@@ -4,10 +4,11 @@ import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 
 import { ExaminerGroupCreateModal } from "@/components/examiner-group-create-modal";
+import { RegionCrossMarkingMatrix } from "@/components/scripts-allocation/region-cross-marking-matrix";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ExaminerGroupRow, ExaminerTypeApi, Subject } from "@/lib/api";
+import type { AllocationSolveModeApi, ExaminerGroupRow, ExaminerTypeApi, Subject } from "@/lib/api";
 import { formInputClass } from "@/lib/form-classes";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 
@@ -55,8 +56,16 @@ type Props = {
   setEnforceSingleSeries: (v: boolean) => void;
   excludeHomeScope: boolean;
   setExcludeHomeScope: (v: boolean) => void;
-  solveMode: "monolithic" | "decomposed";
-  setSolveMode: (v: "monolithic" | "decomposed") => void;
+  solveMode: AllocationSolveModeApi;
+  setSolveMode: (v: AllocationSolveModeApi) => void;
+  regionMatrixRules: Record<string, string[]>;
+  regionSolveOrder: string[];
+  regionRulesActive: boolean;
+  onToggleRegionMatrixCell: (examinerRegion: string, scriptRegion: string, checked: boolean) => void;
+  onRegionRuleChange: (examinerRegion: string, scriptRegions: string[]) => void;
+  onRemoveRegionRule: (examinerRegion: string) => void;
+  onMoveRegionSolveOrderUp: (region: string) => void;
+  onMoveRegionSolveOrderDown: (region: string) => void;
   solveOptionsError: string | null;
   solveRuleRows: RuleRowState[];
   setSolveRuleRows: Dispatch<SetStateAction<RuleRowState[]>>;
@@ -100,6 +109,14 @@ export function AllocationSetupDialog({
   setExcludeHomeScope,
   solveMode,
   setSolveMode,
+  regionMatrixRules,
+  regionSolveOrder,
+  regionRulesActive,
+  onToggleRegionMatrixCell,
+  onRegionRuleChange,
+  onRemoveRegionRule,
+  onMoveRegionSolveOrderUp,
+  onMoveRegionSolveOrderDown,
   solveOptionsError,
   solveRuleRows,
   setSolveRuleRows,
@@ -145,9 +162,9 @@ export function AllocationSetupDialog({
             Configure allocation
           </h2>
           <p id="allocation-setup-desc" className="mt-1 text-xs text-muted-foreground">
-            Manage the examiner pool for this campaign, set booklet quotas, and configure solver options and cross-marking
-            between examiner groups. Define groups on the examiner roster page. Each marking group may appear only once as
-            a row source.
+            Manage the examiner pool for this campaign, set booklet quotas, configure region cross-marking (recommended)
+            or legacy examiner-group rules, and choose a solve strategy. Define groups on the examiner roster page when
+            using group-based rules.
           </p>
         </div>
 
@@ -284,13 +301,39 @@ export function AllocationSetupDialog({
             </div>
           </section>
 
+          <section className="space-y-3 border-t border-border pt-6" aria-labelledby="setup-region-matrix-heading">
+            <h3 id="setup-region-matrix-heading" className="text-sm font-semibold text-card-foreground">
+              Region cross-marking
+            </h3>
+            <RegionCrossMarkingMatrix
+              rules={regionMatrixRules}
+              solveOrder={regionSolveOrder}
+              disabled={busy}
+              onToggle={onToggleRegionMatrixCell}
+              onRegionRuleChange={onRegionRuleChange}
+              onRemoveRegionRule={onRemoveRegionRule}
+              onMoveRegionUp={onMoveRegionSolveOrderUp}
+              onMoveRegionDown={onMoveRegionSolveOrderDown}
+            />
+          </section>
+
           <section className="space-y-3 border-t border-border pt-6" aria-labelledby="setup-solver-heading">
             <h3 id="setup-solver-heading" className="text-sm font-semibold text-card-foreground">
-              Solver and cross-marking (examiner groups)
+              Solver and cross-marking{regionRulesActive ? " (legacy groups)" : " (examiner groups)"}
             </h3>
             <p className="text-xs text-muted-foreground">
-              Each row: marking group (whose examiners receive scripts) may mark script cohorts from the listed groups.
-              Create groups here (name + script regions) or on the examiner roster page; assign members on the roster.
+              {regionRulesActive ? (
+                <>
+                  Region matrix is active — eligibility and self-region marking are controlled by the matrix above.
+                  Legacy group rules below are ignored while the matrix has entries.
+                </>
+              ) : (
+                <>
+                  Each row: marking group (whose examiners receive scripts) may mark script cohorts from the listed
+                  groups. Create groups here (name + script regions) or on the examiner roster page; assign members on
+                  the roster.
+                </>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -347,9 +390,10 @@ export function AllocationSetupDialog({
                 {groupPanelError}
               </p>
             ) : null}
-            {examinerGroups.length < 2 ? (
+            {examinerGroups.length < 2 && !regionRulesActive ? (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                Create at least two examiner groups with script regions and members before cross-marking rules are useful.
+                Create at least two examiner groups with script regions and members before cross-marking rules are useful,
+                or use the region matrix above instead.
               </p>
             ) : null}
             {solveOptionsError ? (
@@ -396,39 +440,55 @@ export function AllocationSetupDialog({
                   type="checkbox"
                   checked={enforceSingleSeries}
                   onChange={(e) => setEnforceSingleSeries(e.target.checked)}
-                  disabled={busy}
+                  disabled={busy || solveMode === "regional_greedy"}
                 />
                 One series per examiner
+                {solveMode === "regional_greedy" ? (
+                  <span className="text-muted-foreground">(always enforced in regional greedy)</span>
+                ) : null}
               </label>
               <label className="flex items-center gap-2 text-foreground">
                 <input
                   type="checkbox"
                   checked={excludeHomeScope}
                   onChange={(e) => setExcludeHomeScope(e.target.checked)}
-                  disabled={busy}
+                  disabled={busy || regionRulesActive}
                 />
                 Also exclude examiner home region (stricter than cohort rule)
+                {regionRulesActive ? (
+                  <span className="text-muted-foreground">(controlled by region matrix)</span>
+                ) : null}
               </label>
               <label className="space-y-1 sm:col-span-2">
                 <span className="font-medium text-foreground">Solve strategy</span>
                 <select
                   className={`${formInputClass} h-9 w-full max-w-xl`}
                   value={solveMode}
-                  onChange={(e) => setSolveMode(e.target.value as "monolithic" | "decomposed")}
+                  onChange={(e) => setSolveMode(e.target.value as AllocationSolveModeApi)}
                   disabled={busy}
                   aria-describedby="solve-strategy-hint"
                 >
                   <option value="monolithic">Single MILP — one combined solve over all examiners and envelopes</option>
                   <option value="decomposed">
-                    Decomposed — sequential marking groups (table order, top first), series buckets by booklet ratio;
-                    smaller MILPs with per-stage progress
+                    Decomposed — sequential marking groups or home regions (table/matrix order, top first), series
+                    buckets by booklet ratio; smaller MILPs with per-stage progress
+                  </option>
+                  <option value="regional_greedy">
+                    Regional greedy — sequential by home region, school-ordered envelopes, quota band, one series per
+                    examiner
                   </option>
                 </select>
                 <span id="solve-strategy-hint" className="block text-muted-foreground">
-                  {solveMode === "decomposed" ? (
+                  {solveMode === "regional_greedy" ? (
                     <>
-                      Later marking groups only see envelopes still unassigned. Order follows the cross-marking table top
-                      to bottom; put the most important marking group first.
+                      Deterministic greedy assign: not globally optimal. Requires the region matrix. Groups are processed
+                      in regional solve order; within each group examiners are processed by name and envelopes by school
+                      code then booklet count.
+                    </>
+                  ) : solveMode === "decomposed" ? (
+                    <>
+                      Later marking groups or regions only see envelopes still unassigned. Order follows the
+                      cross-marking table or region list top to bottom; put the most important marking unit first.
                     </>
                   ) : (
                     <>
@@ -440,6 +500,13 @@ export function AllocationSetupDialog({
               </label>
             </div>
 
+            <details className={regionRulesActive ? "rounded-md border border-border bg-muted/10 p-3" : undefined} open={!regionRulesActive}>
+              {regionRulesActive ? (
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                  Advanced: legacy group rules (ignored while region matrix is active)
+                </summary>
+              ) : null}
+              <div className={regionRulesActive ? "mt-3 space-y-3" : "space-y-3"}>
             <div className="overflow-x-auto rounded-md border border-border">
               <div className="flex justify-end border-b border-border bg-muted/30 px-3 py-2">
                 <Button
@@ -568,6 +635,8 @@ export function AllocationSetupDialog({
                 </tbody>
               </table>
             </div>
+              </div>
+            </details>
             {solverSettingsSavedMessage ? (
               <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100">
                 {solverSettingsSavedMessage}

@@ -147,7 +147,7 @@ async def test_upsert_manual_assignment_subject_not_eligible() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upsert_manual_assignment_rejects_own_cohort() -> None:
+async def test_upsert_manual_assignment_own_cohort_sets_override() -> None:
     run_id = uuid4()
     env_id = uuid4()
     ex_id = uuid4()
@@ -159,7 +159,9 @@ async def test_upsert_manual_assignment_rejects_own_cohort() -> None:
     allocation = MagicMock()
     allocation.id = alloc_id
     allocation.subject_id = 5
-    allocation.cross_marking_rules = {str(g): [str(g)]}
+    allocation.examination_id = 1
+    allocation.cross_marking_rules = {str(g): [str(uuid4())]}
+    allocation.cross_marking_region_rules = {}
     allocation.exclude_home_zone_or_region = False
 
     env = MagicMock()
@@ -172,13 +174,17 @@ async def test_upsert_manual_assignment_rejects_own_cohort() -> None:
 
     member = MagicMock(spec=AllocationExaminer)
     examiner = MagicMock(spec=Examiner)
+    examiner.id = ex_id
     examiner.subjects = [MagicMock(subject_id=5)]
     examiner.region = Region.VOLTA
 
     r_ex = MagicMock()
     r_ex.scalar_one_or_none.return_value = examiner
+    r_a = MagicMock()
+    r_a.scalar_one_or_none.return_value = None
 
     session = AsyncMock()
+    session.add = MagicMock()
 
     async def get_side_effect(model, key, **kwargs):
         if model is AllocationExaminer:
@@ -186,7 +192,7 @@ async def test_upsert_manual_assignment_rejects_own_cohort() -> None:
         return None
 
     session.get = AsyncMock(side_effect=get_side_effect)
-    session.execute = AsyncMock(return_value=r_ex)
+    session.execute = AsyncMock(side_effect=[r_ex, r_a])
 
     with (
         patch("app.services.script_allocation.load_run_with_assignments", new_callable=AsyncMock, return_value=run),
@@ -202,10 +208,12 @@ async def test_upsert_manual_assignment_rejects_own_cohort() -> None:
             return_value=({Region.ASHANTI: g}, {ex_id: g}),
         ),
     ):
-        with pytest.raises(ManualAssignmentError) as exc:
-            await upsert_manual_assignment(session, run_id, env_id, ex_id)
-    assert exc.value.status_code == 400
-    assert "own cohort" in exc.value.detail.lower()
+        await upsert_manual_assignment(session, run_id, env_id, ex_id)
+
+    session.add.assert_called_once()
+    added = session.add.call_args[0][0]
+    assert isinstance(added, AllocationAssignment)
+    assert added.cross_marking_override is True
 
 
 @pytest.mark.asyncio
@@ -221,7 +229,9 @@ async def test_upsert_manual_assignment_inserts_new_row() -> None:
     allocation = MagicMock()
     allocation.id = alloc_id
     allocation.subject_id = 5
+    allocation.examination_id = 1
     allocation.cross_marking_rules = {str(g_mark): [str(g_src)]}
+    allocation.cross_marking_region_rules = {}
     allocation.exclude_home_zone_or_region = False
 
     env = MagicMock()
@@ -234,6 +244,7 @@ async def test_upsert_manual_assignment_inserts_new_row() -> None:
 
     member = MagicMock(spec=AllocationExaminer)
     examiner = MagicMock(spec=Examiner)
+    examiner.id = ex_id
     examiner.subjects = [MagicMock(subject_id=5)]
     examiner.region = Region.VOLTA
 
@@ -276,6 +287,7 @@ async def test_upsert_manual_assignment_inserts_new_row() -> None:
     assert added.script_envelope_id == env_id
     assert added.examiner_id == ex_id
     assert added.booklet_count == 7
+    assert added.cross_marking_override is False
     session.flush.assert_awaited_once()
 
 
@@ -293,7 +305,9 @@ async def test_upsert_manual_assignment_updates_existing_row() -> None:
     allocation = MagicMock()
     allocation.id = alloc_id
     allocation.subject_id = 5
+    allocation.examination_id = 1
     allocation.cross_marking_rules = {str(g_mark): [str(g_src)]}
+    allocation.cross_marking_region_rules = {}
     allocation.exclude_home_zone_or_region = False
 
     env = MagicMock()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -20,7 +21,84 @@ from app.schemas.examiner_groups import (
 )
 from app.services.examiner_roster import parse_region
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["examiner-groups"])
+
+SOURCE_REGION_CONFLICT_MESSAGE = (
+    "One or more regions are already assigned to another group. "
+    "Choose different regions or update the other group first."
+)
+
+
+def _parse_unique_regions(raw_regions: list[str]) -> list[Region]:
+    regions: list[Region] = []
+    seen: set[str] = set()
+    for raw in raw_regions:
+        key = str(raw).strip()
+        if not key:
+            continue
+        if key.lower() in seen:
+            continue
+        seen.add(key.lower())
+        regions.append(parse_region(key))
+    return regions
+
+
+async def _assert_source_regions_available(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    group_id: UUID,
+    regions: list[Region],
+) -> None:
+    if not regions:
+        return
+    stmt = (
+        select(ExaminerGroupSourceRegion.region, ExaminerGroup.name)
+        .join(ExaminerGroup, ExaminerGroupSourceRegion.group_id == ExaminerGroup.id)
+        .where(
+            ExaminerGroupSourceRegion.examination_id == examination_id,
+            ExaminerGroupSourceRegion.region.in_(regions),
+            ExaminerGroupSourceRegion.group_id != group_id,
+        )
+    )
+    conflicts = list((await session.execute(stmt)).all())
+    if not conflicts:
+        return
+    conflict_pairs = [(region.value, group_name) for region, group_name in conflicts]
+    logger.warning(
+        "examiner_group_source_region_conflict examination_id=%s group_id=%s requested=%s conflicts=%s",
+        examination_id,
+        group_id,
+        [region.value for region in regions],
+        conflict_pairs,
+    )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=SOURCE_REGION_CONFLICT_MESSAGE)
+
+
+async def _commit_examiner_group_changes(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    group_id: UUID,
+    regions: list[Region],
+) -> None:
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        logger.warning(
+            "examiner_group_source_region_integrity_error examination_id=%s group_id=%s requested=%s",
+            examination_id,
+            group_id,
+            [region.value for region in regions],
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=SOURCE_REGION_CONFLICT_MESSAGE,
+        ) from exc
 
 
 async def _sync_group_members_to_cohort_regions(
@@ -45,7 +123,8 @@ async def _sync_group_members_to_cohort_regions(
         Examiner.examination_id == examination_id,
         Examiner.region.in_(region_set),
     )
-    ids = list(dict.fromkeys((await session.execute(stmt)).scalars().all()))
+    async with session.no_autoflush:
+        ids = list(dict.fromkeys((await session.execute(stmt)).scalars().all()))
     if not ids:
         return
     other_groups = select(ExaminerGroup.id).where(
@@ -128,16 +207,14 @@ async def create_examiner_group(
     session.add(g)
     await session.flush()
 
-    regions: list[Region] = []
-    seen: set[str] = set()
-    for raw in body.source_regions:
-        key = str(raw).strip()
-        if not key:
-            continue
-        if key.lower() in seen:
-            continue
-        seen.add(key.lower())
-        regions.append(parse_region(key))
+    regions = _parse_unique_regions(body.source_regions)
+
+    await _assert_source_regions_available(
+        session,
+        examination_id=examination_id,
+        group_id=g.id,
+        regions=regions,
+    )
 
     for r in regions:
         session.add(
@@ -153,14 +230,12 @@ async def create_examiner_group(
         group_id=g.id,
         regions=regions,
     )
-    try:
-        await session.commit()
-    except IntegrityError as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Each region may belong to at most one group's cohort for this examination.",
-        ) from e
+    await _commit_examiner_group_changes(
+        session,
+        examination_id=examination_id,
+        group_id=g.id,
+        regions=regions,
+    )
 
     g2 = await _load_group(session, examination_id=examination_id, group_id=g.id)
     assert g2 is not None
@@ -284,17 +359,14 @@ async def replace_examiner_group_source_regions(
     if g is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner group not found")
 
-    regions: list[Region] = []
-    seen: set[str] = set()
-    for raw in body.regions:
-        key = str(raw).strip()
-        if not key:
-            continue
-        if key.lower() in seen:
-            continue
-        seen.add(key.lower())
-        regions.append(parse_region(key))
+    regions = _parse_unique_regions(body.regions)
 
+    await _assert_source_regions_available(
+        session,
+        examination_id=examination_id,
+        group_id=group_id,
+        regions=regions,
+    )
     await session.execute(delete(ExaminerGroupSourceRegion).where(ExaminerGroupSourceRegion.group_id == group_id))
     for r in regions:
         session.add(
@@ -310,14 +382,12 @@ async def replace_examiner_group_source_regions(
         group_id=group_id,
         regions=regions,
     )
-    try:
-        await session.commit()
-    except IntegrityError as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Each region may belong to at most one group's cohort for this examination.",
-        ) from e
+    await _commit_examiner_group_changes(
+        session,
+        examination_id=examination_id,
+        group_id=group_id,
+        regions=regions,
+    )
 
     g2 = await _load_group(session, examination_id=examination_id, group_id=group_id)
     assert g2 is not None

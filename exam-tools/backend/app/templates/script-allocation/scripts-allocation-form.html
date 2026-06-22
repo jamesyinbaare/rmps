@@ -373,6 +373,18 @@
             margin-top: 0;
         }
 
+        table.alloc td.series {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        table.alloc td.series-tone-0 { background: #cfe2f3; }
+        table.alloc td.series-tone-1 { background: #fff2cc; }
+        table.alloc td.series-tone-2 { background: #d9ead3; }
+        table.alloc td.series-tone-3 { background: #ead1dc; }
+        table.alloc td.series-tone-4 { background: #f9cb9c; }
+        table.alloc td.series-tone-5 { background: #d9d2e9; }
+
     </style>
 </head>
 <body>
@@ -440,8 +452,8 @@
                 <tr>
                     <th scope="col" class="idx">#</th>
                     <th scope="col">School name</th>
-                    <th scope="col" class="num">Env #</th>
                     <th scope="col" class="num">Series</th>
+                    <th scope="col" class="num">Env #</th>
                     <th scope="col" class="num">Total</th>
                     <th scope="col" class="correction">Correction</th>
                 </tr>
@@ -451,8 +463,8 @@
                 <tr>
                     <td class="idx">{{ loop.index }}</td>
                     <td>{{ row.school_display }}</td>
+                    <td class="num series{% if row.series_tone is not none %} series-tone-{{ row.series_tone }}{% endif %}">{{ row.series_number }}</td>
                     <td class="num">{{ row.envelope_number }}</td>
-                    <td class="num">{{ row.series_number }}</td>
                     <td class="num">{{ row.booklet_count }}</td>
                     <td class="correction"></td>
                 </tr>
