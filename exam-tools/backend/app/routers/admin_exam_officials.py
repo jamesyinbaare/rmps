@@ -263,7 +263,11 @@ async def admin_export_exam_centre_officials(
     examination_id: int = Query(..., description="Examination id"),
     layout: Literal["zip", "combined", "single_sheet"] = Query(
         "zip",
-        description="zip = one workbook per centre; combined = invigilator workbook sheet per centre; single_sheet = one tab for role group",
+        description=(
+            "zip = one .xlsx per centre in a zip; "
+            "combined = one workbook with one worksheet per centre; "
+            "single_sheet = one workbook with all centres on a single flat worksheet"
+        ),
     ),
     center_id: UUID | None = Query(None, description="Optional: only this centre"),
     designation: str | None = Query(

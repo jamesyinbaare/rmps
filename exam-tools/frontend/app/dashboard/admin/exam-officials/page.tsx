@@ -56,12 +56,12 @@ const OFFICIAL_ACCOUNT_SECTIONS: SectionConfig[] = [
   {
     id: "invigilators",
     title: "Invigilators",
-    tabHelper: "Exports are split per centre (zip) or as a single combined workbook.",
+    tabHelper: "Download all centres on one sheet, or use zip / one tab per centre.",
     designations: ["Invigilator"],
     showDesignationColumn: false,
     emptyLabel: "No invigilators for this filter.",
     exportSlug: "invigilators",
-    exportLayouts: ["zip", "combined"],
+    exportLayouts: ["single_sheet", "combined", "zip"],
   },
   {
     id: "supervisors",
@@ -554,8 +554,10 @@ function AdminExamOfficialsContent() {
       exportKey === "zip"
         ? `${section.exportSlug}_by_centre`
         : exportKey === "combined"
-          ? `${section.exportSlug}_all_centres`
-          : section.exportSlug;
+          ? `${section.exportSlug}_by_centre_tabs`
+          : exportKey === "single_sheet" && section.exportLayouts.includes("combined")
+            ? `${section.exportSlug}_all_centres`
+            : section.exportSlug;
     try {
       if (exportKey === "bog") {
         const filename = examOfficialsBogExportFilename(base, slug, suffix || undefined);
@@ -615,33 +617,42 @@ function AdminExamOfficialsContent() {
   }, [examId, activeSt.total]);
 
   const exportOptions = useMemo(() => {
+    const hasSingleSheet = activeConfig.exportLayouts.includes("single_sheet");
+    const hasCombined = activeConfig.exportLayouts.includes("combined");
+    const hasZip = activeConfig.exportLayouts.includes("zip");
+    const invigilatorStyle = hasSingleSheet && hasCombined;
+
     const opts: {
       key: string;
       label: string;
       description?: string;
       primary?: boolean;
     }[] = [];
-    if (activeConfig.exportLayouts.includes("combined")) {
+
+    if (hasSingleSheet) {
       opts.push({
-        key: "combined",
-        label: "Single workbook",
-        description: "All centres in one Excel file",
+        key: "single_sheet",
+        label: invigilatorStyle ? "Single sheet (all centres)" : "Export Excel",
+        description: invigilatorStyle
+          ? "One worksheet with full bank account details for every centre in scope"
+          : undefined,
         primary: true,
       });
     }
-    if (activeConfig.exportLayouts.includes("zip")) {
+    if (hasCombined) {
+      opts.push({
+        key: "combined",
+        label: "Workbook (tab per centre)",
+        description: "One Excel file, separate tab per centre",
+        primary: !hasSingleSheet,
+      });
+    }
+    if (hasZip) {
       opts.push({
         key: "zip",
         label: "Zip per centre",
         description: "One file per examination centre",
-        primary: !activeConfig.exportLayouts.includes("combined"),
-      });
-    }
-    if (activeConfig.exportLayouts.includes("single_sheet")) {
-      opts.push({
-        key: "single_sheet",
-        label: "Export Excel",
-        primary: true,
+        primary: !hasSingleSheet && !hasCombined,
       });
     }
     opts.push({
