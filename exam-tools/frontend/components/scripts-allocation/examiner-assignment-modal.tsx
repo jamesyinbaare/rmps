@@ -21,7 +21,7 @@ import {
   type ExaminerTypeApi,
   type UnassignedEnvelopeItem,
 } from "@/lib/api";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { formInputClass } from "@/lib/form-classes";
 import { cn } from "@/lib/utils";
 
 type Panel = "assigned" | "add";
@@ -417,75 +417,75 @@ export function ExaminerAssignmentModal({
 
   const footer =
     panel === "add" && addPanelEnvelopes.length > 0 ? (
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0 space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="min-w-0 flex-1">
           {selectedEnvelopeIds.length > 0 ? (
-            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs">
-              <dl className="grid gap-2 sm:grid-cols-3 sm:gap-x-4">
-                <div>
-                  <dt className="text-muted-foreground">Current load</dt>
-                  <dd className="mt-0.5 tabular-nums font-medium text-foreground">
-                    {assignedBookletTotal} booklets
-                    <span className="font-normal text-muted-foreground">
-                      {" "}
-                      · {assignedRows.length} envelope{assignedRows.length === 1 ? "" : "s"}
+            <div className="space-y-1 text-xs leading-snug">
+              <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 tabular-nums text-foreground">
+                <span>
+                  <span className="text-muted-foreground">Load </span>
+                  <span className="font-medium">{assignedBookletTotal}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    bk · {assignedRows.length} env
+                  </span>
+                </span>
+                <span className="text-muted-foreground" aria-hidden>
+                  →
+                </span>
+                <span>
+                  <span className="text-muted-foreground">+</span>
+                  <span className="font-medium text-primary">{selectedBookletTotal}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    bk · {selectedEnvelopeIds.length} env
+                  </span>
+                </span>
+                <span className="text-muted-foreground" aria-hidden>
+                  =
+                </span>
+                <span>
+                  <span className="font-semibold">{resultingBookletTotal}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    bk · {resultingEnvelopeCount} env
+                  </span>
+                  {examiner.quota_booklets != null && resultingDeviation != null ? (
+                    <span
+                      className={cn(
+                        "ml-1 font-medium",
+                        resultingDeviation > 0
+                          ? "text-amber-700 dark:text-amber-300"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      ({resultingDeviation > 0 ? "+" : ""}
+                      {resultingDeviation} quota)
                     </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Adding</dt>
-                  <dd className="mt-0.5 tabular-nums font-medium text-primary">
-                    +{selectedBookletTotal} booklets
-                    <span className="font-normal text-muted-foreground">
-                      {" "}
-                      · {selectedEnvelopeIds.length} envelope{selectedEnvelopeIds.length === 1 ? "" : "s"}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">After assigning</dt>
-                  <dd className="mt-0.5 tabular-nums font-semibold text-foreground">
-                    {resultingBookletTotal} booklets
-                    <span className="font-normal text-muted-foreground">
-                      {" "}
-                      · {resultingEnvelopeCount} envelope{resultingEnvelopeCount === 1 ? "" : "s"}
-                    </span>
-                    {examiner.quota_booklets != null && resultingDeviation != null ? (
-                      <span
-                        className={cn(
-                          "ml-1 font-medium",
-                          resultingDeviation > 0
-                            ? "text-amber-700 dark:text-amber-300"
-                            : "text-muted-foreground",
-                        )}
-                      >
-                        · {resultingDeviation > 0 ? "+" : ""}
-                        {resultingDeviation} vs quota
-                      </span>
-                    ) : null}
-                  </dd>
-                </div>
-              </dl>
-              <p className="mt-2 text-muted-foreground">
-                Series after assigning:{" "}
-                <span className="font-medium text-foreground">{formatSeriesLabel(resultingSeriesLoads)}</span>
+                  ) : null}
+                </span>
+                <span className="hidden text-muted-foreground sm:inline" aria-hidden>
+                  ·
+                </span>
+                <span className="text-muted-foreground">
+                  {formatSeriesLabel(resultingSeriesLoads)}
+                </span>
               </p>
               {seriesConflictBlocked || selectedSeriesConflictBlocked ? (
-                <p className="mt-2 text-amber-800 dark:text-amber-200">
+                <p className="truncate text-amber-800 dark:text-amber-200">
                   {seriesConflictBlocked
-                    ? `Selection includes a different series than the examiner’s current ${formatSeriesLabel(assignedSeriesLoads)}.`
-                    : "Selection spans multiple series, but this campaign allows one series per examiner."}
+                    ? `Different series than current ${formatSeriesLabel(assignedSeriesLoads)}.`
+                    : "Selection spans multiple series; only one allowed per examiner."}
                 </p>
               ) : willHaveMultipleSeries && allowCrossMarkingOverride ? (
-                <p className="mt-2 text-amber-800 dark:text-amber-200">
-                  This assignment will span multiple series ({formatSeriesLabel(resultingSeriesLoads)}). It will be
-                  labelled clearly on this examiner&apos;s allocation form.
+                <p className="truncate text-amber-800 dark:text-amber-200">
+                  Spans multiple series — labelled on the allocation form.
                 </p>
               ) : null}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Select envelopes below to see how this examiner&apos;s load will change.
+              Select envelopes below to preview load changes.
             </p>
           )}
         </div>
@@ -535,12 +535,16 @@ export function ExaminerAssignmentModal({
         .filter(Boolean)
         .join(" · ")}
       className="max-w-5xl"
+      headerClassName="px-5 py-2.5 sm:px-6"
+      titleClassName="text-base sm:text-lg"
+      descriptionClassName="text-xs line-clamp-1"
       bodyClassName="!px-0 !py-0"
+      footerClassName="px-5 py-2.5 sm:px-6"
       footer={footer}
     >
       <div className="flex h-full min-h-0 flex-col">
         {showExaminerNav ? (
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/25 px-5 py-2.5 sm:px-6">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/25 px-5 py-2 sm:px-6">
             <Button
               type="button"
               variant="outline"
@@ -573,19 +577,24 @@ export function ExaminerAssignmentModal({
             </Button>
           </div>
         ) : null}
-        <div className="shrink-0 space-y-4 border-b border-border bg-muted/15 px-5 py-4 sm:px-6">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="tabular-nums">
-              {assignedRows.length} envelope{assignedRows.length === 1 ? "" : "s"}
+        <div
+          className={cn(
+            "shrink-0 border-b border-border bg-muted/15 px-5 sm:px-6",
+            panel === "add" ? "space-y-2 py-2.5" : "space-y-3 py-3",
+          )}
+        >
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="secondary" className="h-6 px-2 text-[11px] tabular-nums">
+              {assignedRows.length} env
             </Badge>
-            <Badge variant="outline" className="tabular-nums">
-              {assignedBookletTotal} booklets
+            <Badge variant="outline" className="h-6 px-2 text-[11px] tabular-nums">
+              {assignedBookletTotal} bk
             </Badge>
             {examiner.quota_booklets != null ? (
               <Badge
                 variant="outline"
                 className={cn(
-                  "tabular-nums",
+                  "h-6 px-2 text-[11px] tabular-nums",
                   examiner.deviation != null && examiner.deviation > 0
                     ? "border-amber-500/40 text-amber-800 dark:text-amber-200"
                     : "",
@@ -598,100 +607,104 @@ export function ExaminerAssignmentModal({
             {assignedOverrideCount > 0 ? (
               <Badge
                 variant="outline"
-                className="border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+                className="h-6 border-amber-500/40 bg-amber-500/10 px-2 text-[11px] text-amber-950 dark:text-amber-100"
               >
-                {assignedOverrideCount} manual override{assignedOverrideCount === 1 ? "" : "s"}
+                {assignedOverrideCount} override{assignedOverrideCount === 1 ? "" : "s"}
               </Badge>
             ) : null}
             {hasMultipleAssignedSeries ? (
               <Badge
                 variant="outline"
-                className="border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100"
+                className="h-6 border-amber-500/50 bg-amber-500/15 px-2 text-[11px] text-amber-950 dark:text-amber-100"
               >
-                Multiple series assigned
+                Multi-series
               </Badge>
             ) : null}
-            {eligibleUnassigned.length > 0 ? (
-              <Badge variant="outline" className="border-primary/30 bg-primary/5 text-foreground">
-                {eligibleUnassigned.length} available to add
+            {panel === "add" && eligibleUnassigned.length > 0 ? (
+              <Badge variant="outline" className="h-6 border-primary/30 bg-primary/5 px-2 text-[11px] text-foreground">
+                {eligibleUnassigned.length} to add
               </Badge>
+            ) : null}
+            {assignedSeriesLoads.length > 0 ? (
+              <span className="inline-flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                <span className="font-medium uppercase tracking-wide">Series:</span>
+                {assignedSeriesLoads.map((series) => (
+                  <button
+                    key={series.seriesNumber}
+                    type="button"
+                    className={cn(
+                      "rounded-md border px-1.5 py-0.5 tabular-nums transition-colors",
+                      panel === "add" && filterSeries === String(series.seriesNumber)
+                        ? "border-primary/40 bg-primary/10 text-foreground"
+                        : "border-border/80 bg-background/80 hover:bg-muted/60",
+                      hasMultipleAssignedSeries && "border-amber-500/40",
+                    )}
+                    onClick={() => {
+                      if (panel !== "add") return;
+                      setFilterSeries(
+                        filterSeries === String(series.seriesNumber) ? "" : String(series.seriesNumber),
+                      );
+                    }}
+                    disabled={panel !== "add"}
+                  >
+                    S{series.seriesNumber}
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ({series.envelopeCount}/{series.bookletCount})
+                    </span>
+                  </button>
+                ))}
+              </span>
             ) : null}
           </div>
 
-          <div className="rounded-xl border border-border bg-card px-3 py-3 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Assigned series
-                  {hasMultipleAssignedSeries ? (
-                    <span className="ml-2 font-normal normal-case text-amber-800 dark:text-amber-200">
-                      (multiple — shown on allocation PDF)
-                    </span>
-                  ) : null}
-                </p>
-                {assignedSeriesLoads.length === 0 ? (
-                  <p className="mt-1.5 text-sm text-muted-foreground">No series yet — assign envelopes below.</p>
-                ) : (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {assignedSeriesLoads.map((series) => (
-                      <span
-                        key={series.seriesNumber}
-                        className={cn(
-                          "inline-flex flex-col rounded-lg border px-3 py-1.5",
-                          hasMultipleAssignedSeries
-                            ? "border-amber-500/40 bg-amber-500/10"
-                            : "border-primary/25 bg-primary/10",
-                        )}
-                      >
+          {panel === "assigned" ? (
+            <div className="rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Assigned series
+                    {hasMultipleAssignedSeries ? (
+                      <span className="ml-1.5 font-normal normal-case text-amber-800 dark:text-amber-200">
+                        (multiple)
+                      </span>
+                    ) : null}
+                  </p>
+                  {assignedSeriesLoads.length === 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">No series yet.</p>
+                  ) : (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {assignedSeriesLoads.map((series) => (
                         <span
+                          key={series.seriesNumber}
                           className={cn(
-                            "text-sm font-semibold tabular-nums",
-                            hasMultipleAssignedSeries ? "text-amber-900 dark:text-amber-100" : "text-primary",
+                            "inline-flex items-baseline gap-1 rounded-md border px-2 py-0.5 text-xs tabular-nums",
+                            hasMultipleAssignedSeries
+                              ? "border-amber-500/40 bg-amber-500/10"
+                              : "border-primary/25 bg-primary/10",
                           )}
                         >
-                          Series {series.seriesNumber}
+                          <span className="font-semibold">S{series.seriesNumber}</span>
+                          <span className="text-muted-foreground">
+                            {series.envelopeCount} env · {series.bookletCount} bk
+                          </span>
                         </span>
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          {series.envelopeCount} envelope{series.envelopeCount === 1 ? "" : "s"} ·{" "}
-                          {series.bookletCount} booklets
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-              {panel === "add" && assignedSeriesLoads.length === 1 ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 shrink-0 text-xs"
-                  onClick={() =>
-                    setFilterSeries(
-                      filterSeries === String(assignedSeriesLoads[0].seriesNumber)
-                        ? ""
-                        : String(assignedSeriesLoads[0].seriesNumber),
-                    )
-                  }
-                >
-                  {filterSeries === String(assignedSeriesLoads[0].seriesNumber)
-                    ? "Show all series"
-                    : `Show series ${assignedSeriesLoads[0].seriesNumber} only`}
-                </Button>
+              {blockSingleSeriesManual ? (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">One series per examiner.</p>
+              ) : allowCrossMarkingOverride ? (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Manual assignment may span multiple series.
+                </p>
               ) : null}
             </div>
-            {blockSingleSeriesManual ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                This campaign allows one series per examiner.
-              </p>
-            ) : allowCrossMarkingOverride ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Manual assignment may include multiple series for this examiner (marked on the allocation PDF).
-              </p>
-            ) : null}
-          </div>
+          ) : null}
 
-          {quotaPercent != null ? (
+          {panel === "assigned" && quotaPercent != null ? (
             <div>
               <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
                 <span>Load vs quota</span>
@@ -759,7 +772,7 @@ export function ExaminerAssignmentModal({
           ) : null}
 
           <div
-            className="flex flex-wrap gap-1 rounded-xl border border-border bg-muted/30 p-1"
+            className="flex flex-wrap gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5"
             role="tablist"
             aria-label="Assignment views"
           >
@@ -768,33 +781,33 @@ export function ExaminerAssignmentModal({
               role="tab"
               aria-selected={panel === "assigned"}
               className={cn(
-                "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm",
                 panel === "assigned"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setPanel("assigned")}
             >
-              <ClipboardList className="size-4 shrink-0 opacity-70" aria-hidden />
+              <ClipboardList className="size-3.5 shrink-0 opacity-70 sm:size-4" aria-hidden />
               Assigned
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums">{assignedRows.length}</span>
+              <span className="rounded bg-muted px-1 py-px text-[10px] tabular-nums sm:text-xs">{assignedRows.length}</span>
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={panel === "add"}
               className={cn(
-                "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm",
                 panel === "add"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setPanel("add")}
             >
-              <PackagePlus className="size-4 shrink-0 opacity-70" aria-hidden />
+              <PackagePlus className="size-3.5 shrink-0 opacity-70 sm:size-4" aria-hidden />
               Add envelopes
               {addPanelEnvelopes.length > 0 ? (
-                <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-xs tabular-nums text-primary">
+                <span className="rounded bg-primary/10 px-1 py-px text-[10px] tabular-nums text-primary sm:text-xs">
                   {addPanelEnvelopes.length}
                 </span>
               ) : null}
@@ -814,7 +827,7 @@ export function ExaminerAssignmentModal({
           </p>
         ) : null}
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-4 pt-4 sm:px-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-3 pt-2 sm:px-6">
           {panel === "assigned" ? (
             assignedRows.length === 0 ? (
               <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-4 py-12 text-center">
@@ -943,7 +956,7 @@ export function ExaminerAssignmentModal({
               Unassigned envelopes exist, but none are eligible for this examiner under cross-marking rules.
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden">
               {ineligibleUnassigned.length > 0 && allowCrossMarkingOverride ? (
                 <p className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:text-amber-100">
                   {ineligibleUnassigned.length} envelope{ineligibleUnassigned.length === 1 ? "" : "s"} fall outside
@@ -952,9 +965,9 @@ export function ExaminerAssignmentModal({
                 </p>
               ) : null}
               <div className="shrink-0">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="sm:col-span-2 lg:col-span-1">
-                  <label htmlFor="add-env-filter-search" className={formLabelClass}>
+                  <label htmlFor="add-env-filter-search" className="sr-only">
                     Search
                   </label>
                   <div className="relative mt-1">
@@ -966,7 +979,7 @@ export function ExaminerAssignmentModal({
                       id="add-env-filter-search"
                       type="search"
                       autoComplete="off"
-                      className={cn(formInputClass, "mt-0 pl-9")}
+                      className={cn(formInputClass, "mt-0 h-8 py-1 pl-9 text-sm")}
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       placeholder="School, zone, series…"
@@ -974,12 +987,12 @@ export function ExaminerAssignmentModal({
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="add-env-filter-region" className={formLabelClass}>
+                  <label htmlFor="add-env-filter-region" className="sr-only">
                     Region
                   </label>
                   <select
                     id="add-env-filter-region"
-                    className={`${formInputClass} mt-1`}
+                    className={cn(formInputClass, "mt-0 h-8 py-1 text-sm")}
                     value={filterRegion}
                     onChange={(e) => {
                       setFilterRegion(e.target.value);
@@ -996,12 +1009,12 @@ export function ExaminerAssignmentModal({
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="add-env-filter-zone" className={formLabelClass}>
+                  <label htmlFor="add-env-filter-zone" className="sr-only">
                     Zone
                   </label>
                   <select
                     id="add-env-filter-zone"
-                    className={`${formInputClass} mt-1`}
+                    className={cn(formInputClass, "mt-0 h-8 py-1 text-sm")}
                     value={filterZone}
                     onChange={(e) => {
                       setFilterZone(e.target.value);
@@ -1017,12 +1030,12 @@ export function ExaminerAssignmentModal({
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="add-env-filter-series" className={formLabelClass}>
+                  <label htmlFor="add-env-filter-series" className="sr-only">
                     Series
                   </label>
                   <select
                     id="add-env-filter-series"
-                    className={`${formInputClass} mt-1`}
+                    className={cn(formInputClass, "mt-0 h-8 py-1 text-sm")}
                     value={filterSeries}
                     onChange={(e) => setFilterSeries(e.target.value)}
                   >
@@ -1036,7 +1049,7 @@ export function ExaminerAssignmentModal({
                 </div>
               </div>
               {filtersActive ? (
-                <div className="mt-3">
+                <div className="mt-2">
                   <Button
                     type="button"
                     variant="outline"
