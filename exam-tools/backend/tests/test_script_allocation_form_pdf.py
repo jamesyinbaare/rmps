@@ -6,17 +6,164 @@ import pytest
 from PyPDF2 import PdfReader
 
 from app.services.script_allocation_form_pdf import (
+    ALLOCATION_ROWS_PAGE_ONE,
     MAX_COPIES,
     MAX_SCHOOL_DISPLAY_LEN,
     _annotate_series_tones,
     _format_school_display,
     _merge_pdf_copies,
+    _paginate_allocation_rows,
     _render_one_examiner_pdf_sync,
     _subject_label,
 )
 from app.models import Subject
 
 pytest.importorskip("weasyprint", reason="WeasyPrint required for HTML→PDF in this test")
+
+
+def _sample_row(index: int) -> dict[str, int | str]:
+    return {
+        "school_code": f"S{index:03d}",
+        "school_name": f"School {index}",
+        "school_display": f"S{index:03d} - School {index}",
+        "envelope_number": index,
+        "series_number": 1,
+        "booklet_count": 10,
+    }
+
+
+def _render_pdf_with_row_count(row_count: int) -> bytes:
+    rows = [_sample_row(i) for i in range(1, row_count + 1)]
+    return _render_one_examiner_pdf_sync(
+        examination_id=1,
+        examination_label_str="2026 Series NovDec",
+        year=2026,
+        subject_label="MATH301 - Mathematics",
+        paper_number=2,
+        examiner_name="A. Examiner",
+        examiner_region="Greater Accra",
+        reference_code="REF-001",
+        rows=rows,
+        total_count=10 * row_count,
+    )
+
+
+@pytest.mark.parametrize(
+    ("row_count", "expected_pages", "expected_show_total"),
+    [
+        (0, 1, [True]),
+        (10, 1, [True]),
+        (25, 1, [True]),
+        (26, 2, [False, True]),
+        (40, 2, [False, True]),
+        (55, 2, [False, True]),
+        (70, 3, [False, False, True]),
+        (90, 4, [False, False, False, True]),
+    ],
+)
+def test_paginate_allocation_rows(
+    row_count: int,
+    expected_pages: int,
+    expected_show_total: list[bool],
+) -> None:
+    rows = [_sample_row(i) for i in range(1, row_count + 1)]
+    pages = _paginate_allocation_rows(rows)
+
+    assert len(pages) == expected_pages
+    assert [page["show_total"] for page in pages] == expected_show_total
+    assert sum(len(page["rows"]) for page in pages) == row_count
+
+    if expected_pages == 1:
+        assert pages[0]["is_first"] is True
+        assert pages[0]["is_last"] is True
+        assert pages[0]["start_index"] == 1
+    else:
+        assert pages[0]["is_first"] is True
+        assert pages[0]["is_last"] is False
+        assert pages[0]["show_total"] is False
+        assert len(pages[0]["rows"]) == ALLOCATION_ROWS_PAGE_ONE
+        assert pages[-1]["is_last"] is True
+        assert pages[-1]["show_total"] is True
+
+
+@pytest.mark.parametrize(
+    ("row_count", "expected_row_counts"),
+    [
+        (55, [25, 30]),
+        (70, [25, 30, 15]),
+        (90, [25, 30, 30, 5]),
+    ],
+)
+def test_paginate_allocation_rows_splits(row_count: int, expected_row_counts: list[int]) -> None:
+    rows = [_sample_row(i) for i in range(1, row_count + 1)]
+    pages = _paginate_allocation_rows(rows)
+
+    assert [len(page["rows"]) for page in pages] == expected_row_counts
+    assert pages[0]["is_first"] is True
+    assert pages[-1]["is_last"] is True
+    for page in pages[:-1]:
+        assert page["show_total"] is False
+        assert page["is_last"] is False
+    assert pages[-1]["show_total"] is True
+
+
+def _assert_total_and_signature_only_on_last_page(pdf: bytes) -> None:
+    reader = PdfReader(BytesIO(pdf))
+    page_count = len(reader.pages)
+    for index, page in enumerate(reader.pages):
+        text = (page.extract_text() or "").lower()
+        is_last = index == page_count - 1
+        if is_last:
+            assert "total booklets" in text
+            assert "receiving officer" in text
+            assert f"page {page_count} of {page_count}" in text
+        else:
+            assert "total booklets" not in text
+            assert "receiving officer" not in text
+            assert "i confirm receipt" not in text
+
+
+def test_paginate_allocation_rows_reserves_closing_page_capacity() -> None:
+    rows = [_sample_row(i) for i in range(1, 56)]
+    pages = _paginate_allocation_rows(rows)
+
+    assert len(pages) == 2
+    assert [len(page["rows"]) for page in pages] == [25, 30]
+    assert sum(len(page["rows"]) for page in pages) == 55
+
+
+def test_render_pdf_single_page_at_or_below_threshold() -> None:
+    pdf = _render_pdf_with_row_count(10)
+    assert pdf.startswith(b"%PDF")
+    assert len(PdfReader(BytesIO(pdf)).pages) == 1
+
+
+def test_render_pdf_two_pages_above_threshold() -> None:
+    pdf = _render_pdf_with_row_count(30)
+    assert pdf.startswith(b"%PDF")
+    reader = PdfReader(BytesIO(pdf))
+    assert len(reader.pages) == 2
+
+
+def test_multi_page_pdf_total_and_signature_only_on_last_page() -> None:
+    pdf = _render_pdf_with_row_count(30)
+    reader = PdfReader(BytesIO(pdf))
+    assert len(reader.pages) == 2
+    _assert_total_and_signature_only_on_last_page(pdf)
+
+
+def test_render_pdf_fifty_five_rows_two_pages() -> None:
+    pdf = _render_pdf_with_row_count(55)
+    assert pdf.startswith(b"%PDF")
+    assert len(PdfReader(BytesIO(pdf)).pages) == 2
+    _assert_total_and_signature_only_on_last_page(pdf)
+
+
+def test_render_pdf_ninety_rows_four_pages() -> None:
+    pdf = _render_pdf_with_row_count(90)
+    assert pdf.startswith(b"%PDF")
+    assert len(PdfReader(BytesIO(pdf)).pages) == 4
+    _assert_total_and_signature_only_on_last_page(pdf)
 
 
 def test_merge_pdf_copies_doubles_page_count() -> None:

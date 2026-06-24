@@ -33,6 +33,8 @@ from app.services.qr_code import generate_qr_code_base64
 MAX_COPIES = 20
 TEMPLATE_REL = "script-allocation/scripts-allocation-form.html"
 MAX_SCHOOL_DISPLAY_LEN = 40
+ALLOCATION_ROWS_PAGE_ONE = 25
+ALLOCATION_ROWS_CONTINUATION = 30
 
 
 def _sanitize_filename_part(s: str) -> str:
@@ -68,6 +70,74 @@ def _annotate_series_tones(rows: list[dict[str, int | str]]) -> list[dict[str, i
     ]
 
 
+def _paginate_allocation_rows(
+    rows: list[dict[str, int | str | None]],
+) -> list[dict[str, object]]:
+    """Split envelope rows across PDF pages, reserving the last page for totals + signature."""
+    if not rows:
+        return [
+            {
+                "rows": [],
+                "start_index": 1,
+                "is_first": True,
+                "is_last": True,
+                "show_total": True,
+            }
+        ]
+    if len(rows) <= ALLOCATION_ROWS_PAGE_ONE:
+        return [
+            {
+                "rows": rows,
+                "start_index": 1,
+                "is_first": True,
+                "is_last": True,
+                "show_total": True,
+            }
+        ]
+
+    pages: list[dict[str, object]] = []
+    remaining = list(rows)
+    start_index = 1
+
+    first = remaining[:ALLOCATION_ROWS_PAGE_ONE]
+    remaining = remaining[ALLOCATION_ROWS_PAGE_ONE:]
+    pages.append(
+        {
+            "rows": first,
+            "start_index": start_index,
+            "is_first": True,
+            "is_last": False,
+            "show_total": False,
+        }
+    )
+    start_index += len(first)
+
+    while len(remaining) > ALLOCATION_ROWS_CONTINUATION:
+        chunk = remaining[:ALLOCATION_ROWS_CONTINUATION]
+        remaining = remaining[ALLOCATION_ROWS_CONTINUATION:]
+        pages.append(
+            {
+                "rows": chunk,
+                "start_index": start_index,
+                "is_first": False,
+                "is_last": False,
+                "show_total": False,
+            }
+        )
+        start_index += len(chunk)
+
+    pages.append(
+        {
+            "rows": remaining,
+            "start_index": start_index,
+            "is_first": False,
+            "is_last": True,
+            "show_total": True,
+        }
+    )
+    return pages
+
+
 def _render_one_examiner_pdf_sync(
     *,
     examination_id: int,
@@ -89,6 +159,7 @@ def _render_one_examiner_pdf_sync(
     )
     qr_code_base64 = generate_qr_code_base64(qr_payload) if qr_payload else None
     rows_with_tones = _annotate_series_tones(rows)
+    pages = _paginate_allocation_rows(rows_with_tones)
     main_html = render_html(
         {
             "examination_label": examination_label_str,
@@ -99,7 +170,7 @@ def _render_one_examiner_pdf_sync(
             "examiner_region": examiner_region,
             "reference_code": reference_code,
             "qr_code_base64": qr_code_base64,
-            "rows": rows_with_tones,
+            "pages": pages,
             "total_count": total_count,
             "generated_at": generated_at,
         },
