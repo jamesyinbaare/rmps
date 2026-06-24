@@ -303,50 +303,48 @@
 
         table.alloc th.total,
         table.alloc td.total {
-            width: 2.8em;
+            width: 4.5em;
+            min-width: 4.5em;
             text-align: right;
             font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
         table.alloc th.revised,
         table.alloc td.revised {
             text-align: center;
             width: 4.2em;
+            min-width: 4.2em;
         }
 
-        .alloc-total {
-            width: 100%;
-            border: 1px solid var(--border-dark);
-            border-top: none;
-            margin: 0 0 8px;
-            page-break-inside: avoid;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-
-        .alloc-total td {
+        table.alloc tfoot td {
             padding: 6px;
             border: 1px solid var(--border);
             vertical-align: middle;
             font-weight: 700;
             background: var(--surface);
+            border-top: 2px solid var(--border-dark);
         }
 
-        .alloc-total .alloc-total-label {
+        table.alloc tfoot .alloc-total-label {
             text-transform: uppercase;
             font-size: 8pt;
             letter-spacing: 0.03em;
+            text-align: right;
         }
 
-        .alloc-total .alloc-total-value {
-            width: 2.8em;
+        table.alloc tfoot .alloc-total-value {
             text-align: right;
             font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
-        .alloc-total .alloc-total-revised {
-            width: 4.2em;
-        }
+        table.alloc col.col-idx { width: 2.4em; }
+        table.alloc col.col-school { width: auto; }
+        table.alloc col.col-series { width: 2.4em; }
+        table.alloc col.col-env { width: 2.6em; }
+        table.alloc col.col-total { width: 4.5em; }
+        table.alloc col.col-revised { width: 4.2em; }
 
         table.alloc td.series-tone-0 { background: #e8f1fa; }
         table.alloc td.series-tone-1 { background: #fff8e6; }
@@ -469,6 +467,14 @@
             {% endif %}
 
             <table class="alloc">
+                <colgroup>
+                    <col class="col-idx" />
+                    <col class="col-school" />
+                    <col class="col-series" />
+                    <col class="col-env" />
+                    <col class="col-total" />
+                    <col class="col-revised" />
+                </colgroup>
                 <thead>
                     <tr>
                         <th scope="col" class="idx">#</th>
@@ -491,16 +497,16 @@
                     </tr>
                     {% endfor %}
                 </tbody>
+                {% if page.show_total %}
+                <tfoot>
+                    <tr>
+                        <td colspan="4" class="alloc-total-label">Total booklets</td>
+                        <td class="total alloc-total-value">{{ total_count }}</td>
+                        <td class="revised"></td>
+                    </tr>
+                </tfoot>
+                {% endif %}
             </table>
-            {% if page.show_total %}
-            <table class="alloc alloc-total" role="presentation">
-                <tr>
-                    <td colspan="4" class="alloc-total-label">Total booklets</td>
-                    <td class="alloc-total-value">{{ total_count }}</td>
-                    <td class="alloc-total-revised"></td>
-                </tr>
-            </table>
-            {% endif %}
             </div>
 
             {% if page.is_last %}
