@@ -20,6 +20,8 @@ type CohortModalShellProps = {
   children: ReactNode;
   className?: string;
   headerClassName?: string;
+  titleClassName?: string;
+  descriptionClassName?: string;
   bodyClassName?: string;
   footerClassName?: string;
 };
@@ -35,6 +37,8 @@ export function CohortModalShell({
   children,
   className,
   headerClassName,
+  titleClassName,
+  descriptionClassName,
   bodyClassName,
   footerClassName,
 }: CohortModalShellProps) {
@@ -114,11 +118,16 @@ export function CohortModalShell({
           )}
         >
           <div className="min-w-0 flex-1 pr-2">
-            <h2 id={titleId} className="truncate text-lg font-semibold text-foreground sm:text-xl">
+            <h2
+              id={titleId}
+              className={cn("truncate text-lg font-semibold text-foreground sm:text-xl", titleClassName)}
+            >
               {title}
             </h2>
             {description ? (
-              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{description}</p>
+              <p className={cn("mt-0.5 line-clamp-2 text-sm text-muted-foreground", descriptionClassName)}>
+                {description}
+              </p>
             ) : null}
           </div>
           <button

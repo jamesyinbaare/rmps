@@ -4,25 +4,34 @@
     <meta charset="UTF-8">
     <title>Scripts allocation form — {{ examiner_name }}</title>
     <style>
-        /* Theme (matches app :root Ghana palette); use sparingly for print / B&W. */
         :root {
-            --theme-primary: #ce1126;
-            --theme-primary-dark: #a50e1e;
-            --theme-ink: #1a1a1a;
-            --theme-muted: #4a4a4a;
-            --theme-border: #737373;
-            --theme-border-light: #b0b0b0;
-            --theme-surface: #f2f2f2;
-            --theme-surface-alt: #e8e8e8;
+            --primary: #ce1126;
+            --ink: #111111;
+            --muted: #555555;
+            --border: #cccccc;
+            --border-dark: #999999;
+            --surface: #f5f5f5;
+            --table-head: #f0f0f0;
+            --page-margin-top: 1.2cm;
+            --page-margin-bottom: 1.8cm;
+            --alloc-row-height: 0.55cm;
+            --sig-bottom-offset: calc(-1.3 * var(--alloc-row-height));
+            --sig-band-height: 4.8cm;
+            --page-content-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
         }
 
         @page {
             size: A4;
-            margin: 1.35cm 1.35cm;
+            margin: var(--page-margin-top) 1.25cm var(--page-margin-bottom) !important;
+            @bottom-left {
+                content: "{{ examiner_name }}{% if reference_code %} · {{ reference_code }}{% endif %}";
+                font-size: 7.5pt;
+                color: var(--muted);
+            }
             @bottom-right {
                 content: "Page " counter(page) " of " counter(pages);
-                font-size: 8pt;
-                color: #4a4a4a;
+                font-size: 7.5pt;
+                color: var(--muted);
             }
         }
 
@@ -31,11 +40,9 @@
         body {
             font-family: Helvetica, Arial, sans-serif;
             font-size: 10pt;
-            color: var(--theme-ink);
-            line-height: 1.45;
+            color: var(--ink);
+            line-height: 1.4;
             margin: 0;
-            padding: 0;
-            position: relative;
         }
 
         .watermark {
@@ -44,462 +51,491 @@
             left: 0;
             right: 0;
             bottom: 0;
-            width: 100%;
-            height: 100%;
             background-image: url('img/logo-crest-only.png');
-            background-size: contain;
+            background-size: 40% auto;
             background-repeat: no-repeat;
-            background-position: center;
+            background-position: center center;
             opacity: 0.04;
             z-index: 0;
             pointer-events: none;
         }
 
-        .content-wrapper {
+        .page-shell {
             position: relative;
             z-index: 1;
-            padding-bottom: 7.2cm;
         }
 
-        .doc-header {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin-bottom: 18px;
-            padding-bottom: 14px;
-            border-bottom: 3px solid var(--theme-primary);
+        .content-page {
+            page-break-after: always;
+            width: 100%;
         }
 
-        .header-logo-container {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
+        .content-page--last {
+            position: relative;
+            height: var(--page-content-height);
+            box-sizing: border-box;
+        }
+
+        .content-page--last .page-content {
+            position: relative;
+            height: 100%;
+            padding-bottom: var(--sig-band-height);
+            box-sizing: border-box;
+            page-break-inside: avoid;
+        }
+
+        .content-page--last .signatures {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: var(--sig-bottom-offset);
+            padding: 6px 0 0;
+            border-top: 2px solid var(--primary);
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+
+        .content-page:last-of-type {
+            page-break-after: auto;
+        }
+
+        /* —— Official header (page 1) —— */
+        .header {
+            display: table;
+            width: 100%;
+            table-layout: fixed;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--ink);
+        }
+
+        .header-logo-cell,
+        .header-spacer-cell {
+            display: table-cell;
+            width: 68px;
+            vertical-align: middle;
         }
 
         .header-logo {
-            height: 64px;
+            height: 46px;
             width: auto;
             display: block;
         }
 
-        .header-title-block {
-            flex: 1;
+        .header-text {
+            display: table-cell;
+            vertical-align: middle;
             text-align: center;
-            padding: 0 8px;
         }
 
-        .doc-header h1 {
+        .header-text h1 {
             margin: 0;
-            font-size: 16pt;
+            font-size: 12.5pt;
             font-weight: 700;
-            color: var(--theme-ink);
-            letter-spacing: 0.06em;
+            letter-spacing: 0.05em;
             text-transform: uppercase;
+            color: var(--ink);
         }
 
-        .doc-header .tagline {
-            margin: 6px 0 0;
+        .header-text p {
+            margin: 3px 0 0;
             font-size: 9.5pt;
             font-weight: 600;
-            color: var(--theme-muted);
-            letter-spacing: 0.02em;
+            color: var(--muted);
         }
 
-        .doc-header .exam-context {
-            margin: 4px 0 0;
-            font-size: 9pt;
-            color: var(--theme-muted);
-        }
-
+        /* —— Details panel (page 1) —— */
         .meta-panel {
-            background: var(--theme-surface);
-            border: 1px solid var(--theme-border);
-            padding: 10px 12px;
-            margin-bottom: 12px;
-            position: relative;
-            padding-top: 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 7px 10px;
+            margin-bottom: 8px;
         }
 
-        .section-legend {
-            position: absolute;
-            top: 0;
-            left: 10px;
-            transform: translateY(-50%);
-            background: #ffffff;
-            padding: 0 6px;
-            font-size: 8pt;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--theme-primary-dark);
-        }
-
-        .meta-grid {
-            display: table;
+        table.meta-table {
             width: 100%;
-            border-collapse: separate;
-            border-spacing: 0 6px;
+            border-collapse: collapse;
+            table-layout: fixed;
         }
 
-        .meta-grid-row {
-            display: table-row;
-        }
-
-        .meta-grid-cell {
-            display: table-cell;
-            width: 50%;
+        table.meta-table td {
             vertical-align: top;
-            padding-right: 12px;
-            padding-bottom: 2px;
+            padding: 0 8px 4px 0;
         }
 
-        .meta-grid-cell:nth-child(even) {
-            padding-right: 0;
-            padding-left: 12px;
+        table.meta-table td.meta-col-mid {
+            width: 22%;
+            padding: 0 4px 4px;
+        }
+
+        table.meta-table td.meta-col-right {
+            width: 22%;
+            padding: 0 0 4px 8px;
+        }
+
+        table.meta-table tr:last-child td {
+            padding-bottom: 0;
         }
 
         .meta-k {
             display: block;
-            font-size: 7.5pt;
+            font-size: 7pt;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.07em;
-            color: var(--theme-muted);
-            margin-bottom: 2px;
+            letter-spacing: 0.06em;
+            color: var(--muted);
         }
 
         .meta-v {
-            font-size: 10.5pt;
-            font-weight: 600;
-            color: var(--theme-ink);
-        }
-
-        .meta-v.examiner {
-            font-size: 11pt;
-        }
-
-        .meta-examiner-block {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px dashed var(--theme-border-light);
-        }
-
-        .meta-examiner-row {
-            display: table;
-            width: 100%;
-        }
-
-        .meta-examiner-details {
-            display: table-cell;
-            vertical-align: top;
-            width: 100%;
-        }
-
-        .meta-examiner-qr {
-            display: table-cell;
-            vertical-align: top;
-            width: 2.8cm;
-            padding-left: 10px;
-            text-align: center;
-        }
-
-        .meta-examiner-qr img {
-            width: 2.5cm;
-            height: 2.5cm;
             display: block;
-            margin: 0 auto 4px;
+            font-size: 9pt;
+            font-weight: 600;
+            color: var(--ink);
         }
 
-        .meta-examiner-qr .qr-caption {
-            font-size: 7pt;
-            color: var(--theme-muted);
-            line-height: 1.3;
-        }
-
-        .meta-v.reference-code {
+        .meta-v.ref {
             font-family: "Courier New", Courier, monospace;
-            letter-spacing: 0.04em;
+            font-size: 8.5pt;
+            letter-spacing: 0.03em;
+        }
+
+        .meta-qr-cell {
+            text-align: right;
+            vertical-align: middle;
+        }
+
+        .meta-qr-cell img {
+            width: 1.6cm;
+            height: 1.6cm;
+            display: inline-block;
+        }
+
+        /* —— Continuation banner (page 2+) —— */
+        .continuation {
+            margin: 0 0 8px;
+            padding: 5px 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            font-size: 9pt;
+            font-weight: 600;
+            color: var(--ink);
         }
 
         .section-heading {
-            font-size: 10pt;
+            margin: 0 0 6px;
+            font-size: 9.5pt;
             font-weight: 700;
-            color: var(--theme-ink);
-            margin: 0 0 8px;
-            padding-left: 10px;
-            border-left: 4px solid var(--theme-primary);
+            color: var(--ink);
         }
 
+        /* —— Envelope table —— */
         table.alloc {
             width: 100%;
             border-collapse: collapse;
-            margin: 0 0 6px;
-            font-size: 8.25pt;
-            line-height: 1.2;
-            border: 1px solid var(--theme-border);
+            table-layout: fixed;
+            font-size: 9pt;
+            border: 1px solid var(--border-dark);
         }
 
         table.alloc th,
         table.alloc td {
-            border: 1px solid var(--theme-border);
-            padding: 3px 5px;
+            padding: 5px 6px;
             text-align: left;
-            vertical-align: top;
+            vertical-align: middle;
+            border: 1px solid var(--border);
+            line-height: 1.3;
         }
 
-        table.alloc tbody td,
-        table.alloc tfoot td {
-            padding-top: 6px;
-            padding-bottom: 6px;
-        }
-
-        /* Dark header reads as solid grey in B&W; primary accent on bottom edge */
-        table.alloc th {
-            background: #2b2b2b;
-            color: #ffffff;
+        table.alloc thead th {
+            background: var(--table-head);
+            color: var(--ink);
             font-weight: 700;
-            font-size: 7pt;
+            font-size: 8pt;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
-            border-bottom: 2px solid var(--theme-primary);
-            padding-top: 6px;
-            padding-bottom: 6px;
+            letter-spacing: 0.03em;
+            border-color: var(--border-dark);
+            border-bottom: 1px solid var(--border-dark);
+            padding: 6px;
         }
 
-        table.alloc tbody tr:nth-child(even) {
-            background: var(--theme-surface);
-        }
-
-        table.alloc tbody tr:nth-child(odd) {
-            background: #ffffff;
+        table.alloc tbody tr:nth-child(even) td {
+            background: #fafafa;
         }
 
         table.alloc td.num,
         table.alloc th.num {
             text-align: right;
             font-variant-numeric: tabular-nums;
-            width: 4.25em;
         }
 
         table.alloc td.idx,
         table.alloc th.idx {
             text-align: center;
-            width: 2.75em;
+            width: 2.4em;
+            font-variant-numeric: tabular-nums;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        table.alloc thead .idx {
+            color: var(--ink);
+        }
+
+        table.alloc th.school,
+        table.alloc td.school {
+            width: 50%;
+        }
+
+        table.alloc th.series,
+        table.alloc td.series {
+            width: 2.4em;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+        }
+
+        table.alloc th.env,
+        table.alloc td.env {
+            width: 2.6em;
+            text-align: right;
             font-variant-numeric: tabular-nums;
         }
 
-        table.alloc th.correction,
-        table.alloc td.correction {
+        table.alloc th.total,
+        table.alloc td.total {
+            width: 4.5em;
+            min-width: 4.5em;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        table.alloc th.revised,
+        table.alloc td.revised {
             text-align: center;
-            width: 6em;
-            min-width: 5em;
-            background: #fafafa;
-        }
-
-        table.alloc thead th.correction {
-            background: #2b2b2b;
-            color: #ffffff;
-        }
-
-        table.alloc td.correction {
-            min-height: 1.35em;
+            width: 4.2em;
+            min-width: 4.2em;
         }
 
         table.alloc tfoot td {
+            padding: 6px;
+            border: 1px solid var(--border);
+            vertical-align: middle;
             font-weight: 700;
-            background: var(--theme-surface-alt);
-            color: var(--theme-ink);
-            border-top: 2px solid var(--theme-border);
-            padding-top: 6px;
-            padding-bottom: 6px;
+            background: var(--surface);
+            border-top: 2px solid var(--border-dark);
         }
 
-        table.alloc tfoot td:first-child {
+        table.alloc tfoot .alloc-total-label {
             text-transform: uppercase;
             font-size: 8pt;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.03em;
+            text-align: right;
         }
 
-        table.alloc tfoot td.correction {
-            background: var(--theme-surface-alt);
+        table.alloc tfoot .alloc-total-value {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
-        .signature-panel {
-            margin-top: 0;
-            padding: 10px 12px;
-            border: 1px solid var(--theme-border);
-            border-top: 2px solid var(--theme-primary);
-            background: var(--theme-surface);
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0.2cm;
-            padding-top: 14px;
-            z-index: 2;
+        table.alloc col.col-idx { width: 2.4em; }
+        table.alloc col.col-school { width: auto; }
+        table.alloc col.col-series { width: 2.4em; }
+        table.alloc col.col-env { width: 2.6em; }
+        table.alloc col.col-total { width: 4.5em; }
+        table.alloc col.col-revised { width: 4.2em; }
+
+        table.alloc td.series-tone-0 { background: #e8f1fa; }
+        table.alloc td.series-tone-1 { background: #fff8e6; }
+        table.alloc td.series-tone-2 { background: #edf5ea; }
+        table.alloc td.series-tone-3 { background: #f5ebef; }
+        table.alloc td.series-tone-4 { background: #fdf0e4; }
+        table.alloc td.series-tone-5 { background: #eeeaf5; }
+
+        .signatures > p {
+            margin: 0 0 5px;
+            font-size: 7.5pt;
+            font-style: italic;
+            color: var(--muted);
+            line-height: 1.25;
         }
 
-        .field {
-            margin-bottom: 8px;
+        .sig-role {
+            margin: 0 0 4px;
+            font-size: 8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--ink);
         }
 
-        .field:last-child {
-            margin-bottom: 0;
+        .sig-field {
+            margin-bottom: 3px;
         }
 
-        .field-row {
+        .sig-label {
+            font-size: 7pt;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .sig-line {
+            border-bottom: 1px solid var(--ink);
+            min-height: 1.05em;
+        }
+
+        .sig-row {
             display: table;
             width: 100%;
-            border-collapse: separate;
-            border-spacing: 10px 0;
-            margin-top: 0;
+            table-layout: fixed;
         }
 
-        .field-row .field {
+        .sig-row .sig-field {
             display: table-cell;
             width: 50%;
             margin-bottom: 0;
+            padding-right: 10px;
         }
 
-        .field-label {
-            font-size: 8.5pt;
-            font-weight: 600;
-            color: var(--theme-muted);
-            margin-bottom: 2px;
+        .sig-row .sig-field:last-child {
+            padding-right: 0;
+            padding-left: 10px;
         }
-
-        .field-line {
-            border-bottom: 1px solid #1a1a1a;
-            min-height: 1.1em;
-            margin-top: 0;
-        }
-
-        table.alloc td.series {
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-        }
-
-        table.alloc td.series-tone-0 { background: #cfe2f3; }
-        table.alloc td.series-tone-1 { background: #fff2cc; }
-        table.alloc td.series-tone-2 { background: #d9ead3; }
-        table.alloc td.series-tone-3 { background: #ead1dc; }
-        table.alloc td.series-tone-4 { background: #f9cb9c; }
-        table.alloc td.series-tone-5 { background: #d9d2e9; }
-
     </style>
 </head>
 <body>
     <div class="watermark" aria-hidden="true"></div>
-    <div class="content-wrapper">
-        <header class="doc-header">
-            <div class="header-logo-container">
-                <img src="img/logo-crest-only.png" alt="" class="header-logo" />
-            </div>
-            <div class="header-title-block">
-                <h1>Scripts allocation form</h1>
-                <p class="exam-context">{{ examination_label }}</p>
-            </div>
-        </header>
+    <div class="page-shell">
+        {% for page in pages %}
+        <section class="content-page{% if page.is_last %} content-page--last{% endif %}">
+            <div class="page-content">
+            <div class="page-main">
+            {% if page.is_first %}
+            <header class="header">
+                <div class="header-logo-cell">
+                    <img src="img/logo-crest-only.png" alt="" class="header-logo" />
+                </div>
+                <div class="header-text">
+                    <h1>Scripts allocation form</h1>
+                    <p>{{ examination_label }}</p>
+                </div>
+                <div class="header-spacer-cell" aria-hidden="true"></div>
+            </header>
 
-        <section class="meta-panel" aria-label="Examination and examiner details">
-            <span class="section-legend">Details</span>
-            <div class="meta-grid">
-                <div class="meta-grid-row">
-                    <div class="meta-grid-cell">
-                        <span class="meta-k">Examination</span>
-                        <span class="meta-v">{{ examination_label }}</span>
-                    </div>
-                    <div class="meta-grid-cell">
-                        <span class="meta-k">Year</span>
-                        <span class="meta-v">{{ year }}</span>
-                    </div>
-                </div>
-                <div class="meta-grid-row">
-                    <div class="meta-grid-cell">
-                        <span class="meta-k">Subject</span>
-                        <span class="meta-v">{{ subject_label }}</span>
-                    </div>
-                    <div class="meta-grid-cell">
-                        <span class="meta-k">Paper</span>
-                        <span class="meta-v">{{ paper_number }}</span>
-                    </div>
-                </div>
+            <div class="meta-panel">
+                <table class="meta-table" role="presentation">
+                    <tr>
+                        <td>
+                            <span class="meta-k">Subject</span>
+                            <span class="meta-v">{{ subject_label }}</span>
+                        </td>
+                        <td class="meta-col-mid">
+                            <span class="meta-k">Paper</span>
+                            <span class="meta-v">{{ paper_number }}</span>
+                        </td>
+                        <td class="meta-col-right">
+                            <span class="meta-k">Year</span>
+                            <span class="meta-v">{{ year }}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="meta-k">Examiner</span>
+                            <span class="meta-v">{{ examiner_name }} ({{ examiner_region }})</span>
+                        </td>
+                        <td class="meta-col-mid">
+                            {% if reference_code %}
+                            <span class="meta-k">Reference</span>
+                            <span class="meta-v ref">{{ reference_code }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="meta-col-right meta-qr-cell">
+                            {% if qr_code_base64 %}
+                            <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="Reference QR" />
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
             </div>
-            <div class="meta-examiner-block">
-                <div class="meta-examiner-row">
-                    <div class="meta-examiner-details">
-                        <span class="meta-k">Examiner</span>
-                        <span class="meta-v examiner">{{ examiner_name }} ({{ examiner_region }})</span>
-                        {% if reference_code %}
-                        <div style="margin-top: 6px;">
-                            <span class="meta-k">Reference code</span>
-                            <span class="meta-v reference-code">{{ reference_code }}</span>
-                        </div>
-                        {% endif %}
-                    </div>
-                    {% if qr_code_base64 %}
-                    <div class="meta-examiner-qr">
-                        <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="Reference code QR" />
-                        <div class="qr-caption reference-code">{{ reference_code }}</div>
-                    </div>
-                    {% endif %}
+
+            <p class="section-heading">Assigned envelopes</p>
+            {% else %}
+            <p class="continuation">
+                Assigned envelopes (continued) — {{ examiner_name }} · {{ subject_label }}
+            </p>
+            {% endif %}
+
+            <table class="alloc">
+                <colgroup>
+                    <col class="col-idx" />
+                    <col class="col-school" />
+                    <col class="col-series" />
+                    <col class="col-env" />
+                    <col class="col-total" />
+                    <col class="col-revised" />
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th scope="col" class="idx">#</th>
+                        <th scope="col" class="school">School name</th>
+                        <th scope="col" class="series">Series</th>
+                        <th scope="col" class="env">Env #</th>
+                        <th scope="col" class="total">Total</th>
+                        <th scope="col" class="revised">Revised</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in page.rows %}
+                    <tr>
+                        <td class="idx">{{ page.start_index + loop.index0 }}</td>
+                        <td class="school">{{ row.school_display }}</td>
+                        <td class="series{% if row.series_tone is not none %} series-tone-{{ row.series_tone }}{% endif %}">{{ row.series_number }}</td>
+                        <td class="env">{{ row.envelope_number }}</td>
+                        <td class="total">{{ row.booklet_count }}</td>
+                        <td class="revised"></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                {% if page.show_total %}
+                <tfoot>
+                    <tr>
+                        <td colspan="4" class="alloc-total-label">Total booklets</td>
+                        <td class="total alloc-total-value">{{ total_count }}</td>
+                        <td class="revised"></td>
+                    </tr>
+                </tfoot>
+                {% endif %}
+            </table>
+            </div>
+
+            {% if page.is_last %}
+            <section class="signatures" aria-label="Receiving officer / examiner">
+                <p class="sig-role">Receiving officer / examiner</p>
+                <p>I confirm receipt of the scripts listed above.</p>
+                <div class="sig-field">
+                    <div class="sig-label">Phone number</div>
+                    <div class="sig-line"></div>
                 </div>
+                <div class="sig-field">
+                    <div class="sig-label">Address</div>
+                    <div class="sig-line"></div>
+                </div>
+                <div class="sig-row">
+                    <div class="sig-field">
+                        <div class="sig-label">Signature</div>
+                        <div class="sig-line"></div>
+                    </div>
+                    <div class="sig-field">
+                        <div class="sig-label">Date</div>
+                        <div class="sig-line"></div>
+                    </div>
+                </div>
+            </section>
+            {% endif %}
             </div>
         </section>
-
-        <h2 class="section-heading">Assigned envelopes</h2>
-        <table class="alloc">
-            <thead>
-                <tr>
-                    <th scope="col" class="idx">#</th>
-                    <th scope="col">School name</th>
-                    <th scope="col" class="num">Series</th>
-                    <th scope="col" class="num">Env #</th>
-                    <th scope="col" class="num">Total</th>
-                    <th scope="col" class="correction">Correction</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td class="idx">{{ loop.index }}</td>
-                    <td>{{ row.school_display }}</td>
-                    <td class="num series{% if row.series_tone is not none %} series-tone-{{ row.series_tone }}{% endif %}">{{ row.series_number }}</td>
-                    <td class="num">{{ row.envelope_number }}</td>
-                    <td class="num">{{ row.booklet_count }}</td>
-                    <td class="correction"></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-            <tfoot>
-                <tr>
-                    <td colspan="4">Total booklets</td>
-                    <td class="num">{{ total_count }}</td>
-                    <td class="correction"></td>
-                </tr>
-            </tfoot>
-        </table>
-
-        <section class="signature-panel" aria-label="Examiner contact and declaration">
-            <span class="section-legend">Receiving officer / examiner</span>
-            <div class="field">
-                <div class="field-label">Phone number</div>
-                <div class="field-line"></div>
-            </div>
-            <div class="field">
-                <div class="field-label">Address</div>
-                <div class="field-line"></div>
-            </div>
-            <div class="field-row">
-                <div class="field">
-                    <div class="field-label">Signature</div>
-                    <div class="field-line"></div>
-                </div>
-                <div class="field">
-                    <div class="field-label">Date</div>
-                    <div class="field-line"></div>
-                </div>
-            </div>
-        </section>
+        {% endfor %}
     </div>
 </body>
 </html>

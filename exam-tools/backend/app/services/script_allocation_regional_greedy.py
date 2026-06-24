@@ -40,13 +40,22 @@ def ordered_marking_regions(
     return out
 
 
+def _region_sort_key(region: Region | None) -> str:
+    if region is None:
+        return "\uffff"
+    return region.value
+
+
 def sort_envelope_rows(
     rows: list[tuple[ScriptEnvelope, ScriptPackingSeries, School]],
 ) -> list[tuple[ScriptEnvelope, ScriptPackingSeries, School]]:
+    """Order: script region → school → series → booklets (desc) → envelope number."""
     return sorted(
         rows,
         key=lambda row: (
-            row[2].code or "",
+            _region_sort_key(row[2].region),
+            (row[2].code or "").lower(),
+            int(row[1].series_number),
             -int(row[0].booklet_count),
             int(row[0].envelope_number),
         ),
