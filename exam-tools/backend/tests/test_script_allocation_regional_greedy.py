@@ -140,6 +140,23 @@ def test_regional_greedy_quota_band() -> None:
     assert len(result.assignments) == 2
 
 
+def test_sort_envelope_rows_region_school_series_booklets() -> None:
+    a1_s1_e1 = uuid4()
+    a1_s1_e2 = uuid4()
+    a1_s2_e1 = uuid4()
+    a2_s1_e1 = uuid4()
+    b1_s1_e1 = uuid4()
+    rows = [
+        (_Env(eid=a1_s1_e2, booklets=40, envelope_number=2), _Series(series_number=1), _School(code="A1", region=Region.EASTERN)),
+        (_Env(eid=b1_s1_e1, booklets=50, envelope_number=1), _Series(series_number=1), _School(code="B1", region=Region.GREATER_ACCRA)),
+        (_Env(eid=a1_s1_e1, booklets=60, envelope_number=1), _Series(series_number=1), _School(code="A1", region=Region.EASTERN)),
+        (_Env(eid=a2_s1_e1, booklets=20, envelope_number=1), _Series(series_number=1), _School(code="A2", region=Region.EASTERN)),
+        (_Env(eid=a1_s2_e1, booklets=30, envelope_number=1), _Series(series_number=2), _School(code="A1", region=Region.EASTERN)),
+    ]
+    sorted_ids = [row[0].id for row in sort_envelope_rows(rows)]
+    assert sorted_ids == [a1_s1_e1, a1_s1_e2, a1_s2_e1, a2_s1_e1, b1_s1_e1]
+
+
 def test_regional_greedy_pooled_regions_and_sort() -> None:
     env_big = uuid4()
     env_small = uuid4()
