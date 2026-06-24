@@ -1697,9 +1697,13 @@ class ExaminerInvitation(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_examiner_invitations_msisdn_global",
             "msisdn",
-            name="uq_examiner_invitations_msisdn_global",
+            unique=True,
+            postgresql_where=text(
+                "msisdn IS NOT NULL AND status IN ('pending', 'quota_waitlisted')"
+            ),
         ),
     )
 

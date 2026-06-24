@@ -35,6 +35,31 @@ from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
 from app.services.subject_marking_group import sync_subject_cohort_memberships
 
+_ACTIVE_INVITATION_STATUSES = (
+    ExaminerInvitationStatus.PENDING,
+    ExaminerInvitationStatus.QUOTA_WAITLISTED,
+)
+
+
+async def _assert_no_active_invitation_for_msisdn(
+    session: AsyncSession,
+    msisdn: str,
+    *,
+    exclude_invitation_id: UUID | None = None,
+) -> None:
+    stmt = select(ExaminerInvitation).where(
+        ExaminerInvitation.msisdn == msisdn,
+        ExaminerInvitation.status.in_(_ACTIVE_INVITATION_STATUSES),
+    )
+    if exclude_invitation_id is not None:
+        stmt = stmt.where(ExaminerInvitation.id != exclude_invitation_id)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        raise ValueError(
+            "An invitation is already pending for this phone number. "
+            "Wait for a response or reopen the existing invitation."
+        )
+
 
 @dataclass(frozen=True)
 class AcceptInvitationResult:
@@ -150,6 +175,7 @@ async def create_examiner_invitation(
         msisdn=msisdn,
         subject_id=subject_id,
     )
+    await _assert_no_active_invitation_for_msisdn(session, msisdn)
 
     region = parse_region(region_str)
     deadline = _as_naive_utc(response_deadline)
@@ -204,6 +230,14 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
         ExaminerInvitationStatus.QUOTA_WAITLISTED,
     ):
         raise ValueError("This invitation is no longer available.")
+
+    await assert_examiner_subject_allowed(
+        session,
+        examination_id=int(inv.examination_id),
+        msisdn=inv.msisdn,
+        subject_id=int(inv.subject_id),
+        allow_pending_invitation_id=inv.id,
+    )
 
     existing = (
         await session.execute(
@@ -605,6 +639,7 @@ async def renew_examiner_invitation(
         subject_id=int(inv.subject_id),
         allow_pending_invitation_id=inv.id,
     )
+    await _assert_no_active_invitation_for_msisdn(session, msisdn, exclude_invitation_id=inv.id)
 
     inv.status = ExaminerInvitationStatus.PENDING
     inv.response_deadline = deadline
