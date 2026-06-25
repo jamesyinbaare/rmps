@@ -27,7 +27,7 @@ from app.services.school_bulk_upload import (
 from app.services.bank_branch_query import (
     DEFAULT_LIMIT,
     MAX_LIST,
-    distinct_bank_names,
+    distinct_bank_names as query_distinct_bank_names,
     list_bank_branches as query_bank_branches,
 )
 
@@ -65,7 +65,7 @@ async def distinct_bank_names(
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
-    return await distinct_bank_names(session, q=q, limit=limit)
+    return await query_distinct_bank_names(session, q=q, limit=limit)
 
 
 @router.post("/bulk-upload", response_model=BankBranchBulkUploadResponse)
