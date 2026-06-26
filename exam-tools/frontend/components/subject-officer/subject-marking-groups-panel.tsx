@@ -12,6 +12,7 @@ import {
   CohortScheduleFields,
   validateCohortSchedule,
 } from "@/components/cohorts/cohort-schedule-fields";
+import { CohortScheduleDisplay } from "@/components/cohorts/cohort-schedule-display";
 import {
   cohortScheduleFromRow,
   cohortScheduleToPayload,
@@ -629,26 +630,47 @@ export function SubjectMarkingGroupsPanel({
             }
             name={nameInput}
             onNameChange={setNameInput}
+            scheduleSummary={scheduleDraft}
+            layoutVariant={canManageDefaultCohort ? "admin" : "standard"}
             isDirty={isDirty}
             detailsDirty={detailsDirty}
             membershipDirty={membershipDirty}
-            detailsSection={({ locked, busy: detailsBusy }) => (
-              <>
-                <CohortScheduleFields
-                  draft={scheduleDraft}
-                  onChange={setScheduleDraft}
-                  disabled={busy || detailsBusy || locked}
-                />
-                {canManageScriptsAllocationRelease && !isCreating ? (
-                  <CohortScriptsAllocationReleaseFields
-                    draft={releaseDraft}
-                    onChange={setReleaseDraft}
-                    disabled={busy || detailsBusy || locked}
-                    className="mt-4"
+            detailsSection={({ locked, busy: detailsBusy }) =>
+              locked ? (
+                <>
+                  <CohortScheduleDisplay
+                    schedule={scheduleDraft}
+                    colored
+                    compact
+                    className="grid-cols-1"
                   />
-                ) : null}
-              </>
-            )}
+                  {canManageScriptsAllocationRelease && !isCreating ? (
+                    <CohortScriptsAllocationReleaseFields
+                      draft={releaseDraft}
+                      onChange={setReleaseDraft}
+                      disabled={busy || detailsBusy || locked}
+                      className="mt-4"
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <CohortScheduleFields
+                    draft={scheduleDraft}
+                    onChange={setScheduleDraft}
+                    disabled={busy || detailsBusy || locked}
+                  />
+                  {canManageScriptsAllocationRelease && !isCreating ? (
+                    <CohortScriptsAllocationReleaseFields
+                      draft={releaseDraft}
+                      onChange={setReleaseDraft}
+                      disabled={busy || detailsBusy || locked}
+                      className="mt-4"
+                    />
+                  ) : null}
+                </>
+              )
+            }
             showRolesTab
             activeTab={membership.activeTab}
             onTabChange={membership.setActiveTab}

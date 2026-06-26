@@ -105,6 +105,16 @@ export const officialAccountsCommandBarControlClass =
 export const officialAccountsCommandBarSearchClass =
   "block min-h-10 w-full min-w-[12rem] flex-1 rounded-lg border border-input-border bg-input px-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 md:min-w-[16rem] lg:max-w-md";
 
+/** Compact toolbar above examiner account tables (search + column controls). */
+export const officialAccountsTableToolbarClass =
+  "flex shrink-0 flex-col gap-1.5 border-t border-border/60 bg-muted/20 px-4 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-5";
+
+export const officialAccountsTableSearchClass =
+  "block h-8 w-full min-w-[10rem] flex-1 rounded-md border border-input-border bg-input px-2.5 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 sm:max-w-md";
+
+export const officialAccountsPayoutSegmentedClass =
+  "inline-flex shrink-0 flex-wrap items-center gap-0.5 rounded-md border border-input-border bg-muted/30 p-0.5";
+
 export const officialAccountsPanelFooterClass =
   "flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/10 px-4 py-3 text-sm sm:px-5";
 

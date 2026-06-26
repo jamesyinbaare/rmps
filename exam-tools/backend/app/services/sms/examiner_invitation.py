@@ -267,12 +267,13 @@ def build_quota_waitlist_sms(
     first = name.split()[0] if name.strip() else "there"
     message = (
         f"Hi {first}, thanks for confirming. The {region_group_name} quota for "
-        f"{subject_name} is full right now. A slot may open later — check your invitation link again."
+        f"{subject_name} is full — you are on the waitlist. If a slot opens, "
+        f"return to your invitation link and confirm; the first to confirm gets the place."
     )
     if len(message) > SMS_SINGLE_SEGMENT_MAX_LEN:
         message = (
             f"Hi {first}, the {region_group_name} quota for {subject_name} is full. "
-            f"Check your invitation link again if a slot opens."
+            f"Check your invitation link and confirm if a slot opens — first to confirm gets it."
         )
     return message
 
