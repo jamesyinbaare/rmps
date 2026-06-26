@@ -1,10 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { Pencil } from "lucide-react";
+import { CalendarDays, Pencil } from "lucide-react";
 
+import { CohortCollapsibleSection } from "@/components/cohorts/cohort-collapsible-section";
 import { CohortMembershipTabs } from "@/components/cohorts/cohort-membership-tabs";
+import { cohortScheduleSummaryParts } from "@/components/cohorts/cohort-schedule-fields";
 import type { ClaimedRule, MembershipExaminer, MembershipTab, RuleOption } from "@/components/cohorts/types";
 import { Button } from "@/components/ui/button";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -20,9 +22,20 @@ type Props = {
   detailsSaveDisabled?: boolean;
   detailsError?: string | null;
   scheduleWarnings?: string[];
+  scheduleSummary?: {
+    coordinationStartDate?: string | null;
+    coordinationStartTime?: string | null;
+    coordinationEndDate?: string | null;
+    coordinationEndTime?: string | null;
+    markingStartDate?: string | null;
+    markingEndDate?: string | null;
+    markedScriptSubmissionDeadline?: string | null;
+  };
   onUnlockDetails?: () => void;
   onSaveDetails?: () => void;
   onCancelDetailsEdit?: () => void;
+  detailsExpanded?: boolean;
+  onDetailsExpandedChange?: (open: boolean) => void;
   showRolesTab: boolean;
   activeTab: MembershipTab;
   onTabChange: (tab: MembershipTab) => void;
@@ -57,9 +70,12 @@ export function CohortWorkspace({
   detailsSaveDisabled = false,
   detailsError = null,
   scheduleWarnings = [],
+  scheduleSummary,
   onUnlockDetails,
   onSaveDetails,
   onCancelDetailsEdit,
+  detailsExpanded,
+  onDetailsExpandedChange,
   showRolesTab,
   activeTab,
   onTabChange,
@@ -83,6 +99,63 @@ export function CohortWorkspace({
   membershipLocked = false,
   nameDisabled = false,
 }: Props) {
+  const [internalDetailsOpen, setInternalDetailsOpen] = useState(true);
+  const detailsOpen = detailsExpanded ?? internalDetailsOpen;
+
+  function setDetailsOpen(next: boolean) {
+    if (detailsExpanded === undefined) setInternalDetailsOpen(next);
+    onDetailsExpandedChange?.(next);
+  }
+
+  useEffect(() => {
+    if (!detailsLocked) setDetailsOpen(true);
+  }, [detailsLocked]);
+
+  const collapsedSummary = scheduleSummary
+    ? cohortScheduleSummaryParts(scheduleSummary).join(" · ") || undefined
+    : undefined;
+
+  const detailsActions = (
+    <>
+      {detailsLocked && onUnlockDetails ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8"
+          disabled={busy}
+          onClick={onUnlockDetails}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit details
+        </Button>
+      ) : null}
+      {!detailsLocked && onSaveDetails ? (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          disabled={busy || detailsSaveDisabled || !detailsDirty || !name.trim()}
+          onClick={onSaveDetails}
+        >
+          Save details
+        </Button>
+      ) : null}
+      {!detailsLocked && onCancelDetailsEdit ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8"
+          disabled={busy}
+          onClick={onCancelDetailsEdit}
+        >
+          Cancel
+        </Button>
+      ) : null}
+    </>
+  );
+
   if (loading) {
     return (
       <div className="grid h-full min-h-80 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
@@ -96,84 +169,65 @@ export function CohortWorkspace({
     );
   }
 
+  const detailsBody = (
+    <div className="space-y-4">
+      {detailsError ? <p className="text-sm text-destructive">{detailsError}</p> : null}
+      {scheduleWarnings.map((w) => (
+        <p key={w} className="text-sm text-amber-800 dark:text-amber-300">
+          {w}
+        </p>
+      ))}
+      <div>
+        <label className={formLabelClass} htmlFor="cohort-ws-name">
+          Name
+        </label>
+        <input
+          id="cohort-ws-name"
+          className={cn(
+            formInputClass,
+            "mt-1",
+            detailsLocked && "cursor-not-allowed opacity-70",
+          )}
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder={`e.g. Northern ${entityLabel}`}
+          disabled={busy || detailsLocked || nameDisabled}
+          autoFocus={!detailsLocked}
+        />
+      </div>
+      {detailsSection}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden lg:grid lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:grid-rows-1 lg:gap-8">
-      <div className="min-h-0 overflow-hidden pr-1 max-lg:max-h-[38%] max-lg:overflow-y-auto lg:min-h-0">
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-foreground">
-              Details
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col gap-6 overflow-hidden lg:grid lg:h-full lg:min-h-0 lg:gap-8",
+        detailsOpen ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:grid-rows-1" : "lg:grid-cols-1",
+      )}
+    >
+      <div className="min-h-0 shrink-0 overflow-visible pr-1 lg:min-h-0">
+        <CohortCollapsibleSection
+          title="Details"
+          icon={CalendarDays}
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          collapsedSummary={
+            collapsedSummary ?? (name.trim() ? name.trim() : undefined)
+          }
+          headerActions={
+            <>
               {!detailsLocked && detailsDirty ? (
-                <span className="ml-1.5 text-xs font-normal text-amber-800 dark:text-amber-300">
-                  · unsaved
+                <span className="self-center text-xs font-normal text-amber-800 dark:text-amber-300">
+                  Unsaved
                 </span>
               ) : null}
-            </h3>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {detailsLocked && onUnlockDetails ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  disabled={busy}
-                  onClick={onUnlockDetails}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Edit details
-                </Button>
-              ) : null}
-              {!detailsLocked && onSaveDetails ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8"
-                  disabled={busy || detailsSaveDisabled || !detailsDirty || !name.trim()}
-                  onClick={onSaveDetails}
-                >
-                  Save details
-                </Button>
-              ) : null}
-              {!detailsLocked && onCancelDetailsEdit ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  disabled={busy}
-                  onClick={onCancelDetailsEdit}
-                >
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </div>
-          {detailsError ? <p className="text-sm text-destructive">{detailsError}</p> : null}
-          {scheduleWarnings.map((w) => (
-            <p key={w} className="text-sm text-amber-800 dark:text-amber-300">
-              {w}
-            </p>
-          ))}
-          <div>
-            <label className={formLabelClass} htmlFor="cohort-ws-name">
-              Name
-            </label>
-            <input
-              id="cohort-ws-name"
-              className={cn(
-                formInputClass,
-                "mt-1",
-                detailsLocked && "cursor-not-allowed opacity-70",
-              )}
-              value={name}
-              onChange={(e) => onNameChange(e.target.value)}
-              placeholder={`e.g. Northern ${entityLabel}`}
-              disabled={busy || detailsLocked || nameDisabled}
-              autoFocus={!detailsLocked}
-            />
-          </div>
-          {detailsSection}
-        </div>
+              {detailsActions}
+            </>
+          }
+        >
+          {detailsBody}
+        </CohortCollapsibleSection>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-muted/15 p-4 max-lg:min-h-48 sm:p-5 lg:min-h-0">

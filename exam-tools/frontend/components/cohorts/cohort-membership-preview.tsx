@@ -52,8 +52,9 @@ function SourceBadges({ sources }: { sources: ("region" | "role" | "manual")[] }
   );
 }
 
-/** Expanded preview uses at least half of the modal viewport height (modal is 90vh). */
-const PREVIEW_EXPANDED_HEIGHT = "min-h-[45vh] max-h-[45vh]";
+/** Expanded preview height — capped on smaller viewports so the modal body keeps room for membership. */
+const PREVIEW_EXPANDED_HEIGHT =
+  "max-lg:max-h-[min(28vh,12rem)] lg:min-h-[45vh] lg:max-h-[45vh]";
 
 export function CohortMembershipPreview({
   examiners,

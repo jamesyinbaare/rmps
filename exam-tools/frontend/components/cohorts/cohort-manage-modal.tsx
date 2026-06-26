@@ -64,6 +64,15 @@ type CohortManageModalProps = {
   nameDisabled?: boolean;
   /** When false, details stay locked with no edit/save controls. */
   detailsEditable?: boolean;
+  scheduleSummary?: {
+    coordinationStartDate?: string | null;
+    coordinationStartTime?: string | null;
+    coordinationEndDate?: string | null;
+    coordinationEndTime?: string | null;
+    markingStartDate?: string | null;
+    markingEndDate?: string | null;
+    markedScriptSubmissionDeadline?: string | null;
+  };
 };
 
 export function CohortManageModal({
@@ -96,18 +105,22 @@ export function CohortManageModal({
   examiners,
   detailsSection,
   detailsEditable = true,
+  scheduleSummary,
   ...workspaceProps
 }: CohortManageModalProps) {
   const [discardOpen, setDiscardOpen] = useState(false);
   const [detailsEditing, setDetailsEditing] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(true);
 
   useEffect(() => {
     if (!open) {
       setDiscardOpen(false);
       setDetailsEditing(false);
+      setDetailsExpanded(false);
       return;
     }
     setDetailsEditing(false);
+    setDetailsExpanded(true);
   }, [open, mode]);
 
   const detailsLocked = !detailsEditing || !detailsEditable;
@@ -207,6 +220,9 @@ export function CohortManageModal({
           entityLabel={entityLabel}
           name={name}
           busy={busy}
+          scheduleSummary={scheduleSummary}
+          detailsExpanded={detailsExpanded}
+          onDetailsExpandedChange={setDetailsExpanded}
           detailsSection={resolvedDetailsSection}
           detailsLocked={detailsLocked}
           detailsDirty={detailsDirty}

@@ -12,11 +12,17 @@ import {
   formatScheduleBrief,
   membersWithPhoneCount,
 } from "@/components/cohorts/cohort-communication-utils";
+import { CohortCollapsibleSection } from "@/components/cohorts/cohort-collapsible-section";
 import { CohortModalShell } from "@/components/cohorts/cohort-modal-shell";
 import { CohortRosterMobileList } from "@/components/cohorts/cohort-roster-mobile-list";
 import { CohortRosterTable } from "@/components/cohorts/cohort-roster-table";
 import { CohortScheduleDisplay } from "@/components/cohorts/cohort-schedule-display";
+import { cohortScheduleSummaryParts } from "@/components/cohorts/cohort-schedule-fields";
 import { cohortScheduleFromRow } from "@/components/cohorts/cohort-schedule-utils";
+import {
+  CohortSectionTabs,
+  type CohortSectionTabOption,
+} from "@/components/cohorts/cohort-section-tabs";
 import type { CohortRosterMember } from "@/components/cohorts/types";
 import {
   CustomSmsModal,
@@ -37,7 +43,15 @@ type Props = {
 };
 
 type CopyAction = "schedule" | "phones" | "roster" | null;
-type MobileTab = "schedule" | "members";
+type ViewSectionTab = "schedule" | "members";
+
+const VIEW_SECTION_TABS = (memberCount: number): [
+  CohortSectionTabOption<ViewSectionTab>,
+  CohortSectionTabOption<ViewSectionTab>,
+] => [
+  { value: "schedule", label: "Schedule" },
+  { value: "members", label: `Members (${memberCount})` },
+];
 
 function SectionHeading({
   icon: Icon,
@@ -70,55 +84,6 @@ function SectionHeading({
       <div className="flex items-center gap-2">
         <span className={cn("h-4 w-0.5 rounded-full", barClass)} aria-hidden />
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-      </div>
-    </div>
-  );
-}
-
-function MobileTabSwitcher({
-  activeTab,
-  onChange,
-  memberCount,
-}: {
-  activeTab: MobileTab;
-  onChange: (tab: MobileTab) => void;
-  memberCount: number;
-}) {
-  return (
-    <div
-      className="sticky top-0 z-10 -mx-4 border-b border-border/80 bg-background/95 px-4 py-2.5 backdrop-blur-sm"
-      role="tablist"
-      aria-label="Cohort sections"
-    >
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/80 p-1">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "schedule"}
-          className={cn(
-            "min-h-10 rounded-md px-3 text-sm font-medium transition-colors",
-            activeTab === "schedule"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground",
-          )}
-          onClick={() => onChange("schedule")}
-        >
-          Schedule
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "members"}
-          className={cn(
-            "min-h-10 rounded-md px-3 text-sm font-medium transition-colors",
-            activeTab === "members"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground",
-          )}
-          onClick={() => onChange("members")}
-        >
-          Members ({memberCount})
-        </button>
       </div>
     </div>
   );
@@ -160,7 +125,8 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
   const [smsError, setSmsError] = useState<string | null>(null);
   const [smsResult, setSmsResult] = useState<CustomSmsBulkResult | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [mobileTab, setMobileTab] = useState<MobileTab>("schedule");
+  const [sectionTab, setSectionTab] = useState<ViewSectionTab>("members");
+  const [scheduleOpen, setScheduleOpen] = useState(true);
 
   useEffect(() => {
     if (!open) {
@@ -171,8 +137,11 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
       setSmsError(null);
       setSmsResult(null);
       setActionMessage(null);
-      setMobileTab("schedule");
+      setSectionTab("members");
+      setScheduleOpen(true);
+      return;
     }
+    setScheduleOpen(true);
   }, [open]);
 
   useEffect(() => {
@@ -194,6 +163,10 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
 
   const phoneCount = membersWithPhoneCount(members);
   const smsTargets = smsSingleTarget ? [smsSingleTarget] : members;
+
+  const scheduleSummary = schedule
+    ? cohortScheduleSummaryParts(schedule).join(" · ")
+    : undefined;
 
   async function handleCopy(action: CopyAction, text: string) {
     const ok = await copyTextToClipboard(text);
@@ -261,6 +234,66 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
   }
 
   if (!cohort || !schedule) return null;
+
+  const memberActionButtons = (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 border-primary/20 bg-background/80 hover:bg-primary/5"
+        disabled={busy}
+        onClick={() => void handleCopy("schedule", formatScheduleBrief(cohort.name, schedule))}
+      >
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+        {copyFeedback === "schedule" ? "Copied!" : "Copy schedule"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 border-emerald-500/25 bg-background/80 hover:bg-emerald-500/5"
+        disabled={busy || phoneCount === 0}
+        onClick={() => void handleCopy("phones", formatPhoneList(members))}
+      >
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+        {copyFeedback === "phones" ? "Copied!" : "Copy phones"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 border-violet-500/20 bg-background/80 hover:bg-violet-500/5"
+        disabled={busy || members.length === 0}
+        onClick={() => void handleCopy("roster", formatRosterTsv(members))}
+      >
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+        {copyFeedback === "roster" ? "Copied!" : "Copy roster"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        className="h-8 gap-1.5 shadow-sm shadow-primary/15"
+        disabled={busy || members.length === 0 || examId == null}
+        onClick={openBulkSms}
+      >
+        <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+        Send SMS
+      </Button>
+    </div>
+  );
+
+  const membersSection = (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.05] via-card to-primary/[0.03] p-4 shadow-sm">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <SectionHeading icon={Users} title="Members" tone="emerald" />
+        {memberActionButtons}
+      </div>
+      <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CohortRosterTable members={members} tinted className="min-h-0 flex-1" />
+      </div>
+    </section>
+  );
 
   const mobileActionBar = (
     <div className="sticky bottom-0 -mx-4 mt-4 space-y-2 border-t border-border/80 bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm">
@@ -334,15 +367,16 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
       ) : null}
 
       <div className="mt-4">
-        <MobileTabSwitcher
-          activeTab={mobileTab}
-          onChange={setMobileTab}
-          memberCount={members.length}
+        <CohortSectionTabs
+          activeTab={sectionTab}
+          onChange={setSectionTab}
+          tabs={VIEW_SECTION_TABS(members.length)}
+          inset="sheet"
         />
       </div>
 
       <div className="mt-4 min-h-[12rem]">
-        {mobileTab === "schedule" ? (
+        {sectionTab === "schedule" ? (
           <CohortScheduleDisplay schedule={schedule} colored className="grid-cols-1" />
         ) : (
           <CohortRosterMobileList
@@ -362,7 +396,7 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
       {cohort.is_default ? (
         <Badge
           variant="secondary"
-          className="w-fit border-primary/20 bg-primary/10 text-[10px] font-normal uppercase tracking-wide text-primary"
+          className="w-fit shrink-0 border-primary/20 bg-primary/10 text-[10px] font-normal uppercase tracking-wide text-primary"
         >
           Default cohort
         </Badge>
@@ -373,66 +407,19 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
         </p>
       ) : null}
 
-      <section className="shrink-0">
-        <SectionHeading icon={CalendarDays} title="Schedule" />
-        <div className="mt-3">
+      <div className="shrink-0">
+        <CohortCollapsibleSection
+          title="Schedule"
+          icon={CalendarDays}
+          open={scheduleOpen}
+          onOpenChange={setScheduleOpen}
+          collapsedSummary={scheduleSummary}
+        >
           <CohortScheduleDisplay schedule={schedule} colored />
-        </div>
-      </section>
+        </CohortCollapsibleSection>
+      </div>
 
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.05] via-card to-primary/[0.03] p-4 shadow-sm">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-          <SectionHeading icon={Users} title="Members" tone="emerald" />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-primary/20 bg-background/80 hover:bg-primary/5"
-              disabled={busy}
-              onClick={() => void handleCopy("schedule", formatScheduleBrief(cohort.name, schedule))}
-            >
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-              {copyFeedback === "schedule" ? "Copied!" : "Copy schedule"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-emerald-500/25 bg-background/80 hover:bg-emerald-500/5"
-              disabled={busy || phoneCount === 0}
-              onClick={() => void handleCopy("phones", formatPhoneList(members))}
-            >
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-              {copyFeedback === "phones" ? "Copied!" : "Copy phones"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-violet-500/20 bg-background/80 hover:bg-violet-500/5"
-              disabled={busy || members.length === 0}
-              onClick={() => void handleCopy("roster", formatRosterTsv(members))}
-            >
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-              {copyFeedback === "roster" ? "Copied!" : "Copy roster"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 gap-1.5 shadow-sm shadow-primary/15"
-              disabled={busy || members.length === 0 || examId == null}
-              onClick={openBulkSms}
-            >
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-              Send SMS
-            </Button>
-          </div>
-        </div>
-        <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <CohortRosterTable members={members} tinted className="min-h-0 flex-1" />
-        </div>
-      </section>
+      {membersSection}
     </div>
   );
 
