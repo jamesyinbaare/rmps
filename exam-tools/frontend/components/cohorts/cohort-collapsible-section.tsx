@@ -45,7 +45,7 @@ export function CohortCollapsibleSection({
 
   return (
     <section
-      className={cn("shrink-0 overflow-hidden", className)}
+      className={cn("flex min-h-0 flex-col", !open && "shrink-0", className)}
       aria-labelledby={headingId}
     >
       <div className="flex items-start gap-2">
@@ -97,11 +97,17 @@ export function CohortCollapsibleSection({
       <div
         id={panelId}
         className={cn(
-          "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-          open ? "grid-rows-[auto]" : "grid-rows-[0fr]",
+          "grid min-h-0 transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
       >
-        <div className={cn("overflow-hidden", bodyClassName)}>
+        <div
+          className={cn(
+            "min-h-0",
+            open ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden",
+            bodyClassName,
+          )}
+        >
           <div className="pt-3">{children}</div>
         </div>
       </div>

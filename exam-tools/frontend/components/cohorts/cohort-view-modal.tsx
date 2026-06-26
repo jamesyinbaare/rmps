@@ -407,15 +407,16 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
         </p>
       ) : null}
 
-      <div className="shrink-0">
+      <div className="min-h-0 shrink-0">
         <CohortCollapsibleSection
           title="Schedule"
           icon={CalendarDays}
           open={scheduleOpen}
           onOpenChange={setScheduleOpen}
           collapsedSummary={scheduleSummary}
+          className={scheduleOpen ? "min-h-0" : undefined}
         >
-          <CohortScheduleDisplay schedule={schedule} colored />
+          <CohortScheduleDisplay schedule={schedule} colored className="grid-cols-1" />
         </CohortCollapsibleSection>
       </div>
 

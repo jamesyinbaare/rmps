@@ -14,6 +14,8 @@ type Props = {
   className?: string;
   /** Tinted cards matching marking-calendar event colors. */
   colored?: boolean;
+  /** Tighter cards for narrow side panels. */
+  compact?: boolean;
 };
 
 function ScheduleField({ label, value }: { label: string; value: string | null }) {
@@ -30,11 +32,13 @@ function ScheduleCard({
   title,
   icon: Icon,
   tone,
+  compact = false,
   children,
 }: {
   title: string;
   icon: typeof CalendarDays;
   tone: "violet" | "primary" | "amber";
+  compact?: boolean;
   children: ReactNode;
 }) {
   const tones = {
@@ -57,14 +61,20 @@ function ScheduleCard({
   const t = tones[tone];
 
   return (
-    <section className={cn("rounded-xl border p-4 shadow-sm", t.card)}>
+    <section className={cn("rounded-xl border shadow-sm", compact ? "p-2.5" : "p-4", t.card)}>
       <div className="flex items-center gap-2">
-        <span className={cn("inline-flex h-7 w-7 items-center justify-center rounded-lg bg-background/70", t.icon)}>
-          <Icon className="h-4 w-4" aria-hidden />
+        <span
+          className={cn(
+            "inline-flex items-center justify-center rounded-lg bg-background/70",
+            compact ? "h-6 w-6" : "h-7 w-7",
+            t.icon,
+          )}
+        >
+          <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden />
         </span>
         <h4 className={cn("text-xs font-semibold uppercase tracking-wide", t.title)}>{title}</h4>
       </div>
-      <dl className="mt-3 space-y-2">{children}</dl>
+      <dl className={cn(compact ? "mt-2 space-y-1" : "mt-3 space-y-2")}>{children}</dl>
     </section>
   );
 }
@@ -91,7 +101,7 @@ export function cohortScheduleHasContent(schedule: CohortScheduleDraft): boolean
   return hasCoordination(schedule) || hasMarking(schedule) || hasSubmission(schedule);
 }
 
-export function CohortScheduleDisplay({ schedule, className, colored = false }: Props) {
+export function CohortScheduleDisplay({ schedule, className, colored = false, compact = false }: Props) {
   const hasAny = cohortScheduleHasContent(schedule);
 
   if (!hasAny) {
@@ -130,10 +140,10 @@ export function CohortScheduleDisplay({ schedule, className, colored = false }: 
     : null;
 
   return (
-    <div className={cn("grid gap-3 sm:grid-cols-2 lg:grid-cols-3", className)}>
+    <div className={cn("grid grid-cols-1", compact ? "gap-2" : "gap-3", className)}>
       {hasCoordination(schedule) ? (
         colored ? (
-          <ScheduleCard title="Coordination" icon={MapPin} tone="violet">
+          <ScheduleCard title="Coordination" icon={MapPin} tone="violet" compact={compact}>
             <ScheduleField label="Start date" value={coordStart !== "—" ? coordStart : null} />
             <ScheduleField label="Start time" value={coordStartTime !== "—" ? coordStartTime : null} />
             <ScheduleField label="End date" value={coordEnd !== "—" ? coordEnd : null} />
@@ -156,7 +166,7 @@ export function CohortScheduleDisplay({ schedule, className, colored = false }: 
 
       {hasMarking(schedule) ? (
         colored ? (
-          <ScheduleCard title="Marking" icon={CalendarDays} tone="primary">
+          <ScheduleCard title="Marking" icon={CalendarDays} tone="primary" compact={compact}>
             <ScheduleField label="Start date" value={markingStart !== "—" ? markingStart : null} />
             <ScheduleField label="End date" value={markingEnd !== "—" ? markingEnd : null} />
           </ScheduleCard>
@@ -173,7 +183,7 @@ export function CohortScheduleDisplay({ schedule, className, colored = false }: 
 
       {hasSubmission(schedule) ? (
         colored ? (
-          <ScheduleCard title="Script submission" icon={ClipboardList} tone="amber">
+          <ScheduleCard title="Script submission" icon={ClipboardList} tone="amber" compact={compact}>
             <ScheduleField label="Deadline" value={submitBy !== "—" ? submitBy : null} />
           </ScheduleCard>
         ) : (

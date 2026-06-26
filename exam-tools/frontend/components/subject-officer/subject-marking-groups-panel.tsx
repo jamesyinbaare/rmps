@@ -631,13 +631,19 @@ export function SubjectMarkingGroupsPanel({
             name={nameInput}
             onNameChange={setNameInput}
             scheduleSummary={scheduleDraft}
+            layoutVariant={canManageDefaultCohort ? "admin" : "standard"}
             isDirty={isDirty}
             detailsDirty={detailsDirty}
             membershipDirty={membershipDirty}
             detailsSection={({ locked, busy: detailsBusy }) =>
               locked ? (
                 <>
-                  <CohortScheduleDisplay schedule={scheduleDraft} className="grid-cols-1" />
+                  <CohortScheduleDisplay
+                    schedule={scheduleDraft}
+                    colored
+                    compact
+                    className="grid-cols-1"
+                  />
                   {canManageScriptsAllocationRelease && !isCreating ? (
                     <CohortScriptsAllocationReleaseFields
                       draft={releaseDraft}

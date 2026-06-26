@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -213,6 +213,52 @@ async def create_examiner_invitation(
     return inv
 
 
+async def _lock_subject_quota(session: AsyncSession, examination_id: int, subject_id: int) -> None:
+    """Serialize accept attempts per examination/subject to avoid overfilling quota."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:exam_id, :subject_id)"),
+        {"exam_id": examination_id, "subject_id": subject_id},
+    )
+
+
+async def _finalize_invitation_acceptance(
+    session: AsyncSession,
+    inv: ExaminerInvitation,
+) -> Examiner:
+    examiner = Examiner(
+        examination_id=inv.examination_id,
+        name=inv.name,
+        examiner_type=inv.examiner_type,
+        region=inv.region,
+        phone_number=inv.phone_number,
+        msisdn=inv.msisdn,
+        gender=inv.gender,
+        portal_token=inv.token,
+        roster_source=ExaminerRosterSource.INVITATION,
+    )
+    session.add(examiner)
+    await session.flush()
+    await sync_examiner_subjects(session, examiner, [inv.subject_id])
+    await assign_reference_code_to_examiner(
+        session,
+        examiner,
+        subject_id=int(inv.subject_id),
+    )
+    await sync_subject_cohort_memberships(
+        session,
+        examination_id=int(inv.examination_id),
+        subject_id=int(inv.subject_id),
+    )
+
+    now = datetime.utcnow()
+    inv.status = ExaminerInvitationStatus.ACCEPTED
+    inv.examiner_id = examiner.id
+    inv.responded_at = now
+    inv.msisdn = None
+    await session.flush()
+    return examiner
+
+
 async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitation) -> AcceptInvitationResult:
     if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
         examiner = await session.get(
@@ -250,6 +296,8 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
     if existing is not None:
         raise ValueError("This person is already on the examiner roster for this examination.")
 
+    await _lock_subject_quota(session, int(inv.examination_id), int(inv.subject_id))
+
     quota_check = await would_exceed_quota(
         session,
         examination_id=int(inv.examination_id),
@@ -279,37 +327,7 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
             region_group_name=quota_check.group_name,
         )
 
-    examiner = Examiner(
-        examination_id=inv.examination_id,
-        name=inv.name,
-        examiner_type=inv.examiner_type,
-        region=inv.region,
-        phone_number=inv.phone_number,
-        msisdn=inv.msisdn,
-        gender=inv.gender,
-        portal_token=inv.token,
-        roster_source=ExaminerRosterSource.INVITATION,
-    )
-    session.add(examiner)
-    await session.flush()
-    await sync_examiner_subjects(session, examiner, [inv.subject_id])
-    await assign_reference_code_to_examiner(
-        session,
-        examiner,
-        subject_id=int(inv.subject_id),
-    )
-    await sync_subject_cohort_memberships(
-        session,
-        examination_id=int(inv.examination_id),
-        subject_id=int(inv.subject_id),
-    )
-
-    now = datetime.utcnow()
-    inv.status = ExaminerInvitationStatus.ACCEPTED
-    inv.examiner_id = examiner.id
-    inv.responded_at = now
-    inv.msisdn = None
-    await session.flush()
+    examiner = await _finalize_invitation_acceptance(session, inv)
     return AcceptInvitationResult(outcome="accepted", examiner=examiner)
 
 

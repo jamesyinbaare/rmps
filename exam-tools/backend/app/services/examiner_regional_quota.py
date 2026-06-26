@@ -511,9 +511,9 @@ def build_quota_waitlist_portal_message(
     first = invitee_name.split()[0] if invitee_name.strip() else "there"
     return (
         f"Thank you, {first}, for confirming your availability as {role_label} for {subject_name}. "
-        f"The roster quota for the {group_name} region group is currently full. "
-        f"A place may open if another examiner declines or is removed from the roster. "
-        f"Please return to this page and try confirming again — we'll add you automatically when a slot is available."
+        f"The roster quota for the {group_name} region group is currently full, so you are on the waitlist. "
+        f"If a slot opens, return to this page and tap Confirm again — "
+        f"the first person to confirm gets the available place."
     )
 
 

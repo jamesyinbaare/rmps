@@ -3,7 +3,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { CohortDiscardConfirm } from "@/components/cohorts/cohort-discard-confirm";
-import { CohortMembershipPreview } from "@/components/cohorts/cohort-membership-preview";
+import {
+  CohortMembershipPreviewOverlay,
+  CohortMembershipPreviewTrigger,
+} from "@/components/cohorts/cohort-membership-preview";
 import { CohortModalShell } from "@/components/cohorts/cohort-modal-shell";
 import { CohortWorkspace } from "@/components/cohorts/cohort-workspace";
 import { CohortWorkspaceFooter } from "@/components/cohorts/cohort-workspace-footer";
@@ -73,6 +76,7 @@ type CohortManageModalProps = {
     markingEndDate?: string | null;
     markedScriptSubmissionDeadline?: string | null;
   };
+  layoutVariant?: "standard" | "admin";
 };
 
 export function CohortManageModal({
@@ -106,22 +110,37 @@ export function CohortManageModal({
   detailsSection,
   detailsEditable = true,
   scheduleSummary,
+  layoutVariant = "standard",
   ...workspaceProps
 }: CohortManageModalProps) {
   const [discardOpen, setDiscardOpen] = useState(false);
   const [detailsEditing, setDetailsEditing] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setDiscardOpen(false);
       setDetailsEditing(false);
       setDetailsExpanded(false);
+      setPreviewOpen(false);
       return;
     }
     setDetailsEditing(false);
     setDetailsExpanded(true);
   }, [open, mode]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setPreviewOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [previewOpen]);
 
   const detailsLocked = !detailsEditing || !detailsEditable;
 
@@ -153,8 +172,12 @@ export function CohortManageModal({
   const modalDescription =
     description ??
     (mode === "create"
-      ? `Save details to create the ${entityLabel}, then save membership separately.`
-      : `Edit and save details and membership independently.`);
+      ? layoutVariant === "admin"
+        ? `Set the schedule and membership rules for this ${entityLabel}.`
+        : `Save details to create the ${entityLabel}, then save membership separately.`
+      : layoutVariant === "admin"
+        ? `Review or update the schedule and membership for this ${entityLabel}.`
+        : `Edit and save details and membership independently.`);
 
   const closeBlocked = busy || deleteConfirmOpen;
 
@@ -190,13 +213,15 @@ export function CohortManageModal({
               onConfirm={confirmDiscard}
             />
           ) : null}
-          <CohortMembershipPreview
-            examiners={examiners}
-            membersDraft={membersDraft}
-            regionsDraft={regionsDraft}
-            rolesDraft={rolesDraft}
-            className="mb-3 min-h-0"
-          />
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <CohortMembershipPreviewTrigger
+              examiners={examiners}
+              membersDraft={membersDraft}
+              regionsDraft={regionsDraft}
+              rolesDraft={rolesDraft}
+              onOpen={() => setPreviewOpen(true)}
+            />
+          </div>
           <CohortWorkspaceFooter
             mode={mode}
             entityLabel={entityLabel}
@@ -214,13 +239,14 @@ export function CohortManageModal({
         </div>
       }
     >
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
         <CohortWorkspace
           {...workspaceProps}
           entityLabel={entityLabel}
           name={name}
           busy={busy}
           scheduleSummary={scheduleSummary}
+          layoutVariant={layoutVariant}
           detailsExpanded={detailsExpanded}
           onDetailsExpandedChange={setDetailsExpanded}
           detailsSection={resolvedDetailsSection}
@@ -236,6 +262,14 @@ export function CohortManageModal({
           regionsDraft={regionsDraft}
           rolesDraft={rolesDraft}
           examiners={examiners}
+        />
+        <CohortMembershipPreviewOverlay
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          examiners={examiners}
+          membersDraft={membersDraft}
+          regionsDraft={regionsDraft}
+          rolesDraft={rolesDraft}
         />
       </div>
     </CohortModalShell>
