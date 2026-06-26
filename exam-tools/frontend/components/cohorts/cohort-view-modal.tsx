@@ -392,7 +392,7 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
   );
 
   const desktopBody = (
-    <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
       {cohort.is_default ? (
         <Badge
           variant="secondary"
@@ -407,20 +407,21 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
         </p>
       ) : null}
 
-      <div className="min-h-0 shrink-0">
-        <CohortCollapsibleSection
-          title="Schedule"
-          icon={CalendarDays}
-          open={scheduleOpen}
-          onOpenChange={setScheduleOpen}
-          collapsedSummary={scheduleSummary}
-          className={scheduleOpen ? "min-h-0" : undefined}
-        >
-          <CohortScheduleDisplay schedule={schedule} colored className="grid-cols-1" />
-        </CohortCollapsibleSection>
-      </div>
+      <div className="grid min-h-0 flex-1 gap-6 md:grid-cols-[minmax(11rem,1fr)_minmax(0,3.5fr)] md:grid-rows-1">
+        <div className="flex min-h-0 flex-col overflow-y-auto pr-1">
+          <CohortCollapsibleSection
+            title="Schedule"
+            icon={CalendarDays}
+            open={scheduleOpen}
+            onOpenChange={setScheduleOpen}
+            collapsedSummary={scheduleSummary}
+          >
+            <CohortScheduleDisplay schedule={schedule} colored compact className="grid-cols-1" />
+          </CohortCollapsibleSection>
+        </div>
 
-      {membersSection}
+        {membersSection}
+      </div>
     </div>
   );
 
@@ -444,7 +445,7 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
           title={cohort.name}
           description="Schedules are managed by administrators."
           closeDisabled={busy}
-          className="max-w-5xl border-primary/20 shadow-2xl shadow-primary/5"
+          className="max-w-6xl border-primary/20 shadow-2xl shadow-primary/5"
           headerClassName="border-primary/15 bg-gradient-to-r from-primary/[0.08] via-violet-500/[0.05] to-emerald-500/[0.04]"
           bodyClassName="bg-gradient-to-b from-muted/20 to-card"
           footerClassName="border-primary/10 bg-gradient-to-r from-primary/[0.04] to-emerald-500/[0.03]"

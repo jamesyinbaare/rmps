@@ -188,7 +188,7 @@ export function CohortWorkspace({
 
   if (loading) {
     return (
-      <div className="grid h-full min-h-80 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+      <div className="grid h-full min-h-80 gap-6 lg:grid-cols-[minmax(11rem,1fr)_minmax(0,3.5fr)]">
         <div className="space-y-4">
           <div className="h-8 w-48 animate-pulse rounded bg-muted/60" />
           <div className="h-24 animate-pulse rounded-lg bg-muted/40" />
@@ -348,7 +348,7 @@ export function CohortWorkspace({
       <div
         className={cn(
           "flex h-full min-h-0 flex-col gap-4 overflow-hidden xl:grid xl:h-full xl:min-h-0 xl:gap-6",
-          "xl:grid-cols-[minmax(15rem,2fr)_minmax(0,3fr)] xl:grid-rows-1",
+          "xl:grid-cols-[minmax(11rem,1fr)_minmax(0,3.5fr)] xl:grid-rows-1",
         )}
       >
         {scheduleColumn}
@@ -374,7 +374,7 @@ export function CohortWorkspace({
     <div
       className={cn(
         "flex h-full min-h-0 flex-col gap-6 overflow-hidden lg:grid lg:h-full lg:min-h-0 lg:gap-8",
-        detailsOpen ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:grid-rows-1" : "lg:grid-cols-1",
+        detailsOpen ? "lg:grid-cols-[minmax(11rem,1fr)_minmax(0,3.5fr)] lg:grid-rows-1" : "lg:grid-cols-1",
       )}
     >
       <div className="flex min-h-0 flex-col overflow-y-auto pr-1 lg:max-h-full">
