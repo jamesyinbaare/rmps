@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ExaminerAccountsColumnsPopover } from "@/components/examiner-accounts/examiner-accounts-columns-popover";
+import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
 import { ExaminerPayoutsCommandBar } from "@/components/examiner-accounts/examiner-payouts-command-bar";
 import { RoleGuard } from "@/components/role-guard";
@@ -26,14 +27,13 @@ import { formatGhsAmount } from "@/lib/format-ghs";
 import {
   buildExaminerAccountsBySubjectHref,
   officialAccountsBtnSecondary,
-  officialAccountsCommandBarClass,
-  officialAccountsCommandBarSearchClass,
   officialAccountsPageLayoutClass,
   officialAccountsPanelFillClass,
   officialAccountsTabPanelClass,
+  officialAccountsTableSearchClass,
+  officialAccountsTableToolbarClass,
 } from "@/lib/official-accounts-zone";
 import { REGION_OPTIONS } from "@/lib/school-enums";
-import { cn } from "@/lib/utils";
 import type { VisibilityState } from "@tanstack/react-table";
 
 const SECTION_ID = "examiner-payouts";
@@ -346,32 +346,36 @@ function ExaminerPayoutsContent() {
         ) : null}
 
         <section className={officialAccountsTabPanelClass}>
-          <div className={cn(officialAccountsCommandBarClass, "shrink-0 border-t border-border/60 py-3")}>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div className="min-w-0 flex-1 max-w-xl">
-                <label className="text-xs font-medium text-muted-foreground" htmlFor="examiner-payouts-search">
-                  Search examiners
-                </label>
-                <input
-                  id="examiner-payouts-search"
-                  type="search"
-                  className={cn(officialAccountsCommandBarSearchClass, "mt-1 w-full max-w-none")}
-                  placeholder="Name or phone…"
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  disabled={busy && items.length === 0}
-                />
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <ExaminerAccountsColumnsPopover
-                  columnVisibility={columnVisibility}
-                  onColumnVisibilityChange={setColumnVisibility}
-                  disabled={busy && items.length === 0}
-                />
-                <p className="shrink-0 text-sm tabular-nums text-muted-foreground" aria-live="polite">
-                  {tableMeta}
-                </p>
-              </div>
+          <div className={officialAccountsTableToolbarClass}>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <input
+                id="examiner-payouts-search"
+                type="search"
+                className={officialAccountsTableSearchClass}
+                placeholder="Search name or phone…"
+                aria-label="Search examiners"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                disabled={busy && items.length === 0}
+              />
+              <ExaminerPayoutViewSegmented
+                value={payoutView}
+                onChange={(view) => {
+                  setPayoutView(view);
+                  syncUrl({ payoutView: view });
+                }}
+                disabled={busy && items.length === 0}
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <ExaminerAccountsColumnsPopover
+                columnVisibility={columnVisibility}
+                onColumnVisibilityChange={setColumnVisibility}
+                disabled={busy && items.length === 0}
+              />
+              <p className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-live="polite">
+                {tableMeta}
+              </p>
             </div>
           </div>
 
@@ -396,10 +400,6 @@ function ExaminerPayoutsContent() {
               syncUrl({ pageSize: size, page: 1 });
             }}
             payoutView={payoutView}
-            onPayoutViewChange={(view) => {
-              setPayoutView(view);
-              syncUrl({ payoutView: view });
-            }}
             columnVisibility={columnVisibility}
           />
         </section>

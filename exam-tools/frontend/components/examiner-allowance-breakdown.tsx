@@ -63,13 +63,16 @@ export function ExaminerAllowanceBreakdownCell({
         <button
           type="button"
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-right tabular-nums underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring/30",
+            "group inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-right tabular-nums underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-ring/30",
             className,
           )}
           aria-label={ariaLabel}
         >
-          <span>{totalLabel}</span>
-          <Info className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="font-semibold">{totalLabel}</span>
+          <Info
+            className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+            aria-hidden
+          />
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
