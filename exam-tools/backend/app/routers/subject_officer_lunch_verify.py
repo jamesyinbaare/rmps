@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
@@ -25,6 +27,7 @@ from app.services.subject_officer_scope import (
     assert_subject_officer_examination_access,
     load_subject_officer_multi_exam_scope,
 )
+from app.services.subject_marking_group import load_group
 
 router = APIRouter(tags=["lunch-coupon-verify"])
 
@@ -129,12 +132,25 @@ async def get_subject_officer_lunch_coupons_print_pdf(
     session: DBSessionDep,
     user: SubjectOfficerDep,
     subject_id: int = Query(..., description="Subject id for coupon sheet"),
+    group_id: UUID | None = Query(None, description="Optional cohort id to filter examiners"),
+    color: str | None = Query(None, description="Brand color preset key"),
 ) -> Response:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
+    if group_id is not None:
+        group = await load_group(
+            session,
+            examination_id=examination_id,
+            subject_id=subject_id,
+            group_id=group_id,
+        )
+        if group is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
     pdf_bytes, filename = await generate_lunch_coupons_pdf(
         session,
         examination_id=examination_id,
         subject_id=subject_id,
+        group_id=group_id,
+        color=color,
     )
     return StreamingResponse(
         iter([pdf_bytes]),

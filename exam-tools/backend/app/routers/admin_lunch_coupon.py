@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
+from uuid import UUID
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -24,6 +25,7 @@ from app.services.lunch_coupon_verify import (
     verify_and_record_lunch_coupon,
     verify_and_record_lunch_coupon_scan,
 )
+from app.services.subject_marking_group import load_group
 
 router = APIRouter(prefix="/admin/examinations", tags=["admin-lunch-coupon"])
 scan_router = APIRouter(prefix="/admin", tags=["admin-lunch-coupon"])
@@ -40,11 +42,24 @@ async def get_admin_lunch_coupons_print_pdf(
     session: DBSessionDep,
     _: SuperAdminOrTestAdminOfficerDep,
     subject_id: int = Query(..., description="Subject id for coupon sheet"),
+    group_id: UUID | None = Query(None, description="Optional cohort id to filter examiners"),
+    color: str | None = Query(None, description="Brand color preset key"),
 ) -> Response:
+    if group_id is not None:
+        group = await load_group(
+            session,
+            examination_id=exam_id,
+            subject_id=subject_id,
+            group_id=group_id,
+        )
+        if group is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
     pdf_bytes, filename = await generate_lunch_coupons_pdf(
         session,
         examination_id=exam_id,
         subject_id=subject_id,
+        group_id=group_id,
+        color=color,
     )
     return StreamingResponse(
         iter([pdf_bytes]),

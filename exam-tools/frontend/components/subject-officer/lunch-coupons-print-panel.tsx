@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Download, Loader2 } from "lucide-react";
 
@@ -12,9 +12,16 @@ import {
   downloadAdminLunchCouponsPdf,
   downloadSubjectOfficerLunchCouponsPdf,
   listAllSubjects,
+  listSubjectMarkingGroups,
   type Subject,
+  type SubjectMarkingGroupRow,
   type SubjectOfficerMeExamAssignment,
 } from "@/lib/api";
+import {
+  DEFAULT_LUNCH_COUPON_BRAND_COLOR,
+  LUNCH_COUPON_BRAND_COLORS,
+  type LunchCouponBrandColorKey,
+} from "@/lib/lunch-coupon-brand-colors";
 import { officialAccountsCommandBarControlClass } from "@/lib/official-accounts-zone";
 import {
   SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS,
@@ -27,6 +34,8 @@ const filterTriggerClass =
   "h-10 w-full border-input-border bg-input shadow-sm hover:bg-input focus-visible:ring-2 focus-visible:ring-ring/30";
 
 const filterSelectClass = cn(officialAccountsCommandBarControlClass, "h-10 w-full disabled:opacity-60");
+
+const ALL_COHORTS_VALUE = "";
 
 type Props = {
   assignments: SubjectOfficerMeExamAssignment[];
@@ -54,6 +63,10 @@ export function LunchCouponsPrintPanel({
   );
   const [subjectId, setSubjectId] = useState<number | null>(workspaceSubjectId ?? null);
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<ScriptControlSubjectTypeFilter>("all");
+  const [cohorts, setCohorts] = useState<SubjectMarkingGroupRow[]>([]);
+  const [cohortsLoading, setCohortsLoading] = useState(false);
+  const [cohortId, setCohortId] = useState(ALL_COHORTS_VALUE);
+  const [brandColor, setBrandColor] = useState<LunchCouponBrandColorKey>(DEFAULT_LUNCH_COUPON_BRAND_COLOR);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,6 +103,30 @@ export function LunchCouponsPrintPanel({
     };
   }, [officerMode]);
 
+  const loadCohorts = useCallback(async () => {
+    if (examId == null || subjectId == null) {
+      setCohorts([]);
+      return;
+    }
+    setCohortsLoading(true);
+    try {
+      const rows = await listSubjectMarkingGroups(examId, subjectId);
+      setCohorts(rows);
+    } catch {
+      setCohorts([]);
+    } finally {
+      setCohortsLoading(false);
+    }
+  }, [examId, subjectId]);
+
+  useEffect(() => {
+    void loadCohorts();
+  }, [loadCohorts]);
+
+  useEffect(() => {
+    setCohortId(ALL_COHORTS_VALUE);
+  }, [examId, subjectId]);
+
   const selectedAssignment = useMemo(
     () => assignments.find((a) => a.examination_id === examId) ?? null,
     [assignments, examId],
@@ -110,11 +147,12 @@ export function LunchCouponsPrintPanel({
   const availableSubjectCount = officerMode ? officerSubjects.length : adminFilteredSubjects.length;
 
   useEffect(() => {
+    if (workspaceLocked) return;
     setSubjectId(null);
-  }, [examId, subjectTypeFilter, officerMode]);
+  }, [examId, subjectTypeFilter, officerMode, workspaceLocked]);
 
   useEffect(() => {
-    if (subjectId == null) return;
+    if (subjectId == null || workspaceLocked) return;
     if (officerMode) {
       if (!officerSubjects.some((s) => s.subject_id === subjectId)) {
         setSubjectId(null);
@@ -124,7 +162,7 @@ export function LunchCouponsPrintPanel({
     if (!adminFilteredSubjects.some((s) => s.id === subjectId)) {
       setSubjectId(null);
     }
-  }, [adminFilteredSubjects, officerMode, officerSubjects, subjectId]);
+  }, [adminFilteredSubjects, officerMode, officerSubjects, subjectId, workspaceLocked]);
 
   const examOptions = useMemo(
     () =>
@@ -181,16 +219,16 @@ export function LunchCouponsPrintPanel({
     setBusy(true);
     setError(null);
     try {
+      const params = {
+        examination_id: examId,
+        subject_id: subjectId,
+        group_id: cohortId || undefined,
+        color: brandColor,
+      };
       if (officerMode) {
-        await downloadSubjectOfficerLunchCouponsPdf({
-          examination_id: examId,
-          subject_id: subjectId,
-        });
+        await downloadSubjectOfficerLunchCouponsPdf(params);
       } else {
-        await downloadAdminLunchCouponsPdf({
-          examination_id: examId,
-          subject_id: subjectId,
-        });
+        await downloadAdminLunchCouponsPdf(params);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to download PDF.");
@@ -207,8 +245,9 @@ export function LunchCouponsPrintPanel({
       <div className="border-b border-border/70 bg-muted/15 px-4 py-3 sm:px-5">
         <h3 className="text-sm font-semibold text-foreground">Print lunch coupons</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Choose an examination and subject to print lunch coupons. Each page holds ten coupons in two columns — one per
-          examiner, with their name, QR code, and reference code. Cut along the dashed lines before handing them out.
+          Choose an examination and subject to print lunch coupons. Optionally filter by cohort and pick a brand color.
+          Each page holds ten coupons in two columns — one per examiner, with their name, QR code, and reference code.
+          Cut along the dashed lines before handing them out.
           {officerMode ? " You can only print for subjects assigned to you." : null}
         </p>
       </div>
@@ -219,64 +258,119 @@ export function LunchCouponsPrintPanel({
           </div>
         ) : (
           <>
-        <CommandBarBorderField label="Examination" htmlFor="lunch-print-exam" className="min-w-0">
-          <SearchableCombobox
-            id="lunch-print-exam"
-            options={examOptions}
-            value={examId != null ? String(examId) : ""}
-            onChange={(v) => {
-              setExamId(v ? Number(v) : null);
-              setError(null);
-            }}
-            placeholder="Select examination…"
-            searchPlaceholder="Examination…"
-            emptyText={assignments.length ? "No examination found." : "No examinations loaded."}
-            widthClass="w-full"
-            truncateTrigger
-            triggerClassName={filterTriggerClass}
-            showAllOption={false}
-            disabled={assignmentsLoading || assignments.length === 0}
-          />
-        </CommandBarBorderField>
-        <CommandBarBorderField label="Subject type" htmlFor="lunch-print-subject-type" className="min-w-0">
+            <CommandBarBorderField label="Examination" htmlFor="lunch-print-exam" className="min-w-0">
+              <SearchableCombobox
+                id="lunch-print-exam"
+                options={examOptions}
+                value={examId != null ? String(examId) : ""}
+                onChange={(v) => {
+                  setExamId(v ? Number(v) : null);
+                  setError(null);
+                }}
+                placeholder="Select examination…"
+                searchPlaceholder="Examination…"
+                emptyText={assignments.length ? "No examination found." : "No examinations loaded."}
+                widthClass="w-full"
+                truncateTrigger
+                triggerClassName={filterTriggerClass}
+                showAllOption={false}
+                disabled={assignmentsLoading || assignments.length === 0}
+              />
+            </CommandBarBorderField>
+            <CommandBarBorderField label="Subject type" htmlFor="lunch-print-subject-type" className="min-w-0">
+              <select
+                id="lunch-print-subject-type"
+                className={filterSelectClass}
+                value={subjectTypeFilter}
+                disabled={subjectsLoading || examId == null || (officerMode && !selectedAssignment)}
+                onChange={(e) => {
+                  setSubjectTypeFilter(e.target.value as ScriptControlSubjectTypeFilter);
+                  setError(null);
+                }}
+              >
+                {SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </CommandBarBorderField>
+            <CommandBarBorderField label="Subject" htmlFor="lunch-print-subject" className="min-w-0 sm:col-span-2 lg:col-span-1">
+              <SearchableCombobox
+                id="lunch-print-subject"
+                options={subjectOptions}
+                value={subjectId != null ? String(subjectId) : ""}
+                onChange={(v) => {
+                  setSubjectId(v ? Number(v) : null);
+                  setError(null);
+                }}
+                placeholder="Select subject…"
+                searchPlaceholder="Subject…"
+                emptyText={subjectEmptyText}
+                widthClass="w-full"
+                truncateTrigger
+                triggerClassName={filterTriggerClass}
+                showAllOption={false}
+                disabled={subjectsLoading || examId == null || availableSubjectCount === 0}
+              />
+            </CommandBarBorderField>
+          </>
+        )}
+        <CommandBarBorderField label="Cohort" htmlFor="lunch-print-cohort" className="min-w-0 sm:col-span-2 lg:col-span-1">
           <select
-            id="lunch-print-subject-type"
+            id="lunch-print-cohort"
             className={filterSelectClass}
-            value={subjectTypeFilter}
-            disabled={subjectsLoading || examId == null || (officerMode && !selectedAssignment)}
+            value={cohortId}
+            disabled={examId == null || subjectId == null || cohortsLoading}
             onChange={(e) => {
-              setSubjectTypeFilter(e.target.value as ScriptControlSubjectTypeFilter);
+              setCohortId(e.target.value);
               setError(null);
             }}
           >
-            {SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
+            <option value={ALL_COHORTS_VALUE}>
+              {cohortsLoading ? "Loading cohorts…" : "All examiners on subject"}
+            </option>
+            {cohorts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
         </CommandBarBorderField>
-        <CommandBarBorderField label="Subject" htmlFor="lunch-print-subject" className="min-w-0 sm:col-span-2 lg:col-span-1">
-          <SearchableCombobox
-            id="lunch-print-subject"
-            options={subjectOptions}
-            value={subjectId != null ? String(subjectId) : ""}
-            onChange={(v) => {
-              setSubjectId(v ? Number(v) : null);
-              setError(null);
-            }}
-            placeholder="Select subject…"
-            searchPlaceholder="Subject…"
-            emptyText={subjectEmptyText}
-            widthClass="w-full"
-            truncateTrigger
-            triggerClassName={filterTriggerClass}
-            showAllOption={false}
-            disabled={subjectsLoading || examId == null || availableSubjectCount === 0}
-          />
-        </CommandBarBorderField>
-          </>
-        )}
+        <div className="sm:col-span-2 lg:col-span-2">
+          <p className="mb-2 text-xs font-medium text-foreground">Brand color</p>
+          <div className="flex flex-wrap gap-2">
+            {LUNCH_COUPON_BRAND_COLORS.map((option) => {
+              const selected = brandColor === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  aria-pressed={selected}
+                  aria-label={option.label}
+                  disabled={disabled && !selected}
+                  onClick={() => {
+                    setBrandColor(option.key);
+                    setError(null);
+                  }}
+                  className={cn(
+                    "inline-flex min-h-9 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    selected
+                      ? "border-foreground/30 bg-muted/50 text-foreground ring-2 ring-ring/30"
+                      : "border-border/70 bg-background text-muted-foreground hover:bg-muted/30",
+                  )}
+                >
+                  <span
+                    className="size-4 shrink-0 rounded-full border border-black/10"
+                    style={{ backgroundColor: option.hex }}
+                    aria-hidden
+                  />
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
       <div className="flex flex-col gap-3 border-t border-border/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p className="text-xs text-muted-foreground">

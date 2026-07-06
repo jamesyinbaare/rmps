@@ -21,6 +21,8 @@
 
         .page {
             page-break-after: always;
+            height: 28.2cm;
+            overflow: hidden;
         }
 
         .page:last-child {
@@ -30,105 +32,88 @@
         .grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            grid-template-rows: repeat(5, 1fr);
-            gap: 0;
+            grid-template-rows: repeat(5, 5.58cm);
             width: 100%;
             height: 28.2cm;
         }
 
         .coupon {
+            height: 5.58cm;
             border: 1px dashed #b8c0cc;
-            height: 100%;
-            padding: 0.22cm 0.4cm 0.2cm;
+            background: #ffffff;
+            overflow: hidden;
+            text-align: center;
+        }
+
+        .coupon-header {
+            padding: 0.14cm 0.32cm 0.12cm;
             text-align: center;
             overflow: hidden;
-            background: #ffffff;
-            position: relative;
-        }
-
-        .coupon.empty {
-            border-color: transparent;
-            background: transparent;
-        }
-
-        .coupon-watermark {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image: url('img/logo-crest-only.png');
-            background-size: 58% auto;
-            background-repeat: no-repeat;
-            background-position: center center;
-            opacity: 0.03;
-            z-index: 0;
-            pointer-events: none;
-        }
-
-        .coupon-inner {
-            position: relative;
-            z-index: 1;
-            width: 100%;
-            height: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-
-        .coupon-inner td {
-            padding: 0;
-            vertical-align: middle;
-        }
-
-        .coupon-name-cell {
-            height: 16%;
-            vertical-align: bottom !important;
-            padding-bottom: 0.08cm !important;
+            background-color: {{ brand_color }};
         }
 
         .coupon-name {
             font-size: 10pt;
             font-weight: 700;
             line-height: 1.15;
-            letter-spacing: -0.01em;
-            color: #0f172a;
-            max-height: 2.3em;
+            color: #ffffff;
+            max-height: 2.2em;
             overflow: hidden;
         }
 
-        .coupon-qr-cell {
-            height: 68%;
-            vertical-align: middle !important;
+        .coupon-cohort {
+            font-size: 6.5pt;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.9);
+            margin-top: 0.05cm;
+            line-height: 1.15;
+            max-height: 1.3em;
+            overflow: hidden;
+        }
+
+        .coupon-body {
+            background: #ffffff;
+            padding: 0.1cm 0.3cm 0.12cm;
+            height: 4.15cm;
+            overflow: hidden;
+        }
+
+        .coupon-body-table {
+            width: 100%;
+            height: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            background: #ffffff;
+        }
+
+        .coupon-body-table td {
+            padding: 0;
+            vertical-align: middle;
+            text-align: center;
+            background: #ffffff;
         }
 
         .coupon-qr-cell img {
-            width: 3.35cm;
-            height: 3.35cm;
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
+            width: 2.8cm;
+            height: 2.8cm;
             display: inline-block;
-        }
-
-        .coupon-code-cell {
-            height: 16%;
-            vertical-align: top !important;
-            padding-top: 0.06cm !important;
-        }
-
-        .coupon-code-wrap {
-            width: 88%;
-            margin: 0 auto;
         }
 
         .coupon-code {
             font-family: "Courier New", Courier, monospace;
-            font-size: 8pt;
+            font-size: 7.5pt;
             font-weight: 700;
-            letter-spacing: 0.1em;
+            letter-spacing: 0.06em;
             color: #334155;
             word-break: break-all;
-            line-height: 1.2;
+            line-height: 1.15;
+            padding-top: 0.06cm;
+        }
+
+        .coupon-slot-empty {
+            height: 5.58cm;
         }
     </style>
 </head>
@@ -139,29 +124,29 @@
             {% for coupon in page %}
             {% if coupon %}
             <div class="coupon">
-                <div class="coupon-watermark"></div>
-                <table class="coupon-inner">
-                    <tr>
-                        <td class="coupon-name-cell">
-                            <div class="coupon-name">{{ coupon.name }}</div>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="coupon-qr-cell">
-                            <img src="data:image/png;base64,{{ coupon.qr_base64 }}" alt="QR code" />
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="coupon-code-cell">
-                            <div class="coupon-code-wrap">
+                <div class="coupon-header">
+                    <div class="coupon-name">{{ coupon.name }}</div>
+                    {% if cohort_name %}
+                    <div class="coupon-cohort">{{ cohort_name }}</div>
+                    {% endif %}
+                </div>
+                <div class="coupon-body">
+                    <table class="coupon-body-table">
+                        <tr>
+                            <td class="coupon-qr-cell">
+                                <img src="data:image/png;base64,{{ coupon.qr_base64 }}" alt="QR code" />
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="coupon-code-cell">
                                 <div class="coupon-code">{{ coupon.reference_code }}</div>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
             </div>
             {% else %}
-            <div class="coupon empty"></div>
+            <div class="coupon-slot-empty"></div>
             {% endif %}
             {% endfor %}
         </div>

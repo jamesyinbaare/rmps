@@ -519,8 +519,196 @@ async def test_subject_officer_print_pdf_checks_subject_access() -> None:
             session=session,
             user=user,
             subject_id=42,
+            group_id=None,
+            color=None,
         )
 
     mock_access.assert_awaited_once_with(session, user, 1, 42)
-    mock_pdf.assert_awaited_once_with(session, examination_id=1, subject_id=42)
+    mock_pdf.assert_awaited_once_with(
+        session,
+        examination_id=1,
+        subject_id=42,
+        group_id=None,
+        color=None,
+    )
     assert response.media_type == "application/pdf"
+
+
+def _lunch_coupon_examiner(*, name: str, reference_code: str | None) -> MagicMock:
+    examiner = MagicMock()
+    examiner.name = name
+    examiner.reference_code = reference_code
+    return examiner
+
+
+@pytest.mark.asyncio
+async def test_load_examiners_for_lunch_coupons_skips_missing_reference_codes() -> None:
+    from app.services.lunch_coupon_pdf import load_examiners_for_lunch_coupons
+
+    session = AsyncMock()
+    exam = MagicMock()
+    subject = MagicMock()
+    session.get = AsyncMock(side_effect=[exam, subject])
+
+    with_code = _lunch_coupon_examiner(name="With code", reference_code="MATH301-NAE1")
+    without_code = _lunch_coupon_examiner(name="No code", reference_code=None)
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = [with_code, without_code]
+    session.execute = AsyncMock(return_value=result)
+
+    loaded_exam, loaded_subject, examiners, missing_codes, cohort_name = await load_examiners_for_lunch_coupons(
+        session,
+        examination_id=1,
+        subject_id=10,
+    )
+
+    assert loaded_exam is exam
+    assert loaded_subject is subject
+    assert examiners == [with_code]
+    assert missing_codes == 1
+    assert cohort_name is None
+
+
+@pytest.mark.asyncio
+async def test_load_examiners_for_lunch_coupons_rejects_when_none_have_codes() -> None:
+    from app.services.lunch_coupon_pdf import load_examiners_for_lunch_coupons
+
+    session = AsyncMock()
+    exam = MagicMock()
+    subject = MagicMock()
+    session.get = AsyncMock(side_effect=[exam, subject])
+
+    without_code = _lunch_coupon_examiner(name="No code", reference_code="")
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = [without_code]
+    session.execute = AsyncMock(return_value=result)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await load_examiners_for_lunch_coupons(session, examination_id=1, subject_id=10)
+
+    assert exc_info.value.status_code == 422
+    assert "reference code" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_load_examiners_for_lunch_coupons_filters_by_cohort() -> None:
+    from uuid import uuid4
+
+    from app.services.lunch_coupon_pdf import load_examiners_for_lunch_coupons
+
+    session = AsyncMock()
+    exam = MagicMock()
+    subject = MagicMock()
+    group_id = uuid4()
+    member_id = uuid4()
+    session.get = AsyncMock(side_effect=[exam, subject])
+
+    group = MagicMock()
+    group.name = "North cohort"
+    member = MagicMock()
+    member.examiner_id = member_id
+    group.members = [member]
+
+    with_code = _lunch_coupon_examiner(name="Cohort member", reference_code="MATH301-NAE1")
+    without_code = _lunch_coupon_examiner(name="Other", reference_code=None)
+
+    with patch(
+        "app.services.lunch_coupon_pdf.load_group",
+        new=AsyncMock(return_value=group),
+    ):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [with_code, without_code]
+        session.execute = AsyncMock(return_value=result)
+
+        loaded_exam, loaded_subject, examiners, missing_codes, cohort_name = await load_examiners_for_lunch_coupons(
+            session,
+            examination_id=1,
+            subject_id=10,
+            group_id=group_id,
+        )
+
+    assert loaded_exam is exam
+    assert loaded_subject is subject
+    assert examiners == [with_code]
+    assert missing_codes == 1
+    assert cohort_name == "North cohort"
+
+
+@pytest.mark.asyncio
+async def test_load_examiners_for_lunch_coupons_cohort_rejects_when_none_have_codes() -> None:
+    from uuid import uuid4
+
+    from app.services.lunch_coupon_pdf import load_examiners_for_lunch_coupons
+
+    session = AsyncMock()
+    exam = MagicMock()
+    subject = MagicMock()
+    group_id = uuid4()
+    session.get = AsyncMock(side_effect=[exam, subject])
+
+    group = MagicMock()
+    group.name = "Empty codes cohort"
+    member = MagicMock()
+    member.examiner_id = uuid4()
+    group.members = [member]
+
+    without_code = _lunch_coupon_examiner(name="No code", reference_code=None)
+
+    with patch(
+        "app.services.lunch_coupon_pdf.load_group",
+        new=AsyncMock(return_value=group),
+    ):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [without_code]
+        session.execute = AsyncMock(return_value=result)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await load_examiners_for_lunch_coupons(
+                session,
+                examination_id=1,
+                subject_id=10,
+                group_id=group_id,
+            )
+
+    assert exc_info.value.status_code == 422
+    assert "cohort" in str(exc_info.value.detail).lower()
+
+
+def test_resolve_brand_color_defaults_to_ctvred() -> None:
+    from app.services.lunch_coupon_pdf import resolve_brand_color
+
+    accent, soft, key = resolve_brand_color(None)
+    assert key == "ctvred"
+    assert accent == "#CE1126"
+    assert soft.startswith("#")
+
+
+def test_resolve_brand_color_rejects_unknown_preset() -> None:
+    from app.services.lunch_coupon_pdf import resolve_brand_color
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_brand_color("not-a-color")
+
+    assert exc_info.value.status_code == 422
+
+
+def test_render_lunch_coupons_pdf_passes_brand_and_cohort_context() -> None:
+    from app.services.lunch_coupon_pdf import _render_lunch_coupons_pdf_sync
+
+    with patch("app.services.lunch_coupon_pdf.render_html") as mock_render:
+        mock_render.return_value = "<html></html>"
+        with patch("app.services.lunch_coupon_pdf.PdfGenerator") as mock_gen:
+            mock_gen.return_value.render_pdf.return_value = b"%PDF"
+            _render_lunch_coupons_pdf_sync(
+                examination_label_str="2026 MAY/JUNE",
+                subject_label="MATH301 — Mathematics",
+                coupons=[{"name": "Jane", "reference_code": "MATH301-NAE1", "qr_base64": "abc"}],
+                brand_color="#1E3A5F",
+                brand_color_soft="#F2F4F7",
+                cohort_name="North cohort",
+            )
+
+    context = mock_render.call_args[0][0]
+    assert context["brand_color"] == "#1E3A5F"
+    assert context["brand_color_soft"] == "#F2F4F7"
+    assert context["cohort_name"] == "North cohort"

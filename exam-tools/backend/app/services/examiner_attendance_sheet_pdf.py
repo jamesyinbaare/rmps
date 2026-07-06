@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Examiner, ExaminerType, Region, Subject, SubjectMarkingGroup
+from app.models import Examiner, Region, Subject, SubjectMarkingGroup
 from app.services.exam_official_export import examination_label
 from app.services.examiner_invitation import subject_display_code
 from app.services.pdf_generator import PdfGenerator, render_html
@@ -18,18 +18,6 @@ from app.services.subject_marking_group import load_group
 
 TEMPLATE_REL = "examiner-attendance/marking-attendance-sheet.html"
 ROWS_PER_PAGE = 25
-
-_EXAMINER_TYPE_ABBREVS: dict[str, str] = {
-    ExaminerType.CHIEF.value: "CE",
-    ExaminerType.ASSISTANT_CHIEF.value: "ACE",
-    ExaminerType.ASSISTANT.value: "AE",
-    ExaminerType.TEAM_LEADER.value: "TL",
-}
-
-
-def _examiner_type_abbrev(examiner_type: ExaminerType) -> str:
-    return _EXAMINER_TYPE_ABBREVS.get(examiner_type.value, examiner_type.value.upper())
-
 
 def _subject_label(subject: Subject) -> str:
     code = subject_display_code(subject)
@@ -43,6 +31,20 @@ def _region_label(region: Region | None) -> str:
     if region is None:
         return ""
     return region.value
+
+
+def _attendance_sheet_rows(examiners: list[Examiner]) -> list[dict]:
+    rows: list[dict] = []
+    for index, examiner in enumerate(examiners, start=1):
+        rows.append(
+            {
+                "index": index,
+                "name": examiner.name,
+                "reference_code": (examiner.reference_code or "").strip(),
+                "region": _region_label(examiner.region),
+            }
+        )
+    return rows
 
 
 def _paginate_rows(rows: list[dict]) -> list[dict]:
@@ -138,18 +140,7 @@ async def generate_examiner_attendance_sheet_pdf(
         group_id=group_id,
     )
 
-    rows: list[dict] = []
-    for index, examiner in enumerate(examiners, start=1):
-        rows.append(
-            {
-                "index": index,
-                "name": examiner.name,
-                "designation": _examiner_type_abbrev(examiner.examiner_type),
-                "region": _region_label(examiner.region),
-            }
-        )
-
-    pages = _paginate_rows(rows)
+    pages = _paginate_rows(_attendance_sheet_rows(examiners))
     context = {
         "examination_label": examination_label(exam),
         "subject_label": _subject_label(subject),
