@@ -6970,10 +6970,14 @@ export async function verifyAdminExaminerLunchCouponScan(
 export async function downloadAdminLunchCouponsPdf(params: {
   examination_id: number;
   subject_id: number;
+  group_id?: string;
+  color?: string;
   filename?: string;
 }): Promise<void> {
   const q = new URLSearchParams();
   q.set("subject_id", String(params.subject_id));
+  if (params.group_id) q.set("group_id", params.group_id);
+  if (params.color) q.set("color", params.color);
   const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
   await downloadApiFile(
     `/admin/examinations/${params.examination_id}/lunch-coupons/print.pdf?${q.toString()}`,
@@ -6984,10 +6988,14 @@ export async function downloadAdminLunchCouponsPdf(params: {
 export async function downloadSubjectOfficerLunchCouponsPdf(params: {
   examination_id: number;
   subject_id: number;
+  group_id?: string;
+  color?: string;
   filename?: string;
 }): Promise<void> {
   const q = new URLSearchParams();
   q.set("subject_id", String(params.subject_id));
+  if (params.group_id) q.set("group_id", params.group_id);
+  if (params.color) q.set("color", params.color);
   const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
   await downloadApiFile(
     `/examinations/${params.examination_id}/subject-officer/lunch-coupons/print.pdf?${q.toString()}`,
