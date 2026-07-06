@@ -42,74 +42,130 @@
             border: 1px dashed #b8c0cc;
             background: #ffffff;
             overflow: hidden;
-            text-align: center;
         }
 
         .coupon-header {
-            padding: 0.14cm 0.32cm 0.12cm;
-            text-align: center;
+            height: 1.3cm;
+            max-height: 1.3cm;
             overflow: hidden;
-            background-color: {{ brand_color }};
+            border-bottom: 2px solid rgba(255, 255, 255, 0.25);
+        }
+
+        .coupon-header-layout {
+            width: 100%;
+            height: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .coupon-header-layout td {
+            padding: 0;
+            vertical-align: middle;
+            border: none;
+            background: transparent;
+        }
+
+        .coupon-header-main {
+            text-align: center;
+            padding: 0.1cm 0.12cm 0.08cm 0.28cm;
+        }
+
+        .coupon-header-logo {
+            width: 0.72cm;
+            text-align: right;
+            padding-right: 0.2cm;
+        }
+
+        .coupon-header-logo img {
+            width: 0.5cm;
+            height: auto;
+            opacity: 0.35;
+            display: block;
+            margin-left: auto;
         }
 
         .coupon-name {
             font-size: 10pt;
             font-weight: 700;
-            line-height: 1.15;
+            line-height: 1.12;
             color: #ffffff;
             max-height: 2.2em;
             overflow: hidden;
+            padding-top: 0.06cm;
         }
 
         .coupon-cohort {
             font-size: 6.5pt;
             font-weight: 600;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.05em;
             text-transform: uppercase;
-            color: rgba(255, 255, 255, 0.9);
-            margin-top: 0.05cm;
-            line-height: 1.15;
-            max-height: 1.3em;
+            color: rgba(255, 255, 255, 0.88);
+            margin-top: 0.04cm;
+            line-height: 1.1;
+            max-height: 1.2em;
             overflow: hidden;
         }
 
         .coupon-body {
+            height: 4.28cm;
+            max-height: 4.28cm;
             background: #ffffff;
-            padding: 0.1cm 0.3cm 0.12cm;
-            height: 4.15cm;
+            overflow: hidden;
+            text-align: center;
+        }
+
+        .coupon-qr-zone {
+            height: 3.35cm;
+            padding-top: 0.1cm;
+            text-align: center;
+        }
+
+        .qr-frame {
+            display: inline-block;
+            padding: 0.07cm;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-top-width: 2px;
+        }
+
+        .qr-frame img {
+            width: 2.7cm;
+            height: 2.7cm;
+            display: block;
+        }
+
+        .coupon-ref-strip {
+            height: 0.93cm;
+            max-height: 0.93cm;
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            padding: 0.07cm 0.24cm 0.05cm;
+            text-align: center;
             overflow: hidden;
         }
 
-        .coupon-body-table {
-            width: 100%;
-            height: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-            background: #ffffff;
+        .ref-label {
+            display: block;
+            font-size: 5pt;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #64748b;
+            line-height: 1;
+            margin-bottom: 0.04cm;
         }
 
-        .coupon-body-table td {
-            padding: 0;
-            vertical-align: middle;
-            text-align: center;
-            background: #ffffff;
-        }
-
-        .coupon-qr-cell img {
-            width: 2.8cm;
-            height: 2.8cm;
-            display: inline-block;
-        }
-
-        .coupon-code {
+        .ref-code {
+            display: block;
             font-family: "Courier New", Courier, monospace;
             font-size: 7.5pt;
             font-weight: 700;
             letter-spacing: 0.06em;
             color: #334155;
+            line-height: 1.1;
             word-break: break-all;
-            line-height: 1.15;
-            padding-top: 0.06cm;
+            max-height: 1.2em;
+            overflow: hidden;
         }
 
         .coupon-slot-empty {
@@ -124,25 +180,31 @@
             {% for coupon in page %}
             {% if coupon %}
             <div class="coupon">
-                <div class="coupon-header">
-                    <div class="coupon-name">{{ coupon.name }}</div>
-                    {% if cohort_name %}
-                    <div class="coupon-cohort">{{ cohort_name }}</div>
-                    {% endif %}
-                </div>
-                <div class="coupon-body">
-                    <table class="coupon-body-table">
+                <div class="coupon-header" style="background-color: {{ brand_color }};">
+                    <table class="coupon-header-layout">
                         <tr>
-                            <td class="coupon-qr-cell">
-                                <img src="data:image/png;base64,{{ coupon.qr_base64 }}" alt="QR code" />
+                            <td class="coupon-header-main">
+                                <div class="coupon-name">{{ coupon.name }}</div>
+                                {% if cohort_name %}
+                                <div class="coupon-cohort">{{ cohort_name }}</div>
+                                {% endif %}
                             </td>
-                        </tr>
-                        <tr>
-                            <td class="coupon-code-cell">
-                                <div class="coupon-code">{{ coupon.reference_code }}</div>
+                            <td class="coupon-header-logo">
+                                <img src="img/logo-crest-only.png" alt="" />
                             </td>
                         </tr>
                     </table>
+                </div>
+                <div class="coupon-body">
+                    <div class="coupon-qr-zone">
+                        <div class="qr-frame" style="border-top-color: {{ brand_color }};">
+                            <img src="data:image/png;base64,{{ coupon.qr_base64 }}" alt="QR code" />
+                        </div>
+                    </div>
+                    <div class="coupon-ref-strip">
+                        <span class="ref-label">Reference</span>
+                        <span class="ref-code">{{ coupon.reference_code }}</span>
+                    </div>
                 </div>
             </div>
             {% else %}
