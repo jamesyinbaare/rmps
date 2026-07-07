@@ -122,6 +122,7 @@ export function SubjectMarkingGroupsPanel({
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [releaseBusy, setReleaseBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [membershipError, setMembershipError] = useState<string | null>(null);
@@ -389,6 +390,40 @@ export function SubjectMarkingGroupsPanel({
     setDetailsError(null);
   }
 
+  async function handleScriptsReleaseEnabledToggle(enabled: boolean) {
+    if (examId == null || subjectId == null || selectedId == null || isCreating) return;
+    const previous = { ...releaseDraft };
+    const next: ScriptsAllocationReleaseDraft = {
+      ...releaseDraft,
+      enabled,
+      releaseAt: enabled ? releaseDraft.releaseAt : "",
+    };
+    setReleaseDraft(next);
+    setReleaseBusy(true);
+    setDetailsError(null);
+    try {
+      const updated = await updateSubjectMarkingGroup(
+        examId,
+        subjectId,
+        selectedId,
+        scriptsAllocationReleaseToPayload(next),
+      );
+      const synced = scriptsAllocationReleaseFromRow(updated);
+      setReleaseDraft(synced);
+      await loadGroups(examId, subjectId);
+      setSavedSnapshot((prev) =>
+        prev
+          ? buildCohortFormSnapshot(prev.name, prev.schedule, prev.membership, synced)
+          : prev,
+      );
+    } catch (e) {
+      setReleaseDraft(previous);
+      setDetailsError(e instanceof Error ? e.message : "Failed to update scripts allocation release");
+    } finally {
+      setReleaseBusy(false);
+    }
+  }
+
   async function handleSaveDetails(): Promise<boolean> {
     if (examId == null || subjectId == null) return false;
     const name = nameInput.trim();
@@ -648,7 +683,9 @@ export function SubjectMarkingGroupsPanel({
                     <CohortScriptsAllocationReleaseFields
                       draft={releaseDraft}
                       onChange={setReleaseDraft}
-                      disabled={busy || detailsBusy || locked}
+                      onEnabledToggle={(enabled) => handleScriptsReleaseEnabledToggle(enabled)}
+                      disabled={busy || releaseBusy}
+                      toggleBusy={releaseBusy}
                       className="mt-4"
                     />
                   ) : null}
@@ -664,7 +701,9 @@ export function SubjectMarkingGroupsPanel({
                     <CohortScriptsAllocationReleaseFields
                       draft={releaseDraft}
                       onChange={setReleaseDraft}
-                      disabled={busy || detailsBusy || locked}
+                      onEnabledToggle={(enabled) => handleScriptsReleaseEnabledToggle(enabled)}
+                      disabled={busy || releaseBusy}
+                      toggleBusy={releaseBusy}
                       className="mt-4"
                     />
                   ) : null}

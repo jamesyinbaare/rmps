@@ -13,9 +13,11 @@ from app.services.sms.factory import get_sms_provider
 from app.services.sms.phone import normalize_msisdn
 from app.services.sms.types import SmsDeliveryResult
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+if TYPE_CHECKING:
     from app.models import Examiner
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,28 @@ _EXAMINER_TYPE_ABBREVS = {
     "assistant_examiner": "AE",
     "team_leader": "TL",
 }
+
+
+def _examiner_sms_load_options() -> list:
+    from app.models import Examiner as ExaminerModel
+    from app.models import ExaminerSubject
+
+    return [
+        selectinload(ExaminerModel.examination),
+        selectinload(ExaminerModel.subjects).selectinload(ExaminerSubject.subject),
+        selectinload(ExaminerModel.invitation),
+    ]
+
+
+async def load_examiner_for_roster_sms(session: AsyncSession, examiner_id: UUID) -> Examiner | None:
+    from app.models import Examiner as ExaminerModel
+
+    stmt = (
+        select(ExaminerModel)
+        .where(ExaminerModel.id == examiner_id)
+        .options(*_examiner_sms_load_options())
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 def _format_response_deadline(dt) -> str:
@@ -132,10 +156,14 @@ async def maybe_send_custom_examiner_roster_sms(
 ) -> tuple[bool, str | None, UUID | None]:
     from app.services.sms.delivery_log import record_custom_examiner_roster_sms
 
-    rendered = render_examiner_roster_custom_message(ex, template)
+    loaded = await load_examiner_for_roster_sms(session, ex.id)
+    if loaded is None:
+        return False, "Examiner not found", None
+
+    rendered = render_examiner_roster_custom_message(loaded, template)
     result, delivery_id = await record_custom_examiner_roster_sms(
         session,
-        examiner=ex,
+        examiner=loaded,
         message=rendered,
         trigger=trigger,
         triggered_by_user_id=triggered_by_user_id,

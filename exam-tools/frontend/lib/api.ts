@@ -4320,8 +4320,12 @@ export type ExaminerInvitationPublic = {
 
 export type AppointmentLettersReleaseMode = "on_acceptance" | "scheduled_date";
 
-export type ExaminerPortalSettings = {
+export type CohortExaminerPortalRelease = {
   examination_id: number;
+  subject_id: number;
+  group_id: string;
+  group_name: string;
+  is_default: boolean;
   appointment_letters_release_enabled: boolean;
   appointment_letters_release_mode: AppointmentLettersReleaseMode;
   appointment_letters_release_at: string | null;
@@ -4333,12 +4337,18 @@ export type ExaminerPortalSettings = {
   notified_count: number;
 };
 
-export type ExaminerPortalSettingsPut = {
+export type CohortExaminerPortalReleasePut = {
   appointment_letters_release_enabled: boolean;
   appointment_letters_release_mode: AppointmentLettersReleaseMode;
   appointment_letters_release_at?: string | null;
   examiner_bank_details_editable_by_examiners: boolean;
 };
+
+/** @deprecated Use CohortExaminerPortalRelease */
+export type ExaminerPortalSettings = CohortExaminerPortalRelease;
+
+/** @deprecated Use CohortExaminerPortalReleasePut */
+export type ExaminerPortalSettingsPut = CohortExaminerPortalReleasePut;
 
 export type NotifyEligibleAppointmentLettersResponse = {
   sms_sent_count: number;
@@ -5949,17 +5959,21 @@ function examinerAttendanceSheetsSubjectQuery(subjectId: number, extra?: Record<
   return `?${q.toString()}`;
 }
 
+export type AttendanceSheetSortField = "reference_code" | "name" | "region";
+
 export async function downloadExaminerAttendanceSheetBlankPdf(params: {
   examination_id: number;
   subject_id: number;
   group_id: string;
   attendance_date: string;
+  sort_by?: AttendanceSheetSortField;
   filename?: string;
 }): Promise<void> {
   const q = new URLSearchParams();
   q.set("subject_id", String(params.subject_id));
   q.set("group_id", params.group_id);
   q.set("attendance_date", params.attendance_date);
+  q.set("sort_by", params.sort_by ?? "reference_code");
   const fallback = `Attendance_${params.group_id}_${params.attendance_date}.pdf`;
   await downloadApiFile(
     `/examinations/${params.examination_id}/subject-officer/examiner-attendance-sheets/blank.pdf?${q.toString()}`,
@@ -6394,6 +6408,10 @@ export type SubjectMarkingGroupRow = {
   marked_script_submission_deadline: string | null;
   scripts_allocation_release_enabled?: boolean;
   scripts_allocation_release_at?: string | null;
+  appointment_letters_release_enabled?: boolean;
+  appointment_letters_release_mode?: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
+  examiner_bank_details_editable_by_examiners?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -6423,28 +6441,61 @@ export type ExaminerAppointmentLetterReferencePutCell = {
   reference_number: string | null;
 };
 
-export async function getExaminerPortalSettings(examinationId: number): Promise<ExaminerPortalSettings> {
-  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`);
+export async function getCohortExaminerPortalRelease(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+): Promise<CohortExaminerPortalRelease> {
+  return apiJson<CohortExaminerPortalRelease>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/marking-groups/${groupId}/examiner-portal-release`,
+  );
 }
 
-export async function putExaminerPortalSettings(
+export async function putCohortExaminerPortalRelease(
   examinationId: number,
-  body: ExaminerPortalSettingsPut,
-): Promise<ExaminerPortalSettings> {
-  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  subjectId: number,
+  groupId: string,
+  body: CohortExaminerPortalReleasePut,
+): Promise<CohortExaminerPortalRelease> {
+  return apiJson<CohortExaminerPortalRelease>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/marking-groups/${groupId}/examiner-portal-release`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 }
 
-export async function notifyEligibleAppointmentLetters(
+export async function notifyEligibleAppointmentLettersForCohort(
   examinationId: number,
+  subjectId: number,
+  groupId: string,
 ): Promise<NotifyEligibleAppointmentLettersResponse> {
   return apiJson<NotifyEligibleAppointmentLettersResponse>(
-    `/admin/examinations/${examinationId}/examiner-portal-settings/notify-eligible-appointment-letters`,
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/marking-groups/${groupId}/examiner-portal-release/notify-eligible-appointment-letters`,
     { method: "POST" },
   );
+}
+
+/** @deprecated Use getCohortExaminerPortalRelease */
+export async function getExaminerPortalSettings(examinationId: number): Promise<ExaminerPortalSettings> {
+  throw new Error("Exam-wide portal settings are no longer supported. Select a subject cohort.");
+}
+
+/** @deprecated Use putCohortExaminerPortalRelease */
+export async function putExaminerPortalSettings(
+  examinationId: number,
+  _body: ExaminerPortalSettingsPut,
+): Promise<ExaminerPortalSettings> {
+  throw new Error("Exam-wide portal settings are no longer supported. Select a subject cohort.");
+}
+
+/** @deprecated Use notifyEligibleAppointmentLettersForCohort */
+export async function notifyEligibleAppointmentLetters(
+  _examinationId: number,
+): Promise<NotifyEligibleAppointmentLettersResponse> {
+  throw new Error("Exam-wide notify is no longer supported. Select a subject cohort.");
 }
 
 export async function getExaminerAppointmentLetterReferences(

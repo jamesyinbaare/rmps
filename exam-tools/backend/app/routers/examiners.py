@@ -759,6 +759,9 @@ async def bulk_send_examiner_roster_custom_sms(
         )
     )
     rows = {ex.id: ex for ex in (await session.execute(stmt)).scalars().all()}
+    subject_ids_by_examiner = {
+        ex_id: _examiner_subject_ids(ex) for ex_id, ex in rows.items()
+    }
 
     errors: list[ExaminerBulkSmsRowError] = []
     sent_count = 0
@@ -776,7 +779,7 @@ async def bulk_send_examiner_roster_custom_sms(
             failed_count += 1
             continue
         if scope is not None:
-            subject_ids = _examiner_subject_ids(ex)
+            subject_ids = subject_ids_by_examiner.get(ex_id, [])
             if not any(sid in scope for sid in subject_ids):
                 errors.append(
                     ExaminerBulkSmsRowError(
@@ -805,7 +808,6 @@ async def bulk_send_examiner_roster_custom_sms(
                     )
                 )
         except Exception as e:  # noqa: BLE001 — per-recipient; continue batch
-            await session.rollback()
             failed_count += 1
             errors.append(ExaminerBulkSmsRowError(examiner_id=ex_id, message=str(e)))
 

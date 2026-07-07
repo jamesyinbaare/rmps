@@ -12,6 +12,7 @@ import {
   listExaminerMarkingAttendanceSheets,
   listSubjectMarkingGroups,
   uploadExaminerMarkingAttendanceSheet,
+  type AttendanceSheetSortField,
   type ExaminerMarkingAttendanceSheet,
   type SubjectMarkingGroupRow,
 } from "@/lib/api";
@@ -25,6 +26,12 @@ const btnDanger =
   "inline-flex min-h-9 items-center justify-center rounded-lg border border-destructive/50 px-3 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
 
 const uploadModalClass = "h-auto max-h-[min(90vh,40rem)] max-w-lg";
+
+const ATTENDANCE_SHEET_SORT_OPTIONS: { value: AttendanceSheetSortField; label: string }[] = [
+  { value: "reference_code", label: "Reference code" },
+  { value: "name", label: "Name" },
+  { value: "region", label: "Region" },
+];
 
 function todayIsoDate(): string {
   const d = new Date();
@@ -64,6 +71,7 @@ export function ExaminerAttendanceSheetsPanel({ examId, subjectId }: Props) {
   const [uploadDate, setUploadDate] = useState(todayIsoDate);
   const [downloadGroupId, setDownloadGroupId] = useState("");
   const [downloadDate, setDownloadDate] = useState(todayIsoDate);
+  const [downloadSortBy, setDownloadSortBy] = useState<AttendanceSheetSortField>("reference_code");
   const [uploadNotes, setUploadNotes] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -158,6 +166,7 @@ export function ExaminerAttendanceSheetsPanel({ examId, subjectId }: Props) {
     setError(null);
     setDownloadGroupId("");
     setDownloadDate(todayIsoDate());
+    setDownloadSortBy("reference_code");
     setDownloadModalOpen(true);
   }
 
@@ -176,6 +185,7 @@ export function ExaminerAttendanceSheetsPanel({ examId, subjectId }: Props) {
         subject_id: subjectId,
         group_id: downloadGroupId,
         attendance_date: downloadDate,
+        sort_by: downloadSortBy,
       });
       setDownloadModalOpen(false);
     } catch (e) {
@@ -497,6 +507,28 @@ export function ExaminerAttendanceSheetsPanel({ examId, subjectId }: Props) {
               disabled={downloadBusy}
               onChange={(e) => setDownloadDate(e.target.value)}
             />
+          </div>
+
+          <div>
+            <label className={formLabelClass} htmlFor="attendance-sheet-download-sort">
+              Sort by
+            </label>
+            <select
+              id="attendance-sheet-download-sort"
+              className={cn(formInputClass, "mt-1 h-10 w-full")}
+              value={downloadSortBy}
+              disabled={downloadBusy}
+              onChange={(e) => setDownloadSortBy(e.target.value as AttendanceSheetSortField)}
+            >
+              {ATTENDANCE_SHEET_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Controls the order of examiner rows on the printed sheet.
+            </p>
           </div>
         </div>
       </CohortModalShell>

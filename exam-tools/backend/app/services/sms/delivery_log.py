@@ -313,26 +313,11 @@ async def record_custom_examiner_roster_sms(
     triggered_by_user_id: UUID | None = None,
     retried_from_id: UUID | None = None,
 ) -> tuple[SmsDeliveryResult, UUID | None]:
-    from app.models import Examiner as ExaminerModel
-    from app.models import ExaminerSubject
-    from app.services.sms.examiner_roster import send_custom_examiner_roster_sms
+    from app.services.sms.examiner_roster import load_examiner_for_roster_sms, send_custom_examiner_roster_sms
 
-    ex = examiner
-    if ex.examination is None or not ex.subjects:
-        from sqlalchemy import select
-
-        stmt = (
-            select(ExaminerModel)
-            .where(ExaminerModel.id == examiner.id)
-            .options(
-                selectinload(ExaminerModel.examination),
-                selectinload(ExaminerModel.subjects).selectinload(ExaminerSubject.subject),
-                selectinload(ExaminerModel.invitation),
-            )
-        )
-        ex = (await session.execute(stmt)).scalar_one_or_none()
-        if ex is None:
-            return SmsDeliveryResult(sent=False, error="Examiner not found"), None
+    ex = await load_examiner_for_roster_sms(session, examiner.id)
+    if ex is None:
+        return SmsDeliveryResult(sent=False, error="Examiner not found"), None
 
     phone = ex.phone_number or ""
     try:
