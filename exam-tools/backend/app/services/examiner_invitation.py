@@ -88,6 +88,41 @@ def _examiner_type_label(examiner_type: ExaminerType) -> str:
     }[examiner_type]
 
 
+def effective_examiner_type_for_portal(
+    inv: ExaminerInvitation,
+    examiner: Examiner | None = None,
+) -> ExaminerType:
+    """Use roster role for accepted invitees; otherwise invitation role."""
+    if (
+        examiner is not None
+        and inv.status == ExaminerInvitationStatus.ACCEPTED
+        and inv.examiner_id is not None
+        and inv.examiner_id == examiner.id
+    ):
+        examiner_type = examiner.examiner_type
+        if isinstance(examiner_type, ExaminerType):
+            return examiner_type
+        return ExaminerType(str(examiner_type))
+    invitation_type = inv.examiner_type
+    if isinstance(invitation_type, ExaminerType):
+        return invitation_type
+    return ExaminerType(str(invitation_type))
+
+
+def sync_accepted_invitation_role_from_roster(
+    examiner: Examiner,
+    examiner_type: ExaminerType,
+) -> None:
+    inv = examiner.invitation
+    if (
+        inv is not None
+        and inv.status == ExaminerInvitationStatus.ACCEPTED
+        and inv.examiner_id == examiner.id
+    ):
+        inv.examiner_type = examiner_type
+        inv.updated_at = datetime.utcnow()
+
+
 def subject_display_code(subject: Subject | None) -> str:
     if subject is None:
         return ""

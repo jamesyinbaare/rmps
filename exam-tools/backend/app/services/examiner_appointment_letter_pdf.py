@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Examiner,
     ExaminerAllowanceType,
     ExaminerInvitation,
     ExaminerType,
@@ -49,7 +50,11 @@ from app.services.coordination_schedule import (
     format_appointment_letter_date,
     format_appointment_letter_time,
 )
-from app.services.examiner_invitation import _examiner_type_label, subject_display_code
+from app.services.examiner_invitation import (
+    _examiner_type_label,
+    effective_examiner_type_for_portal,
+    subject_display_code,
+)
 from app.services.pdf_generator import render_html
 from app.services.subject_marking_group import get_examiner_marking_group
 
@@ -446,7 +451,10 @@ async def build_examiner_appointment_letter_pdf(
             end_time=inv.coordination_end_time,
             venue=inv.coordination_venue,
         )
-    examiner_type = inv.examiner_type
+    examiner: Examiner | None = None
+    if session is not None and inv.examiner_id is not None:
+        examiner = await session.get(Examiner, inv.examiner_id)
+    examiner_type = effective_examiner_type_for_portal(inv, examiner)
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))
 

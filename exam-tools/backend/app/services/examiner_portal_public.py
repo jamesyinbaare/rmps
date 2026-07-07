@@ -17,6 +17,7 @@ from app.services.examiner_invitation import (
     _examiner_type_label,
     _expire_if_confirmation_deadline_passed,
     _is_publicly_accessible,
+    effective_examiner_type_for_portal,
     invitation_coordination_summary,
     public_invitation_view,
 )
@@ -187,6 +188,9 @@ async def public_invitation_portal_view(
         examiner = await _load_examiner_with_subjects(session, inv.examiner_id)
         if examiner is not None:
             summary["reference_code"] = examiner.reference_code
+            effective_type = effective_examiner_type_for_portal(inv, examiner)
+            summary["examiner_type"] = effective_type.value
+            summary["examiner_type_label"] = _examiner_type_label(effective_type)
         summary["marking_cohorts"] = await _marking_cohorts_for_examiner(
             session,
             examination_id=int(inv.examination_id),
