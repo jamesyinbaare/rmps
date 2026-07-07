@@ -14,27 +14,29 @@ import {
   downloadExaminerAppointmentLetterPreviewPdf,
   fetchExaminerAppointmentLetterSignatureBlobUrl,
   fetchExaminerAppointmentLetterSubjectSignatureBlobUrl,
+  getCohortExaminerPortalRelease,
   getExaminerAppointmentLetterReferences,
   getExaminerAppointmentLetterSettings,
   getExaminerAppointmentLetterSubjectSettings,
-  getExaminerPortalSettings,
-  notifyEligibleAppointmentLetters,
+  listAdminSubjectMarkingGroups,
+  notifyEligibleAppointmentLettersForCohort,
+  putCohortExaminerPortalRelease,
   putExaminerAppointmentLetterReferences,
   putExaminerAppointmentLetterSettings,
   putExaminerAppointmentLetterSubjectSettings,
-  putExaminerPortalSettings,
   uploadExaminerAppointmentLetterSignature,
   uploadExaminerAppointmentLetterSubjectSignature,
   type AppointmentLetterSignatureRole,
   type AppointmentLetterSigningOfficial,
   type AppointmentLettersReleaseMode,
+  type CohortExaminerPortalRelease,
   type ExaminerAppointmentLetterReferencePutCell,
   type ExaminerAppointmentLetterSettings,
   type ExaminerAppointmentLetterSubjectSettings,
-  type ExaminerPortalSettings,
   type ExaminerTypeApi,
   type Examination,
   type ExaminationExaminerAppointmentLetterReferencesResponse,
+  type SubjectMarkingGroupRow,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { formatExamLabel } from "@/lib/official-rates-draft";
@@ -223,12 +225,15 @@ function SubjectDacSignaturePreview({
 }
 
 export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubjectId, className }: Props) {
-  const [settings, setSettings] = useState<ExaminerPortalSettings | null>(null);
+  const [settings, setSettings] = useState<CohortExaminerPortalRelease | null>(null);
   const [releaseDraft, setReleaseDraft] = useState<ReleaseDraft | null>(null);
-  const [releaseLoading, setReleaseLoading] = useState(true);
+  const [releaseLoading, setReleaseLoading] = useState(false);
   const [releaseBusy, setReleaseBusy] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const [releaseMessage, setReleaseMessage] = useState<string | null>(null);
+  const [cohorts, setCohorts] = useState<SubjectMarkingGroupRow[]>([]);
+  const [selectedCohortId, setSelectedCohortId] = useState<string | null>(null);
+  const [cohortsLoading, setCohortsLoading] = useState(false);
 
   const [letterSettings, setLetterSettings] = useState<ExaminerAppointmentLetterSettings | null>(null);
   const [letterDraft, setLetterDraft] = useState<LetterSettingsDraft | null>(null);
@@ -287,11 +292,36 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
     [selectedSubjectId, timetableSubjects],
   );
 
-  const loadRelease = useCallback(async () => {
+  const selectedCohort = useMemo(
+    () => cohorts.find((c) => c.id === selectedCohortId) ?? null,
+    [cohorts, selectedCohortId],
+  );
+
+  const loadCohorts = useCallback(async (subjectId: number) => {
+    setCohortsLoading(true);
+    setReleaseError(null);
+    try {
+      const rows = await listAdminSubjectMarkingGroups(examId, subjectId);
+      setCohorts(rows);
+      setSelectedCohortId((prev) => {
+        if (prev && rows.some((row) => row.id === prev)) return prev;
+        const defaultRow = rows.find((row) => row.is_default) ?? rows[0];
+        return defaultRow?.id ?? null;
+      });
+    } catch (e) {
+      setCohorts([]);
+      setSelectedCohortId(null);
+      setReleaseError(e instanceof Error ? e.message : "Could not load cohorts");
+    } finally {
+      setCohortsLoading(false);
+    }
+  }, [examId]);
+
+  const loadRelease = useCallback(async (subjectId: number, groupId: string) => {
     setReleaseLoading(true);
     setReleaseError(null);
     try {
-      const row = await getExaminerPortalSettings(examId);
+      const row = await getCohortExaminerPortalRelease(examId, subjectId, groupId);
       setSettings(row);
       setReleaseDraft({
         enabled: row.appointment_letters_release_enabled,
@@ -363,12 +393,15 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
   }, [examId]);
 
   useEffect(() => {
-    void loadRelease();
     void loadLetterSettings();
     void loadReferences();
     setCopySourceExamId("");
     defaultSubjectAppliedRef.current = false;
-  }, [loadRelease, loadLetterSettings, loadReferences]);
+    setCohorts([]);
+    setSelectedCohortId(null);
+    setSettings(null);
+    setReleaseDraft(null);
+  }, [loadLetterSettings, loadReferences]);
 
   useEffect(() => {
     if (defaultSubjectAppliedRef.current || !defaultSubjectId || refsLoading) return;
@@ -382,13 +415,27 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
     if (selectedSubjectId == null) {
       setSubjectDacSettings(null);
       setSubjectDacDraft(null);
+      setCohorts([]);
+      setSelectedCohortId(null);
+      setSettings(null);
+      setReleaseDraft(null);
       return;
     }
     void loadSubjectDac(selectedSubjectId);
-  }, [selectedSubjectId, loadSubjectDac]);
+    void loadCohorts(selectedSubjectId);
+  }, [selectedSubjectId, loadSubjectDac, loadCohorts]);
+
+  useEffect(() => {
+    if (selectedSubjectId == null || selectedCohortId == null) {
+      setSettings(null);
+      setReleaseDraft(null);
+      return;
+    }
+    void loadRelease(selectedSubjectId, selectedCohortId);
+  }, [selectedSubjectId, selectedCohortId, loadRelease]);
 
   async function handleSaveRelease(overrides?: Partial<ReleaseDraft>) {
-    if (!releaseDraft) return;
+    if (!releaseDraft || selectedSubjectId == null || selectedCohortId == null) return;
     const next: ReleaseDraft = { ...releaseDraft, ...overrides };
     if (next.enabled && next.mode === "scheduled_date" && !next.releaseAt.trim()) {
       setReleaseError("Set a release date and time when using scheduled release.");
@@ -398,7 +445,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
     setReleaseError(null);
     setReleaseMessage(null);
     try {
-      const row = await putExaminerPortalSettings(examId, {
+      const row = await putCohortExaminerPortalRelease(examId, selectedSubjectId, selectedCohortId, {
         appointment_letters_release_enabled: next.enabled,
         appointment_letters_release_mode: next.mode,
         appointment_letters_release_at:
@@ -426,12 +473,17 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
   }
 
   async function handleNotify() {
+    if (selectedSubjectId == null || selectedCohortId == null) return;
     setReleaseBusy(true);
     setReleaseError(null);
     setReleaseMessage(null);
     try {
-      const result = await notifyEligibleAppointmentLetters(examId);
-      await loadRelease();
+      const result = await notifyEligibleAppointmentLettersForCohort(
+        examId,
+        selectedSubjectId,
+        selectedCohortId,
+      );
+      await loadRelease(selectedSubjectId, selectedCohortId);
       setReleaseMessage(
         `SMS sent to ${result.sms_sent_count} examiner(s).` +
           (result.sms_failed_count ? ` ${result.sms_failed_count} failed.` : "") +
@@ -1203,9 +1255,34 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">Release and notify</h2>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Control when rostered examiners can download appointment letters on their portal.
+              Control when examiners in a subject cohort can download appointment letters on their portal.
             </p>
-            {settings ? (
+            {selectedSubject == null ? (
+              <p className="mt-3 text-xs text-muted-foreground">Select a subject above to manage cohort release.</p>
+            ) : null}
+            {selectedSubject != null ? (
+              <div className="mt-3 max-w-md space-y-1.5">
+                <label className={formLabelClass} htmlFor="release-cohort">
+                  Cohort
+                </label>
+                <select
+                  id="release-cohort"
+                  className={formInputClass}
+                  value={selectedCohortId ?? ""}
+                  disabled={cohortsLoading || releaseBusy}
+                  onChange={(e) => setSelectedCohortId(e.target.value || null)}
+                >
+                  {cohorts.length === 0 ? <option value="">No cohorts</option> : null}
+                  {cohorts.map((cohort) => (
+                    <option key={cohort.id} value={cohort.id}>
+                      {cohort.name}
+                      {cohort.is_default ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {settings && selectedCohort ? (
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
                 <div>
                   <dt className="font-medium text-foreground">Rostered</dt>
@@ -1231,7 +1308,13 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
               type="button"
               variant="outline"
               size="sm"
-              disabled={releaseLoading || releaseBusy || !settings?.appointment_letters_release_enabled}
+              disabled={
+                releaseLoading ||
+                releaseBusy ||
+                cohortsLoading ||
+                selectedCohortId == null ||
+                !settings?.appointment_letters_release_enabled
+              }
               onClick={() => void handleNotify()}
             >
               {releaseBusy ? "Working…" : "Notify eligible examiners"}
@@ -1239,7 +1322,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
           </div>
         </div>
 
-        {releaseDraft ? (
+        {releaseDraft && selectedSubjectId != null && selectedCohortId != null ? (
           <div className="mt-4 space-y-4">
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -1337,7 +1420,9 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
             </Button>
           </div>
         ) : null}
-        {releaseLoading ? <p className="mt-2 text-xs text-muted-foreground">Loading…</p> : null}
+        {releaseLoading || cohortsLoading ? (
+          <p className="mt-2 text-xs text-muted-foreground">Loading…</p>
+        ) : null}
         {releaseError ? (
           <p className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {releaseError}

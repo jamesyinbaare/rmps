@@ -120,21 +120,37 @@ async def _load_examiner_for_gated_portal(session: AsyncSession, examiner_id: UU
 
 async def resolve_examiner_id_for_appointment_letter(session: AsyncSession, token: str) -> UUID:
     """Accepted/rostered examiner with appointment letter release gate."""
+    resolved = await resolve_portal_token(session, token)
+    if resolved is None:
+        raise ValueError("Portal link not found.")
     examiner_id = await resolve_examiner_id_for_portal_token(session, token)
     from app.services.examiner_portal_release import assert_may_access_appointment_letter
 
     examiner = await _load_examiner_for_gated_portal(session, examiner_id)
-    await assert_may_access_appointment_letter(session, examiner)
+    subject_id = (
+        int(resolved.invitation.subject_id)
+        if isinstance(resolved, ResolvedPortalInvitation)
+        else int(resolved.subject.id)
+    )
+    await assert_may_access_appointment_letter(session, examiner, subject_id=subject_id)
     return examiner_id
 
 
 async def resolve_examiner_id_for_bank_details(session: AsyncSession, token: str) -> UUID:
     """Accepted/rostered examiner with bank details entry gate."""
+    resolved = await resolve_portal_token(session, token)
+    if resolved is None:
+        raise ValueError("Portal link not found.")
     examiner_id = await resolve_examiner_id_for_portal_token(session, token)
     from app.services.examiner_portal_release import assert_may_access_bank_details
 
     examiner = await _load_examiner_for_gated_portal(session, examiner_id)
-    await assert_may_access_bank_details(session, examiner)
+    subject_id = (
+        int(resolved.invitation.subject_id)
+        if isinstance(resolved, ResolvedPortalInvitation)
+        else int(resolved.subject.id)
+    )
+    await assert_may_access_bank_details(session, examiner, subject_id=subject_id)
     return examiner_id
 
 

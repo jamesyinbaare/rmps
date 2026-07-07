@@ -11,11 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models import Examiner, ExaminerSubject
-from app.services.examiner_portal_release import (
-    examiner_portal_link,
-    is_appointment_letter_available,
-)
+from app.models import Examiner, ExaminerSubject, SubjectMarkingGroupMember
+from app.services.cohort_portal_release import is_appointment_letter_available_for_examiner
+from app.services.examiner_portal_release import examiner_portal_link
 from app.services.sms.delivery_log import record_examiner_appointment_letter_released_sms
 from app.services.sms.factory import get_sms_provider
 from app.services.sms.phone import normalize_msisdn
@@ -60,8 +58,21 @@ async def maybe_send_appointment_letter_released_sms(
     )
 
 
-async def maybe_notify_on_portal_visit(session: AsyncSession, examiner: Examiner) -> None:
-    if not await is_appointment_letter_available(session, examiner):
+async def maybe_notify_on_portal_visit(
+    session: AsyncSession,
+    examiner: Examiner,
+    *,
+    subject_id: int | None = None,
+) -> None:
+    if subject_id is None:
+        return
+    eligible = await is_appointment_letter_available_for_examiner(
+        session,
+        examination_id=int(examiner.examination_id),
+        subject_id=subject_id,
+        examiner_id=examiner.id,
+    )
+    if not eligible:
         return
     if examiner.appointment_letter_notified_at is not None:
         return
@@ -75,27 +86,54 @@ async def maybe_notify_on_portal_visit(session: AsyncSession, examiner: Examiner
         await session.flush()
 
 
-async def notify_eligible_examiners(
+async def _cohort_member_examiners(
     session: AsyncSession,
     *,
     examination_id: int,
+    subject_id: int,
+    group_id: UUID,
+) -> list[Examiner]:
+    stmt = (
+        select(Examiner)
+        .join(SubjectMarkingGroupMember, SubjectMarkingGroupMember.examiner_id == Examiner.id)
+        .where(
+            SubjectMarkingGroupMember.group_id == group_id,
+            SubjectMarkingGroupMember.examination_id == examination_id,
+            SubjectMarkingGroupMember.subject_id == subject_id,
+        )
+        .options(selectinload(Examiner.subjects).selectinload(ExaminerSubject.subject))
+    )
+    return list((await session.execute(stmt)).scalars().unique().all())
+
+
+async def notify_eligible_examiners_in_cohort(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    group_id: UUID,
     triggered_by_user_id: UUID | None,
     trigger: str,
 ) -> dict:
     if not settings.sms_enabled or not settings.nalo_sms_key.strip():
         return {"sms_sent_count": 0, "sms_failed_count": 0, "skipped_count": 0}
 
-    stmt = (
-        select(Examiner)
-        .where(Examiner.examination_id == examination_id)
-        .options(selectinload(Examiner.subjects).selectinload(ExaminerSubject.subject))
+    examiners = await _cohort_member_examiners(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        group_id=group_id,
     )
-    examiners = list((await session.execute(stmt)).scalars().all())
     sent = 0
     failed = 0
     skipped = 0
     for examiner in examiners:
-        if not await is_appointment_letter_available(session, examiner):
+        if not await is_appointment_letter_available_for_examiner(
+            session,
+            examination_id=examination_id,
+            subject_id=subject_id,
+            examiner_id=examiner.id,
+        ):
             skipped += 1
             continue
         if examiner.appointment_letter_notified_at is not None:

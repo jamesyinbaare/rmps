@@ -108,6 +108,12 @@ def group_response(group: SubjectMarkingGroup) -> dict:
         "marked_script_submission_deadline": group.marked_script_submission_deadline,
         "scripts_allocation_release_enabled": bool(group.scripts_allocation_release_enabled),
         "scripts_allocation_release_at": group.scripts_allocation_release_at,
+        "appointment_letters_release_enabled": bool(group.appointment_letters_release_enabled),
+        "appointment_letters_release_mode": group.appointment_letters_release_mode,
+        "appointment_letters_release_at": group.appointment_letters_release_at,
+        "examiner_bank_details_editable_by_examiners": bool(
+            group.examiner_bank_details_editable_by_examiners
+        ),
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }

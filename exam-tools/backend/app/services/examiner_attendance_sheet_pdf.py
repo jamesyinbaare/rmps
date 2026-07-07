@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import enum
+import re
 from datetime import date
 from pathlib import Path
 from uuid import UUID
@@ -18,6 +20,51 @@ from app.services.subject_marking_group import load_group
 
 TEMPLATE_REL = "examiner-attendance/marking-attendance-sheet.html"
 ROWS_PER_PAGE = 25
+
+
+class AttendanceSheetSortField(enum.Enum):
+    REFERENCE_CODE = "reference_code"
+    NAME = "name"
+    REGION = "region"
+
+
+def _name_sort_key(examiner: Examiner) -> str:
+    return (examiner.name or "").casefold()
+
+
+def _natural_sort_key(text: str) -> tuple:
+    parts: list[tuple[int, int | str]] = []
+    for part in re.split(r"(\d+)", text):
+        if not part:
+            continue
+        if part.isdigit():
+            parts.append((0, int(part)))
+        else:
+            parts.append((1, part.casefold()))
+    return tuple(parts)
+
+
+def _reference_code_sort_key(examiner: Examiner) -> tuple:
+    code = (examiner.reference_code or "").strip()
+    if not code:
+        return ((1,), _name_sort_key(examiner))
+    return ((0, _natural_sort_key(code)), _name_sort_key(examiner))
+
+
+def _region_sort_key(examiner: Examiner) -> tuple[str, str]:
+    region = examiner.region.value if isinstance(examiner.region, Region) else str(examiner.region or "")
+    return (region.casefold(), _name_sort_key(examiner))
+
+
+def sort_examiners_for_attendance_sheet(
+    examiners: list[Examiner],
+    sort_by: AttendanceSheetSortField,
+) -> list[Examiner]:
+    if sort_by == AttendanceSheetSortField.NAME:
+        return sorted(examiners, key=_name_sort_key)
+    if sort_by == AttendanceSheetSortField.REGION:
+        return sorted(examiners, key=_region_sort_key)
+    return sorted(examiners, key=_reference_code_sort_key)
 
 def _subject_label(subject: Subject) -> str:
     code = subject_display_code(subject)
@@ -101,13 +148,9 @@ async def load_cohort_examiners_for_attendance_sheet(
             detail="This cohort has no examiners. Add members before printing.",
         )
 
-    stmt = (
-        select(Examiner)
-        .where(
-            Examiner.examination_id == examination_id,
-            Examiner.id.in_(examiner_ids),
-        )
-        .order_by(Examiner.region, Examiner.name)
+    stmt = select(Examiner).where(
+        Examiner.examination_id == examination_id,
+        Examiner.id.in_(examiner_ids),
     )
     examiners = list((await session.execute(stmt)).scalars().all())
     if not examiners:
@@ -126,6 +169,7 @@ async def generate_examiner_attendance_sheet_pdf(
     subject_id: int,
     group_id: UUID,
     attendance_date: date,
+    sort_by: AttendanceSheetSortField = AttendanceSheetSortField.REFERENCE_CODE,
 ) -> tuple[bytes, str]:
     from app.models import Examination
 
@@ -139,8 +183,9 @@ async def generate_examiner_attendance_sheet_pdf(
         subject_id=subject_id,
         group_id=group_id,
     )
+    sorted_examiners = sort_examiners_for_attendance_sheet(examiners, sort_by)
 
-    pages = _paginate_rows(_attendance_sheet_rows(examiners))
+    pages = _paginate_rows(_attendance_sheet_rows(sorted_examiners))
     context = {
         "examination_label": examination_label(exam),
         "subject_label": _subject_label(subject),

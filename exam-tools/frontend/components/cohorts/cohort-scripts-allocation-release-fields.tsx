@@ -8,14 +8,18 @@ import { cn } from "@/lib/utils";
 type Props = {
   draft: ScriptsAllocationReleaseDraft;
   onChange: (draft: ScriptsAllocationReleaseDraft) => void;
+  onEnabledToggle?: (enabled: boolean) => void | Promise<void>;
   disabled?: boolean;
+  toggleBusy?: boolean;
   className?: string;
 };
 
 export function CohortScriptsAllocationReleaseFields({
   draft,
   onChange,
+  onEnabledToggle,
   disabled = false,
+  toggleBusy = false,
   className,
 }: Props) {
   return (
@@ -39,8 +43,15 @@ export function CohortScriptsAllocationReleaseFields({
           type="checkbox"
           className="size-4 rounded border-border"
           checked={draft.enabled}
-          disabled={disabled}
-          onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
+          disabled={disabled || toggleBusy}
+          onChange={(e) => {
+            const enabled = e.target.checked;
+            if (onEnabledToggle) {
+              void onEnabledToggle(enabled);
+              return;
+            }
+            onChange({ ...draft, enabled });
+          }}
         />
         Enable release to examiners
       </label>

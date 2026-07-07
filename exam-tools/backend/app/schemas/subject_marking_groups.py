@@ -30,6 +30,10 @@ class SubjectMarkingGroupUpdate(BaseModel):
     marked_script_submission_deadline: datetime | None = None
     scripts_allocation_release_enabled: bool | None = None
     scripts_allocation_release_at: datetime | None = None
+    appointment_letters_release_enabled: bool | None = None
+    appointment_letters_release_mode: str | None = None
+    appointment_letters_release_at: datetime | None = None
+    examiner_bank_details_editable_by_examiners: bool | None = None
 
 
 class SubjectMarkingGroupMembersReplace(BaseModel):
@@ -58,6 +62,10 @@ class SubjectMarkingGroupResponse(BaseModel):
     marked_script_submission_deadline: datetime | None
     scripts_allocation_release_enabled: bool = False
     scripts_allocation_release_at: datetime | None = None
+    appointment_letters_release_enabled: bool = False
+    appointment_letters_release_mode: str = "scheduled_date"
+    appointment_letters_release_at: datetime | None = None
+    examiner_bank_details_editable_by_examiners: bool = False
     created_at: datetime
     updated_at: datetime
 

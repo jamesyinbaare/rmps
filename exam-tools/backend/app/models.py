@@ -1411,6 +1411,19 @@ class SubjectMarkingGroup(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     scripts_allocation_release_at = Column(DateTime, nullable=True)
+    appointment_letters_release_enabled = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    appointment_letters_release_mode = Column(
+        String(32),
+        nullable=False,
+        default="scheduled_date",
+        server_default="scheduled_date",
+    )
+    appointment_letters_release_at = Column(DateTime, nullable=True)
+    examiner_bank_details_editable_by_examiners = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

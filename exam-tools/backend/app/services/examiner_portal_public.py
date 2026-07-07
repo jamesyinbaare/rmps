@@ -20,15 +20,9 @@ from app.services.examiner_invitation import (
     invitation_coordination_summary,
     public_invitation_view,
 )
+from app.services.cohort_portal_release import release_display_fields_for_subject_preview
 from app.services.examiner_portal import ResolvedPortalExaminer, ResolvedPortalInvitation
-from app.services.examiner_portal_release import (
-    appointment_letter_pending_message,
-    bank_fields_from_settings,
-    get_or_create_portal_settings,
-    is_appointment_letter_available,
-    is_bank_details_editable,
-    is_release_enabled,
-)
+from app.services.examiner_portal_release import release_fields_for_examiner
 from app.services.scripts_allocation_release import (
     is_scripts_allocation_visible_for_examiner,
     scripts_allocation_pending_message,
@@ -67,47 +61,42 @@ async def _release_fields_for_examiner(
     *,
     subject_id: int | None = None,
 ) -> dict:
-    row = await get_or_create_portal_settings(session, int(examiner.examination_id))
-    release_enabled = bool(row.appointment_letters_release_enabled)
-    mode_raw = row.appointment_letters_release_mode
-    if isinstance(mode_raw, AppointmentLettersReleaseMode):
-        mode = mode_raw
-    else:
-        try:
-            mode = AppointmentLettersReleaseMode(str(mode_raw))
-        except ValueError:
-            mode = AppointmentLettersReleaseMode.SCHEDULED_DATE
-    available = await is_appointment_letter_available(session, examiner)
-    pending = appointment_letter_pending_message(
-        release_enabled=release_enabled,
-        release_mode=mode,
-        release_at=row.appointment_letters_release_at,
+    if subject_id is None:
+        return {
+            "appointment_letters_release_enabled": False,
+            "appointment_letters_available": False,
+            "appointment_letters_release_mode": AppointmentLettersReleaseMode.SCHEDULED_DATE.value,
+            "appointment_letters_release_at": None,
+            "appointment_letters_pending_message": None,
+            "bank_details_editable_by_examiners": False,
+            "bank_details_available": False,
+            "bank_details_pending_message": None,
+            "scripts_allocation_available": False,
+            "scripts_allocation_pending_message": None,
+        }
+
+    fields = await release_fields_for_examiner(
+        session,
+        examiner,
+        subject_id=subject_id,
         examiner_accepted=True,
     )
-    scripts_available = False
-    scripts_pending: str | None = None
-    if subject_id is not None:
-        scripts_available = await is_scripts_allocation_visible_for_examiner(
-            session,
-            examination_id=int(examiner.examination_id),
-            subject_id=subject_id,
-            examiner_id=examiner.id,
-        )
-        scripts_pending = await scripts_allocation_pending_message(
-            session,
-            examination_id=int(examiner.examination_id),
-            subject_id=subject_id,
-            examiner_id=examiner.id,
-        )
+    scripts_available = await is_scripts_allocation_visible_for_examiner(
+        session,
+        examination_id=int(examiner.examination_id),
+        subject_id=subject_id,
+        examiner_id=examiner.id,
+    )
+    scripts_pending = await scripts_allocation_pending_message(
+        session,
+        examination_id=int(examiner.examination_id),
+        subject_id=subject_id,
+        examiner_id=examiner.id,
+    )
     return {
-        "appointment_letters_release_enabled": release_enabled,
-        "appointment_letters_available": available,
-        "appointment_letters_release_mode": mode.value,
-        "appointment_letters_release_at": row.appointment_letters_release_at,
-        "appointment_letters_pending_message": pending,
+        **fields,
         "scripts_allocation_available": scripts_available,
         "scripts_allocation_pending_message": scripts_pending,
-        **bank_fields_from_settings(row),
     }
 
 
@@ -121,7 +110,7 @@ async def enrich_portal_with_release(
 ) -> dict:
     summary["examination_id"] = int(examination_id)
     if examiner is None:
-        if examination_id is None:
+        if examination_id is None or subject_id is None:
             summary.update(
                 {
                     "appointment_letters_release_enabled": False,
@@ -137,37 +126,23 @@ async def enrich_portal_with_release(
                 }
             )
             return summary
-        row = await get_or_create_portal_settings(session, int(examination_id))
-        release_enabled = bool(row.appointment_letters_release_enabled)
-        mode_raw = row.appointment_letters_release_mode
-        if isinstance(mode_raw, AppointmentLettersReleaseMode):
-            mode = mode_raw
-        else:
-            try:
-                mode = AppointmentLettersReleaseMode(str(mode_raw))
-            except ValueError:
-                mode = AppointmentLettersReleaseMode.SCHEDULED_DATE
         accepted = summary.get("status") == ExaminerInvitationStatus.ACCEPTED.value
+        preview = await release_display_fields_for_subject_preview(
+            session,
+            examination_id=int(examination_id),
+            subject_id=int(subject_id),
+            examiner_accepted=accepted,
+        )
         summary.update(
             {
-                "appointment_letters_release_enabled": release_enabled,
-                "appointment_letters_available": False,
-                "appointment_letters_release_mode": mode.value,
-                "appointment_letters_release_at": row.appointment_letters_release_at,
-                "appointment_letters_pending_message": appointment_letter_pending_message(
-                    release_enabled=release_enabled,
-                    release_mode=mode,
-                    release_at=row.appointment_letters_release_at,
-                    examiner_accepted=accepted,
-                ),
+                **preview,
                 "scripts_allocation_available": False,
                 "scripts_allocation_pending_message": None,
-                **bank_fields_from_settings(row),
             }
         )
         return summary
 
-    await maybe_notify_on_portal_visit(session, examiner)
+    await maybe_notify_on_portal_visit(session, examiner, subject_id=subject_id)
     summary.update(
         await _release_fields_for_examiner(session, examiner, subject_id=subject_id)
     )

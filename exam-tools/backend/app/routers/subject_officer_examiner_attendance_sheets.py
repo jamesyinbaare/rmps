@@ -26,7 +26,10 @@ from app.services.examiner_attendance_sheet_files import (
     remove_examiner_attendance_sheet_file,
     write_examiner_attendance_sheet_file,
 )
-from app.services.examiner_attendance_sheet_pdf import generate_examiner_attendance_sheet_pdf
+from app.services.examiner_attendance_sheet_pdf import (
+    AttendanceSheetSortField,
+    generate_examiner_attendance_sheet_pdf,
+)
 from app.services.examiner_invitation import subject_display_code
 from app.services.script_control import (
     assert_script_packing_calendar_allowed,
@@ -106,6 +109,7 @@ async def download_blank_examiner_attendance_sheet(
     subject_id: int = Query(...),
     group_id: UUID = Query(...),
     attendance_date: date = Query(...),
+    sort_by: AttendanceSheetSortField = Query(AttendanceSheetSortField.REFERENCE_CODE),
 ) -> Response:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
     await _load_cohort_or_404(session, examination_id=examination_id, subject_id=subject_id, group_id=group_id)
@@ -116,6 +120,7 @@ async def download_blank_examiner_attendance_sheet(
         subject_id=subject_id,
         group_id=group_id,
         attendance_date=attendance_date,
+        sort_by=sort_by,
     )
     return StreamingResponse(
         iter([pdf_bytes]),
