@@ -45,6 +45,7 @@ from app.services.examiner_delete import (
     delete_examiner_with_cleanup,
     load_examiner_for_delete,
 )
+from app.services.examiner_invitation import sync_accepted_invitation_role_from_roster
 from app.services.examiner_portal import (
     examiner_portal_url,
     generate_portal_token,
@@ -466,6 +467,7 @@ async def update_examiner(
         ex.region = new_region
     if "examiner_type" in patch and patch["examiner_type"] is not None:
         ex.examiner_type = new_type
+        sync_accepted_invitation_role_from_roster(ex, new_type)
     if "deviation_weight" in patch:
         ex.deviation_weight = patch["deviation_weight"]
     if "gender" in patch:
