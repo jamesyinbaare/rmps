@@ -2739,6 +2739,7 @@ export type AdminExaminerAllowanceRow = {
   examination_id: number;
   examination_label: string;
   full_name: string;
+  reference_code?: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
   subject_codes: string;
