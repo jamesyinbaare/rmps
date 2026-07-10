@@ -26,7 +26,7 @@ from app.services.examiner_invitation import _examiner_type_label
 
 # Core columns always included (order matters).
 CORE_HEADER_LABELS = [
-    "Code",
+    "Reference code",
     "Name",
     "Role",
     "Region",

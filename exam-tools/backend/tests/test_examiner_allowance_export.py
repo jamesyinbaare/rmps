@@ -18,6 +18,7 @@ from app.services.examiner_allowance_export import (
 def _row(
     *,
     name: str = "Alice",
+    reference_code: str | None = "MATH-AE1",
     bank_name: str | None = "GCB",
     branch_name: str | None = "Kumasi",
     bank_code: str | None = "001234",
@@ -30,6 +31,7 @@ def _row(
         examination_id=1,
         examination_label="BECE 2026",
         full_name=name,
+        reference_code=reference_code,
         examiner_type="assistant_examiner",
         region="Ashanti",
         subject_codes="MATH",
@@ -111,11 +113,13 @@ def test_detail_workbook_highlights_incomplete_bank() -> None:
     headers = [ws.cell(row=2, column=c).value for c in range(1, 30) if ws.cell(row=2, column=c).value]
     assert "Bank status" in headers
     assert "Phone" in headers
+    assert headers[0] == "Reference code"
     status_col = headers.index("Bank status") + 1
     phone_col = headers.index("Phone") + 1
     assert ws.cell(row=3, column=status_col).value == "Incomplete"
     assert ws.cell(row=4, column=status_col).value == "OK"
     assert ws.cell(row=3, column=phone_col).value == "0550000000"
+    assert ws.cell(row=3, column=1).value == "MATH-AE1"
     # Incomplete row uses amber fill FDE68A
     assert ws.cell(row=3, column=1).fill.fgColor.rgb in ("00FDE68A", "FDE68A")
     # Complete second row uses zebra alt
@@ -129,6 +133,7 @@ def test_bog_rows_include_phone_and_incomplete_flag() -> None:
     rows = bog_rows_from_admin_items(items)
     by_name = {r.full_name: r for r in rows}
     assert by_name["ALICE"].phone_number == "0550000000"
+    assert by_name["ALICE"].reference_code == "MATH-AE1"
     assert by_name["ALICE"].incomplete_bank is True
     assert by_name["BOB"].incomplete_bank is False
 
@@ -137,21 +142,23 @@ def test_examiner_bog_workbook_includes_phone_and_highlights_incomplete() -> Non
     from app.services.examiner_allowance_bog_export import bog_rows_from_admin_items
     from app.services.exam_official_bog_export import bog_workbook_bytes
 
-    items = [_row(name="Alice", account=""), _row(name="Bob")]
+    items = [_row(name="Alice", account="", reference_code="MATH-AE9"), _row(name="Bob")]
     rows = bog_rows_from_admin_items(items)
     payload = bog_workbook_bytes([], {}, title="Test", prebuilt_rows=rows, include_phone=True)
     wb = load_workbook(BytesIO(payload))
     ws = wb.active
     assert ws is not None
-    headers = [ws.cell(row=2, column=c).value for c in range(1, 10) if ws.cell(row=2, column=c).value]
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 12) if ws.cell(row=2, column=c).value]
     assert headers == [
         "Serial",
         "Sort code",
         "Account number",
         "Name",
+        "Reference code",
         "Phone",
         "Designation",
         "Amount (GHS)",
     ]
-    assert ws.cell(row=3, column=5).value == "0550000000"
+    assert ws.cell(row=3, column=5).value == "MATH-AE9"
+    assert ws.cell(row=3, column=6).value == "0550000000"
     assert ws.cell(row=3, column=1).fill.fgColor.rgb in ("00FDE68A", "FDE68A")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import enum
-import re
 from datetime import date
 from pathlib import Path
 from uuid import UUID
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Examiner, Region, Subject, SubjectMarkingGroup
 from app.services.exam_official_export import examination_label
 from app.services.examiner_invitation import subject_display_code
+from app.services.examiner_sort import ExaminerSortField, sort_examiners
 from app.services.pdf_generator import PdfGenerator, render_html
 from app.services.subject_marking_group import load_group
 
@@ -28,43 +28,11 @@ class AttendanceSheetSortField(enum.Enum):
     REGION = "region"
 
 
-def _name_sort_key(examiner: Examiner) -> str:
-    return (examiner.name or "").casefold()
-
-
-def _natural_sort_key(text: str) -> tuple:
-    parts: list[tuple[int, int | str]] = []
-    for part in re.split(r"(\d+)", text):
-        if not part:
-            continue
-        if part.isdigit():
-            parts.append((0, int(part)))
-        else:
-            parts.append((1, part.casefold()))
-    return tuple(parts)
-
-
-def _reference_code_sort_key(examiner: Examiner) -> tuple:
-    code = (examiner.reference_code or "").strip()
-    if not code:
-        return ((1,), _name_sort_key(examiner))
-    return ((0, _natural_sort_key(code)), _name_sort_key(examiner))
-
-
-def _region_sort_key(examiner: Examiner) -> tuple[str, str]:
-    region = examiner.region.value if isinstance(examiner.region, Region) else str(examiner.region or "")
-    return (region.casefold(), _name_sort_key(examiner))
-
-
 def sort_examiners_for_attendance_sheet(
     examiners: list[Examiner],
     sort_by: AttendanceSheetSortField,
 ) -> list[Examiner]:
-    if sort_by == AttendanceSheetSortField.NAME:
-        return sorted(examiners, key=_name_sort_key)
-    if sort_by == AttendanceSheetSortField.REGION:
-        return sorted(examiners, key=_region_sort_key)
-    return sorted(examiners, key=_reference_code_sort_key)
+    return sort_examiners(examiners, ExaminerSortField(sort_by.value))
 
 def _subject_label(subject: Subject) -> str:
     code = subject_display_code(subject)

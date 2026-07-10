@@ -73,21 +73,24 @@ class BogExportRow:
     amount: Decimal
     phone_number: str = ""
     incomplete_bank: bool = False
+    reference_code: str = ""
 
 
 _FILL_INCOMPLETE = PatternFill(fill_type="solid", fgColor="FDE68A")
 
+# Examiner BoG: Phone + Reference code after Name.
 BOG_HEADER_LABELS_WITH_PHONE = [
     "Serial",
     "Sort code",
     "Account number",
     "Name",
+    "Reference code",
     "Phone",
     "Designation",
     "Amount (GHS)",
 ]
 
-BOG_COLUMN_WIDTHS_WITH_PHONE = [10, 12, 22, 28, 14, 24, 16]
+BOG_COLUMN_WIDTHS_WITH_PHONE = [10, 12, 22, 28, 16, 14, 24, 16]
 
 
 def _bog_display_name(raw: str) -> str:
@@ -273,9 +276,10 @@ def bog_workbook_bytes(
     widths = BOG_COLUMN_WIDTHS_WITH_PHONE if include_phone else BOG_COLUMN_WIDTHS
     ncols = len(headers)
     name_col = 4
-    phone_col = 5 if include_phone else None
-    designation_col = 6 if include_phone else DESIGNATION_COLUMN
-    amount_col = 7 if include_phone else AMOUNT_COLUMN
+    reference_col = 5 if include_phone else None
+    phone_col = 6 if include_phone else None
+    designation_col = 7 if include_phone else DESIGNATION_COLUMN
+    amount_col = 8 if include_phone else AMOUNT_COLUMN
     start_row = 1
 
     if title:
@@ -294,6 +298,8 @@ def bog_workbook_bytes(
         _write_text_cell(ws, r, SORT_CODE_COLUMN, row.sort_code)
         _write_text_cell(ws, r, ACCOUNT_COLUMN, row.account_number)
         _write_text_cell(ws, r, name_col, row.full_name)
+        if reference_col is not None:
+            _write_text_cell(ws, r, reference_col, row.reference_code or "")
         if phone_col is not None:
             _write_text_cell(ws, r, phone_col, row.phone_number or "")
         _write_text_cell(ws, r, designation_col, row.designation)

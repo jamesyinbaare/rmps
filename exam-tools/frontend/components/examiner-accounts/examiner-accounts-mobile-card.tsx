@@ -22,6 +22,7 @@ type Props = {
   showRole?: boolean;
   showRegion?: boolean;
   showPhone?: boolean;
+  showReferenceCode?: boolean;
 };
 
 export function ExaminerAccountsMobileCard({
@@ -33,6 +34,7 @@ export function ExaminerAccountsMobileCard({
   showRole = false,
   showRegion = true,
   showPhone = true,
+  showReferenceCode = true,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const roleAbbrev = EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
@@ -40,6 +42,7 @@ export function ExaminerAccountsMobileCard({
   const scriptSource = scriptSourceSummary(row.subject_breakdowns, { subjectId, paperNumber });
   const incomplete = isBankAccountIncomplete(row);
   const phone = row.phone_number?.trim() || null;
+  const refCode = row.reference_code?.trim() || null;
 
   return (
     <article
@@ -56,6 +59,9 @@ export function ExaminerAccountsMobileCard({
               .filter(Boolean)
               .join(" · ") || "—"}
           </p>
+          {showReferenceCode && refCode ? (
+            <p className="mt-0.5 font-mono text-xs tabular-nums text-muted-foreground">{refCode}</p>
+          ) : null}
           {showPhone && phone ? (
             <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">{phone}</p>
           ) : null}

@@ -92,6 +92,7 @@ def bog_rows_from_admin_items(
                 amount=amount,
                 phone_number=(item.phone_number or "").strip(),
                 incomplete_bank=bank_account_incomplete(item),
+                reference_code=(item.reference_code or "").strip(),
             )
         )
     return rows

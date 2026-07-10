@@ -133,6 +133,7 @@ export function ExaminerAccountsTable({
   const showRole = isExaminerAccountsColumnVisible(columnVisibility, "role");
   const showRegion = isExaminerAccountsColumnVisible(columnVisibility, "region");
   const showPhone = isExaminerAccountsColumnVisible(columnVisibility, "phone");
+  const showReferenceCode = isExaminerAccountsColumnVisible(columnVisibility, "reference_code");
   const showSubjects = !showSubjectScripts && isExaminerAccountsColumnVisible(columnVisibility, "subjects");
   const showBank = isExaminerAccountsColumnVisible(columnVisibility, "bank");
   const showBranch = isExaminerAccountsColumnVisible(columnVisibility, "branch");
@@ -187,6 +188,11 @@ export function ExaminerAccountsTable({
             showPhoneInSubline={!showPhone}
           />
         </td>
+        {showReferenceCode ? (
+          <td className={cn(cellPad, "whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground")}>
+            {row.reference_code?.trim() || "—"}
+          </td>
+        ) : null}
         {showPhone ? (
           <td className={cn(cellPad, "whitespace-nowrap tabular-nums text-muted-foreground")}>
             {row.phone_number?.trim() || "—"}
@@ -254,6 +260,11 @@ export function ExaminerAccountsTable({
           {(page - 1) * pageSize + index + 1}
         </td>
         <td className={cn(cellPad, "sticky left-10 z-[1] min-w-[8rem] font-medium", rowStickyBg)}>{row.full_name}</td>
+        {showReferenceCode ? (
+          <td className={cn(cellPad, "whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground")}>
+            {row.reference_code?.trim() || "—"}
+          </td>
+        ) : null}
         {showRole ? (
           <td className={cellPad} title={EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}>
             {EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}
@@ -316,6 +327,9 @@ export function ExaminerAccountsTable({
                         onSort={handleSort}
                       />
                     </th>
+                    {showReferenceCode ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Ref. code</th>
+                    ) : null}
                     {showPhone ? (
                       <th className="px-3 py-1.5 font-medium text-muted-foreground">Phone</th>
                     ) : null}
@@ -383,6 +397,9 @@ export function ExaminerAccountsTable({
                         onSort={handleSort}
                       />
                     </th>
+                    {showReferenceCode ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Ref. code</th>
+                    ) : null}
                     {showRole ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Role</th> : null}
                     {showRegion ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Region</th> : null}
                     {showPhone ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Phone</th> : null}
@@ -440,6 +457,7 @@ export function ExaminerAccountsTable({
                   showRole={showRole}
                   showRegion={showRegion}
                   showPhone={showPhone}
+                  showReferenceCode={showReferenceCode}
                 />
               ))
             : null}
