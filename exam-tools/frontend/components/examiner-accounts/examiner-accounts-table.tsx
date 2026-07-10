@@ -10,6 +10,7 @@ import {
   ExaminerIdentityCell,
   ExaminerScriptsCell,
   examinerRowIncompleteClass,
+  isBankAccountIncomplete,
 } from "@/components/examiner-accounts/examiner-accounts-table-cells";
 import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
@@ -55,6 +56,7 @@ type Props = {
 
 const cellPad = "px-3 py-2 align-top";
 const stickyBg = "bg-card";
+const stickyBgIncomplete = "bg-amber-50 dark:bg-amber-950/40";
 
 function SortableHeader({
   label,
@@ -130,6 +132,8 @@ export function ExaminerAccountsTable({
 
   const showRole = isExaminerAccountsColumnVisible(columnVisibility, "role");
   const showRegion = isExaminerAccountsColumnVisible(columnVisibility, "region");
+  const showPhone = isExaminerAccountsColumnVisible(columnVisibility, "phone");
+  const showReferenceCode = isExaminerAccountsColumnVisible(columnVisibility, "reference_code");
   const showSubjects = !showSubjectScripts && isExaminerAccountsColumnVisible(columnVisibility, "subjects");
   const showBank = isExaminerAccountsColumnVisible(columnVisibility, "bank");
   const showBranch = isExaminerAccountsColumnVisible(columnVisibility, "branch");
@@ -165,7 +169,8 @@ export function ExaminerAccountsTable({
       subjectId: showSubjectScripts ? subjectId : null,
       paperNumber: showSubjectScripts ? paperNumber : null,
     });
-    const rowIndex = (page - 1) * pageSize + index + 1;
+    const incomplete = isBankAccountIncomplete(row);
+    const rowStickyBg = incomplete ? stickyBgIncomplete : stickyBg;
 
     return (
       <tr
@@ -175,9 +180,24 @@ export function ExaminerAccountsTable({
           examinerRowIncompleteClass(row),
         )}
       >
-        <td className={cn(cellPad, "sticky left-0 z-[1] min-w-[12rem] max-w-[18rem]", stickyBg)}>
-          <ExaminerIdentityCell row={row} showRole={showRole} showRegion />
+        <td className={cn(cellPad, "sticky left-0 z-[1] min-w-[12rem] max-w-[18rem]", rowStickyBg)}>
+          <ExaminerIdentityCell
+            row={row}
+            showRole={showRole}
+            showRegion={showRegion}
+            showPhoneInSubline={!showPhone}
+          />
         </td>
+        {showReferenceCode ? (
+          <td className={cn(cellPad, "whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground")}>
+            {row.reference_code?.trim() || "—"}
+          </td>
+        ) : null}
+        {showPhone ? (
+          <td className={cn(cellPad, "whitespace-nowrap tabular-nums text-muted-foreground")}>
+            {row.phone_number?.trim() || "—"}
+          </td>
+        ) : null}
         {splitBank ? (
           <>
             {showBank ? (
@@ -225,19 +245,37 @@ export function ExaminerAccountsTable({
       subjectId: showSubjectScripts ? subjectId : null,
       paperNumber: showSubjectScripts ? paperNumber : null,
     });
+    const incomplete = isBankAccountIncomplete(row);
+    const rowStickyBg = incomplete ? stickyBgIncomplete : stickyBg;
 
     return (
-      <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
-        <td className={cn(cellPad, "sticky left-0 z-[1] w-10 text-center tabular-nums text-muted-foreground", stickyBg)}>
+      <tr
+        key={row.id}
+        className={cn(
+          "border-b border-border/60 last:border-0 hover:bg-muted/30",
+          examinerRowIncompleteClass(row),
+        )}
+      >
+        <td className={cn(cellPad, "sticky left-0 z-[1] w-10 text-center tabular-nums text-muted-foreground", rowStickyBg)}>
           {(page - 1) * pageSize + index + 1}
         </td>
-        <td className={cn(cellPad, "sticky left-10 z-[1] min-w-[8rem] font-medium", stickyBg)}>{row.full_name}</td>
+        <td className={cn(cellPad, "sticky left-10 z-[1] min-w-[8rem] font-medium", rowStickyBg)}>{row.full_name}</td>
+        {showReferenceCode ? (
+          <td className={cn(cellPad, "whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground")}>
+            {row.reference_code?.trim() || "—"}
+          </td>
+        ) : null}
         {showRole ? (
           <td className={cellPad} title={EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}>
             {EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}
           </td>
         ) : null}
         {showRegion ? <td className={cn(cellPad, "text-muted-foreground")}>{row.region || "—"}</td> : null}
+        {showPhone ? (
+          <td className={cn(cellPad, "whitespace-nowrap tabular-nums text-muted-foreground")}>
+            {row.phone_number?.trim() || "—"}
+          </td>
+        ) : null}
         {showSubjects ? (
           <td className={cn(cellPad, "max-w-[14rem] truncate text-muted-foreground")} title={row.subject_names}>
             {row.subject_codes || "—"}
@@ -289,6 +327,12 @@ export function ExaminerAccountsTable({
                         onSort={handleSort}
                       />
                     </th>
+                    {showReferenceCode ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Ref. code</th>
+                    ) : null}
+                    {showPhone ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Phone</th>
+                    ) : null}
                     {splitBank ? (
                       <>
                         {showBank ? (
@@ -353,8 +397,12 @@ export function ExaminerAccountsTable({
                         onSort={handleSort}
                       />
                     </th>
+                    {showReferenceCode ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Ref. code</th>
+                    ) : null}
                     {showRole ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Role</th> : null}
                     {showRegion ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Region</th> : null}
+                    {showPhone ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Phone</th> : null}
                     {showSubjects ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Subjects</th> : null}
                     {showBank ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Bank</th> : null}
                     {showBranch ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Branch</th> : null}
@@ -407,7 +455,9 @@ export function ExaminerAccountsTable({
                   paperNumber={showSubjectScripts ? paperNumber : null}
                   payoutView={payoutView}
                   showRole={showRole}
-                  showRegion
+                  showRegion={showRegion}
+                  showPhone={showPhone}
+                  showReferenceCode={showReferenceCode}
                 />
               ))
             : null}

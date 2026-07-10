@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Examiner, ExaminerSubject, Examination, Subject
 from app.services.exam_official_export import examination_label
 from app.services.examiner_qr_payload import build_examiner_qr_payload
+from app.services.examiner_sort import sort_examiners
 from app.services.pdf_generator import PdfGenerator, render_html
 from app.services.qr_code import generate_qr_code_base64
 from app.services.subject_marking_group import load_group
@@ -123,7 +124,7 @@ def _filter_examiners_with_codes(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=no_codes_detail,
         )
-    return with_codes, len(examiners) - len(with_codes)
+    return sort_examiners(with_codes), len(examiners) - len(with_codes)
 
 
 async def load_examiners_for_lunch_coupons(

@@ -1,8 +1,10 @@
 import type { VisibilityState } from "@tanstack/react-table";
 
 export const EXAMINER_ACCOUNTS_COLUMN_TOGGLE_OPTIONS = [
+  { id: "reference_code", label: "Reference code", defaultVisible: true },
   { id: "role", label: "Role", defaultVisible: true },
   { id: "region", label: "Region", defaultVisible: false },
+  { id: "phone", label: "Phone", defaultVisible: true },
   { id: "subjects", label: "Subjects", defaultVisible: true },
   { id: "bank", label: "Bank", defaultVisible: false },
   { id: "branch", label: "Branch", defaultVisible: false },
@@ -40,8 +42,10 @@ export function examinerAccountsTableColSpan(
 ): number {
   if (layout === "classic") {
     let count = 4;
+    if (isExaminerAccountsColumnVisible(columnVisibility, "reference_code")) count++;
     if (isExaminerAccountsColumnVisible(columnVisibility, "role")) count++;
     if (isExaminerAccountsColumnVisible(columnVisibility, "region")) count++;
+    if (isExaminerAccountsColumnVisible(columnVisibility, "phone")) count++;
     if (!showSubjectScripts && isExaminerAccountsColumnVisible(columnVisibility, "subjects")) count++;
     if (isExaminerAccountsColumnVisible(columnVisibility, "bank")) count++;
     if (isExaminerAccountsColumnVisible(columnVisibility, "branch")) count++;
@@ -57,6 +61,8 @@ export function examinerAccountsTableColSpan(
     if (isExaminerAccountsColumnVisible(columnVisibility, "branch")) count++;
     if (isExaminerAccountsColumnVisible(columnVisibility, "account")) count++;
   }
+  if (isExaminerAccountsColumnVisible(columnVisibility, "reference_code")) count++;
+  if (isExaminerAccountsColumnVisible(columnVisibility, "phone")) count++;
   if (!showSubjectScripts && isExaminerAccountsColumnVisible(columnVisibility, "subjects")) count++;
   if (isExaminerAccountsColumnVisible(columnVisibility, "source")) count++;
   return count;

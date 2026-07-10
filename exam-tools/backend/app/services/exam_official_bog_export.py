@@ -71,6 +71,26 @@ class BogExportRow:
     full_name: str
     designation: str
     amount: Decimal
+    phone_number: str = ""
+    incomplete_bank: bool = False
+    reference_code: str = ""
+
+
+_FILL_INCOMPLETE = PatternFill(fill_type="solid", fgColor="FDE68A")
+
+# Examiner BoG: Phone + Reference code after Name.
+BOG_HEADER_LABELS_WITH_PHONE = [
+    "Serial",
+    "Sort code",
+    "Account number",
+    "Name",
+    "Reference code",
+    "Phone",
+    "Designation",
+    "Amount (GHS)",
+]
+
+BOG_COLUMN_WIDTHS_WITH_PHONE = [10, 12, 22, 28, 16, 14, 24, 16]
 
 
 def _bog_display_name(raw: str) -> str:
@@ -202,13 +222,24 @@ def _write_amount_cell(ws: object, row: int, column: int, value: Decimal) -> Non
     cell.number_format = AMOUNT_NUMBER_FORMAT
 
 
-def _style_data_row(ws: object, row: int, ncols: int, *, stripe: bool) -> None:
-    fill = _FILL_ZEBRA_ALT if stripe else _FILL_ZEBRA_BASE
+def _style_data_row(
+    ws: object,
+    row: int,
+    ncols: int,
+    *,
+    stripe: bool,
+    incomplete: bool = False,
+    name_column: int = NAME_COLUMN,
+) -> None:
+    if incomplete:
+        fill = _FILL_INCOMPLETE
+    else:
+        fill = _FILL_ZEBRA_ALT if stripe else _FILL_ZEBRA_BASE
     border = _grid_border()
     for col in range(1, ncols + 1):
         cell = ws.cell(row=row, column=col)
         cell.fill = fill
-        cell.font = _FONT_NAME if col == NAME_COLUMN else _FONT_DATA
+        cell.font = _FONT_NAME if col == name_column else _FONT_DATA
         cell.border = border
         cell.alignment = _data_alignment(col)
     ws.row_dimensions[row].height = 20
@@ -232,6 +263,7 @@ def bog_workbook_bytes(
     *,
     title: str | None = None,
     prebuilt_rows: list[BogExportRow] | None = None,
+    include_phone: bool = False,
 ) -> bytes:
     rows = prebuilt_rows if prebuilt_rows is not None else bog_export_rows(pairs, rates_by_designation)
     total = bog_grand_total(rows)
@@ -240,7 +272,14 @@ def bog_workbook_bytes(
     ws = wb.active
     assert ws is not None
     ws.title = "BoG payment"
-    ncols = len(BOG_HEADER_LABELS)
+    headers = BOG_HEADER_LABELS_WITH_PHONE if include_phone else BOG_HEADER_LABELS
+    widths = BOG_COLUMN_WIDTHS_WITH_PHONE if include_phone else BOG_COLUMN_WIDTHS
+    ncols = len(headers)
+    name_col = 4
+    reference_col = 5 if include_phone else None
+    phone_col = 6 if include_phone else None
+    designation_col = 7 if include_phone else DESIGNATION_COLUMN
+    amount_col = 8 if include_phone else AMOUNT_COLUMN
     start_row = 1
 
     if title:
@@ -248,7 +287,7 @@ def bog_workbook_bytes(
         start_row += 1
 
     header_row = start_row
-    for col, label in enumerate(BOG_HEADER_LABELS, start=1):
+    for col, label in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col, value=label)
     _style_header_row(ws, header_row, ncols)
 
@@ -258,10 +297,21 @@ def bog_workbook_bytes(
         _write_text_cell(ws, r, SERIAL_COLUMN, row.serial)
         _write_text_cell(ws, r, SORT_CODE_COLUMN, row.sort_code)
         _write_text_cell(ws, r, ACCOUNT_COLUMN, row.account_number)
-        _write_text_cell(ws, r, NAME_COLUMN, row.full_name)
-        _write_text_cell(ws, r, DESIGNATION_COLUMN, row.designation)
-        _write_amount_cell(ws, r, AMOUNT_COLUMN, row.amount)
-        _style_data_row(ws, r, ncols, stripe=idx % 2 == 1)
+        _write_text_cell(ws, r, name_col, row.full_name)
+        if reference_col is not None:
+            _write_text_cell(ws, r, reference_col, row.reference_code or "")
+        if phone_col is not None:
+            _write_text_cell(ws, r, phone_col, row.phone_number or "")
+        _write_text_cell(ws, r, designation_col, row.designation)
+        _write_amount_cell(ws, r, amount_col, row.amount)
+        _style_data_row(
+            ws,
+            r,
+            ncols,
+            stripe=idx % 2 == 1,
+            incomplete=row.incomplete_bank,
+            name_column=name_col,
+        )
 
     total_row = data_row + len(rows)
     total_border = _grid_border(total_top=True)
@@ -270,18 +320,18 @@ def bog_workbook_bytes(
         cell.fill = _FILL_TOTAL
         cell.font = _FONT_TOTAL
         cell.border = total_border
-    ws.cell(row=total_row, column=DESIGNATION_COLUMN, value=GRAND_TOTAL_LABEL)
-    _write_amount_cell(ws, total_row, AMOUNT_COLUMN, total)
-    ws.cell(row=total_row, column=DESIGNATION_COLUMN).alignment = Alignment(
+    ws.cell(row=total_row, column=designation_col, value=GRAND_TOTAL_LABEL)
+    _write_amount_cell(ws, total_row, amount_col, total)
+    ws.cell(row=total_row, column=designation_col).alignment = Alignment(
         horizontal="right", vertical="center"
     )
-    ws.cell(row=total_row, column=AMOUNT_COLUMN).font = _FONT_TOTAL
-    ws.cell(row=total_row, column=AMOUNT_COLUMN).alignment = Alignment(
+    ws.cell(row=total_row, column=amount_col).font = _FONT_TOTAL
+    ws.cell(row=total_row, column=amount_col).alignment = Alignment(
         horizontal="right", vertical="center"
     )
     ws.row_dimensions[total_row].height = 22
 
-    for i, w in enumerate(BOG_COLUMN_WIDTHS, start=1):
+    for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     last_data_row = total_row - 1 if rows else header_row

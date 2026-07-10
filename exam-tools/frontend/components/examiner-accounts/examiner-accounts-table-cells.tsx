@@ -8,13 +8,22 @@ import type { AdminExaminerAllowanceRow, ExaminerTypeApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export function isBankAccountIncomplete(row: AdminExaminerAllowanceRow): boolean {
-  return !row.bank_name?.trim() || !row.branch_name?.trim() || !row.account_number?.trim();
+  return (
+    !row.bank_name?.trim() ||
+    !row.branch_name?.trim() ||
+    !row.bank_code?.trim() ||
+    !row.account_number?.trim()
+  );
 }
 
-function examinerSubline(row: AdminExaminerAllowanceRow, showRegion: boolean): string {
+function examinerSubline(
+  row: AdminExaminerAllowanceRow,
+  showRegion: boolean,
+  showPhoneInSubline: boolean,
+): string {
   const parts: string[] = [];
   if (showRegion && row.region?.trim()) parts.push(row.region.trim());
-  if (row.phone_number?.trim()) parts.push(row.phone_number.trim());
+  if (showPhoneInSubline && row.phone_number?.trim()) parts.push(row.phone_number.trim());
   return parts.join(" · ");
 }
 
@@ -22,13 +31,21 @@ type IdentityProps = {
   row: AdminExaminerAllowanceRow;
   showRole: boolean;
   showRegion: boolean;
+  /** When false, phone is shown as its own column instead of under the name. */
+  showPhoneInSubline?: boolean;
   rowIndex?: number;
 };
 
-export function ExaminerIdentityCell({ row, showRole, showRegion, rowIndex }: IdentityProps) {
+export function ExaminerIdentityCell({
+  row,
+  showRole,
+  showRegion,
+  showPhoneInSubline = true,
+  rowIndex,
+}: IdentityProps) {
   const roleAbbrev = EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const roleFull = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
-  const subline = examinerSubline(row, showRegion);
+  const subline = examinerSubline(row, showRegion, showPhoneInSubline);
 
   return (
     <div className="min-w-0">
@@ -118,5 +135,7 @@ export function ExaminerScriptsCell({ scriptCount }: ScriptsProps) {
 }
 
 export function examinerRowIncompleteClass(row: AdminExaminerAllowanceRow): string {
-  return isBankAccountIncomplete(row) ? "border-l-2 border-l-amber-500/50" : "";
+  return isBankAccountIncomplete(row)
+    ? "border-l-2 border-l-amber-500 bg-amber-500/[0.06] dark:bg-amber-400/[0.08]"
+    : "";
 }

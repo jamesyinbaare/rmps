@@ -53,6 +53,9 @@ from app.services.coordination_schedule import (
 from app.services.examiner_invitation import (
     _examiner_type_label,
     effective_examiner_type_for_portal,
+    effective_invitee_name_for_portal,
+    effective_phone_for_portal,
+    effective_region_for_portal,
     subject_display_code,
 )
 from app.services.pdf_generator import render_html
@@ -457,6 +460,9 @@ async def build_examiner_appointment_letter_pdf(
     examiner_type = effective_examiner_type_for_portal(inv, examiner)
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))
+    invitee_name = effective_invitee_name_for_portal(inv, examiner)
+    phone_number = effective_phone_for_portal(inv, examiner)
+    region = effective_region_for_portal(inv, examiner)
 
     if session is not None:
         reference_number = await resolve_appointment_letter_reference_number(
@@ -478,12 +484,12 @@ async def build_examiner_appointment_letter_pdf(
 
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
-        invitee_name=inv.name,
-        phone_number=inv.phone_number,
+        invitee_name=invitee_name,
+        phone_number=phone_number,
         examiner_type=examiner_type,
         examiner_type_label=_examiner_type_label(examiner_type),
         subject=subject,
-        region=inv.region.value,
+        region=region.value,
         coordination_context=coordination_context,
         signatory_context=await _load_signatory_context(session, int(exam.id), int(subject.id))
             if session is not None
@@ -495,7 +501,7 @@ async def build_examiner_appointment_letter_pdf(
                 session,
                 examination_id=int(exam.id),
                 examiner_type=examiner_type,
-                region=inv.region,
+                region=region,
                 subject_id=int(subject.id),
             )
         )
@@ -512,7 +518,7 @@ async def build_examiner_appointment_letter_pdf(
         reference_number=reference_number,
         letter_date=letter_date,
     )
-    fn = f"appointment_letter_{_sanitize_filename_part(inv.name)}.pdf"
+    fn = f"appointment_letter_{_sanitize_filename_part(invitee_name)}.pdf"
     return pdf_bytes, fn
 
 

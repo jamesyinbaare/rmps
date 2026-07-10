@@ -12,6 +12,7 @@ from app.services.exam_official_bog_export import (
     bog_workbook_bytes,
     exam_bog_export_filename,
 )
+from app.services.examiner_allowance_export import bank_account_incomplete
 from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiner_to_admin_row
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_compensation import (
@@ -77,11 +78,9 @@ def bog_rows_from_admin_items(
     for item in sorted_items:
         account = (item.account_number or "").strip()
         sort_code = (item.bank_code or "").strip()
-        if not account or not sort_code:
-            continue
         amount = payout_amount_for_mode(item, mode)
-        if amount <= 0:
-            continue
+        if amount < 0:
+            amount = Decimal("0")
         serial += 1
         rows.append(
             BogExportRow(
@@ -91,6 +90,9 @@ def bog_rows_from_admin_items(
                 full_name=_bog_display_name(item.full_name),
                 designation=_role_label(item.examiner_type),
                 amount=amount,
+                phone_number=(item.phone_number or "").strip(),
+                incomplete_bank=bank_account_incomplete(item),
+                reference_code=(item.reference_code or "").strip(),
             )
         )
     return rows
@@ -127,7 +129,7 @@ def examiner_bog_workbook_bytes(
         for ex in examiners
     ]
     rows = bog_rows_from_admin_items(items, mode)
-    return bog_workbook_bytes([], {}, title=title, prebuilt_rows=rows)
+    return bog_workbook_bytes([], {}, title=title, prebuilt_rows=rows, include_phone=True)
 
 
 def examiner_bog_export_filename(exam_part: str, mode: ExaminerBogPayoutMode = ExaminerBogPayoutMode.ALL) -> str:
