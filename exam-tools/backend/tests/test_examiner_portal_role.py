@@ -11,6 +11,9 @@ import pytest
 from app.models import ExaminerInvitationStatus, ExaminerType, Region
 from app.services.examiner_invitation import (
     effective_examiner_type_for_portal,
+    effective_invitee_name_for_portal,
+    effective_phone_for_portal,
+    effective_region_for_portal,
     sync_accepted_invitation_role_from_roster,
 )
 from app.services.examiner_portal import ResolvedPortalInvitation
@@ -47,9 +50,36 @@ def _mock_examiner(**overrides: object) -> MagicMock:
     examiner.examiner_type = ExaminerType.TEAM_LEADER
     examiner.reference_code = "MATH301-TL1"
     examiner.examination_id = 1
+    examiner.name = "Roster Name"
+    examiner.phone_number = "0551111111"
+    examiner.region = Region.GREATER_ACCRA
     for key, value in overrides.items():
         setattr(examiner, key, value)
     return examiner
+
+
+def test_effective_identity_uses_roster_for_accepted_linked_examiner() -> None:
+    examiner_id = uuid4()
+    inv = _mock_invitation(examiner_id=examiner_id)
+    examiner = _mock_examiner(
+        id=examiner_id,
+        name="Roster Jane",
+        phone_number="0559999999",
+        region=Region.NORTHERN,
+    )
+
+    assert effective_invitee_name_for_portal(inv, examiner) == "Roster Jane"
+    assert effective_phone_for_portal(inv, examiner) == "0559999999"
+    assert effective_region_for_portal(inv, examiner) == Region.NORTHERN
+
+
+def test_effective_identity_uses_invitation_when_pending() -> None:
+    inv = _mock_invitation(status=ExaminerInvitationStatus.PENDING, examiner_id=None)
+    examiner = _mock_examiner()
+
+    assert effective_invitee_name_for_portal(inv, examiner) == "Jane Doe"
+    assert effective_phone_for_portal(inv, examiner) == "0240000000"
+    assert effective_region_for_portal(inv, examiner) == Region.ASHANTI
 
 
 def test_effective_examiner_type_uses_roster_for_accepted_linked_examiner() -> None:
@@ -131,6 +161,9 @@ async def test_public_invitation_portal_view_uses_roster_role() -> None:
 
     assert summary["examiner_type"] == ExaminerType.TEAM_LEADER.value
     assert summary["examiner_type_label"] == "Team leader"
+    assert summary["invitee_name"] == "Roster Name"
+    assert summary["phone_number"] == "0551111111"
+    assert summary["region"] == Region.GREATER_ACCRA.value
 
 
 @pytest.mark.asyncio
@@ -143,6 +176,7 @@ async def test_build_examiner_appointment_letter_pdf_uses_roster_role() -> None:
     session = AsyncMock()
     session.get = AsyncMock(return_value=examiner)
     captured: dict = {}
+    fee_region: dict = {}
 
     async def _fake_coordination(*_args, **_kwargs) -> dict:
         return {
@@ -154,7 +188,8 @@ async def test_build_examiner_appointment_letter_pdf_uses_roster_role() -> None:
     async def _fake_reference_number(*_args, **_kwargs) -> str:
         return "REF-001"
 
-    async def _fake_fee_context(*_args, **_kwargs) -> dict:
+    async def _fake_fee_context(*_args, **kwargs) -> dict:
+        fee_region["region"] = kwargs.get("region")
         return {}
 
     async def _fake_signatory(*_args, **_kwargs) -> dict:
@@ -195,9 +230,14 @@ async def test_build_examiner_appointment_letter_pdf_uses_roster_role() -> None:
             side_effect=_fake_render,
         ),
     ):
-        pdf, _filename = await build_examiner_appointment_letter_pdf(inv, session)
+        pdf, filename = await build_examiner_appointment_letter_pdf(inv, session)
 
     assert pdf == b"%PDF"
     assert captured["context"]["examiner_type"] == ExaminerType.TEAM_LEADER.value
     assert captured["context"]["examiner_type_label"] == "Team leader"
     assert captured["context"]["examiner_role_title"] == "Team Leader"
+    assert captured["context"]["invitee_name"] == "Roster Name"
+    assert captured["context"]["phone_number"] == "0551111111"
+    assert captured["context"]["region"] == Region.GREATER_ACCRA.value
+    assert fee_region["region"] == Region.GREATER_ACCRA
+    assert "Roster" in filename

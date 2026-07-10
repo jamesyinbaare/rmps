@@ -109,6 +109,54 @@ def effective_examiner_type_for_portal(
     return ExaminerType(str(invitation_type))
 
 
+def _roster_linked_for_portal(
+    inv: ExaminerInvitation,
+    examiner: Examiner | None,
+) -> bool:
+    return (
+        examiner is not None
+        and inv.status == ExaminerInvitationStatus.ACCEPTED
+        and inv.examiner_id is not None
+        and inv.examiner_id == examiner.id
+    )
+
+
+def effective_invitee_name_for_portal(
+    inv: ExaminerInvitation,
+    examiner: Examiner | None = None,
+) -> str:
+    """Prefer roster name for accepted invitees; otherwise invitation name."""
+    if _roster_linked_for_portal(inv, examiner):
+        return examiner.name  # type: ignore[union-attr]
+    return inv.name
+
+
+def effective_phone_for_portal(
+    inv: ExaminerInvitation,
+    examiner: Examiner | None = None,
+) -> str:
+    """Prefer roster phone for accepted invitees; otherwise invitation phone."""
+    if _roster_linked_for_portal(inv, examiner):
+        return (examiner.phone_number or "")  # type: ignore[union-attr]
+    return inv.phone_number or ""
+
+
+def effective_region_for_portal(
+    inv: ExaminerInvitation,
+    examiner: Examiner | None = None,
+) -> Region:
+    """Prefer roster region for accepted invitees; otherwise invitation region."""
+    if _roster_linked_for_portal(inv, examiner):
+        region = examiner.region  # type: ignore[union-attr]
+        if isinstance(region, Region):
+            return region
+        return Region(str(region))
+    region = inv.region
+    if isinstance(region, Region):
+        return region
+    return Region(str(region))
+
+
 def sync_accepted_invitation_role_from_roster(
     examiner: Examiner,
     examiner_type: ExaminerType,

@@ -2919,6 +2919,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   subject_id?: number | null;
   group_id?: string | null;
   search?: string | null;
+  include_fields?: string[] | null;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
@@ -2928,6 +2929,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
   if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.include_fields?.length) q.set("include_fields", params.include_fields.join(","));
   await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
 }
 

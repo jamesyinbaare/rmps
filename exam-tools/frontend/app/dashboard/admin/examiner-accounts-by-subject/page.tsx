@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
 
 import { ExaminerAccountsColumnsPopover } from "@/components/examiner-accounts/examiner-accounts-columns-popover";
+import { ExaminerAllowanceExportFieldsDialog } from "@/components/examiner-accounts/examiner-allowance-export-fields-dialog";
 import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
 import {
@@ -49,6 +50,7 @@ import {
   type ExaminerPayoutView,
 } from "@/lib/examiner-payout-view";
 import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
+import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
 import { formatGhsAmount } from "@/lib/format-ghs";
 import type { VisibilityState } from "@tanstack/react-table";
 
@@ -100,6 +102,7 @@ function ExaminerAccountsBySubjectContent() {
   const [rowsBusy, setRowsBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [excelExportOpen, setExcelExportOpen] = useState(false);
   const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
@@ -499,6 +502,10 @@ function ExaminerAccountsBySubjectContent() {
 
   async function onExport(key: string) {
     if (examId == null || !selectedExam || !subjectId.trim()) return;
+    if (key === "excel") {
+      setExcelExportOpen(true);
+      return;
+    }
     setExportBusy(`${SECTION_ID}:${key}`);
     try {
       const base = exportFilenameBase(selectedExam, selectedSummary?.subject_code, paperNumber);
@@ -509,12 +516,7 @@ function ExaminerAccountsBySubjectContent() {
         region: regionFilter || null,
         search: searchQuery.trim() || null,
       };
-      if (key === "excel") {
-        await downloadAdminExaminerAllowancesExport({
-          ...exportParams,
-          filename: `${base}_examiner_allowances.xlsx`,
-        });
-      } else if (key === "bog_all") {
+      if (key === "bog_all") {
         await downloadAdminExaminerAllowancesBogExport({
           ...exportParams,
           payout_mode: "all",
@@ -533,6 +535,28 @@ function ExaminerAccountsBySubjectContent() {
           filename: `${base}_${bogExportFilenameSuffix("allowances_marking")}.xlsx`,
         });
       }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExportBusy(null);
+    }
+  }
+
+  async function onConfirmExcelExport(includeFields: ExaminerAllowanceOptionalExportField[]) {
+    if (examId == null || !selectedExam || !subjectId.trim()) return;
+    setExportBusy(`${SECTION_ID}:excel`);
+    try {
+      const base = exportFilenameBase(selectedExam, selectedSummary?.subject_code, paperNumber);
+      await downloadAdminExaminerAllowancesExport({
+        examination_id: examId,
+        subject_id: Number.parseInt(subjectId, 10),
+        group_id: cohortFilter || null,
+        region: regionFilter || null,
+        search: searchQuery.trim() || null,
+        include_fields: includeFields,
+        filename: `${base}_examiner_allowances.xlsx`,
+      });
+      setExcelExportOpen(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Export failed.");
     } finally {
@@ -771,6 +795,15 @@ function ExaminerAccountsBySubjectContent() {
           </section>
         ) : null}
       </div>
+
+      <ExaminerAllowanceExportFieldsDialog
+        open={excelExportOpen}
+        onClose={() => {
+          if (!exportBusy) setExcelExportOpen(false);
+        }}
+        busy={exportBusy === `${SECTION_ID}:excel`}
+        onConfirm={(fields) => void onConfirmExcelExport(fields)}
+      />
     </div>
   );
 }

@@ -28,7 +28,11 @@ from app.services.examiner_allowance_bog_export import (
     examiner_bog_export_filename,
     examiner_bog_workbook_bytes,
 )
-from app.services.examiner_allowance_export import examiner_detail_workbook_bytes, examiner_export_filename
+from app.services.examiner_allowance_export import (
+    examiner_detail_workbook_bytes,
+    examiner_export_filename,
+    parse_include_fields,
+)
 from app.services.examiner_allowance_list import examiners_to_admin_rows
 from app.services.examiner_allocated_booklets import (
     load_effective_allocated_booklets_map,
@@ -210,11 +214,16 @@ async def admin_export_examiner_allowances(
     subject_id: int | None = Query(None),
     group_id: UUID | None = Query(None),
     search: str | None = Query(None),
+    include_fields: str | None = Query(
+        None,
+        description="Comma-separated optional columns: travel_zone, subject_names",
+    ),
 ) -> Response:
     ex = await _load_examination(session, examination_id)
     role_filter = _examiner_type_filter_from_query(role)
     region_filter = _region_filter_from_query(region)
     group_filter = await _resolve_group_filter(session, examination_id, subject_id, group_id)
+    extra_fields = parse_include_fields(include_fields)
 
     stmt = _base_examiner_stmt(
         examination_id,
@@ -250,6 +259,7 @@ async def admin_export_examiner_allowances(
         travel_factors,
         allocated_booklets,
         source_modes,
+        include_fields=extra_fields,
     )
     filename = examiner_export_filename(ex)
     return Response(

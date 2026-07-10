@@ -18,6 +18,9 @@ from app.services.examiner_invitation import (
     _expire_if_confirmation_deadline_passed,
     _is_publicly_accessible,
     effective_examiner_type_for_portal,
+    effective_invitee_name_for_portal,
+    effective_phone_for_portal,
+    effective_region_for_portal,
     invitation_coordination_summary,
     public_invitation_view,
 )
@@ -191,6 +194,9 @@ async def public_invitation_portal_view(
             effective_type = effective_examiner_type_for_portal(inv, examiner)
             summary["examiner_type"] = effective_type.value
             summary["examiner_type_label"] = _examiner_type_label(effective_type)
+            summary["invitee_name"] = effective_invitee_name_for_portal(inv, examiner)
+            summary["phone_number"] = effective_phone_for_portal(inv, examiner)
+            summary["region"] = effective_region_for_portal(inv, examiner).value
         summary["marking_cohorts"] = await _marking_cohorts_for_examiner(
             session,
             examination_id=int(inv.examination_id),

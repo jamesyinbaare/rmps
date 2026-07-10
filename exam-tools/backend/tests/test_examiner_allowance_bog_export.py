@@ -70,15 +70,23 @@ def _row(
     )
 
 
-def test_bog_rows_skip_missing_bank_and_zero_total() -> None:
+def test_bog_rows_include_missing_bank_and_zero_total() -> None:
     items = [
         _row(name="Alice", account=""),
         _row(name="Bob", total="0"),
         _row(name="Carol"),
     ]
     rows = bog_rows_from_admin_items(items)
-    assert len(rows) == 1
-    assert rows[0].full_name == "CAROL"
+    assert len(rows) == 3
+    by_name = {r.full_name: r for r in rows}
+    assert by_name["ALICE"].account_number == ""
+    assert by_name["ALICE"].sort_code == "001234"
+    assert by_name["ALICE"].phone_number == "0550000000"
+    assert by_name["ALICE"].incomplete_bank is True
+    assert by_name["BOB"].amount == Decimal("0")
+    assert by_name["CAROL"].account_number == "1234567890123"
+    assert by_name["CAROL"].amount == Decimal("200.00")
+    assert by_name["CAROL"].incomplete_bank is False
 
 
 def test_examiner_bog_workbook_grand_total() -> None:

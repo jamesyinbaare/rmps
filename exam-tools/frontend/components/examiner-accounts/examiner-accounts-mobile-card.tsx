@@ -21,6 +21,7 @@ type Props = {
   payoutView: ExaminerPayoutView;
   showRole?: boolean;
   showRegion?: boolean;
+  showPhone?: boolean;
 };
 
 export function ExaminerAccountsMobileCard({
@@ -31,28 +32,33 @@ export function ExaminerAccountsMobileCard({
   payoutView,
   showRole = false,
   showRegion = true,
+  showPhone = true,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const roleAbbrev = EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const roleFull = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const scriptSource = scriptSourceSummary(row.subject_breakdowns, { subjectId, paperNumber });
   const incomplete = isBankAccountIncomplete(row);
+  const phone = row.phone_number?.trim() || null;
 
   return (
     <article
       className={cn(
         "rounded-xl border border-border bg-card p-3 shadow-sm",
-        incomplete && "border-l-2 border-l-amber-500/50",
+        incomplete && "border-l-2 border-l-amber-500 bg-amber-500/[0.06] dark:bg-amber-400/[0.08]",
       )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-foreground">{row.full_name}</p>
           <p className="text-xs text-muted-foreground">
-            {[showRegion && row.region ? row.region : null, row.phone_number?.trim() || null]
+            {[showRegion && row.region ? row.region : null, !showPhone ? phone : null]
               .filter(Boolean)
               .join(" · ") || "—"}
           </p>
+          {showPhone && phone ? (
+            <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">{phone}</p>
+          ) : null}
           {showRole ? (
             <p className="mt-0.5 text-xs text-muted-foreground" title={roleFull}>
               {roleAbbrev}
