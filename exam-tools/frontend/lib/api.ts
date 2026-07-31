@@ -7257,13 +7257,17 @@ export const WORKFORCE_PAPER_OPTIONS = [1, 2] as const;
 export type WorkforceRatesResponse = {
   examination_id: number;
   rate_per_script_ghs: string | null;
+  objective_rate_per_script_ghs?: string | null;
+  subjective_rate_per_script_ghs?: string | null;
   commuting_allowance_ghs: string | null;
   lunch_allowance_ghs: string | null;
   withholding_tax_percent: string;
 };
 
 export type WorkforceRatesPutPayload = {
-  rate_per_script_ghs: string;
+  rate_per_script_ghs?: string;
+  objective_rate_per_script_ghs?: string;
+  subjective_rate_per_script_ghs?: string;
   commuting_allowance_ghs: string;
   lunch_allowance_ghs: string;
   withholding_tax_percent: string;
@@ -7276,6 +7280,8 @@ export type WorkforcePayoutCompletedBatchLine = {
   paper_number: number;
   script_count: number;
   batch_sequence: number;
+  rate_per_script_ghs?: string | null;
+  line_gross_ghs?: string | null;
 };
 
 export type WorkforcePayoutRow = {
@@ -7288,6 +7294,8 @@ export type WorkforcePayoutRow = {
   completed_scripts: number;
   num_days: number;
   rate_per_script_ghs: string;
+  objective_rate_per_script_ghs?: string | null;
+  subjective_rate_per_script_ghs?: string | null;
   commuting_allowance_ghs: string;
   lunch_allowance_ghs: string;
   commuting_payable_ghs: string;
@@ -7340,6 +7348,15 @@ export type WorkforcePublicPortal = {
   active_batches: WorkforcePublicBatchRow[];
   completed_batches: WorkforcePublicBatchRow[];
   has_bank_account: boolean;
+  appointment_letters_available?: boolean;
+  appointment_letters_pending_message?: string | null;
+  bank_details_editable?: boolean;
+  bank_details_pending_message?: string | null;
+  exercise_start_date?: string | null;
+  work_start_time?: string | null;
+  work_end_time?: string | null;
+  venue?: string | null;
+  cohort_name?: string | null;
 };
 
 export type WorkforceAvailabilityActionResponse = {
@@ -7411,6 +7428,23 @@ export async function declinePublicWorkforceAvailability(
     `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/decline`,
     { method: "POST" },
   );
+}
+
+export async function downloadPublicWorkforceAppointmentLetterPdf(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  filename = "appointment_letter.pdf",
+): Promise<void> {
+  const res = await publicApiFetch(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/appointment-letter.pdf`,
+  );
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function getPublicWorkforceBankAccount(
@@ -7541,6 +7575,293 @@ export async function bulkSendAdminWorkforceInviteSms(
   return apiJson<WorkforceBulkInviteSmsResponse>(
     `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/bulk-invite-sms`,
     { method: "POST", body: JSON.stringify({ ids }) },
+  );
+}
+
+export type WorkforceBulkImportRowError = {
+  row_number: number;
+  message: string;
+};
+
+export type WorkforceBulkImportResponse = {
+  created_count: number;
+  errors: WorkforceBulkImportRowError[];
+  items: WorkforceRosterRow[];
+};
+
+export async function downloadAdminWorkforceRosterBulkUploadTemplate(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/bulk-upload/template`,
+    `${workforceRosterSegment(kind)}_bulk_template.xlsx`,
+  );
+}
+
+export async function uploadAdminWorkforceRosterBulkUpload(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  file: File,
+  options?: { sendSms?: boolean; availabilityDeadline?: string | null },
+): Promise<WorkforceBulkImportResponse> {
+  const q = new URLSearchParams();
+  if (options?.sendSms) q.set("send_sms", "true");
+  if (options?.availabilityDeadline) q.set("availability_deadline", options.availabilityDeadline);
+  const qs = q.toString();
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiJson<WorkforceBulkImportResponse>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/bulk-upload${qs ? `?${qs}` : ""}`,
+    { method: "POST", body: formData },
+  );
+}
+
+// --- Workforce exercise cohorts (script checker / data entry clerk) ---
+
+function workforceCohortSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-cohorts" : "data-entry-clerk-cohorts";
+}
+
+export type WorkforceExerciseGroupRow = {
+  id: string;
+  examination_id: number;
+  kind: string;
+  name: string;
+  is_default: boolean;
+  member_person_ids: string[];
+  member_count: number;
+  exercise_start_date: string | null;
+  work_start_time: string | null;
+  work_end_time: string | null;
+  venue: string | null;
+  appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at: string | null;
+  bank_details_editable: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkforceExerciseGroupCreatePayload = {
+  name: string;
+  exercise_start_date?: string | null;
+  work_start_time?: string | null;
+  work_end_time?: string | null;
+  venue?: string | null;
+};
+
+export type WorkforceExerciseGroupUpdatePayload = Partial<WorkforceExerciseGroupCreatePayload>;
+
+export type WorkforceExerciseGroupReleaseRow = {
+  examination_id: number;
+  kind: string;
+  group_id: string;
+  group_name: string;
+  is_default: boolean;
+  appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at: string | null;
+  bank_details_editable: boolean;
+  updated_at: string;
+  rostered_person_count: number;
+  pending_release_count: number;
+  eligible_now_count: number;
+  notified_count: number;
+};
+
+export type WorkforceExerciseGroupReleasePutPayload = {
+  appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
+  bank_details_editable: boolean;
+};
+
+export async function listWorkforceExerciseGroups(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceExerciseGroupRow[]> {
+  return apiJson<WorkforceExerciseGroupRow[]>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}`,
+  );
+}
+
+export async function createWorkforceExerciseGroup(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  payload: WorkforceExerciseGroupCreatePayload,
+): Promise<WorkforceExerciseGroupRow> {
+  return apiJson<WorkforceExerciseGroupRow>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function updateWorkforceExerciseGroup(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+  payload: WorkforceExerciseGroupUpdatePayload,
+): Promise<WorkforceExerciseGroupRow> {
+  return apiJson<WorkforceExerciseGroupRow>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function deleteWorkforceExerciseGroup(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+): Promise<void> {
+  await apiJson<void>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function setWorkforceExerciseGroupMembers(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+  personIds: string[],
+): Promise<WorkforceExerciseGroupRow> {
+  return apiJson<WorkforceExerciseGroupRow>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}/members`,
+    { method: "PUT", body: JSON.stringify({ person_ids: personIds }) },
+  );
+}
+
+export async function getWorkforceExerciseGroupRelease(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+): Promise<WorkforceExerciseGroupReleaseRow> {
+  return apiJson<WorkforceExerciseGroupReleaseRow>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}/release`,
+  );
+}
+
+export async function putWorkforceExerciseGroupRelease(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+  payload: WorkforceExerciseGroupReleasePutPayload,
+): Promise<WorkforceExerciseGroupReleaseRow> {
+  return apiJson<WorkforceExerciseGroupReleaseRow>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}/release`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function notifyWorkforceExerciseGroupAppointmentLetters(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  groupId: string,
+): Promise<NotifyEligibleAppointmentLettersResponse> {
+  return apiJson<NotifyEligibleAppointmentLettersResponse>(
+    `/admin/examinations/${examinationId}/${workforceCohortSegment(kind)}/${groupId}/notify-eligible-appointment-letters`,
+    { method: "POST" },
+  );
+}
+
+// --- Workforce appointment letter settings (script checker / data entry clerk) ---
+
+function workforceLetterSettingsSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker"
+    ? "script-checker-appointment-letter-settings"
+    : "data-entry-clerk-appointment-letter-settings";
+}
+
+export type WorkforceAppointmentLetterSettings = {
+  examination_id: number;
+  kind: "script_checker" | "data_entry_clerk";
+  signing_official: AppointmentLetterSigningOfficial;
+  signed_for_director_general: boolean;
+  director_general_name: string;
+  director_general_title: string;
+  director_assessment_name: string;
+  director_assessment_title: string;
+  valediction: string;
+  letter_date: string | null;
+  reference_number: string;
+  cc_lines: string[];
+  director_general_signature: AppointmentLetterSignatureMeta;
+  director_assessment_signature: AppointmentLetterSignatureMeta;
+  updated_at: string | null;
+};
+
+export type WorkforceAppointmentLetterSettingsPutPayload = Omit<
+  WorkforceAppointmentLetterSettings,
+  "examination_id" | "kind" | "director_general_signature" | "director_assessment_signature" | "updated_at"
+>;
+
+export async function getWorkforceAppointmentLetterSettings(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceAppointmentLetterSettings> {
+  return apiJson<WorkforceAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/${workforceLetterSettingsSegment(kind)}`,
+  );
+}
+
+export async function putWorkforceAppointmentLetterSettings(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  body: WorkforceAppointmentLetterSettingsPutPayload,
+): Promise<WorkforceAppointmentLetterSettings> {
+  return apiJson<WorkforceAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/${workforceLetterSettingsSegment(kind)}`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export async function uploadWorkforceAppointmentLetterSignature(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+  file: File,
+): Promise<WorkforceAppointmentLetterSettings> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiJson<WorkforceAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/${workforceLetterSettingsSegment(kind)}/signatures/${role}`,
+    { method: "POST", body },
+  );
+}
+
+export async function deleteWorkforceAppointmentLetterSignature(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<WorkforceAppointmentLetterSettings> {
+  return apiJson<WorkforceAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/${workforceLetterSettingsSegment(kind)}/signatures/${role}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchWorkforceAppointmentLetterSignatureBlobUrl(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examinationId}/${workforceLetterSettingsSegment(kind)}/signatures/${role}`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function downloadWorkforceAppointmentLetterPreviewPdf(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  filename = "appointment_letter_preview.pdf",
+): Promise<void> {
+  const segment = kind === "script-checker" ? "script-checker" : "data-entry-clerk";
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/${segment}-appointment-letter-preview.pdf`,
+    filename,
   );
 }
 

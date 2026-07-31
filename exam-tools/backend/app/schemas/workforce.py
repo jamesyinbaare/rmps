@@ -58,6 +58,39 @@ class WorkforceRosterResponse(BaseModel):
     updated_at: datetime
 
 
+class WorkforceRosterBulkUploadError(BaseModel):
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class WorkforceRosterBulkUploadRow(BaseModel):
+    row_number: int
+    id: UUID
+    name: str
+    reference_code: str | None = None
+    cohort_name: str | None = None
+
+
+class WorkforceRosterBulkUploadResponse(BaseModel):
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[WorkforceRosterBulkUploadError] = Field(default_factory=list)
+    created: list[WorkforceRosterBulkUploadRow] = Field(default_factory=list)
+
+
+class WorkforceBulkImportRowError(BaseModel):
+    row_number: int = Field(description="1-based spreadsheet row number (row 1 is the header).")
+    message: str
+
+
+class WorkforceBulkImportResponse(BaseModel):
+    created_count: int
+    errors: list[WorkforceBulkImportRowError]
+    items: list[WorkforceRosterResponse] = Field(default_factory=list)
+
+
 class WorkforceBulkInviteSmsRequest(BaseModel):
     ids: list[UUID] = Field(min_length=1)
 
@@ -120,6 +153,25 @@ class WorkforceAssignmentBatchCreate(BaseModel):
 
 
 class WorkforceRatesPut(BaseModel):
+    """Legacy combined put body; prefer ScriptCheckerRatesPut / DataEntryClerkRatesPut."""
+
+    rate_per_script_ghs: Decimal | None = Field(default=None, ge=0)
+    objective_rate_per_script_ghs: Decimal | None = Field(default=None, ge=0)
+    subjective_rate_per_script_ghs: Decimal | None = Field(default=None, ge=0)
+    commuting_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
+    lunch_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
+    withholding_tax_percent: Decimal = Field(default=Decimal("10"), ge=0, le=100)
+
+
+class ScriptCheckerRatesPut(BaseModel):
+    objective_rate_per_script_ghs: Decimal = Field(ge=0)
+    subjective_rate_per_script_ghs: Decimal = Field(ge=0)
+    commuting_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
+    lunch_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
+    withholding_tax_percent: Decimal = Field(default=Decimal("10"), ge=0, le=100)
+
+
+class DataEntryClerkRatesPut(BaseModel):
     rate_per_script_ghs: Decimal = Field(ge=0)
     commuting_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
     lunch_allowance_ghs: Decimal = Field(default=Decimal("0"), ge=0)
@@ -129,6 +181,8 @@ class WorkforceRatesPut(BaseModel):
 class WorkforceRatesResponse(BaseModel):
     examination_id: int
     rate_per_script_ghs: Decimal | None = None
+    objective_rate_per_script_ghs: Decimal | None = None
+    subjective_rate_per_script_ghs: Decimal | None = None
     commuting_allowance_ghs: Decimal | None = None
     lunch_allowance_ghs: Decimal | None = None
     withholding_tax_percent: Decimal = Field(default=Decimal("10"))
@@ -141,6 +195,8 @@ class WorkforcePayoutCompletedBatchLine(BaseModel):
     paper_number: int
     script_count: int
     batch_sequence: int
+    rate_per_script_ghs: Decimal | None = None
+    line_gross_ghs: Decimal | None = None
 
 
 class WorkforcePayoutRow(BaseModel):
@@ -153,6 +209,8 @@ class WorkforcePayoutRow(BaseModel):
     completed_scripts: int
     num_days: int
     rate_per_script_ghs: Decimal
+    objective_rate_per_script_ghs: Decimal | None = None
+    subjective_rate_per_script_ghs: Decimal | None = None
     commuting_allowance_ghs: Decimal
     lunch_allowance_ghs: Decimal
     commuting_payable_ghs: Decimal
@@ -212,6 +270,15 @@ class WorkforcePublicPortalResponse(BaseModel):
     active_batches: list[WorkforcePublicBatchRow]
     completed_batches: list[WorkforcePublicBatchRow]
     has_bank_account: bool
+    appointment_letters_available: bool = False
+    appointment_letters_pending_message: str | None = None
+    bank_details_editable: bool = False
+    bank_details_pending_message: str | None = None
+    exercise_start_date: str | None = None
+    work_start_time: str | None = None
+    work_end_time: str | None = None
+    venue: str | None = None
+    cohort_name: str | None = None
 
 
 class WorkforceAvailabilityActionResponse(BaseModel):

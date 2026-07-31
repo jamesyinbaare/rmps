@@ -12,18 +12,25 @@ from app.services.workforce_compensation import (
     WorkforceRateConfig,
     compute_workforce_payout,
     rate_config_from_row,
+    rate_for_paper,
     work_days_from_batches,
 )
 
 
-def _batch(*, script_count: int, completed_at: datetime | None = None, status=WorkforceAssignmentBatchStatus.COMPLETED):
+def _batch(
+    *,
+    script_count: int,
+    paper_number: int = 1,
+    completed_at: datetime | None = None,
+    status=WorkforceAssignmentBatchStatus.COMPLETED,
+):
     batch = MagicMock()
     batch.status = status
     batch.script_count = script_count
     batch.completed_at = completed_at
     batch.assigned_at = datetime(2026, 6, 1, 9, 0)
     batch.subject_id = 1
-    batch.paper_number = 1
+    batch.paper_number = paper_number
     batch.batch_sequence = 1
     return batch
 
@@ -65,3 +72,27 @@ def test_compute_workforce_payout_applies_tax_and_daily_allowances() -> None:
     assert result.commuting_payable_ghs == Decimal("30.00")
     assert result.lunch_payable_ghs == Decimal("40.00")
     assert result.payable_ghs == Decimal("340.00")
+
+
+def test_script_checker_ot_st_rates_by_paper_number() -> None:
+    config = WorkforceRateConfig(
+        rate_per_script_ghs=Decimal("0.40"),
+        objective_rate_per_script_ghs=Decimal("0.40"),
+        subjective_rate_per_script_ghs=Decimal("0.50"),
+        commuting_allowance_ghs=Decimal("0"),
+        lunch_allowance_ghs=Decimal("0"),
+        withholding_tax_percent=Decimal("10"),
+        has_rate_row=True,
+    )
+    assert rate_for_paper(config, 1) == Decimal("0.40")
+    assert rate_for_paper(config, 2) == Decimal("0.50")
+
+    batches = [
+        _batch(script_count=100, paper_number=1, completed_at=datetime(2026, 6, 1, 12)),
+        _batch(script_count=100, paper_number=2, completed_at=datetime(2026, 6, 1, 13)),
+    ]
+    result = compute_workforce_payout(batches, config, subjects={})
+    # 100*0.40 + 100*0.50 = 90
+    assert result.script_gross_ghs == Decimal("90.00")
+    assert result.withholding_tax_ghs == Decimal("9.00")
+    assert result.payable_ghs == Decimal("81.00")

@@ -2,8 +2,9 @@
 
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, ClipboardList } from "lucide-react";
+import { CheckCircle2, ChevronDown, ClipboardList, MapPin } from "lucide-react";
 
+import { WorkforceAppointmentLetterSection } from "@/components/workforce/workforce-appointment-letter-section";
 import { WorkforceBankAccountForm } from "@/components/workforce/workforce-bank-account-form";
 import { WorkforcePortalLandingPanel } from "@/components/workforce/workforce-portal-landing-panel";
 import {
@@ -36,6 +37,18 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function formatTime(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const parts = raw.split(":");
+  if (parts.length < 2) return raw;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return raw;
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function BatchCard({
@@ -79,6 +92,61 @@ function BatchCard({
         {batch.completed_at ? ` · Completed ${formatDate(batch.completed_at)}` : ""}
       </p>
     </div>
+  );
+}
+
+function CompletedBatchesSection({
+  batches,
+  unitLabel,
+}: {
+  batches: WorkforcePublicBatchRow[];
+  unitLabel: string;
+}) {
+  const [open, setOpen] = useState(batches.length <= 3);
+
+  if (batches.length === 0) {
+    return (
+      <section className="mt-6" aria-labelledby="completed-work-heading">
+        <div className="mb-3 flex items-center gap-2">
+          <CheckCircle2 className="size-4 text-emerald-600" aria-hidden />
+          <h2 id="completed-work-heading" className="text-sm font-semibold text-foreground">
+            Completed batches
+          </h2>
+        </div>
+        <p className="rounded-xl border border-dashed border-border/80 bg-muted/10 px-3.5 py-4 text-center text-sm text-muted-foreground">
+          No completed batches yet.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-6" aria-labelledby="completed-work-heading">
+      <button
+        type="button"
+        className="mb-3 flex w-full items-center gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="completed-batches-list"
+      >
+        <CheckCircle2 className="size-4 shrink-0 text-emerald-600" aria-hidden />
+        <h2 id="completed-work-heading" className="min-w-0 flex-1 text-sm font-semibold text-foreground">
+          Completed batches
+          <span className="ml-1.5 font-normal tabular-nums text-muted-foreground">({batches.length})</span>
+        </h2>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <div id="completed-batches-list" className="space-y-2">
+          {batches.map((batch) => (
+            <BatchCard key={batch.id} batch={batch} variant="completed" unitLabel={unitLabel} />
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -141,6 +209,10 @@ export function WorkforcePublicPortalPage({ config }: Props) {
   const unitLabel = workUnitLabel(config.kind);
   const activeTotal = profile.active_batches.reduce((sum, b) => sum + b.script_count, 0);
   const completedTotal = profile.completed_batches.reduce((sum, b) => sum + b.script_count, 0);
+  const startTime = formatTime(profile.work_start_time);
+  const endTime = formatTime(profile.work_end_time);
+  const hasSchedule = Boolean(profile.exercise_start_date || profile.venue || startTime || endTime);
+  const bankEditable = profile.bank_details_editable === true;
 
   return (
     <WorkforcePortalShell portalLabel={config.label}>
@@ -156,6 +228,42 @@ export function WorkforcePublicPortalPage({ config }: Props) {
         <WorkforcePortalTile label="In progress" value={activeTotal > 0 ? `${activeTotal} ${unitLabel}` : "—"} />
         <WorkforcePortalTile label="Completed" value={completedTotal > 0 ? `${completedTotal} ${unitLabel}` : "—"} />
       </div>
+
+      {hasSchedule ? (
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card/90 p-4 shadow-sm" aria-labelledby="exercise-schedule-heading">
+          <div className="mb-2 flex items-center gap-2">
+            <MapPin className="size-4 text-primary" aria-hidden />
+            <h2 id="exercise-schedule-heading" className="text-sm font-semibold text-foreground">
+              Exercise schedule
+              {profile.cohort_name ? (
+                <span className="ml-2 font-normal text-muted-foreground">· {profile.cohort_name}</span>
+              ) : null}
+            </h2>
+          </div>
+          <dl className="space-y-1.5 text-sm">
+            {profile.exercise_start_date ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Starts</dt>
+                <dd className="text-right font-medium text-foreground">{formatDate(profile.exercise_start_date)}</dd>
+              </div>
+            ) : null}
+            {startTime || endTime ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Hours</dt>
+                <dd className="text-right font-medium text-foreground">
+                  {[startTime, endTime].filter(Boolean).join(" – ")}
+                </dd>
+              </div>
+            ) : null}
+            {profile.venue ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Location</dt>
+                <dd className="text-right font-medium text-foreground">{profile.venue}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </section>
+      ) : null}
 
       <section className="mt-6" aria-labelledby="active-work-heading">
         <div className="mb-3 flex items-center gap-2">
@@ -177,31 +285,33 @@ export function WorkforcePublicPortalPage({ config }: Props) {
         )}
       </section>
 
-      <section className="mt-6" aria-labelledby="completed-work-heading">
-        <div className="mb-3 flex items-center gap-2">
-          <CheckCircle2 className="size-4 text-emerald-600" aria-hidden />
-          <h2 id="completed-work-heading" className="text-sm font-semibold text-foreground">
-            Completed batches
-          </h2>
-        </div>
-        {profile.completed_batches.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/80 bg-muted/10 px-3.5 py-4 text-center text-sm text-muted-foreground">
-            No completed batches yet.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {profile.completed_batches.map((batch) => (
-              <BatchCard key={batch.id} batch={batch} variant="completed" unitLabel={unitLabel} />
-            ))}
-          </div>
-        )}
-      </section>
+      <CompletedBatchesSection batches={profile.completed_batches} unitLabel={unitLabel} />
 
-      <WorkforceBankAccountForm
-        kind={config.kind}
-        token={token}
-        examinationLabel={profile.examination_label}
-      />
+      <div className="mt-6">
+        <WorkforceAppointmentLetterSection
+          kind={config.kind}
+          token={token}
+          personName={profile.name}
+          available={profile.appointment_letters_available === true}
+          pendingMessage={profile.appointment_letters_pending_message}
+        />
+      </div>
+
+      {bankEditable ? (
+        <WorkforceBankAccountForm
+          kind={config.kind}
+          token={token}
+          examinationLabel={profile.examination_label}
+        />
+      ) : (
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card/90 p-4 shadow-sm">
+          <h2 className="text-base font-semibold text-foreground">Bank details</h2>
+          <p className="mt-2 text-sm text-muted-foreground" role="status">
+            {profile.bank_details_pending_message ??
+              "Bank details entry has been disabled by the examination office."}
+          </p>
+        </section>
+      )}
     </WorkforcePortalShell>
   );
 }

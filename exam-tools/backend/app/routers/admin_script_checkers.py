@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 
 from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
+from app.models import WorkforceKind
 from app.schemas.workforce import (
+    WorkforceBulkImportResponse,
+    WorkforceBulkImportRowError,
     WorkforceBulkInviteSmsRequest,
     WorkforceBulkInviteSmsResponse,
     WorkforceInviteSmsResult,
@@ -17,6 +22,11 @@ from app.schemas.workforce import (
     WorkforceRosterUpdate,
 )
 from app.services.sms.workforce_portal_sms import maybe_send_script_checker_invite_sms
+from app.services.template_generator import generate_workforce_roster_bulk_template
+from app.services.workforce_bulk_upload import (
+    bulk_upload_workforce_roster,
+    read_workforce_roster_spreadsheet,
+)
 from app.services.workforce_roster import (
     WorkforceRosterNotFoundError,
     create_script_checker,
@@ -30,6 +40,9 @@ router = APIRouter(
     prefix="/admin/examinations/{examination_id}/script-checkers",
     tags=["admin-script-checkers"],
 )
+
+_MAX_BULK_BYTES = 5 * 1024 * 1024
+_MAX_BULK_ROWS = 2000
 
 
 @router.get("", response_model=list[WorkforceRosterResponse])
@@ -69,6 +82,78 @@ async def create_admin_script_checker(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return WorkforceRosterResponse(**row)
+
+
+@router.get(
+    "/bulk-upload/template",
+    summary="Download Excel template for script checker roster bulk upload",
+)
+async def download_script_checker_bulk_upload_template(
+    _: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int,  # noqa: ARG001
+) -> Response:
+    body = generate_workforce_roster_bulk_template()
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="script_checkers_bulk_template.xlsx"'},
+    )
+
+
+@router.post("/bulk-upload", response_model=WorkforceBulkImportResponse)
+async def bulk_upload_admin_script_checkers(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int,
+    file: UploadFile = File(...),
+    send_sms: bool = Query(False, description="Send portal invite SMS to newly created rows"),
+    availability_deadline: datetime | None = Query(
+        None, description="Optional respond-by deadline applied to every created row"
+    ),
+) -> WorkforceBulkImportResponse:
+    raw = await file.read()
+    if len(raw) > _MAX_BULK_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large")
+    try:
+        df = read_workforce_roster_spreadsheet(raw, file.filename or "upload.csv")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if len(df) > _MAX_BULK_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At most {_MAX_BULK_ROWS} data rows are allowed",
+        )
+    try:
+        created_rows, row_errors = await bulk_upload_workforce_roster(
+            session,
+            examination_id=examination_id,
+            kind=WorkforceKind.SCRIPT_CHECKER,
+            df=df,
+            availability_deadline=availability_deadline,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+    if send_sms:
+        for row in created_rows:
+            try:
+                checker = await get_script_checker_or_404(
+                    session, examination_id=examination_id, checker_id=row["id"]
+                )
+                await maybe_send_script_checker_invite_sms(
+                    session,
+                    checker,
+                    trigger="admin_bulk_upload",
+                    triggered_by_user_id=user.id,
+                )
+            except WorkforceRosterNotFoundError:
+                continue
+
+    return WorkforceBulkImportResponse(
+        created_count=len(created_rows),
+        errors=[WorkforceBulkImportRowError(row_number=n, message=m) for n, m in row_errors],
+        items=[WorkforceRosterResponse(**row) for row in created_rows],
+    )
 
 
 @router.get("/{checker_id}", response_model=WorkforceRosterResponse)

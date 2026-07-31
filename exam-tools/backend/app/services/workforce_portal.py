@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models import DataEntryClerk, Examination, ScriptChecker
+from app.models import DataEntryClerk, Examination, ScriptChecker, WorkforceAvailabilityStatus, WorkforceKind
 from app.services.exam_official_export import examination_label
 from app.services.examiner_invitation import generate_invitation_token
+from app.services.workforce_portal_release import release_display_fields_for_person
 
 
 def generate_portal_token() -> str:
@@ -65,6 +66,13 @@ async def public_script_checker_portal_view(session: AsyncSession, checker: Scri
     exam = checker.examination
     active, completed = await batches_to_public_rows(session, checker.assignment_batches)
     status = checker.availability_status
+    release_fields = await release_display_fields_for_person(
+        session,
+        examination_id=int(checker.examination_id),
+        kind=WorkforceKind.SCRIPT_CHECKER,
+        person_id=checker.id,
+        person_accepted=checker.availability_status == WorkforceAvailabilityStatus.CONFIRMED,
+    )
     return {
         "id": checker.id,
         "name": checker.name,
@@ -80,6 +88,15 @@ async def public_script_checker_portal_view(session: AsyncSession, checker: Scri
         "active_batches": active,
         "completed_batches": completed,
         "has_bank_account": checker.bank_account is not None,
+        "appointment_letters_available": release_fields["appointment_letters_available"],
+        "appointment_letters_pending_message": release_fields["appointment_letters_pending_message"],
+        "bank_details_editable": release_fields["bank_details_editable"],
+        "bank_details_pending_message": release_fields["bank_details_pending_message"],
+        "exercise_start_date": release_fields["exercise_start_date"],
+        "work_start_time": release_fields["work_start_time"],
+        "work_end_time": release_fields["work_end_time"],
+        "venue": release_fields["venue"],
+        "cohort_name": release_fields["cohort_name"],
     }
 
 
@@ -90,6 +107,13 @@ async def public_data_entry_clerk_portal_view(session: AsyncSession, clerk: Data
     exam = clerk.examination
     active, completed = await batches_to_public_rows(session, clerk.assignment_batches)
     status = clerk.availability_status
+    release_fields = await release_display_fields_for_person(
+        session,
+        examination_id=int(clerk.examination_id),
+        kind=WorkforceKind.DATA_ENTRY_CLERK,
+        person_id=clerk.id,
+        person_accepted=clerk.availability_status == WorkforceAvailabilityStatus.CONFIRMED,
+    )
     return {
         "id": clerk.id,
         "name": clerk.name,
@@ -105,4 +129,13 @@ async def public_data_entry_clerk_portal_view(session: AsyncSession, clerk: Data
         "active_batches": active,
         "completed_batches": completed,
         "has_bank_account": clerk.bank_account is not None,
+        "appointment_letters_available": release_fields["appointment_letters_available"],
+        "appointment_letters_pending_message": release_fields["appointment_letters_pending_message"],
+        "bank_details_editable": release_fields["bank_details_editable"],
+        "bank_details_pending_message": release_fields["bank_details_pending_message"],
+        "exercise_start_date": release_fields["exercise_start_date"],
+        "work_start_time": release_fields["work_start_time"],
+        "work_end_time": release_fields["work_end_time"],
+        "venue": release_fields["venue"],
+        "cohort_name": release_fields["cohort_name"],
     }

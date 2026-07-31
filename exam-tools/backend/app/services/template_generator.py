@@ -69,6 +69,32 @@ def generate_examiners_bulk_template() -> bytes:
     return output.getvalue()
 
 
+def generate_workforce_roster_bulk_template() -> bytes:
+    """Excel template for script checker / data entry clerk roster bulk upload.
+
+    Columns: name, phone_number, region, cohort_name (cohort_name is optional; blank assigns
+    the default cohort).
+    Phone column is formatted as Text so Excel does not strip leading zeros.
+    """
+    df = pd.DataFrame(
+        {
+            "name": ["Jane Doe", "John Smith"],
+            "phone_number": ["0551234567", "0244123456"],
+            "region": ["Greater Accra", "Ashanti"],
+            "cohort_name": ["", "Batch 2"],
+        }
+    )
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Roster")
+        ws = writer.sheets["Roster"]
+        for row in range(1, 10001):
+            ws.cell(row=row, column=2).number_format = "@"
+    output.seek(0)
+    return output.getvalue()
+
+
 def generate_inspector_postings_bulk_template() -> bytes:
     """Excel template for inspector postings bulk upload.
 

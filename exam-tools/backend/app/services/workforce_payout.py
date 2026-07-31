@@ -23,7 +23,11 @@ from app.models import (
 )
 from app.services.exam_official_bog_export import BogExportRow, bog_workbook_bytes, exam_bog_export_filename
 from app.services.exam_official_export import examination_label, safe_filename_part
-from app.services.workforce_compensation import compute_workforce_payout, rate_config_from_row
+from app.services.workforce_compensation import (
+    compute_workforce_payout,
+    rate_config_from_data_entry_clerk_row,
+    rate_config_from_script_checker_row,
+)
 
 DESIGNATION_SCRIPT_CHECKER = "Script checker"
 DESIGNATION_DATA_ENTRY_CLERK = "Data entry clerk"
@@ -94,6 +98,8 @@ def _payout_item_from_breakdown(
         "completed_scripts": breakdown.completed_scripts,
         "num_days": breakdown.num_days,
         "rate_per_script_ghs": breakdown.rate_per_script_ghs,
+        "objective_rate_per_script_ghs": breakdown.objective_rate_per_script_ghs,
+        "subjective_rate_per_script_ghs": breakdown.subjective_rate_per_script_ghs,
         "commuting_allowance_ghs": breakdown.commuting_allowance_ghs,
         "lunch_allowance_ghs": breakdown.lunch_allowance_ghs,
         "commuting_payable_ghs": breakdown.commuting_payable_ghs,
@@ -119,7 +125,7 @@ async def list_script_checker_payouts(
         raise ValueError("Examination not found")
 
     rate_row = await session.get(ExaminationScriptCheckerRate, examination_id)
-    rate_config = rate_config_from_row(rate_row)
+    rate_config = rate_config_from_script_checker_row(rate_row)
 
     stmt = (
         select(ScriptChecker)
@@ -169,7 +175,7 @@ async def list_data_entry_clerk_payouts(
         raise ValueError("Examination not found")
 
     rate_row = await session.get(ExaminationDataEntryClerkRate, examination_id)
-    rate_config = rate_config_from_row(rate_row)
+    rate_config = rate_config_from_data_entry_clerk_row(rate_row)
 
     stmt = (
         select(DataEntryClerk)
@@ -209,6 +215,12 @@ async def list_data_entry_clerk_payouts(
     return {"items": items, "total": len(items)}
 
 
+def _bank_incomplete(item: dict) -> bool:
+    account = (item.get("account_number") or "").strip()
+    sort_code = (item.get("bank_code") or "").strip()
+    return not account or not sort_code
+
+
 def _bog_rows_from_payout_items(
     items: list[dict],
     *,
@@ -218,11 +230,15 @@ def _bog_rows_from_payout_items(
     serial = 0
     sorted_items = sorted(items, key=lambda r: r["full_name"].lower())
     for item in sorted_items:
+        completed = int(item.get("completed_scripts") or 0)
+        if completed <= 0:
+            continue
+        amount = cast(Decimal, item["payable_ghs"])
+        if amount < 0:
+            amount = Decimal("0")
         account = (item.get("account_number") or "").strip()
         sort_code = (item.get("bank_code") or "").strip()
-        amount = cast(Decimal, item["payable_ghs"])
-        if not account or not sort_code or amount <= 0:
-            continue
+        incomplete = _bank_incomplete(item)
         serial += 1
         rows.append(
             BogExportRow(
@@ -232,6 +248,10 @@ def _bog_rows_from_payout_items(
                 full_name=_bog_display_name(item["full_name"]),
                 designation=designation,
                 amount=amount,
+                phone_number=(item.get("phone_number") or "").strip(),
+                incomplete_bank=incomplete,
+                work_units=completed,
+                num_days=int(item.get("num_days") or 0),
             )
         )
     return rows
@@ -242,9 +262,17 @@ def workforce_bog_workbook_bytes(
     *,
     title: str,
     designation: str,
+    work_unit_label: str,
 ) -> bytes:
     rows = _bog_rows_from_payout_items(items, designation=designation)
-    return bog_workbook_bytes([], {}, title=title, prebuilt_rows=rows)
+    return bog_workbook_bytes(
+        [],
+        {},
+        title=title,
+        prebuilt_rows=rows,
+        include_workforce_detail=True,
+        work_unit_label=work_unit_label,
+    )
 
 
 def script_checker_bog_workbook_bytes(
@@ -252,7 +280,12 @@ def script_checker_bog_workbook_bytes(
     items: list[dict],
 ) -> bytes:
     title = f"BoG payment — {examination_label(exam)} — script checkers"
-    return workforce_bog_workbook_bytes(items, title=title, designation=DESIGNATION_SCRIPT_CHECKER)
+    return workforce_bog_workbook_bytes(
+        items,
+        title=title,
+        designation=DESIGNATION_SCRIPT_CHECKER,
+        work_unit_label="Scripts",
+    )
 
 
 def data_entry_clerk_bog_workbook_bytes(
@@ -260,7 +293,12 @@ def data_entry_clerk_bog_workbook_bytes(
     items: list[dict],
 ) -> bytes:
     title = f"BoG payment — {examination_label(exam)} — data entry clerks"
-    return workforce_bog_workbook_bytes(items, title=title, designation=DESIGNATION_DATA_ENTRY_CLERK)
+    return workforce_bog_workbook_bytes(
+        items,
+        title=title,
+        designation=DESIGNATION_DATA_ENTRY_CLERK,
+        work_unit_label="Entries",
+    )
 
 
 def script_checker_bog_export_filename(exam: Examination) -> str:
