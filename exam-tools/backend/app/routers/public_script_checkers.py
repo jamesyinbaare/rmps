@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import io
+
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from app.dependencies.database import DBSessionDep
+from app.models import WorkforceKind
 from app.schemas.bank_branch import BankBranchListResponse, BankBranchRow
 from app.schemas.workforce import (
     WorkforceAvailabilityActionResponse,
@@ -12,6 +16,10 @@ from app.schemas.workforce import (
     WorkforceBankAccountResponse,
     WorkforceBankAccountUpsert,
     WorkforcePublicPortalResponse,
+)
+from app.services.workforce_appointment_letter_pdf import (
+    WorkforceAppointmentLetterError,
+    build_workforce_appointment_letter_pdf,
 )
 from app.services.workforce_availability import (
     confirm_workforce_availability,
@@ -90,6 +98,29 @@ async def decline_public_script_checker_availability(
     )
 
 
+@router.get("/{token}/appointment-letter.pdf")
+async def get_public_script_checker_appointment_letter_pdf(
+    session: DBSessionDep,
+    token: str,
+) -> StreamingResponse:
+    checker = await _resolve_checker_or_404(session, token)
+    try:
+        require_workforce_portal_access(checker)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    try:
+        pdf_bytes, filename = await build_workforce_appointment_letter_pdf(
+            session, checker, WorkforceKind.SCRIPT_CHECKER
+        )
+    except (ValueError, WorkforceAppointmentLetterError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 @router.get("/{token}/bank-account", response_model=WorkforceBankAccountResponse)
 async def get_public_script_checker_bank_account(
     session: DBSessionDep,
@@ -115,6 +146,17 @@ async def upsert_public_script_checker_bank_account(
     checker = await _resolve_checker_or_404(session, token)
     try:
         require_workforce_portal_access(checker)
+        from app.models import WorkforceKind
+        from app.services.workforce_portal_release import is_bank_details_editable_for_person
+
+        editable = await is_bank_details_editable_for_person(
+            session,
+            examination_id=int(checker.examination_id),
+            kind=WorkforceKind.SCRIPT_CHECKER,
+            person_id=checker.id,
+        )
+        if not editable:
+            raise ValueError("Bank details entry has been disabled by the examination office.")
         row = await upsert_script_checker_bank_account(
             session,
             checker_id=checker.id,
@@ -124,7 +166,12 @@ async def upsert_public_script_checker_bank_account(
         await session.commit()
     except ValueError as exc:
         await session.rollback()
-        code = status.HTTP_403_FORBIDDEN if "confirm your availability" in str(exc).lower() else status.HTTP_400_BAD_REQUEST
+        lowered = str(exc).lower()
+        code = (
+            status.HTTP_403_FORBIDDEN
+            if "confirm your availability" in lowered or "disabled by the examination office" in lowered
+            else status.HTTP_400_BAD_REQUEST
+        )
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     return WorkforceBankAccountResponse(**script_checker_bank_account_to_dict(row))
 

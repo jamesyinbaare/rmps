@@ -22,6 +22,8 @@ type Props = {
 
 type RateForm = {
   ratePerScript: string;
+  objectiveRate: string;
+  subjectiveRate: string;
   commutingPerDay: string;
   lunchPerDay: string;
   taxPercent: string;
@@ -29,6 +31,8 @@ type RateForm = {
 
 const EMPTY_FORM: RateForm = {
   ratePerScript: "",
+  objectiveRate: "",
+  subjectiveRate: "",
   commutingPerDay: "0",
   lunchPerDay: "0",
   taxPercent: "10",
@@ -61,7 +65,8 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const unitLabel = config.kind === "data-entry-clerk" ? "entry" : "script";
+  const isScriptChecker = config.kind === "script-checker";
+  const unitLabel = isScriptChecker ? "script" : "entry";
 
   useEffect(() => {
     if (exams.length > 0 && examId == null) setExamId(exams[0]!.id);
@@ -75,6 +80,8 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
       const data = await getAdminWorkforceRates(config.kind, examId);
       setForm({
         ratePerScript: data.rate_per_script_ghs ?? "",
+        objectiveRate: data.objective_rate_per_script_ghs ?? "",
+        subjectiveRate: data.subjective_rate_per_script_ghs ?? "",
         commutingPerDay: data.commuting_allowance_ghs ?? "0",
         lunchPerDay: data.lunch_allowance_ghs ?? "0",
         taxPercent: data.withholding_tax_percent ?? "10",
@@ -97,10 +104,17 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
 
   async function handleSave() {
     if (examId == null) return;
-    const rateError = parseNonNegative(form.ratePerScript, `Rate per ${unitLabel}`);
     const commuteError = parseNonNegative(form.commutingPerDay, "Commute allowance");
     const lunchError = parseNonNegative(form.lunchPerDay, "Lunch allowance");
     const taxError = parseTaxPercent(form.taxPercent);
+    let rateError: string | null = null;
+    if (isScriptChecker) {
+      rateError =
+        parseNonNegative(form.objectiveRate, "Objective rate") ??
+        parseNonNegative(form.subjectiveRate, "Subjective rate");
+    } else {
+      rateError = parseNonNegative(form.ratePerScript, `Rate per ${unitLabel}`);
+    }
     const firstError = rateError ?? commuteError ?? lunchError ?? taxError;
     if (firstError) {
       setSaveError(firstError);
@@ -108,10 +122,15 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
     }
 
     const payload: WorkforceRatesPutPayload = {
-      rate_per_script_ghs: form.ratePerScript.trim(),
       commuting_allowance_ghs: form.commutingPerDay.trim(),
       lunch_allowance_ghs: form.lunchPerDay.trim(),
       withholding_tax_percent: form.taxPercent.trim(),
+      ...(isScriptChecker
+        ? {
+            objective_rate_per_script_ghs: form.objectiveRate.trim(),
+            subjective_rate_per_script_ghs: form.subjectiveRate.trim(),
+          }
+        : { rate_per_script_ghs: form.ratePerScript.trim() }),
     };
 
     setSaving(true);
@@ -155,6 +174,9 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
         </div>
 
         <p className="text-sm text-muted-foreground">
+          {isScriptChecker
+            ? "Objective (paper 1) and subjective (paper 2+) rates are applied per completed batch. "
+            : ""}
           Gross {unitLabel} earnings are taxed at the configured rate. Commute and lunch allowances are paid per work
           day (distinct days with completed batches). Net payable = ({unitLabel} gross − tax) + commute + lunch.
         </p>
@@ -179,21 +201,56 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
           <p className="text-sm text-destructive">{loadError}</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:max-w-3xl">
-            <div>
-              <label className={formLabelClass} htmlFor="workforce-rate-amount">
-                Rate per {unitLabel} (GHS)
-              </label>
-              <input
-                id="workforce-rate-amount"
-                type="number"
-                min={0}
-                step="0.01"
-                className={formInputClass}
-                value={form.ratePerScript}
-                onChange={(e) => updateField("ratePerScript", e.target.value)}
-                placeholder="0.00"
-              />
-            </div>
+            {isScriptChecker ? (
+              <>
+                <div>
+                  <label className={formLabelClass} htmlFor="workforce-rate-ot">
+                    Objective rate per script (GHS)
+                  </label>
+                  <input
+                    id="workforce-rate-ot"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    className={formInputClass}
+                    value={form.objectiveRate}
+                    onChange={(e) => updateField("objectiveRate", e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className={formLabelClass} htmlFor="workforce-rate-st">
+                    Subjective rate per script (GHS)
+                  </label>
+                  <input
+                    id="workforce-rate-st"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    className={formInputClass}
+                    value={form.subjectiveRate}
+                    onChange={(e) => updateField("subjectiveRate", e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className={formLabelClass} htmlFor="workforce-rate-amount">
+                  Rate per {unitLabel} (GHS)
+                </label>
+                <input
+                  id="workforce-rate-amount"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className={formInputClass}
+                  value={form.ratePerScript}
+                  onChange={(e) => updateField("ratePerScript", e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+            )}
             <div>
               <label className={formLabelClass} htmlFor="workforce-tax-percent">
                 Withholding tax on {unitLabel} earnings (%)
@@ -207,37 +264,34 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
                 className={formInputClass}
                 value={form.taxPercent}
                 onChange={(e) => updateField("taxPercent", e.target.value)}
-                placeholder="10"
               />
             </div>
             <div>
-              <label className={formLabelClass} htmlFor="workforce-commute-rate">
+              <label className={formLabelClass} htmlFor="workforce-commute">
                 Commute allowance per day (GHS)
               </label>
               <input
-                id="workforce-commute-rate"
+                id="workforce-commute"
                 type="number"
                 min={0}
                 step="0.01"
                 className={formInputClass}
                 value={form.commutingPerDay}
                 onChange={(e) => updateField("commutingPerDay", e.target.value)}
-                placeholder="0.00"
               />
             </div>
             <div>
-              <label className={formLabelClass} htmlFor="workforce-lunch-rate">
+              <label className={formLabelClass} htmlFor="workforce-lunch">
                 Lunch allowance per day (GHS)
               </label>
               <input
-                id="workforce-lunch-rate"
+                id="workforce-lunch"
                 type="number"
                 min={0}
                 step="0.01"
                 className={formInputClass}
                 value={form.lunchPerDay}
                 onChange={(e) => updateField("lunchPerDay", e.target.value)}
-                placeholder="0.00"
               />
             </div>
           </div>

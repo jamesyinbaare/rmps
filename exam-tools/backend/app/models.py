@@ -1007,6 +1007,11 @@ class WorkforceAvailabilityStatus(enum.Enum):
     DECLINED = "declined"
 
 
+class WorkforceKind(enum.Enum):
+    SCRIPT_CHECKER = "script_checker"
+    DATA_ENTRY_CLERK = "data_entry_clerk"
+
+
 class ScriptChecker(Base):
     """Script checking workforce roster for an examination (token portal, no login)."""
 
@@ -1020,6 +1025,7 @@ class ScriptChecker(Base):
     reference_code = Column(String(64), nullable=True)
     portal_token = Column(String(128), nullable=False, unique=True, index=True)
     portal_invite_sms_sent_at = Column(DateTime, nullable=True)
+    appointment_letter_notified_at = Column(DateTime, nullable=True)
     availability_status = Column(
         Enum(
             WorkforceAvailabilityStatus,
@@ -1142,6 +1148,7 @@ class DataEntryClerk(Base):
     reference_code = Column(String(64), nullable=True)
     portal_token = Column(String(128), nullable=False, unique=True, index=True)
     portal_invite_sms_sent_at = Column(DateTime, nullable=True)
+    appointment_letter_notified_at = Column(DateTime, nullable=True)
     availability_status = Column(
         Enum(
             WorkforceAvailabilityStatus,
@@ -1255,7 +1262,20 @@ class ExaminationScriptCheckerRate(Base):
     __tablename__ = "examination_script_checker_rates"
 
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
-    rate_per_script_ghs = Column(Numeric(12, 2), nullable=False, default=0)
+    objective_rate_per_script_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Per-script rate for objective tests (paper 1).",
+    )
+    subjective_rate_per_script_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Per-script rate for subjective tests (paper 2+).",
+    )
     commuting_allowance_ghs = Column(
         Numeric(12, 2),
         nullable=False,
@@ -1282,12 +1302,108 @@ class ExaminationScriptCheckerRate(Base):
     examination = relationship("Examination", backref="script_checker_rates")
 
     __table_args__ = (
-        CheckConstraint("rate_per_script_ghs >= 0", name="ck_script_checker_rates_nonneg"),
+        CheckConstraint("objective_rate_per_script_ghs >= 0", name="ck_script_checker_rates_ot_nonneg"),
+        CheckConstraint("subjective_rate_per_script_ghs >= 0", name="ck_script_checker_rates_st_nonneg"),
         CheckConstraint("commuting_allowance_ghs >= 0", name="ck_script_checker_rates_commuting_nonneg"),
         CheckConstraint("lunch_allowance_ghs >= 0", name="ck_script_checker_rates_lunch_nonneg"),
         CheckConstraint(
             "withholding_tax_percent >= 0 AND withholding_tax_percent <= 100",
             name="ck_script_checker_rates_tax_percent_range",
+        ),
+    )
+
+
+class WorkforceExerciseGroup(Base):
+    """Exam-scoped exercise cohort for script checkers or data entry clerks (dates, venue, letter release)."""
+
+    __tablename__ = "workforce_exercise_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(
+        Enum(
+            WorkforceKind,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=32,
+        ),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(255), nullable=False)
+    is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    exercise_start_date = Column(DateTime, nullable=True)
+    work_start_time = Column(Time, nullable=True)
+    work_end_time = Column(Time, nullable=True)
+    venue = Column(String(255), nullable=True)
+    appointment_letters_release_enabled = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    appointment_letters_release_mode = Column(
+        String(32),
+        nullable=False,
+        default="scheduled_date",
+        server_default="scheduled_date",
+    )
+    appointment_letters_release_at = Column(DateTime, nullable=True)
+    bank_details_editable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="workforce_exercise_groups")
+    members = relationship(
+        "WorkforceExerciseGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "kind",
+            "name",
+            name="uq_workforce_exercise_groups_exam_kind_name",
+        ),
+        Index(
+            "uq_workforce_exercise_groups_default",
+            "examination_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("is_default = true"),
+        ),
+    )
+
+
+class WorkforceExerciseGroupMember(Base):
+    __tablename__ = "workforce_exercise_group_members"
+
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workforce_exercise_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    person_id = Column(UUID(as_uuid=True), primary_key=True)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(
+        Enum(
+            WorkforceKind,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=32,
+        ),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    group = relationship("WorkforceExerciseGroup", back_populates="members")
+
+    __table_args__ = (
+        Index(
+            "ix_workforce_exercise_group_members_person",
+            "examination_id",
+            "kind",
+            "person_id",
         ),
     )
 
@@ -2755,6 +2871,48 @@ class ExaminationExaminerAppointmentLetterSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="examiner_appointment_letter_settings")
+
+
+class ExaminationWorkforceAppointmentLetterSettings(Base):
+    """Per examination + workforce kind: signatory names, signatures, CC lines for appointment letters."""
+
+    __tablename__ = "examination_workforce_appointment_letter_settings"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    kind = Column(
+        Enum(
+            WorkforceKind,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=32,
+        ),
+        primary_key=True,
+    )
+    signing_official = Column(
+        Enum(
+            AppointmentLetterSigningOfficial,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+        default=AppointmentLetterSigningOfficial.DIRECTOR_ASSESSMENT_CERTIFICATION,
+        server_default=AppointmentLetterSigningOfficial.DIRECTOR_ASSESSMENT_CERTIFICATION.value,
+    )
+    signed_for_director_general = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    director_general_name = Column(String(255), nullable=True)
+    director_general_title = Column(String(255), nullable=True)
+    director_general_signature_path = Column(String(512), nullable=True)
+    director_assessment_name = Column(String(255), nullable=True)
+    director_assessment_title = Column(String(255), nullable=True)
+    director_assessment_signature_path = Column(String(512), nullable=True)
+    valediction = Column(String(255), nullable=False, default="Yours faithfully", server_default="Yours faithfully")
+    letter_date = Column(Date, nullable=True)
+    reference_number = Column(String(128), nullable=True)
+    cc_lines = Column(JSON, nullable=False, default=list, server_default=text("'[]'"))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="workforce_appointment_letter_settings")
 
 
 class ExaminationExaminerAppointmentLetterSubjectSettings(Base):

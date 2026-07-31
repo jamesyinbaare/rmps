@@ -121,6 +121,11 @@ async def test_create_script_checker_does_not_assign_reference_code(monkeypatch:
 
     stored: dict[str, object] = {}
     monkeypatch.setattr("app.services.workforce_roster.generate_portal_token", lambda: "token")
+    monkeypatch.setattr(
+        "app.services.workforce_roster.ensure_default_group",
+        AsyncMock(return_value=MagicMock(id="group-1")),
+    )
+    monkeypatch.setattr("app.services.workforce_roster.add_member", AsyncMock(return_value=None))
 
     def add_side_effect(row):
         stored["row"] = row

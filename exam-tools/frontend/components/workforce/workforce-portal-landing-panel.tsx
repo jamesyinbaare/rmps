@@ -66,7 +66,7 @@ export function WorkforcePortalLandingPanel({ config, token, profile, onConfirme
       : profile.availability_status === "declined"
         ? XCircle
         : CalendarClock;
-  const statement = buildWorkforceAcceptanceStatement(profile);
+  const statement = buildWorkforceAcceptanceStatement(profile, config.kind);
 
   function closeConfirm() {
     if (busy) return;
@@ -170,7 +170,7 @@ export function WorkforcePortalLandingPanel({ config, token, profile, onConfirme
           {canRespond ? (
             <section className="mt-5 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4" aria-label="Acceptance statement">
               <h2 className="text-sm font-semibold text-foreground">Acceptance statement</h2>
-              <p className="mt-2 text-sm leading-relaxed text-foreground">{statement}</p>
+              <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-foreground">{statement}</p>
             </section>
           ) : null}
 
@@ -241,7 +241,7 @@ export function WorkforcePortalLandingPanel({ config, token, profile, onConfirme
                 : "Type decline to record that you cannot take this role."}
             </p>
             {confirmAction === "accept" ? (
-              <p className="mt-4 rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3.5 text-sm leading-relaxed text-foreground">
+              <p className="mt-4 whitespace-pre-line rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3.5 text-sm leading-relaxed text-foreground">
                 {statement}
               </p>
             ) : null}

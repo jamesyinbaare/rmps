@@ -4,9 +4,8 @@ import { useEffect, useState } from "react";
 
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
 import { RoleGuard } from "@/components/role-guard";
-import { WorkforceRosterPanel } from "@/components/workforce/workforce-roster-panel";
+import { WorkforceAdminHub } from "@/components/workforce/workforce-admin-hub";
 import { apiJson, type Examination } from "@/lib/api";
-import { formatWorkforceExamLabel } from "@/lib/workforce-exam-utils";
 import { DATA_ENTRY_CLERK_CONFIG } from "@/lib/workforce-kind";
 
 export default function AdminDataEntryClerksPage() {
@@ -20,9 +19,10 @@ export default function AdminDataEntryClerksPage() {
     <RoleGuard allowedRoles={["SUPER_ADMIN", "TEST_ADMIN_OFFICER"]} loginHref="/login/admin">
       <div className="space-y-4">
         <OfficialAccountsPageIntro
-          description="Manage the data entry clerk roster, portal links, and SMS invites."
+          description="Invite and manage data entry clerks for an examination — roster, exercise cohorts, and appointment letters."
+          footerNote={false}
         />
-        <WorkforceRosterPanel config={DATA_ENTRY_CLERK_CONFIG} exams={exams} formatExamLabel={formatWorkforceExamLabel} />
+        <WorkforceAdminHub config={DATA_ENTRY_CLERK_CONFIG} exams={exams} />
       </div>
     </RoleGuard>
   );

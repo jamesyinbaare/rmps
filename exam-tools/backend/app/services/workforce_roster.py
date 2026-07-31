@@ -3,25 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import DataEntryClerk, Examination, ScriptChecker
+from app.models import DataEntryClerk, Examination, ScriptChecker, WorkforceKind
 from app.schemas.workforce import WorkforceRosterCreate, WorkforceRosterUpdate
 from app.services.script_allocation import parse_region
 from app.services.sms.phone import normalize_msisdn
+from app.services.workforce_exercise_group import add_member, ensure_default_group
 from app.services.workforce_portal import (
     data_entry_clerk_portal_url,
     generate_portal_token,
     script_checker_portal_url,
 )
-
-WorkforceKind = Literal["script_checker", "data_entry_clerk"]
-
 
 class WorkforceRosterNotFoundError(Exception):
     pass
@@ -190,6 +187,16 @@ async def create_script_checker(
     )
     session.add(row)
     await session.flush()
+    default_group = await ensure_default_group(
+        session, examination_id=examination_id, kind=WorkforceKind.SCRIPT_CHECKER
+    )
+    await add_member(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.SCRIPT_CHECKER,
+        group_id=default_group.id,
+        person_id=row.id,
+    )
     await session.refresh(row, attribute_names=["bank_account"])
     return script_checker_to_dict(row)
 
@@ -219,6 +226,16 @@ async def create_data_entry_clerk(
     )
     session.add(row)
     await session.flush()
+    default_group = await ensure_default_group(
+        session, examination_id=examination_id, kind=WorkforceKind.DATA_ENTRY_CLERK
+    )
+    await add_member(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.DATA_ENTRY_CLERK,
+        group_id=default_group.id,
+        person_id=row.id,
+    )
     await session.refresh(row, attribute_names=["bank_account"])
     return data_entry_clerk_to_dict(row)
 

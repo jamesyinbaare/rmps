@@ -81,12 +81,22 @@ export function WorkforcePayableBreakdownCell({
               {unitSingular.charAt(0).toUpperCase() + unitSingular.slice(1)} earnings
             </p>
             <BreakdownRow
-              label={unitLabel === "entries" ? "Rate per entry" : "Rate per script"}
-              value={formatGhsAmount(row.rate_per_script_ghs)}
+              label={
+                row.objective_rate_per_script_ghs != null && row.subjective_rate_per_script_ghs != null
+                  ? "Rates (OT / ST)"
+                  : unitLabel === "entries"
+                    ? "Rate per entry"
+                    : "Rate per script"
+              }
+              value={
+                row.objective_rate_per_script_ghs != null && row.subjective_rate_per_script_ghs != null
+                  ? `${formatGhsAmount(row.objective_rate_per_script_ghs)} / ${formatGhsAmount(row.subjective_rate_per_script_ghs)}`
+                  : formatGhsAmount(row.rate_per_script_ghs)
+              }
             />
             <BreakdownRow label={`Completed ${unitLabel}`} value={row.completed_scripts.toLocaleString()} />
             <BreakdownRow
-              label={`${row.completed_scripts.toLocaleString()} × ${formatGhsAmount(row.rate_per_script_ghs)}`}
+              label="Gross script earnings"
               value={formatGhsAmount(row.script_gross_ghs)}
             />
             <BreakdownRow

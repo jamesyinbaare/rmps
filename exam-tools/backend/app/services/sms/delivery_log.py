@@ -27,6 +27,7 @@ MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM = "examiner_invitation_custom"
 MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM = "examiner_roster_custom"
 MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED = "examiner_appointment_letter_released"
 MESSAGE_TYPE_WORKFORCE_PORTAL_INVITE = "workforce_portal_invite"
+MESSAGE_TYPE_WORKFORCE_APPOINTMENT_LETTER_RELEASED = "workforce_appointment_letter_released"
 
 
 def _truncate(text: str | None, max_len: int) -> str | None:
@@ -413,6 +414,72 @@ async def record_examiner_appointment_letter_released_sms(
         phone_number=phone,
         msisdn=msisdn,
         message_type=MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+    )
+    await session.flush()
+
+    result = await get_sms_provider().send_sms(msisdn, message)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id)
+    else:
+        await mark_delivery_failed(
+            session,
+            pending.id,
+            error=result.error or "SMS failed",
+        )
+    return result
+
+
+async def record_workforce_appointment_letter_released_sms(
+    session: AsyncSession,
+    *,
+    script_checker: "ScriptChecker | None" = None,
+    data_entry_clerk: "DataEntryClerk | None" = None,
+    message: str,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+) -> SmsDeliveryResult:
+    from app.config import settings
+    from app.services.sms.factory import get_sms_provider
+
+    if (script_checker is None) == (data_entry_clerk is None):
+        return SmsDeliveryResult(sent=False, error="Exactly one workforce member is required")
+
+    person = script_checker if script_checker is not None else data_entry_clerk
+    assert person is not None
+    script_checker_id = script_checker.id if script_checker is not None else None
+    data_entry_clerk_id = data_entry_clerk.id if data_entry_clerk is not None else None
+    phone = person.phone_number or ""
+
+    if not settings.sms_enabled or not settings.nalo_sms_key.strip():
+        return SmsDeliveryResult(sent=False, error="SMS is not configured")
+
+    try:
+        msisdn = normalize_msisdn(phone)
+    except ValueError as exc:
+        await create_delivery_log(
+            session,
+            script_checker_id=script_checker_id,
+            data_entry_clerk_id=data_entry_clerk_id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_WORKFORCE_APPOINTMENT_LETTER_RELEASED,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            error_message=str(exc),
+        )
+        return SmsDeliveryResult(sent=False, error=str(exc))
+
+    pending = await create_delivery_log(
+        session,
+        script_checker_id=script_checker_id,
+        data_entry_clerk_id=data_entry_clerk_id,
+        phone_number=phone,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_WORKFORCE_APPOINTMENT_LETTER_RELEASED,
         trigger=trigger,
         status="pending",
         triggered_by_user_id=triggered_by_user_id,

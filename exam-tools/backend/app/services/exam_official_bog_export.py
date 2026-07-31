@@ -74,6 +74,8 @@ class BogExportRow:
     phone_number: str = ""
     incomplete_bank: bool = False
     reference_code: str = ""
+    work_units: int | None = None
+    num_days: int | None = None
 
 
 _FILL_INCOMPLETE = PatternFill(fill_type="solid", fgColor="FDE68A")
@@ -91,6 +93,21 @@ BOG_HEADER_LABELS_WITH_PHONE = [
 ]
 
 BOG_COLUMN_WIDTHS_WITH_PHONE = [10, 12, 22, 28, 16, 14, 24, 16]
+
+# Workforce BoG: Phone + scripts/entries + days after Name.
+BOG_HEADER_LABELS_WORKFORCE = [
+    "Serial",
+    "Sort code",
+    "Account number",
+    "Name",
+    "Phone",
+    "Scripts",
+    "Days",
+    "Designation",
+    "Amount (GHS)",
+]
+
+BOG_COLUMN_WIDTHS_WORKFORCE = [10, 12, 22, 28, 14, 10, 8, 22, 16]
 
 
 def _bog_display_name(raw: str) -> str:
@@ -182,12 +199,12 @@ def _header_alignment(column: int) -> Alignment:
     return Alignment(horizontal="left", vertical="center", wrap_text=False)
 
 
-def _data_alignment(column: int) -> Alignment:
+def _data_alignment(column: int, *, amount_column: int = AMOUNT_COLUMN) -> Alignment:
     if column == SERIAL_COLUMN:
         return Alignment(horizontal="center", vertical="center", wrap_text=False)
     if column in (SORT_CODE_COLUMN, ACCOUNT_COLUMN):
         return Alignment(horizontal="left", vertical="center", wrap_text=False)
-    if column == AMOUNT_COLUMN:
+    if column == amount_column:
         return Alignment(horizontal="right", vertical="center", wrap_text=False)
     return Alignment(horizontal="left", vertical="center", wrap_text=True)
 
@@ -201,14 +218,17 @@ def _style_title_row(ws: object, row: int, ncols: int, title: str) -> None:
     ws.row_dimensions[row].height = 32
 
 
-def _style_header_row(ws: object, row: int, ncols: int) -> None:
+def _style_header_row(ws: object, row: int, ncols: int, *, amount_column: int = AMOUNT_COLUMN) -> None:
     border = _grid_border(header_bottom=True)
     for col in range(1, ncols + 1):
         cell = ws.cell(row=row, column=col)
         cell.fill = _FILL_HEADER
         cell.font = _FONT_HEADER
         cell.border = border
-        cell.alignment = _header_alignment(col)
+        if col == amount_column:
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+        else:
+            cell.alignment = _header_alignment(col)
     ws.row_dimensions[row].height = 22
 
 
@@ -222,6 +242,11 @@ def _write_amount_cell(ws: object, row: int, column: int, value: Decimal) -> Non
     cell.number_format = AMOUNT_NUMBER_FORMAT
 
 
+def _write_int_cell(ws: object, row: int, column: int, value: int) -> None:
+    cell = ws.cell(row=row, column=column, value=value)
+    cell.number_format = "0"
+
+
 def _style_data_row(
     ws: object,
     row: int,
@@ -230,6 +255,7 @@ def _style_data_row(
     stripe: bool,
     incomplete: bool = False,
     name_column: int = NAME_COLUMN,
+    amount_column: int = AMOUNT_COLUMN,
 ) -> None:
     if incomplete:
         fill = _FILL_INCOMPLETE
@@ -241,7 +267,7 @@ def _style_data_row(
         cell.fill = fill
         cell.font = _FONT_NAME if col == name_column else _FONT_DATA
         cell.border = border
-        cell.alignment = _data_alignment(col)
+        cell.alignment = _data_alignment(col, amount_column=amount_column)
     ws.row_dimensions[row].height = 20
 
 
@@ -264,6 +290,8 @@ def bog_workbook_bytes(
     title: str | None = None,
     prebuilt_rows: list[BogExportRow] | None = None,
     include_phone: bool = False,
+    include_workforce_detail: bool = False,
+    work_unit_label: str = "Scripts",
 ) -> bytes:
     rows = prebuilt_rows if prebuilt_rows is not None else bog_export_rows(pairs, rates_by_designation)
     total = bog_grand_total(rows)
@@ -272,14 +300,38 @@ def bog_workbook_bytes(
     ws = wb.active
     assert ws is not None
     ws.title = "BoG payment"
-    headers = BOG_HEADER_LABELS_WITH_PHONE if include_phone else BOG_HEADER_LABELS
-    widths = BOG_COLUMN_WIDTHS_WITH_PHONE if include_phone else BOG_COLUMN_WIDTHS
+    if include_workforce_detail:
+        headers = list(BOG_HEADER_LABELS_WORKFORCE)
+        headers[5] = work_unit_label
+        widths = BOG_COLUMN_WIDTHS_WORKFORCE
+        name_col = 4
+        phone_col = 5
+        work_units_col = 6
+        days_col = 7
+        designation_col = 8
+        amount_col = 9
+        reference_col = None
+    elif include_phone:
+        headers = BOG_HEADER_LABELS_WITH_PHONE
+        widths = BOG_COLUMN_WIDTHS_WITH_PHONE
+        name_col = 4
+        reference_col = 5
+        phone_col = 6
+        work_units_col = None
+        days_col = None
+        designation_col = 7
+        amount_col = 8
+    else:
+        headers = BOG_HEADER_LABELS
+        widths = BOG_COLUMN_WIDTHS
+        name_col = NAME_COLUMN
+        reference_col = None
+        phone_col = None
+        work_units_col = None
+        days_col = None
+        designation_col = DESIGNATION_COLUMN
+        amount_col = AMOUNT_COLUMN
     ncols = len(headers)
-    name_col = 4
-    reference_col = 5 if include_phone else None
-    phone_col = 6 if include_phone else None
-    designation_col = 7 if include_phone else DESIGNATION_COLUMN
-    amount_col = 8 if include_phone else AMOUNT_COLUMN
     start_row = 1
 
     if title:
@@ -289,7 +341,7 @@ def bog_workbook_bytes(
     header_row = start_row
     for col, label in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col, value=label)
-    _style_header_row(ws, header_row, ncols)
+    _style_header_row(ws, header_row, ncols, amount_column=amount_col)
 
     data_row = header_row + 1
     for idx, row in enumerate(rows):
@@ -302,6 +354,10 @@ def bog_workbook_bytes(
             _write_text_cell(ws, r, reference_col, row.reference_code or "")
         if phone_col is not None:
             _write_text_cell(ws, r, phone_col, row.phone_number or "")
+        if work_units_col is not None:
+            _write_int_cell(ws, r, work_units_col, int(row.work_units or 0))
+        if days_col is not None:
+            _write_int_cell(ws, r, days_col, int(row.num_days or 0))
         _write_text_cell(ws, r, designation_col, row.designation)
         _write_amount_cell(ws, r, amount_col, row.amount)
         _style_data_row(
@@ -311,6 +367,7 @@ def bog_workbook_bytes(
             stripe=idx % 2 == 1,
             incomplete=row.incomplete_bank,
             name_column=name_col,
+            amount_column=amount_col,
         )
 
     total_row = data_row + len(rows)

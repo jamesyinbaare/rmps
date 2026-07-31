@@ -87,9 +87,25 @@ function SortableHeader({
 }
 
 function renderDataRow(row: WorkforcePayoutRow, unitLabel: string, ratesHref: string) {
+  const missingBank = !row.has_bank_account || !row.account_number?.trim() || !row.bank_code?.trim();
   return (
-    <tr key={row.id} className="hover:bg-muted/30">
-      <td className={cellName}>{row.full_name}</td>
+    <tr
+      key={row.id}
+      className={cn(
+        "hover:bg-muted/30",
+        missingBank && "border-l-2 border-l-amber-500 bg-amber-500/[0.06] dark:bg-amber-400/[0.08]",
+      )}
+    >
+      <td className={cellName}>
+        <span className="inline-flex flex-wrap items-center gap-2">
+          {row.full_name}
+          {missingBank ? (
+            <span className="inline-flex rounded-full bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+              No bank
+            </span>
+          ) : null}
+        </span>
+      </td>
       <td className={cn(cellMuted, "font-mono tabular-nums")}>{row.reference_code ?? "—"}</td>
       <td className="max-w-40 truncate border-l border-border/60 px-3 py-2 align-top" title={row.bank_name ?? undefined}>
         {row.bank_name ?? "—"}
@@ -115,13 +131,24 @@ function renderDataRow(row: WorkforcePayoutRow, unitLabel: string, ratesHref: st
 
 function MobilePayoutCard({ row, unitLabel, ratesHref }: { row: WorkforcePayoutRow; unitLabel: string; ratesHref: string }) {
   const [expanded, setExpanded] = useState(false);
+  const missingBank = !row.has_bank_account || !row.account_number?.trim() || !row.bank_code?.trim();
   return (
-    <article className="rounded-xl border border-border bg-card p-3 shadow-sm">
+    <article
+      className={cn(
+        "rounded-xl border border-border bg-card p-3 shadow-sm",
+        missingBank && "border-l-2 border-l-amber-500 bg-amber-500/[0.06] dark:bg-amber-400/[0.08]",
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-foreground">{row.full_name}</p>
           {row.reference_code ? (
             <p className="font-mono text-xs text-muted-foreground">{row.reference_code}</p>
+          ) : null}
+          {missingBank ? (
+            <span className="mt-1 inline-flex rounded-full bg-amber-500/12 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+              No bank details
+            </span>
           ) : null}
         </div>
         <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
@@ -151,6 +178,8 @@ function MobilePayoutCard({ row, unitLabel, ratesHref }: { row: WorkforcePayoutR
           <dd className="font-mono">{displayBankCode(row.bank_code)}</dd>
           <dt className="text-muted-foreground">Phone</dt>
           <dd className="tabular-nums">{row.phone_number || "—"}</dd>
+          <dt className="text-muted-foreground">Days</dt>
+          <dd className="tabular-nums">{row.num_days.toLocaleString()}</dd>
         </dl>
       ) : null}
     </article>

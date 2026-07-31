@@ -4,7 +4,11 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies.auth import SuperAdminOrFinanceOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.schemas.workforce import WorkforceRatesPut, WorkforceRatesResponse
+from app.schemas.workforce import (
+    DataEntryClerkRatesPut,
+    ScriptCheckerRatesPut,
+    WorkforceRatesResponse,
+)
 from app.services.workforce_rates import (
     get_data_entry_clerk_rates,
     get_script_checker_rates,
@@ -33,7 +37,7 @@ async def get_admin_script_checker_rates(
 @router.put("/{exam_id}/script-checker-rates", response_model=WorkforceRatesResponse)
 async def put_admin_script_checker_rates(
     exam_id: int,
-    body: WorkforceRatesPut,
+    body: ScriptCheckerRatesPut,
     session: DBSessionDep,
     _: SuperAdminOrFinanceOfficerDep,
 ) -> WorkforceRatesResponse:
@@ -66,7 +70,7 @@ async def get_admin_data_entry_clerk_rates(
 @router.put("/{exam_id}/data-entry-clerk-rates", response_model=WorkforceRatesResponse)
 async def put_admin_data_entry_clerk_rates(
     exam_id: int,
-    body: WorkforceRatesPut,
+    body: DataEntryClerkRatesPut,
     session: DBSessionDep,
     _: SuperAdminOrFinanceOfficerDep,
 ) -> WorkforceRatesResponse:
