@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Files } from "lucide-react"
 import Link from "next/link"
 import { LoginForm } from "@/components/login-form"
-import { isAuthenticated } from "@/lib/api"
+import { getCurrentUser, isAuthenticated } from "@/lib/api"
+import { normalizeRole } from "@/lib/role-utils"
 import { toast } from "sonner"
 
 export default function LoginPage() {
@@ -27,8 +28,18 @@ export default function LoginPage() {
 
     // If already authenticated, redirect to home or intended destination
     if (isAuthenticated()) {
-      // Use window.location for immediate redirect to avoid stuck state
-      window.location.href = redirect || "/";
+      if (redirect) {
+        window.location.href = redirect;
+        return;
+      }
+      void getCurrentUser()
+        .then((user) => {
+          window.location.href =
+            normalizeRole(user.role) === "DATACLERK" ? "/clerk" : "/";
+        })
+        .catch(() => {
+          window.location.href = "/";
+        });
     }
   }, [router, redirect, searchParams]);
 

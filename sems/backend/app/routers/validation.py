@@ -1,11 +1,12 @@
 """API router for validation endpoints."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
+from app.dependencies.auth import CurrentUserDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
 
 logger = logging.getLogger(__name__)
@@ -16,16 +17,22 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    IssueBatch,
     School,
     Subject,
     SubjectRegistration,
     SubjectScore,
     SubjectScoreValidationIssue,
     SubjectType,
+    User,
+    UserRole,
     ValidationIssueStatus,
     ValidationIssueType,
 )
 from app.schemas.validation import (
+    ClerkValidationStatsItem,
+    ClerkValidationStatsResponse,
+    MyValidationStatsResponse,
     ResolveValidationIssueRequest,
     RunValidationRequest,
     RunValidationResponse,
@@ -35,6 +42,10 @@ from app.schemas.validation import (
 )
 from app.utils.score_utils import add_extraction_method_to_document, parse_score_value
 from app.services.validation_job_service import process_validation
+from app.services.clerk_quota_service import (
+    count_resolved_today,
+    get_effective_quota,
+)
 from app.services.cache_service import cache_service
 from app.utils.cache_utils import (
     generate_issues_list_key,
@@ -50,12 +61,13 @@ router = APIRouter(prefix="/api/v1/validation", tags=["validation"])
 async def run_validation(
     request: RunValidationRequest,
     session: DBSessionDep,
+    _: RegistrarDep,
 ) -> RunValidationResponse:
     """
     Manually trigger validation for SubjectScores.
 
-    Runs validation synchronously and returns results immediately.
-    Optional filters can be provided to limit the scope of validation.
+    Registrar-or-above only. Runs validation synchronously and returns results
+    immediately. Optional filters can be provided to limit the scope of validation.
     """
     try:
         logger.info(
@@ -99,9 +111,201 @@ async def run_validation(
         )
 
 
+def _utc_day_start(now: datetime | None = None) -> datetime:
+    current = now or datetime.utcnow()
+    return current.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _utc_week_start(now: datetime | None = None) -> datetime:
+    day_start = _utc_day_start(now)
+    return day_start - timedelta(days=day_start.weekday())
+
+
+async def _assert_can_act_on_issue(
+    session: DBSessionDep,
+    issue: SubjectScoreValidationIssue,
+    current_user: User,
+    *,
+    enforce_quota: bool = False,
+) -> None:
+    """Enforce batch assignment for clerks; optional daily resolve quota."""
+    if current_user.role <= UserRole.REGISTRAR:
+        return
+
+    if current_user.role == UserRole.DATACLERK:
+        if issue.batch_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Issue is not assigned to you",
+            )
+        batch = (
+            await session.execute(select(IssueBatch).where(IssueBatch.id == issue.batch_id))
+        ).scalar_one_or_none()
+        if batch is None or batch.assigned_to_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Issue is not assigned to you",
+            )
+        if enforce_quota:
+            limit, _ = await get_effective_quota(session, current_user.id)
+            resolved_today = await count_resolved_today(session, current_user.id)
+            if resolved_today >= limit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Daily resolve quota reached",
+                )
+        return
+
+    # Officers: allow without assignment ownership for ops, no quota
+    return
+
+
+@router.get("/stats/me", response_model=MyValidationStatsResponse)
+async def get_my_validation_stats(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> MyValidationStatsResponse:
+    """Return personal open-queue and attributed resolution stats for the current user."""
+    day_start = _utc_day_start()
+    week_start = _utc_week_start()
+
+    async def _count_resolved(since: datetime | None = None) -> int:
+        stmt = select(func.count()).select_from(SubjectScoreValidationIssue).where(
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED,
+            SubjectScoreValidationIssue.resolved_by_user_id == current_user.id,
+        )
+        if since is not None:
+            stmt = stmt.where(SubjectScoreValidationIssue.resolved_at >= since)
+        result = await session.execute(stmt)
+        return result.scalar() or 0
+
+    ignored_total_result = await session.execute(
+        select(func.count())
+        .select_from(SubjectScoreValidationIssue)
+        .where(
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.IGNORED,
+            SubjectScoreValidationIssue.resolved_by_user_id == current_user.id,
+        )
+    )
+
+    # Assigned pending for clerks; global pending open_count for elevated roles
+    if current_user.role == UserRole.DATACLERK:
+        assigned_pending_result = await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id)
+            .where(
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+                IssueBatch.assigned_to_user_id == current_user.id,
+            )
+        )
+        assigned_pending = assigned_pending_result.scalar() or 0
+        open_count = assigned_pending
+    else:
+        open_result = await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .where(SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING)
+        )
+        open_count = open_result.scalar() or 0
+        assigned_pending = 0
+
+    quota_limit, quota_overridden = await get_effective_quota(session, current_user.id)
+    resolved_today = await _count_resolved(day_start)
+
+    return MyValidationStatsResponse(
+        open_count=open_count,
+        resolved_today=resolved_today,
+        resolved_week=await _count_resolved(week_start),
+        resolved_total=await _count_resolved(),
+        ignored_total=ignored_total_result.scalar() or 0,
+        quota_limit=quota_limit,
+        quota_remaining=max(0, quota_limit - resolved_today),
+        quota_overridden=quota_overridden,
+        assigned_pending_count=assigned_pending if current_user.role == UserRole.DATACLERK else open_count,
+    )
+
+
+@router.get("/stats/clerks", response_model=ClerkValidationStatsResponse)
+async def get_clerk_validation_stats(
+    session: DBSessionDep,
+    _: RegistrarDep,
+) -> ClerkValidationStatsResponse:
+    """Return ranked attributed resolution stats for data clerks (Registrar+)."""
+    day_start = _utc_day_start()
+    week_start = _utc_week_start()
+
+    resolved_today = func.coalesce(
+        func.sum(
+            case(
+                (
+                    (SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED)
+                    & (SubjectScoreValidationIssue.resolved_at >= day_start),
+                    1,
+                ),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    resolved_week = func.coalesce(
+        func.sum(
+            case(
+                (
+                    (SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED)
+                    & (SubjectScoreValidationIssue.resolved_at >= week_start),
+                    1,
+                ),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    resolved_total = func.coalesce(
+        func.sum(
+            case(
+                (SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED, 1),
+                else_=0,
+            )
+        ),
+        0,
+    )
+
+    stmt = (
+        select(
+            User.id,
+            User.full_name,
+            resolved_today.label("resolved_today"),
+            resolved_week.label("resolved_week"),
+            resolved_total.label("resolved_total"),
+        )
+        .outerjoin(
+            SubjectScoreValidationIssue,
+            SubjectScoreValidationIssue.resolved_by_user_id == User.id,
+        )
+        .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
+        .group_by(User.id, User.full_name)
+        .order_by(resolved_total.desc(), User.full_name.asc())
+    )
+
+    result = await session.execute(stmt)
+    clerks = [
+        ClerkValidationStatsItem(
+            user_id=row.id,
+            full_name=row.full_name,
+            resolved_today=int(row.resolved_today or 0),
+            resolved_week=int(row.resolved_week or 0),
+            resolved_total=int(row.resolved_total or 0),
+        )
+        for row in result.all()
+    ]
+    return ClerkValidationStatsResponse(clerks=clerks)
+
+
 @router.get("/issues", response_model=ValidationIssueListResponse)
 async def list_validation_issues(
     session: DBSessionDep,
+    current_user: CurrentUserDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     exam_id: int | None = Query(None, description="Filter by exam ID"),
@@ -111,35 +315,60 @@ async def list_validation_issues(
     issue_type: str | None = Query(None, description="Filter by issue type (missing_score, invalid_score)"),
     test_type: int | None = Query(None, description="Filter by test type (1 = Objectives, 2 = Essay, 3 = Practical)"),
     subject_type: str | None = Query(None, description="Filter by subject type (CORE, ELECTIVE)"),
+    batch_id: int | None = Query(None, description="Filter by batch ID"),
+    assigned_to_user_id: str | None = Query(None, description="Registrar+: filter by assignee UUID"),
+    unassigned_only: bool = Query(False, description="Registrar+: only issues with no batch or unassigned batch"),
 ) -> ValidationIssueListResponse:
     """List validation issues with pagination and optional filters."""
-    # Generate cache key
-    cache_key = generate_issues_list_key(
-        page=page,
-        page_size=page_size,
-        exam_id=exam_id,
-        school_id=school_id,
-        subject_id=subject_id,
-        status_filter=status_filter.value if status_filter else None,
-        issue_type=issue_type,
-        test_type=test_type,
-        subject_type=subject_type,
-    )
+    is_clerk = current_user.role == UserRole.DATACLERK
+    use_cache = not is_clerk and batch_id is None and not unassigned_only and not assigned_to_user_id
 
-    # Try to get from cache
-    cached_response = await cache_service.get(cache_key)
-    if cached_response is not None:
-        logger.debug(f"Cache hit for key: {cache_key}")
-        return ValidationIssueListResponse.model_validate(cached_response)
+    if use_cache:
+        cache_key = generate_issues_list_key(
+            page=page,
+            page_size=page_size,
+            exam_id=exam_id,
+            school_id=school_id,
+            subject_id=subject_id,
+            status_filter=status_filter.value if status_filter else None,
+            issue_type=issue_type,
+            test_type=test_type,
+            subject_type=subject_type,
+        )
+        cached_response = await cache_service.get(cache_key)
+        if cached_response is not None:
+            return ValidationIssueListResponse.model_validate(cached_response)
+    else:
+        cache_key = None
 
-    logger.debug(f"Cache miss for key: {cache_key}, querying database")
     offset = (page - 1) * page_size
-
-    # Build base query
     stmt = select(SubjectScoreValidationIssue)
 
-    # Apply filters
-    # Need to join ExamSubject for exam_id, subject_id, or subject_type filters
+    if is_clerk:
+        stmt = stmt.join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id).where(
+            IssueBatch.assigned_to_user_id == current_user.id
+        )
+        if batch_id is not None:
+            stmt = stmt.where(SubjectScoreValidationIssue.batch_id == batch_id)
+    else:
+        if batch_id is not None:
+            stmt = stmt.where(SubjectScoreValidationIssue.batch_id == batch_id)
+        if unassigned_only:
+            stmt = stmt.outerjoin(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id).where(
+                (SubjectScoreValidationIssue.batch_id.is_(None))
+                | (IssueBatch.assigned_to_user_id.is_(None))
+            )
+        elif assigned_to_user_id:
+            from uuid import UUID
+
+            try:
+                assignee = UUID(assigned_to_user_id)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="Invalid assigned_to_user_id") from e
+            stmt = stmt.join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id).where(
+                IssueBatch.assigned_to_user_id == assignee
+            )
+
     needs_exam_subject_join = exam_id is not None or subject_id is not None or subject_type is not None
     if needs_exam_subject_join:
         stmt = stmt.join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
@@ -148,19 +377,14 @@ async def list_validation_issues(
         if subject_id is not None:
             stmt = stmt.where(ExamSubject.subject_id == subject_id)
         if subject_type is not None:
-            # Join with Subject to filter by subject_type
             stmt = stmt.join(Subject, ExamSubject.subject_id == Subject.id)
             try:
                 subject_type_enum = SubjectType(subject_type)
                 stmt = stmt.where(Subject.subject_type == subject_type_enum)
             except ValueError:
-                # Invalid subject_type, return empty results
                 stmt = stmt.where(False)
 
     if school_id is not None:
-        # Join through SubjectScore -> SubjectRegistration -> ExamRegistration -> Candidate
-        # Get subject_score_ids for the school
-        from app.models import SubjectScore
         school_subject_score_ids = (
             select(SubjectScore.id)
             .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
@@ -178,33 +402,53 @@ async def list_validation_issues(
             issue_type_enum = ValidationIssueType(issue_type)
             stmt = stmt.where(SubjectScoreValidationIssue.issue_type == issue_type_enum)
         except ValueError:
-            # Invalid issue_type, return empty results
             stmt = stmt.where(False)
 
     if test_type is not None:
         stmt = stmt.where(SubjectScoreValidationIssue.test_type == test_type)
 
-    # Get total count
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total_result = await session.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    # Apply pagination and ordering
-    stmt = stmt.order_by(SubjectScoreValidationIssue.created_at.desc()).offset(offset).limit(page_size)
+    stmt = stmt.order_by(
+        SubjectScoreValidationIssue.batch_id.asc().nulls_last(),
+        SubjectScoreValidationIssue.id.asc(),
+    ).offset(offset).limit(page_size)
 
-    # Execute query
     result = await session.execute(stmt)
     issues = result.scalars().all()
+
+    batch_ids = {i.batch_id for i in issues if i.batch_id is not None}
+    batch_meta: dict[int, tuple[str, bool]] = {}
+    if batch_ids:
+        batch_rows = (
+            await session.execute(
+                select(IssueBatch.id, IssueBatch.name, IssueBatch.has_document).where(
+                    IssueBatch.id.in_(batch_ids)
+                )
+            )
+        ).all()
+        batch_meta = {row.id: (row.name, row.has_document) for row in batch_rows}
+
+    issue_responses: list[SubjectScoreValidationIssueResponse] = []
+    for issue in issues:
+        item = SubjectScoreValidationIssueResponse.model_validate(issue)
+        if issue.batch_id and issue.batch_id in batch_meta:
+            name, has_doc = batch_meta[issue.batch_id]
+            item.batch_name = name
+            item.batch_has_document = has_doc
+        issue_responses.append(item)
 
     response = ValidationIssueListResponse(
         total=total,
         page=page,
         page_size=page_size,
-        issues=[SubjectScoreValidationIssueResponse.model_validate(issue) for issue in issues],
+        issues=issue_responses,
     )
 
-    # Cache the response
-    await cache_service.set(cache_key, response.model_dump())
+    if cache_key is not None:
+        await cache_service.set(cache_key, response.model_dump())
 
     return response
 
@@ -213,19 +457,9 @@ async def list_validation_issues(
 async def get_validation_issue(
     issue_id: int,
     session: DBSessionDep,
+    current_user: CurrentUserDep,
 ) -> ValidationIssueDetailResponse:
     """Get a single validation issue with extended details."""
-    # Generate cache key
-    cache_key = generate_issue_detail_key(issue_id)
-
-    # Try to get from cache
-    cached_response = await cache_service.get(cache_key)
-    if cached_response is not None:
-        logger.debug(f"Cache hit for key: {cache_key}")
-        return ValidationIssueDetailResponse.model_validate(cached_response)
-
-    logger.debug(f"Cache miss for key: {cache_key}, querying database")
-    # Get issue with related data
     stmt = (
         select(
             SubjectScoreValidationIssue,
@@ -270,7 +504,8 @@ async def get_validation_issue(
         school,
     ) = row
 
-    # Get current score value for the problematic field
+    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=False)
+
     current_score_value = None
     document_id = None
     if issue.field_name == "obj_raw_score":
@@ -283,15 +518,14 @@ async def get_validation_issue(
         current_score_value = subject_score.pract_raw_score
         document_id = subject_score.pract_document_id
 
-    # Get document info if document_id exists
     document_file_name = None
     document_numeric_id = None
     document_mime_type = None
     if document_id:
-        # Filter by both extracted_id and exam_id to ensure we get the correct document
         doc_stmt = select(Document).where(
             Document.extracted_id == document_id,
-            Document.exam_id == exam.id
+            Document.exam_id == exam.id,
+            Document.id_extraction_status == "success",
         )
         doc_result = await session.execute(doc_stmt)
         doc = doc_result.scalar_one_or_none()
@@ -300,7 +534,17 @@ async def get_validation_issue(
             document_numeric_id = doc.id
             document_mime_type = doc.mime_type
 
-    response = ValidationIssueDetailResponse(
+    batch_name = None
+    batch_has_document = None
+    if issue.batch_id:
+        batch = (
+            await session.execute(select(IssueBatch).where(IssueBatch.id == issue.batch_id))
+        ).scalar_one_or_none()
+        if batch:
+            batch_name = batch.name
+            batch_has_document = batch.has_document
+
+    return ValidationIssueDetailResponse(
         id=issue.id,
         subject_score_id=issue.subject_score_id,
         exam_subject_id=issue.exam_subject_id,
@@ -312,6 +556,10 @@ async def get_validation_issue(
         created_at=issue.created_at,
         updated_at=issue.updated_at,
         resolved_at=issue.resolved_at,
+        resolved_by_user_id=issue.resolved_by_user_id,
+        batch_id=issue.batch_id,
+        batch_name=batch_name,
+        batch_has_document=batch_has_document,
         candidate_id=candidate.id,
         candidate_name=candidate.name,
         candidate_index_number=candidate.index_number,
@@ -331,17 +579,13 @@ async def get_validation_issue(
         document_mime_type=document_mime_type,
     )
 
-    # Cache the response
-    await cache_service.set(cache_key, response.model_dump())
-
-    return response
-
 
 @router.put("/issues/{issue_id}/resolve", response_model=SubjectScoreValidationIssueResponse)
 async def resolve_validation_issue(
     issue_id: int,
     request: ResolveValidationIssueRequest,
     session: DBSessionDep,
+    current_user: CurrentUserDep,
 ) -> SubjectScoreValidationIssueResponse:
     """Mark a validation issue as resolved, optionally with a corrected score."""
     stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
@@ -353,6 +597,8 @@ async def resolve_validation_issue(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Validation issue with id {issue_id} not found",
         )
+
+    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=True)
 
     # If corrected_score is provided, update the SubjectScore field
     if request.corrected_score is not None:
@@ -416,6 +662,7 @@ async def resolve_validation_issue(
 
     issue.status = ValidationIssueStatus.RESOLVED
     issue.resolved_at = datetime.utcnow()
+    issue.resolved_by_user_id = current_user.id
     await session.commit()
     await session.refresh(issue)
 
@@ -431,6 +678,7 @@ async def resolve_validation_issue(
 async def ignore_validation_issue(
     issue_id: int,
     session: DBSessionDep,
+    current_user: CurrentUserDep,
 ) -> SubjectScoreValidationIssueResponse:
     """Mark a validation issue as ignored."""
     stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
@@ -443,8 +691,11 @@ async def ignore_validation_issue(
             detail=f"Validation issue with id {issue_id} not found",
         )
 
+    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=False)
+
     issue.status = ValidationIssueStatus.IGNORED
     issue.resolved_at = datetime.utcnow()
+    issue.resolved_by_user_id = current_user.id
     await session.commit()
     await session.refresh(issue)
 

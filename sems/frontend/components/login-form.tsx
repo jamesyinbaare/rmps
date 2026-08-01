@@ -12,7 +12,8 @@ import {
   FieldSeparator,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { login } from "@/lib/api"
+import { getCurrentUser, login } from "@/lib/api"
+import { normalizeRole } from "@/lib/role-utils"
 import { toast } from "sonner"
 import { resetLogoutNotification } from "@/lib/auth-utils"
 
@@ -51,16 +52,22 @@ export function LoginForm({
     setLoading(true)
 
     try {
-      const response = await login({ email, password })
+      await login({ email, password })
       // Tokens are already stored by the login function
-      // Clear any existing refresh tokens (shouldn't be necessary, but good practice)
-      // Reset logout notification flag on successful login
       resetLogoutNotification()
       toast.success("Login successful")
-      // Redirect to intended destination or home page
-      // Use window.location for immediate redirect to avoid stuck state
       const redirect = searchParams.get("redirect")
-      window.location.href = redirect || "/"
+      if (redirect) {
+        window.location.href = redirect
+        return
+      }
+      try {
+        const user = await getCurrentUser()
+        window.location.href =
+          normalizeRole(user.role) === "DATACLERK" ? "/clerk" : "/"
+      } catch {
+        window.location.href = "/"
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Login failed"
 
