@@ -559,6 +559,10 @@ export interface SubjectScoreValidationIssue {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  resolved_by_user_id: string | null;
+  batch_id: number | null;
+  batch_name?: string | null;
+  batch_has_document?: boolean | null;
 }
 
 export interface ValidationIssueListResponse {
@@ -590,6 +594,7 @@ export interface ValidationIssuesFilters {
   issue_type?: ValidationIssueType;
   test_type?: number;
   subject_type?: string;
+  batch_id?: number;
   page?: number;
   page_size?: number;
 }
@@ -606,6 +611,10 @@ export interface ValidationIssueDetailResponse {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  resolved_by_user_id: string | null;
+  batch_id: number | null;
+  batch_name: string | null;
+  batch_has_document: boolean | null;
   candidate_id: number | null;
   candidate_name: string | null;
   candidate_index_number: string | null;
@@ -623,6 +632,151 @@ export interface ValidationIssueDetailResponse {
   document_file_name: string | null;
   document_numeric_id: number | null;
   document_mime_type: string | null;
+}
+
+export interface MyValidationStats {
+  open_count: number;
+  resolved_today: number;
+  resolved_week: number;
+  resolved_total: number;
+  ignored_total: number;
+  quota_limit: number;
+  quota_remaining: number;
+  quota_overridden: boolean;
+  assigned_pending_count: number;
+}
+
+export interface ClerkValidationStatsItem {
+  user_id: string;
+  full_name: string;
+  resolved_today: number;
+  resolved_week: number;
+  resolved_total: number;
+}
+
+export interface ClerkValidationStatsResponse {
+  clerks: ClerkValidationStatsItem[];
+}
+
+export interface IssueBatch {
+  id: number;
+  name: string;
+  exam_id: number;
+  subject_id: number;
+  test_type: number;
+  has_document: boolean;
+  target_size: number;
+  tolerance: number;
+  issue_count: number;
+  assigned_to_user_id: string | null;
+  assigned_by_user_id: string | null;
+  assigned_at: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  assigned_to_name: string | null;
+}
+
+export interface IssueBatchListResponse {
+  batches: IssueBatch[];
+  total: number;
+}
+
+export type ClerkBatchProgressStatus = "in_progress" | "completed";
+
+export interface ClerkBatchItem {
+  id: number;
+  name: string;
+  exam_id: number;
+  subject_id: number;
+  subject_code: string | null;
+  subject_name: string | null;
+  exam_year: number | null;
+  test_type: number;
+  has_document: boolean;
+  issue_count: number;
+  pending_count: number;
+  done_count: number;
+  total_count: number;
+  progress_status: ClerkBatchProgressStatus;
+  assigned_at: string | null;
+  created_at: string;
+}
+
+export interface ClerkBatchListResponse {
+  batches: ClerkBatchItem[];
+  total: number;
+  in_progress_count: number;
+  completed_count: number;
+}
+
+export interface MyBatchesFilters {
+  status?: "in_progress" | "completed" | "all";
+  exam_id?: number;
+  subject_id?: number;
+  test_type?: number;
+  has_document?: boolean;
+}
+
+export interface CreateBatchesRequest {
+  exam_id: number;
+  subject_id: number;
+  test_type: number;
+  target_size?: number;
+  tolerance?: number;
+  has_document?: boolean | null;
+}
+
+export interface CreateBatchesResponse {
+  batches: Array<{
+    id: number;
+    name: string;
+    issue_count: number;
+    has_document: boolean;
+    oversized?: boolean;
+  }>;
+  oversized_groups: Array<{
+    document_id: string | null;
+    issue_count: number;
+    has_document: boolean;
+  }>;
+  created_doc_count: number;
+  created_nod_count: number;
+}
+
+export interface BatchSummaryUnbatchedItem {
+  exam_id: number;
+  subject_id: number;
+  subject_code: string;
+  test_type: number;
+  has_document: boolean;
+  pending_count: number;
+}
+
+export interface BatchSummaryClerkItem {
+  user_id: string;
+  full_name: string;
+  assigned_batches: number;
+  assigned_pending_issues: number;
+}
+
+export interface BatchSummaryResponse {
+  unbatched: BatchSummaryUnbatchedItem[];
+  clerks: BatchSummaryClerkItem[];
+}
+
+export interface ClerkQuotaItem {
+  user_id: string;
+  full_name: string;
+  base_quota: number;
+  override_quota: number | null;
+  quota_limit: number;
+  resolved_today: number;
+  remaining: number;
+  quota_overridden: boolean;
+}
+
+export interface ClerkQuotaListResponse {
+  clerks: ClerkQuotaItem[];
 }
 
 export interface RegistrationProgress {

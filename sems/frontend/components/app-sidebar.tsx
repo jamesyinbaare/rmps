@@ -10,6 +10,8 @@ import {
   Settings,
   ClipboardList,
   Images,
+  ListTodo,
+  Layers,
 } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
@@ -23,29 +25,49 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { getCurrentUser } from "@/lib/api"
+import { normalizeRole } from "@/lib/role-utils"
 import type { User, UserRole } from "@/types/document"
-
-// Helper function to normalize role (handle both number and string)
-const normalizeRole = (role: UserRole | number | undefined): UserRole | undefined => {
-  if (role === undefined) return undefined
-  if (typeof role === "string") return role as UserRole
-  if (typeof role === "number") {
-    // Convert number to role name
-    const roleMap: Record<number, UserRole> = {
-      0: "SUPER_ADMIN",
-      10: "REGISTRAR",
-      15: "OFFICER",
-      30: "DATACLERK",
-    }
-    return roleMap[role]
-  }
-  return undefined
-}
 
 // Helper function to get navigation menu based on user role
 const getNavMain = (userRole?: UserRole | number) => {
-  // Normalize role to handle both number and string formats
   const normalizedRole = normalizeRole(userRole)
+
+  if (normalizedRole === "DATACLERK") {
+    return [
+      {
+        title: "My Queue",
+        url: "/clerk",
+        icon: ListTodo,
+        items: [
+          {
+            title: "Open Issues",
+            url: "/clerk",
+          },
+        ],
+      },
+      {
+        title: "Scores",
+        url: "/scores",
+        icon: ClipboardCheck,
+        items: [
+          {
+            title: "Data Entry",
+            url: "/scores/data-entry",
+            items: [
+              {
+                title: "Digital",
+                url: "/scores/data-entry/digital",
+              },
+              {
+                title: "Manual",
+                url: "/scores/data-entry/manual",
+              },
+            ],
+          },
+        ],
+      },
+    ]
+  }
 
   const baseNav = [
     {
@@ -110,7 +132,6 @@ const getNavMain = (userRole?: UserRole | number) => {
           },
         ]
 
-        // Only show Users menu for SUPER_ADMIN and REGISTRAR
         if (normalizedRole === "SUPER_ADMIN" || normalizedRole === "REGISTRAR") {
           manageItems.push({
             title: "Users",
@@ -162,54 +183,75 @@ const getNavMain = (userRole?: UserRole | number) => {
       },
     ],
   },
-  {
-    title: "Activity",
-    url: "/activity",
-    icon: Activity,
-    items: [
-      {
-        title: "Recent Activity",
-        url: "/activity/recent",
-      },
-      {
-        title: "History",
-        url: "/activity/history",
-      },
-      {
-        title: "Analytics",
-        url: "/activity/analytics",
-      },
-    ],
-  },
-  {
-    title: "More",
-    url: "/more",
-    icon: Grid3x3,
-    items: [
-      {
-        title: "Photo Album",
-        url: "/more/photo-album",
-        icon: Images,
-      },
-      {
-        title: "Upload Candidates",
-        url: "/more/upload-candidates",
-      },
-      {
-        title: "Upload Programmes",
-        url: "/more/upload-programmes",
-      },
-      {
-        title: "Upload Subjects",
-        url: "/more/upload-subjects",
-      },
-      {
-        title: "Upload Schools",
-        url: "/more/upload-schools",
-      },
-    ],
-  },
   ]
+
+  if (normalizedRole === "SUPER_ADMIN" || normalizedRole === "REGISTRAR") {
+    baseNav.push({
+      title: "Clerk Ops",
+      url: "/clerk/assign",
+      icon: Layers,
+      items: [
+        {
+          title: "Assign & Quotas",
+          url: "/clerk/assign",
+        },
+        {
+          title: "Leaderboard",
+          url: "/clerk/stats",
+        },
+      ],
+    })
+  }
+
+  baseNav.push(
+    {
+      title: "Activity",
+      url: "/activity",
+      icon: Activity,
+      items: [
+        {
+          title: "Recent Activity",
+          url: "/activity/recent",
+        },
+        {
+          title: "History",
+          url: "/activity/history",
+        },
+        {
+          title: "Analytics",
+          url: "/activity/analytics",
+        },
+      ],
+    },
+    {
+      title: "More",
+      url: "/more",
+      icon: Grid3x3,
+      items: [
+        {
+          title: "Photo Album",
+          url: "/more/photo-album",
+          icon: Images,
+        },
+        {
+          title: "Upload Candidates",
+          url: "/more/upload-candidates",
+        },
+        {
+          title: "Upload Programmes",
+          url: "/more/upload-programmes",
+        },
+        {
+          title: "Upload Subjects",
+          url: "/more/upload-subjects",
+        },
+        {
+          title: "Upload Schools",
+          url: "/more/upload-schools",
+        },
+      ],
+    },
+  )
 
   return baseNav
 }

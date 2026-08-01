@@ -25,6 +25,7 @@ from app.routers import (
     subjects,
     users,
     validation,
+    validation_batches,
 )
 from app.services.reducto_queue import reducto_queue_service
 from app.config import logging_settings
@@ -189,6 +190,7 @@ app.include_router(results.router)
 app.include_router(grades.router)
 app.include_router(pdf_generation_jobs.router)
 app.include_router(validation.router)
+app.include_router(validation_batches.router)
 app.include_router(insights.router)
 app.include_router(users.router)
 

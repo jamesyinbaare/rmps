@@ -487,6 +487,74 @@ class PdfGenerationJob(Base):
     subject = relationship("Subject")
 
 
+class IssueBatch(Base):
+    """Batch of validation issues for clerk assignment (DOC/NOD streams)."""
+
+    __tablename__ = "issue_batches"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(128), unique=True, nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    test_type = Column(Integer, nullable=False, index=True)  # 1 Obj / 2 Essay / 3 Practical
+    has_document = Column(Boolean, nullable=False, index=True)
+    target_size = Column(Integer, nullable=False)
+    tolerance = Column(Integer, nullable=False)
+    issue_count = Column(Integer, nullable=False, default=0)
+    assigned_to_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assigned_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_at = Column(DateTime, nullable=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    exam = relationship("Exam")
+    subject = relationship("Subject")
+    assigned_to = relationship("User", foreign_keys=[assigned_to_user_id])
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    issues = relationship("SubjectScoreValidationIssue", back_populates="batch")
+
+
+class ClerkQuotaSettings(Base):
+    """Per-clerk base daily resolve quota."""
+
+    __tablename__ = "clerk_quota_settings"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    daily_resolve_quota = Column(Integer, nullable=False, default=200)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+
+
+class ClerkDailyQuotaOverride(Base):
+    """Same-day override of a clerk's resolve quota (UTC date)."""
+
+    __tablename__ = "clerk_daily_quota_overrides"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    quota_date = Column(Date, nullable=False, index=True)
+    override_quota = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", foreign_keys=[user_id])
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (UniqueConstraint("user_id", "quota_date", name="uq_clerk_daily_quota_override"),)
+
+
 class SubjectScoreValidationIssue(Base):
     """Records for validation issues found in SubjectScore records."""
 
@@ -506,9 +574,17 @@ class SubjectScoreValidationIssue(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
+    resolved_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    batch_id = Column(
+        Integer, ForeignKey("issue_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     subject_score = relationship("SubjectScore")
     exam_subject = relationship("ExamSubject")
+    resolved_by = relationship("User", foreign_keys=[resolved_by_user_id])
+    batch = relationship("IssueBatch", back_populates="issues")
 
 
 class CandidatePhoto(Base):

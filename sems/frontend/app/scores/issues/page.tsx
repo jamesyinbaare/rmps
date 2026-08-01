@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -15,18 +16,24 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getValidationIssues, getValidationIssue, runValidation, resolveValidationIssue, ignoreValidationIssue, getAllExams, listSchools, listSubjects, API_BASE_URL } from "@/lib/api";
+import {
+  getCurrentUser,
+  getValidationIssues,
+  runValidation,
+  getAllExams,
+  listSchools,
+  listSubjects,
+} from "@/lib/api";
+import { normalizeRole } from "@/lib/role-utils";
 import type {
   SubjectScoreValidationIssue,
-  ValidationIssueDetailResponse,
   ValidationIssueStatus,
   ValidationIssueType,
   Exam,
   School,
   Subject,
 } from "@/types/document";
-import { Loader2, AlertCircle, CheckCircle2, XCircle, Play, Filter, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Loader2, AlertCircle, CheckCircle2, XCircle, Play, Filter, ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import {
@@ -40,8 +47,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ValidationIssueWorkspace } from "@/components/ValidationIssueWorkspace";
 
 export default function ValidationIssuesPage() {
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
   const [issues, setIssues] = useState<SubjectScoreValidationIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,18 +86,9 @@ export default function ValidationIssuesPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilterOptions, setLoadingFilterOptions] = useState(false);
 
-  // Issue detail modal
+  // Issue detail workspace
   const [issueModalOpen, setIssueModalOpen] = useState(false);
   const [currentIssueIndex, setCurrentIssueIndex] = useState<number | null>(null);
-  const [issueDetail, setIssueDetail] = useState<ValidationIssueDetailResponse | null>(null);
-  const [loadingIssueDetail, setLoadingIssueDetail] = useState(false);
-  const [correctedScore, setCorrectedScore] = useState<string>("");
-  const [resolvingIssue, setResolvingIssue] = useState(false);
-  const [ignoringIssue, setIgnoringIssue] = useState(false);
-  const [imageLoading, setImageLoading] = useState(true);
-  const [imageError, setImageError] = useState(false);
-  const [allDetailsOpen, setAllDetailsOpen] = useState(false);
-  const correctedScoreInputRef = useRef<HTMLInputElement>(null);
 
   // Load issues
   const loadIssues = useCallback(async () => {
@@ -131,15 +134,13 @@ export default function ValidationIssuesPage() {
       setIssues(response.issues);
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / pageSize));
-      // Update current issue detail if modal is open and issue still exists
-      if (issueModalOpen && currentIssueIndex !== null && currentIssueIndex < response.issues.length) {
-        loadIssueDetail(response.issues[currentIssueIndex].id);
-      } else if (issueModalOpen && (currentIssueIndex === null || currentIssueIndex >= response.issues.length)) {
-        // Close modal if current issue no longer exists
-        setIssueModalOpen(false);
-        setCurrentIssueIndex(null);
-        setIssueDetail(null);
-      }
+      setCurrentIssueIndex((idx) => {
+        if (idx !== null && idx >= response.issues.length) {
+          setIssueModalOpen(false);
+          return null;
+        }
+        return idx;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load validation issues");
       console.error("Error loading validation issues:", err);
@@ -149,97 +150,39 @@ export default function ValidationIssuesPage() {
   }, [page, pageSize, statusFilter, issueTypeFilter, examIdFilter, schoolIdFilter, subjectIdFilter, testTypeFilter, subjectTypeFilter]);
 
   useEffect(() => {
+    const checkAccess = async () => {
+      try {
+        const user = await getCurrentUser();
+        if (normalizeRole(user.role) === "DATACLERK") {
+          router.replace("/clerk");
+          return;
+        }
+        setAuthorized(true);
+      } catch {
+        router.replace("/login");
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    void checkAccess();
+  }, [router]);
+
+  useEffect(() => {
+    if (!authorized) return;
     loadIssues();
-  }, [loadIssues]);
+  }, [authorized, loadIssues]);
 
   // Load filter options on mount and when dialog opens
   useEffect(() => {
+    if (!authorized) return;
     loadFilterOptions();
-  }, []);
+  }, [authorized]);
 
   useEffect(() => {
     if (runDialogOpen) {
       loadFilterOptions();
     }
   }, [runDialogOpen]);
-
-  // Keyboard navigation for issue dialog
-  useEffect(() => {
-    if (!issueModalOpen) return;
-
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      // Allow navigation with arrow keys even when input is focused
-      // Only prevent if user is actively typing (has text selected or cursor is not at edge)
-      const isInputFocused = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-
-      if (isInputFocused) {
-        const input = e.target as HTMLInputElement;
-        const hasSelection = input.selectionStart !== input.selectionEnd;
-        const isAtStart = input.selectionStart === 0;
-        const isAtEnd = input.selectionStart === input.value.length;
-
-        // Only allow navigation if at edge of input or has no selection
-        if (e.key === "ArrowLeft" && !isAtStart && !hasSelection) return;
-        if (e.key === "ArrowRight" && !isAtEnd && !hasSelection) return;
-      }
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        if (currentIssueIndex !== null && currentIssueIndex > 0 && issues.length > 0) {
-          const newIndex = currentIssueIndex - 1;
-          setCurrentIssueIndex(newIndex);
-          setImageLoading(true);
-          setImageError(false);
-          setAllDetailsOpen(false);
-          setLoadingIssueDetail(true);
-          try {
-            const detail = await getValidationIssue(issues[newIndex].id);
-            setIssueDetail(detail);
-            setCorrectedScore(detail.current_score_value || "");
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to load issue details");
-            console.error("Error loading issue detail:", err);
-          } finally {
-            setLoadingIssueDetail(false);
-          }
-        }
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        if (currentIssueIndex !== null && currentIssueIndex < issues.length - 1) {
-          const newIndex = currentIssueIndex + 1;
-          setCurrentIssueIndex(newIndex);
-          setImageLoading(true);
-          setImageError(false);
-          setAllDetailsOpen(false);
-          setLoadingIssueDetail(true);
-          try {
-            const detail = await getValidationIssue(issues[newIndex].id);
-            setIssueDetail(detail);
-            setCorrectedScore(detail.current_score_value || "");
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to load issue details");
-            console.error("Error loading issue detail:", err);
-          } finally {
-            setLoadingIssueDetail(false);
-          }
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [issueModalOpen, currentIssueIndex, issues]);
-
-  // Auto-focus corrected score input when dialog opens
-  useEffect(() => {
-    if (issueModalOpen && issueDetail && issueDetail.status === "pending" && !loadingIssueDetail) {
-      // Small delay to ensure the input is rendered
-      const timer = setTimeout(() => {
-        correctedScoreInputRef.current?.focus();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [issueModalOpen, issueDetail, loadingIssueDetail]);
 
   const loadFilterOptions = async () => {
     setLoadingFilterOptions(true);
@@ -338,107 +281,14 @@ export default function ValidationIssuesPage() {
     }
   };
 
-  const loadIssueDetail = async (issueId: number) => {
-    setLoadingIssueDetail(true);
-    setImageLoading(true);
-    setImageError(false);
-    // Reset collapsible state when loading new issue
-    setAllDetailsOpen(false);
-    try {
-      const detail = await getValidationIssue(issueId);
-      setIssueDetail(detail);
-      setCorrectedScore(detail.current_score_value || "");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load issue details");
-      console.error("Error loading issue detail:", err);
-    } finally {
-      setLoadingIssueDetail(false);
-    }
-  };
-
-  const handleOpenIssueModal = (issue: SubjectScoreValidationIssue, index: number) => {
+  const handleOpenIssueModal = (_issue: SubjectScoreValidationIssue, index: number) => {
     setCurrentIssueIndex(index);
     setIssueModalOpen(true);
-    // Reset image state when opening modal
-    setImageLoading(true);
-    setImageError(false);
-    loadIssueDetail(issue.id);
   };
 
-  const handleCloseIssueModal = () => {
-    setIssueModalOpen(false);
-    setCurrentIssueIndex(null);
-    setIssueDetail(null);
-    setCorrectedScore("");
-    setImageLoading(true);
-    setImageError(false);
-    // Reset collapsible state when closing modal
-    setAllDetailsOpen(false);
-  };
-
-  const handleNavigateIssue = (direction: "prev" | "next") => {
-    if (currentIssueIndex === null || issues.length === 0) return;
-
-    let newIndex: number;
-    if (direction === "prev") {
-      newIndex = Math.max(0, currentIssueIndex - 1);
-    } else {
-      newIndex = Math.min(issues.length - 1, currentIssueIndex + 1);
-    }
-
-    if (newIndex !== currentIssueIndex) {
-      setCurrentIssueIndex(newIndex);
-      // Reset image state before loading new issue
-      setImageLoading(true);
-      setImageError(false);
-      loadIssueDetail(issues[newIndex].id);
-    }
-  };
-
-  const handleResolveIssue = async () => {
-    if (!issueDetail) return;
-
-    setResolvingIssue(true);
-    try {
-      await resolveValidationIssue(issueDetail.id, correctedScore || undefined);
-      toast.success("Issue marked as resolved");
-
-      // Navigate to next issue or close modal
-      if (currentIssueIndex !== null && currentIssueIndex < issues.length - 1) {
-        handleNavigateIssue("next");
-      } else {
-        handleCloseIssueModal();
-      }
-
-      await loadIssues();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to resolve issue");
-    } finally {
-      setResolvingIssue(false);
-    }
-  };
-
-  const handleIgnoreIssue = async () => {
-    if (!issueDetail) return;
-
-    setIgnoringIssue(true);
-    try {
-      await ignoreValidationIssue(issueDetail.id);
-      toast.success("Issue marked as ignored");
-
-      // Navigate to next issue or close modal
-      if (currentIssueIndex !== null && currentIssueIndex < issues.length - 1) {
-        handleNavigateIssue("next");
-      } else {
-        handleCloseIssueModal();
-      }
-
-      await loadIssues();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to ignore issue");
-    } finally {
-      setIgnoringIssue(false);
-    }
+  const handleIssueHandled = (issueId: number) => {
+    setIssues((prev) => prev.filter((issue) => issue.id !== issueId));
+    setTotal((prev) => Math.max(0, prev - 1));
   };
 
   const getStatusBadge = (status: ValidationIssueStatus) => {
@@ -513,6 +363,10 @@ export default function ValidationIssuesPage() {
         return fieldName;
     }
   };
+
+  if (!authChecked || !authorized) {
+    return null;
+  }
 
   return (
     <DashboardLayout>
@@ -1146,316 +1000,14 @@ export default function ValidationIssuesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Issue Detail Modal */}
-        <Dialog open={issueModalOpen} onOpenChange={handleCloseIssueModal}>
-          <DialogContent className="2xl:max-w-[60vw] min-w-[80vw] max-h-[90vh] overflow-hidden flex flex-col">
-            <DialogHeader>
-              {issueDetail ? (
-                <>
-                  <DialogTitle className="text-2xl font-bold">
-                    {issueDetail.candidate_name || "Unknown Candidate"}
-                  </DialogTitle>
-                  <DialogDescription className="text-lg font-semibold text-foreground mt-1">
-                    {issueDetail.candidate_index_number || "No Index Number"}
-                  </DialogDescription>
-                </>
-              ) : (
-                <>
-                  <DialogTitle>Issue Details</DialogTitle>
-                  <DialogDescription>
-                    Review and resolve validation issues
-                  </DialogDescription>
-                </>
-              )}
-            </DialogHeader>
-
-            {loadingIssueDetail ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : issueDetail ? (
-              <div className="flex gap-6 flex-1 overflow-hidden min-h-0">
-                {/* Document Image on Left */}
-                {issueDetail.document_id && issueDetail.document_mime_type?.startsWith("image/") && issueDetail.exam_id && (
-                  <div className="w-2/3 shrink-0 border-r pr-6 overflow-y-auto flex flex-col">
-                    <div className="relative bg-muted rounded-lg overflow-auto flex-1 flex items-center justify-center min-h-0" style={{ minHeight: '400px' }}>
-                      {imageError ? (
-                        <div className="flex items-center justify-center h-full text-muted-foreground">
-                          <p>Unable to load document image</p>
-                        </div>
-                      ) : (
-                        <>
-                          {imageLoading && (
-                            <Skeleton className="w-full h-full absolute inset-0 z-10" />
-                          )}
-                          <img
-                            key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${issueDetail.id}`}
-                            src={`${API_BASE_URL}/api/v1/documents/by-extracted-id/${issueDetail.document_id}/download?exam_id=${issueDetail.exam_id}`}
-                            alt={issueDetail.document_file_name || "Document"}
-                            className="w-auto h-auto object-contain"
-                            style={{
-                              maxWidth: '100%',
-                              maxHeight: '100%',
-                              opacity: imageLoading ? 0 : 1,
-                              transition: 'opacity 0.2s ease-in-out'
-                            }}
-                            loading="lazy"
-                            onLoad={() => {
-                              setImageLoading(false);
-                            }}
-                            onError={(e) => {
-                              console.error("Image load error:", e);
-                              setImageLoading(false);
-                              setImageError(true);
-                            }}
-                          />
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Issue Details on Right */}
-                <div className={`space-y-6 py-4 overflow-y-auto flex-1 min-h-0 ${issueDetail.document_id && issueDetail.document_mime_type?.startsWith("image/") && issueDetail.exam_id ? "w-1/3" : "w-full"}`}>
-                {/* Candidate/Subject Info - Always visible */}
-                <div className="space-y-3">
-                  <h3 className="font-semibold text-sm">Candidate & Subject Information</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    {issueDetail.candidate_name && (
-                      <div>
-                        <p className="text-muted-foreground">Candidate Name</p>
-                        <p className="font-medium">{issueDetail.candidate_name}</p>
-                      </div>
-                    )}
-                    {issueDetail.candidate_index_number && (
-                      <div>
-                        <p className="text-muted-foreground">Index Number</p>
-                        <p className="font-medium">{issueDetail.candidate_index_number}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Score Information - Reorganized with current score, input, and resolve button on same row */}
-                <div className="space-y-3 border-t pt-4">
-                  <h3 className="font-semibold text-sm">Score Information</h3>
-                  {issueDetail.status === "pending" ? (
-                    <div className="flex items-end gap-3">
-                      <div className="flex-1">
-                        <label className="text-sm font-medium text-muted-foreground">Current Score Value</label>
-                        <p className="text-sm mt-1 font-mono">
-                          {issueDetail.current_score_value ?? <span className="text-muted-foreground">Not set</span>}
-                        </p>
-                      </div>
-                      <div className="flex-1">
-                        <label htmlFor="corrected-score" className="text-sm font-medium text-muted-foreground">
-                          Corrected Score Value
-                        </label>
-                        <Input
-                          ref={correctedScoreInputRef}
-                          id="corrected-score"
-                          value={correctedScore}
-                          onChange={(e) => setCorrectedScore(e.target.value)}
-                          placeholder="Enter score (e.g., 85, A, AA)"
-                          className="mt-1"
-                        />
-                      </div>
-                      <Button
-                        onClick={handleResolveIssue}
-                        disabled={resolvingIssue || ignoringIssue}
-                        className="gap-2 shrink-0"
-                      >
-                        {resolvingIssue ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Resolving...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            Resolve
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Current Score Value</label>
-                      <p className="text-sm mt-1 font-mono">
-                        {issueDetail.current_score_value ?? <span className="text-muted-foreground">Not set</span>}
-                      </p>
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Enter a numeric value, "A" for absent, "AA" for absent with reason, or leave empty
-                  </p>
-                </div>
-
-                {/* All Additional Details - Consolidated into one collapsible */}
-                <Collapsible open={allDetailsOpen} onOpenChange={setAllDetailsOpen}>
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors border-t pt-4">
-                    {allDetailsOpen ? (
-                      <ChevronUp className="h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4" />
-                    )}
-                    View All Details
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-4 mt-3">
-                    {/* Issue Info */}
-                    <div className="space-y-3">
-                      <h4 className="font-semibold text-sm">Issue Information</h4>
-                      <div className="flex items-center gap-2">
-                        {getStatusBadge(issueDetail.status)}
-                        {getIssueTypeBadge(issueDetail.issue_type)}
-                        <Badge variant="outline" className="text-xs">
-                          {getTestTypeLabel(issueDetail.test_type)}
-                        </Badge>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Message</p>
-                        <p className="text-sm mt-1">{issueDetail.message}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <p className="text-muted-foreground">Created</p>
-                          <p>{format(new Date(issueDetail.created_at), "MMM d, yyyy HH:mm")}</p>
-                        </div>
-                        {issueDetail.resolved_at && (
-                          <div>
-                            <p className="text-muted-foreground">Resolved</p>
-                            <p>{format(new Date(issueDetail.resolved_at), "MMM d, yyyy HH:mm")}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Subject and Exam Details */}
-                    {(issueDetail.subject_name || (issueDetail.exam_type && issueDetail.exam_year && issueDetail.exam_series) || issueDetail.school_name) && (
-                      <div className="space-y-3 border-t pt-4">
-                        <h4 className="font-semibold text-sm">Additional Candidate Information</h4>
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          {issueDetail.school_name && (
-                            <div>
-                              <p className="text-muted-foreground">School</p>
-                              <p className="font-medium">{issueDetail.school_name}</p>
-                            </div>
-                          )}
-                          {issueDetail.subject_name && (
-                            <div>
-                              <p className="text-muted-foreground">Subject</p>
-                              <p className="font-medium">
-                                {issueDetail.subject_code} - {issueDetail.subject_name}
-                              </p>
-                            </div>
-                          )}
-                          {issueDetail.exam_type && issueDetail.exam_year && issueDetail.exam_series && (
-                            <div>
-                              <p className="text-muted-foreground">Exam</p>
-                              <p className="font-medium">
-                                {issueDetail.exam_type} - {issueDetail.exam_series} {issueDetail.exam_year}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Field Name */}
-                    <div className="space-y-3 border-t pt-4">
-                      <h4 className="font-semibold text-sm">Field Information</h4>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Field</label>
-                        <p className="text-sm font-medium mt-1">{getFieldNameLabel(issueDetail.field_name)}</p>
-                      </div>
-                    </div>
-
-                    {/* Related Document Info */}
-                    {issueDetail.document_id && (!issueDetail.document_numeric_id || !issueDetail.document_mime_type?.startsWith("image/")) && (
-                      <div className="space-y-3 border-t pt-4">
-                        <h4 className="font-semibold text-sm">Related Document</h4>
-                        <div className="text-sm">
-                          <p className="text-muted-foreground">Document ID</p>
-                          <p className="font-mono">{issueDetail.document_id}</p>
-                          {issueDetail.document_file_name && (
-                            <>
-                              <p className="text-muted-foreground mt-2">File Name</p>
-                              <p>{issueDetail.document_file_name}</p>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                Failed to load issue details
-              </div>
-            )}
-
-            {issueDetail && issueDetail.status === "pending" && (
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={handleCloseIssueModal}
-                  disabled={resolvingIssue || ignoringIssue}
-                >
-                  Close
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={handleIgnoreIssue}
-                  disabled={resolvingIssue || ignoringIssue}
-                  className="gap-2"
-                >
-                  {ignoringIssue ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Ignoring...
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-4 w-4" />
-                      Ignore
-                    </>
-                  )}
-                </Button>
-              </DialogFooter>
-            )}
-
-            {/* Navigation - Below the action buttons */}
-            {issueDetail && issues.length > 1 && (
-              <div className="flex items-center justify-center gap-4 border-t pt-4 px-6">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleNavigateIssue("prev")}
-                  disabled={currentIssueIndex === 0 || loadingIssueDetail}
-                  className="gap-2"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Issue {currentIssueIndex !== null ? currentIssueIndex + 1 : 0} of {issues.length}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleNavigateIssue("next")}
-                  disabled={currentIssueIndex === null || currentIssueIndex === issues.length - 1 || loadingIssueDetail}
-                  className="gap-2"
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
+        <ValidationIssueWorkspace
+          open={issueModalOpen}
+          onOpenChange={setIssueModalOpen}
+          issues={issues}
+          currentIndex={currentIssueIndex}
+          onCurrentIndexChange={setCurrentIssueIndex}
+          onHandled={handleIssueHandled}
+        />
       </div>
     </DashboardLayout>
   );

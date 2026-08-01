@@ -48,6 +48,16 @@ import type {
   RunValidationRequest,
   RunValidationResponse,
   ValidationIssuesFilters,
+  MyValidationStats,
+  ClerkValidationStatsResponse,
+  IssueBatchListResponse,
+  ClerkBatchListResponse,
+  MyBatchesFilters,
+  CreateBatchesRequest,
+  CreateBatchesResponse,
+  BatchSummaryResponse,
+  ClerkQuotaListResponse,
+  ClerkQuotaItem,
   User,
   UserUpdate,
   UserPasswordReset,
@@ -2244,7 +2254,7 @@ export async function deleteMultiplePdfGenerationJobs(jobIds: number[]): Promise
 export async function runValidation(
   request: RunValidationRequest = {}
 ): Promise<RunValidationResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/validation/run`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2265,15 +2275,20 @@ export async function getValidationIssues(
   if (filters.issue_type) params.append("issue_type", filters.issue_type);
   if (filters.test_type) params.append("test_type", filters.test_type.toString());
   if (filters.subject_type) params.append("subject_type", filters.subject_type);
+  if (filters.batch_id) params.append("batch_id", filters.batch_id.toString());
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues?${params.toString()}`);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues?${params.toString()}`
+  );
   return handleResponse<ValidationIssueListResponse>(response);
 }
 
 export async function getValidationIssue(issueId: number): Promise<ValidationIssueDetailResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}`);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues/${issueId}`
+  );
   return handleResponse<ValidationIssueDetailResponse>(response);
 }
 
@@ -2281,26 +2296,159 @@ export async function resolveValidationIssue(
   issueId: number,
   correctedScore?: string
 ): Promise<SubjectScoreValidationIssue> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}/resolve`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      corrected_score: correctedScore !== undefined ? correctedScore : null,
-    }),
-  });
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues/${issueId}/resolve`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        corrected_score: correctedScore !== undefined ? correctedScore : null,
+      }),
+    }
+  );
   return handleResponse<SubjectScoreValidationIssue>(response);
 }
 
 export async function ignoreValidationIssue(issueId: number): Promise<SubjectScoreValidationIssue> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}/ignore`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues/${issueId}/ignore`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
   return handleResponse<SubjectScoreValidationIssue>(response);
+}
+
+export async function getMyValidationStats(): Promise<MyValidationStats> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/stats/me`);
+  return handleResponse<MyValidationStats>(response);
+}
+
+export async function getClerkValidationStats(): Promise<ClerkValidationStatsResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/stats/clerks`);
+  return handleResponse<ClerkValidationStatsResponse>(response);
+}
+
+export async function createIssueBatches(
+  request: CreateBatchesRequest
+): Promise<CreateBatchesResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/batches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  return handleResponse<CreateBatchesResponse>(response);
+}
+
+export async function listMyBatches(
+  filters: MyBatchesFilters = {}
+): Promise<ClerkBatchListResponse> {
+  const params = new URLSearchParams();
+  if (filters.status) params.append("status", filters.status);
+  if (filters.exam_id) params.append("exam_id", String(filters.exam_id));
+  if (filters.subject_id) params.append("subject_id", String(filters.subject_id));
+  if (filters.test_type) params.append("test_type", String(filters.test_type));
+  if (filters.has_document !== undefined) {
+    params.append("has_document", String(filters.has_document));
+  }
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/batches/mine?${params.toString()}`
+  );
+  return handleResponse<ClerkBatchListResponse>(response);
+}
+
+export async function listIssueBatches(filters: {
+  exam_id?: number;
+  subject_id?: number;
+  test_type?: number;
+  has_document?: boolean;
+  unassigned_only?: boolean;
+  assigned_to?: string;
+} = {}): Promise<IssueBatchListResponse> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", String(filters.exam_id));
+  if (filters.subject_id) params.append("subject_id", String(filters.subject_id));
+  if (filters.test_type) params.append("test_type", String(filters.test_type));
+  if (filters.has_document !== undefined) {
+    params.append("has_document", String(filters.has_document));
+  }
+  if (filters.unassigned_only) params.append("unassigned_only", "true");
+  if (filters.assigned_to) params.append("assigned_to", filters.assigned_to);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/batches?${params.toString()}`
+  );
+  return handleResponse<IssueBatchListResponse>(response);
+}
+
+export async function assignIssueBatches(
+  batchIds: number[],
+  userId: string
+): Promise<{ assigned_count: number; batch_ids: number[] }> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/batches/assign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ batch_ids: batchIds, user_id: userId }),
+  });
+  return handleResponse(response);
+}
+
+export async function releaseIssueBatches(payload: {
+  batch_ids?: number[];
+  user_id?: string;
+}): Promise<{ released_count: number }> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/batches/release`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(response);
+}
+
+export async function getBatchSummary(examId?: number): Promise<BatchSummaryResponse> {
+  const params = new URLSearchParams();
+  if (examId) params.append("exam_id", String(examId));
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/batches/summary?${params.toString()}`
+  );
+  return handleResponse<BatchSummaryResponse>(response);
+}
+
+export async function listClerkQuotas(): Promise<ClerkQuotaListResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/quotas`);
+  return handleResponse<ClerkQuotaListResponse>(response);
+}
+
+export async function setClerkBaseQuota(
+  userId: string,
+  dailyResolveQuota: number
+): Promise<ClerkQuotaItem> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/quotas/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ daily_resolve_quota: dailyResolveQuota }),
+  });
+  return handleResponse<ClerkQuotaItem>(response);
+}
+
+export async function setClerkQuotaOverride(
+  userId: string,
+  overrideQuota: number | null,
+  reason?: string
+): Promise<ClerkQuotaItem> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/quotas/${userId}/override`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ override_quota: overrideQuota, reason: reason ?? null }),
+    }
+  );
+  return handleResponse<ClerkQuotaItem>(response);
 }
 
 // Result Processing API Functions
