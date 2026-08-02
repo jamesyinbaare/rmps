@@ -2,8 +2,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files (+ .npmrc for legacy-peer-deps / lucide peer range)
+COPY package*.json .npmrc ./
 
 # Install dependencies
 RUN npm ci

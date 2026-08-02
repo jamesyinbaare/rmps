@@ -163,7 +163,7 @@ export default function GenerateICMsPage() {
 
       try {
         setLoading(true);
-        if (selectedSchoolId && selectedSchoolId !== "all" && selectedSchoolId !== "") {
+        if (selectedSchoolId !== "" && selectedSchoolId !== "all") {
           const schoolSubjects = await getSubjectsForExamAndSchoolByCandidates(examId, selectedSchoolId as number);
           setSubjects(schoolSubjects);
         } else {
@@ -176,7 +176,9 @@ export default function GenerateICMsPage() {
               original_code: es.subject_code,
               subject_type: es.subject_type,
               exam_type: exam?.exam_type ?? null,
-            }))
+              created_at: "",
+              updated_at: "",
+            })) as Subject[]
           );
         }
       } catch (err) {
