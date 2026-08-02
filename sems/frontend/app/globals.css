@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@rfdtech/components/style.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -46,83 +47,54 @@
   --radius-4xl: calc(var(--radius) + 16px);
 }
 
+/*
+ * Bridge shadcn semantic tokens → CLET design tokens so existing UI
+ * picks up the WorldSkills Ghana CTVET theme without a full rewrite.
+ */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: var(--clet-bg);
+  --foreground: var(--clet-text);
+  --card: var(--clet-surface-card);
+  --card-foreground: var(--clet-text);
+  --popover: var(--clet-surface-panel);
+  --popover-foreground: var(--clet-text);
+  --primary: var(--clet-primary);
+  --primary-foreground: var(--clet-on-primary);
+  --secondary: var(--clet-secondary);
+  --secondary-foreground: var(--clet-text);
+  --muted: var(--clet-surface-subtle);
+  --muted-foreground: var(--clet-text-muted);
+  --accent: var(--clet-hover);
+  --accent-foreground: var(--clet-text);
+  --destructive: var(--clet-error);
+  --border: var(--clet-border);
+  --input: var(--clet-border);
+  --ring: var(--clet-focus);
+  --chart-1: #00853f;
+  --chart-2: #003764;
+  --chart-3: #ffcc00;
+  --chart-4: #ff6c0c;
+  --chart-5: #d51067;
+  --sidebar: var(--clet-surface-panel);
+  --sidebar-foreground: var(--clet-text);
+  --sidebar-primary: var(--clet-primary);
+  --sidebar-primary-foreground: var(--clet-on-primary);
+  --sidebar-accent: var(--clet-primary-light);
+  --sidebar-accent-foreground: var(--clet-text);
+  --sidebar-border: var(--clet-border);
+  --sidebar-ring: var(--clet-focus);
 }
 
 .dark {
-  /* Main background - slightly lighter dark gray like Dropbox */
-  --background: oklch(0.22 0 0);
-  --foreground: oklch(0.95 0 0);
-  /* Cards - slightly darker than background */
-  --card: oklch(0.25 0 0);
-  --card-foreground: oklch(0.95 0 0);
-  /* Popovers match cards */
-  --popover: oklch(0.25 0 0);
-  --popover-foreground: oklch(0.95 0 0);
-  /* Primary - lighter for buttons/accents */
-  --primary: oklch(0.6 0.15 250);
-  --primary-foreground: oklch(0.95 0 0);
-  /* Secondary - medium gray */
-  --secondary: oklch(0.3 0 0);
-  --secondary-foreground: oklch(0.95 0 0);
-  /* Muted - for subtle backgrounds */
-  --muted: oklch(0.28 0 0);
-  --muted-foreground: oklch(0.65 0 0);
-  /* Accent - for hover states */
-  --accent: oklch(0.32 0 0);
-  --accent-foreground: oklch(0.95 0 0);
-  /* Destructive */
-  --destructive: oklch(0.65 0.22 25);
-  --border: oklch(0.3 0 0);
-  --input: oklch(0.28 0 0);
-  --ring: oklch(0.5 0.15 250);
-  /* Charts */
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  /* Sidebar - darker gray like Dropbox */
-  --sidebar: oklch(0.18 0 0);
-  --sidebar-foreground: oklch(0.9 0 0);
-  --sidebar-primary: oklch(0.6 0.15 250);
-  --sidebar-primary-foreground: oklch(0.95 0 0);
-  --sidebar-accent: oklch(0.25 0 0);
-  --sidebar-accent-foreground: oklch(0.95 0 0);
-  --sidebar-border: oklch(0.25 0 0);
-  --sidebar-ring: oklch(0.5 0.15 250);
+  --secondary-foreground: #1c2526;
+  --chart-1: #22a35a;
+  --chart-2: #5b9bd5;
+  --chart-3: #ffcc00;
+  --chart-4: #ff6c0c;
+  --chart-5: #e85a9b;
+  --sidebar: var(--clet-surface-dark, var(--clet-surface-panel));
+  --sidebar-accent: var(--clet-hover);
 }
 
 @layer base {

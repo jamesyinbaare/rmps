@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Settings, ChevronDown, Search, X } from "lucide-react";
+import { Settings, ChevronDown, Search, X, PanelLeft } from "lucide-react";
+import { SidebarTrigger } from "@rfdtech/components/next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { SidebarTrigger } from "./ui/sidebar";
 import { Separator } from "./ui/separator";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +68,12 @@ export function TopBar({
       <div className="flex h-16 shrink-0 items-center justify-between gap-4 px-4">
         {/* Left: Sidebar Trigger and Title */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <SidebarTrigger className="-ml-1" />
+          <SidebarTrigger
+            className="-ml-1 inline-flex size-8 items-center justify-center rounded-md hover:bg-accent"
+            aria-label="Toggle sidebar"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </SidebarTrigger>
           <Separator orientation="vertical" className="mr-2 h-4" />
           {typeof title === "string" ? (
             <h1 className="text-lg font-semibold truncate">{title}</h1>

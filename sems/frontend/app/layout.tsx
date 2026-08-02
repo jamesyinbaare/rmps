@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
-import { ThemeProvider } from "next-themes";
 import { AuthGuard } from "@/components/AuthGuard";
 import { InactivityMonitor } from "@/components/InactivityMonitor";
+import { Providers } from "./providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Document Management System",
+  title: "SEMS — ICM System",
   description: "Document Tracking System for Certificate II Examination",
 };
 
@@ -31,15 +32,17 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          <AuthGuard>
-            <>
-              {children}
-              <InactivityMonitor />
-            </>
-          </AuthGuard>
-          <Toaster position="top-center" />
-        </ThemeProvider>
+        <Suspense fallback={null}>
+          <Providers>
+            <AuthGuard>
+              <>
+                {children}
+                <InactivityMonitor />
+              </>
+            </AuthGuard>
+            <Toaster position="top-center" />
+          </Providers>
+        </Suspense>
       </body>
     </html>
   );
