@@ -411,10 +411,20 @@ async def list_validation_issues(
     total_result = await session.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    stmt = stmt.order_by(
-        SubjectScoreValidationIssue.batch_id.asc().nulls_last(),
-        SubjectScoreValidationIssue.id.asc(),
-    ).offset(offset).limit(page_size)
+    # Join candidate path only for ordering (after count) so pagination follows index number
+    stmt = (
+        stmt.join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .order_by(
+            SubjectScoreValidationIssue.batch_id.asc().nulls_last(),
+            Candidate.index_number.asc(),
+            SubjectScoreValidationIssue.id.asc(),
+        )
+        .offset(offset)
+        .limit(page_size)
+    )
 
     result = await session.execute(stmt)
     issues = result.scalars().all()
