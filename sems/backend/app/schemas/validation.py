@@ -40,6 +40,8 @@ class SubjectScoreValidationIssueResponse(BaseModel):
     batch_id: int | None = None
     batch_name: str | None = None
     batch_has_document: bool | None = None
+    candidate_name: str | None = None
+    candidate_index_number: str | None = None
 
     class Config:
         from_attributes = True

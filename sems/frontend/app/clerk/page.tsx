@@ -52,6 +52,23 @@ function getTestTypeLabel(testType: number) {
   }
 }
 
+function getFieldNameLabel(fieldName: string) {
+  switch (fieldName) {
+    case "obj_raw_score":
+      return "Objectives Score";
+    case "essay_raw_score":
+      return "Essay Score";
+    case "pract_raw_score":
+      return "Practical Score";
+    default:
+      return fieldName.replace(/_raw_score$/, "").replace(/_/g, " ");
+  }
+}
+
+function getIssueTypeLabel(issueType: string) {
+  return issueType.replace(/_/g, " ");
+}
+
 type DocFilter = "all" | "doc" | "nod";
 type AllocTab = "in_progress" | "completed";
 
@@ -196,6 +213,11 @@ export default function ClerkDashboardPage() {
             }
           : prev
       );
+      const canAutoOpen = issues.length > 0 && !quotaBlocked;
+      if (canAutoOpen) {
+        setCurrentIssueIndex(0);
+        setWorkspaceOpen(true);
+      }
     }
   };
 
@@ -341,9 +363,9 @@ export default function ClerkDashboardPage() {
 
               {quotaBlocked && isInProgress && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-                  Daily resolve quota reached
+                  Daily quota reached
                   {stats ? ` (${stats.resolved_today}/${stats.quota_limit})` : ""}. Ask a
-                  registrar for a same-day override to continue.
+                  registrar for an override.
                 </div>
               )}
 
@@ -393,16 +415,23 @@ export default function ClerkDashboardPage() {
                             className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex items-center gap-4 disabled:opacity-80 disabled:hover:bg-transparent disabled:cursor-default"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="font-medium truncate">{issue.message}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {format(new Date(issue.created_at), "MMM d, HH:mm")} ·{" "}
-                                {issue.field_name.replace("_raw_score", "")} ·{" "}
-                                {getTestTypeLabel(issue.test_type)}
+                              <p className="font-semibold tabular-nums truncate">
+                                {issue.candidate_index_number || "No index"}
+                                {issue.candidate_name ? (
+                                  <span className="font-normal text-muted-foreground">
+                                    {" "}
+                                    · {issue.candidate_name}
+                                  </span>
+                                ) : null}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5 capitalize">
+                                {getFieldNameLabel(issue.field_name)} ·{" "}
+                                {getIssueTypeLabel(issue.issue_type)}
                               </p>
                             </div>
                             <Badge variant="outline" className="shrink-0 capitalize">
                               {issue.status === "pending"
-                                ? issue.issue_type.replace("_", " ")
+                                ? getIssueTypeLabel(issue.issue_type)
                                 : issue.status}
                             </Badge>
                           </button>
@@ -439,15 +468,15 @@ export default function ClerkDashboardPage() {
               <div>
                 <h1 className="text-3xl font-semibold tracking-tight">My batch allocations</h1>
                 <p className="text-muted-foreground mt-1">
-                  Open a batch to resolve its remaining issues. Enter to resolve, I to ignore.
+                  Open a batch to resolve remaining issues. Enter to resolve, Ctrl+I to ignore.
                 </p>
               </div>
 
               {quotaBlocked && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-                  Daily resolve quota reached
+                  Daily quota reached
                   {stats ? ` (${stats.resolved_today}/${stats.quota_limit})` : ""}. Ask a
-                  registrar for a same-day override to continue.
+                  registrar for an override.
                 </div>
               )}
 
