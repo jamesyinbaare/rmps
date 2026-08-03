@@ -563,6 +563,8 @@ export interface SubjectScoreValidationIssue {
   batch_id: number | null;
   batch_name?: string | null;
   batch_has_document?: boolean | null;
+  candidate_name?: string | null;
+  candidate_index_number?: string | null;
 }
 
 export interface ValidationIssueListResponse {

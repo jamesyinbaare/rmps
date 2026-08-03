@@ -411,15 +411,34 @@ async def list_validation_issues(
     total_result = await session.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    stmt = stmt.order_by(
-        SubjectScoreValidationIssue.batch_id.asc().nulls_last(),
-        SubjectScoreValidationIssue.id.asc(),
-    ).offset(offset).limit(page_size)
+    # Join candidate path for ordering + list identity fields (after count).
+    # Order: batch → score-sheet document → candidate index → issue id
+    effective_document_id = case(
+        (SubjectScoreValidationIssue.field_name == "obj_raw_score", SubjectScore.obj_document_id),
+        (SubjectScoreValidationIssue.field_name == "essay_raw_score", SubjectScore.essay_document_id),
+        (SubjectScoreValidationIssue.field_name == "pract_raw_score", SubjectScore.pract_document_id),
+        else_=None,
+    )
+    stmt = (
+        stmt.add_columns(Candidate.name, Candidate.index_number)
+        .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .order_by(
+            SubjectScoreValidationIssue.batch_id.asc().nulls_last(),
+            effective_document_id.asc().nulls_last(),
+            Candidate.index_number.asc(),
+            SubjectScoreValidationIssue.id.asc(),
+        )
+        .offset(offset)
+        .limit(page_size)
+    )
 
     result = await session.execute(stmt)
-    issues = result.scalars().all()
+    rows = result.all()
 
-    batch_ids = {i.batch_id for i in issues if i.batch_id is not None}
+    batch_ids = {issue.batch_id for issue, _, _ in rows if issue.batch_id is not None}
     batch_meta: dict[int, tuple[str, bool]] = {}
     if batch_ids:
         batch_rows = (
@@ -432,8 +451,10 @@ async def list_validation_issues(
         batch_meta = {row.id: (row.name, row.has_document) for row in batch_rows}
 
     issue_responses: list[SubjectScoreValidationIssueResponse] = []
-    for issue in issues:
+    for issue, candidate_name, candidate_index_number in rows:
         item = SubjectScoreValidationIssueResponse.model_validate(issue)
+        item.candidate_name = candidate_name
+        item.candidate_index_number = candidate_index_number
         if issue.batch_id and issue.batch_id in batch_meta:
             name, has_doc = batch_meta[issue.batch_id]
             item.batch_name = name

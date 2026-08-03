@@ -803,12 +803,21 @@ export default function ValidationIssuesPage() {
                           </Badge>
                         </div>
                         <div className="flex-1 min-w-0 flex items-center gap-4">
-                          <span className="font-semibold text-sm shrink-0">
-                            {getFieldNameLabel(issue.field_name)}
-                          </span>
-                          <p className="text-sm text-muted-foreground flex-1 min-w-0 truncate">
-                            {issue.message}
-                          </p>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-sm tabular-nums truncate">
+                              {issue.candidate_index_number || "No index"}
+                              {issue.candidate_name ? (
+                                <span className="font-normal text-muted-foreground">
+                                  {" "}
+                                  · {issue.candidate_name}
+                                </span>
+                              ) : null}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                              {getFieldNameLabel(issue.field_name)}
+                              {issue.message ? ` · ${issue.message}` : ""}
+                            </p>
+                          </div>
                           <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
                             <span>
                               Created {format(new Date(issue.created_at), "MMM d, yyyy")}

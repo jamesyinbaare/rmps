@@ -1,27 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { format } from "date-fns";
 import { toast } from "sonner";
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
+  Columns2,
+  FileText,
   Loader2,
+  Minus,
+  Plus,
+  RotateCcw,
+  Rows2,
   XCircle,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -33,39 +34,37 @@ import {
   ignoreValidationIssue,
   resolveValidationIssue,
 } from "@/lib/api";
+import {
+  createDocumentPrefetchCache,
+  mapPool,
+  type DocumentPrefetchCache,
+} from "@/lib/document-prefetch-cache";
 import type {
   SubjectScoreValidationIssue,
   ValidationIssueDetailResponse,
-  ValidationIssueStatus,
   ValidationIssueType,
 } from "@/types/document";
 
-function getStatusBadge(status: ValidationIssueStatus) {
-  switch (status) {
-    case "pending":
-      return (
-        <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-          <AlertCircle className="h-3 w-3 mr-1" />
-          Open
-        </Badge>
-      );
-    case "resolved":
-      return (
-        <Badge variant="default" className="bg-green-600 hover:bg-green-700">
-          <CheckCircle2 className="h-3 w-3 mr-1" />
-          Resolved
-        </Badge>
-      );
-    case "ignored":
-      return (
-        <Badge variant="secondary">
-          <XCircle className="h-3 w-3 mr-1" />
-          Ignored
-        </Badge>
-      );
-    default:
-      return <Badge variant="outline">{status}</Badge>;
+type WorkspaceLayout = "horizontal" | "vertical";
+
+const LAYOUT_STORAGE_KEY = "sems.validationIssueWorkspace.layout";
+
+/** How many unique upcoming score sheets to keep warm. */
+const PREFETCH_UNIQUE_DOCS = 3;
+/** Max issues to scan ahead when collecting unique documents (NOD-heavy queues). */
+const PREFETCH_ISSUE_SCAN_LIMIT = 15;
+const PREFETCH_DETAIL_CONCURRENCY = 2;
+const PREFETCH_BLOB_CONCURRENCY = 2;
+
+function readStoredLayout(): WorkspaceLayout {
+  if (typeof window === "undefined") return "horizontal";
+  try {
+    const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (stored === "vertical" || stored === "horizontal") return stored;
+  } catch {
+    /* ignore */
   }
+  return "horizontal";
 }
 
 function getIssueTypeBadge(issueType: ValidationIssueType) {
@@ -73,30 +72,17 @@ function getIssueTypeBadge(issueType: ValidationIssueType) {
     case "missing_score":
       return (
         <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-          Missing Score
+          Missing
         </Badge>
       );
     case "invalid_score":
       return (
         <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-          Invalid Score
+          Invalid
         </Badge>
       );
     default:
       return <Badge variant="outline">{issueType}</Badge>;
-  }
-}
-
-function getTestTypeLabel(testType: number) {
-  switch (testType) {
-    case 1:
-      return "Objectives";
-    case 2:
-      return "Essay";
-    case 3:
-      return "Practical";
-    default:
-      return `Type ${testType}`;
   }
 }
 
@@ -111,6 +97,29 @@ function getFieldNameLabel(fieldName: string) {
     default:
       return fieldName;
   }
+}
+
+function getTaskLine(fieldName: string) {
+  return `Enter ${getFieldNameLabel(fieldName)} from the sheet`;
+}
+
+function documentUrl(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id">) {
+  return `${API_BASE_URL}/api/v1/documents/by-extracted-id/${detail.document_id}/download?exam_id=${detail.exam_id}`;
+}
+
+/** Stable identity for the score sheet — shared across issues on the same document. */
+function documentKey(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null): string | null {
+  if (!detail?.document_id || detail.exam_id == null) return null;
+  return `${detail.document_id}:${detail.exam_id}`;
+}
+
+function isPrefetchableDocument(
+  detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null
+): detail is Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> & {
+  document_id: string;
+  exam_id: number;
+} {
+  return !!detail?.document_id && detail.exam_id != null;
 }
 
 export interface ValidationIssueWorkspaceProps {
@@ -140,43 +149,169 @@ export function ValidationIssueWorkspace({
   const [ignoringIssue, setIgnoringIssue] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
-  const [allDetailsOpen, setAllDetailsOpen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [layout, setLayout] = useState<WorkspaceLayout>("horizontal");
+  /** Bumps when prefetch cache gains/loses blob URLs so the viewer can switch src. */
+  const [prefetchEpoch, setPrefetchEpoch] = useState(0);
   const correctedScoreInputRef = useRef<HTMLInputElement>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const loadedDocumentKeyRef = useRef<string | null>(null);
+  const detailCacheRef = useRef(new Map<number, ValidationIssueDetailResponse>());
+  const prefetchCacheRef = useRef<DocumentPrefetchCache | null>(null);
+  if (!prefetchCacheRef.current) {
+    prefetchCacheRef.current = createDocumentPrefetchCache();
+  }
+  const prefetchCache = prefetchCacheRef.current;
 
-  const loadIssueDetail = useCallback(async (issueId: number) => {
-    setLoadingIssueDetail(true);
-    setImageLoading(true);
-    setImageError(false);
-    setAllDetailsOpen(false);
-    try {
-      const detail = await getValidationIssue(issueId);
-      setIssueDetail(detail);
-      setCorrectedScore(detail.current_score_value || "");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load issue details");
-      console.error("Error loading issue detail:", err);
-    } finally {
-      setLoadingIssueDetail(false);
-    }
+  useEffect(() => {
+    setLayout(readStoredLayout());
   }, []);
 
   useEffect(() => {
+    return prefetchCache.subscribe(() => {
+      setPrefetchEpoch((n) => n + 1);
+    });
+  }, [prefetchCache]);
+
+  const setLayoutPreference = (next: WorkspaceLayout) => {
+    setLayout(next);
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const resetViewer = useCallback(() => {
+    setZoom(1);
+    setImageLoading(true);
+    setImageError(false);
+    if (viewerRef.current) {
+      viewerRef.current.scrollTop = 0;
+      viewerRef.current.scrollLeft = 0;
+    }
+  }, []);
+
+  const loadIssueDetail = useCallback(
+    async (issueId: number) => {
+      setLoadingIssueDetail(true);
+      try {
+        const cached = detailCacheRef.current.get(issueId);
+        const detail = cached ?? (await getValidationIssue(issueId));
+        if (!cached) {
+          detailCacheRef.current.set(issueId, detail);
+        }
+        const nextDocKey = documentKey(detail);
+        // Only blank/reload the sheet when the underlying document changes
+        if (nextDocKey !== loadedDocumentKeyRef.current) {
+          resetViewer();
+          loadedDocumentKeyRef.current = nextDocKey;
+        }
+        setIssueDetail(detail);
+        setCorrectedScore(detail.current_score_value || "");
+
+        // Warm current document immediately
+        if (isPrefetchableDocument(detail) && nextDocKey) {
+          void prefetchCache.ensure(
+            nextDocKey,
+            documentUrl(detail),
+            detail.document_mime_type
+          );
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to load issue details");
+        console.error("Error loading issue detail:", err);
+      } finally {
+        setLoadingIssueDetail(false);
+      }
+    },
+    [resetViewer, prefetchCache]
+  );
+
+  useEffect(() => {
     if (open && currentIndex !== null && issues[currentIndex]) {
-      loadIssueDetail(issues[currentIndex].id);
+      void loadIssueDetail(issues[currentIndex].id);
     }
     if (!open) {
       setIssueDetail(null);
       setCorrectedScore("");
-      setImageLoading(true);
-      setImageError(false);
-      setAllDetailsOpen(false);
+      loadedDocumentKeyRef.current = null;
+      detailCacheRef.current.clear();
+      prefetchCache.clear();
+      resetViewer();
     }
-  }, [open, currentIndex, issues, loadIssueDetail]);
+  }, [open, currentIndex, issues, loadIssueDetail, resetViewer, prefetchCache]);
+
+  // Prefetch upcoming issue details + next N unique document blobs
+  useEffect(() => {
+    if (!open || currentIndex === null) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      const currentKey = documentKey(issueDetail);
+      const upcoming = issues.slice(
+        currentIndex + 1,
+        currentIndex + 1 + PREFETCH_ISSUE_SCAN_LIMIT
+      );
+
+      // Resolve details for upcoming issues (bounded concurrency)
+      await mapPool(upcoming, PREFETCH_DETAIL_CONCURRENCY, async (issue) => {
+        if (cancelled) return;
+        if (detailCacheRef.current.has(issue.id)) return;
+        try {
+          const detail = await getValidationIssue(issue.id);
+          if (cancelled) return;
+          detailCacheRef.current.set(issue.id, detail);
+        } catch {
+          /* skip failed prefetch detail */
+        }
+      });
+
+      if (cancelled) return;
+
+      const uniqueKeys: string[] = [];
+      const keyToDetail = new Map<string, ValidationIssueDetailResponse>();
+      if (currentKey && issueDetail && isPrefetchableDocument(issueDetail)) {
+        uniqueKeys.push(currentKey);
+        keyToDetail.set(currentKey, issueDetail);
+      }
+
+      const targetCount = uniqueKeys.length + PREFETCH_UNIQUE_DOCS;
+      for (const issue of upcoming) {
+        if (uniqueKeys.length >= targetCount) break;
+        const detail = detailCacheRef.current.get(issue.id);
+        if (!detail || !isPrefetchableDocument(detail)) continue;
+        const key = documentKey(detail);
+        if (!key || keyToDetail.has(key)) continue;
+        keyToDetail.set(key, detail);
+        uniqueKeys.push(key);
+      }
+
+      // Window = current + next unique docs (uniqueKeys already ordered that way)
+      prefetchCache.retain(uniqueKeys);
+
+      const toFetch = uniqueKeys.filter((key) => !prefetchCache.get(key));
+      await mapPool(toFetch, PREFETCH_BLOB_CONCURRENCY, async (key) => {
+        if (cancelled) return;
+        const detail = keyToDetail.get(key);
+        if (!detail || !isPrefetchableDocument(detail)) return;
+        await prefetchCache.ensure(key, documentUrl(detail), detail.document_mime_type);
+      });
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentIndex, issues, issueDetail, prefetchCache]);
 
   useEffect(() => {
     if (open && issueDetail?.status === "pending" && !loadingIssueDetail) {
       const timer = setTimeout(() => {
         correctedScoreInputRef.current?.focus();
+        correctedScoreInputRef.current?.select();
       }, 100);
       return () => clearTimeout(timer);
     }
@@ -205,7 +340,6 @@ export function ValidationIssueWorkspace({
     (issueId: number, action: "resolved" | "ignored") => {
       const remainingCount = issues.length - 1;
       onHandled?.(issueId, action);
-      // Parent removes the issue; same index becomes the next item.
       if (currentIndex === null || remainingCount <= 0 || currentIndex >= remainingCount) {
         onOpenChange(false);
         onCurrentIndexChange(null);
@@ -255,8 +389,18 @@ export function ValidationIssueWorkspace({
       const isInputFocused =
         e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
 
-      if (e.key === "Enter" && !e.shiftKey && issueDetail?.status === "pending") {
-        if (isInputFocused || e.target === document.body) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleClose();
+        return;
+      }
+
+      if (
+        (e.key === "Enter" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) &&
+        !e.shiftKey &&
+        issueDetail?.status === "pending"
+      ) {
+        if (isInputFocused || e.target === document.body || e.ctrlKey || e.metaKey) {
           e.preventDefault();
           if (!resolvingIssue && !ignoringIssue) {
             void handleResolveIssue();
@@ -265,7 +409,11 @@ export function ValidationIssueWorkspace({
         }
       }
 
-      if ((e.key === "i" || e.key === "I") && !isInputFocused && issueDetail?.status === "pending") {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === "i" || e.key === "I") &&
+        issueDetail?.status === "pending"
+      ) {
         e.preventDefault();
         if (!resolvingIssue && !ignoringIssue) {
           void handleIgnoreIssue();
@@ -303,10 +451,49 @@ export function ValidationIssueWorkspace({
     handleNavigateIssue,
   ]);
 
+  const hasPdf =
+    !!issueDetail?.document_id &&
+    !!issueDetail.exam_id &&
+    (issueDetail.document_mime_type === "application/pdf" ||
+      !!issueDetail.document_file_name?.toLowerCase().endsWith(".pdf"));
+
+  // Prefer image viewer when mime is missing — most score sheets are images and
+  // Document metadata is sometimes absent even when extracted_id is set.
   const hasImage =
     !!issueDetail?.document_id &&
-    !!issueDetail.document_mime_type?.startsWith("image/") &&
-    !!issueDetail.exam_id;
+    !!issueDetail.exam_id &&
+    !hasPdf &&
+    (!issueDetail.document_mime_type ||
+      issueDetail.document_mime_type.startsWith("image/"));
+
+  const hasDocument = hasImage || hasPdf;
+
+  const currentDocKey = documentKey(issueDetail);
+  // Read cache after prefetchEpoch changes so React re-renders with the new blob URL
+  const prefetchedSheet =
+    prefetchEpoch > -1 && currentDocKey ? prefetchCache.get(currentDocKey) : undefined;
+  const sheetSrc =
+    prefetchedSheet?.blobUrl ??
+    (issueDetail && isPrefetchableDocument(issueDetail) ? documentUrl(issueDetail) : "");
+
+  // Always release blobs if the workspace unmounts
+  useEffect(() => {
+    return () => {
+      prefetchCache.clear();
+    };
+  }, [prefetchCache]);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!hasImage) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setZoom((z) => Math.min(4, Math.max(0.5, Math.round((z + delta) * 10) / 10)));
+    }
+  };
+
+  const issuePosition =
+    currentIndex !== null ? `Issue ${currentIndex + 1} of ${issues.length}` : "";
 
   return (
     <Dialog
@@ -316,22 +503,61 @@ export function ValidationIssueWorkspace({
         else onOpenChange(next);
       }}
     >
-      <DialogContent className="2xl:max-w-[60vw] min-w-[80vw] max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader>
+      <DialogContent
+        showCloseButton
+        className="!fixed !inset-2 !top-2 !left-2 !right-2 !bottom-2 !translate-x-0 !translate-y-0 !w-auto !max-w-none !h-auto !max-h-none overflow-hidden flex flex-col p-0 gap-0 rounded-xl sm:!max-w-none"
+      >
+        <DialogHeader className="px-4 py-2 border-b shrink-0 space-y-0">
           {issueDetail ? (
-            <>
-              <DialogTitle className="text-2xl font-bold">
-                {issueDetail.candidate_name || "Unknown Candidate"}
-              </DialogTitle>
-              <DialogDescription className="text-lg font-semibold text-foreground mt-1">
-                {issueDetail.candidate_index_number || "No Index Number"}
-                {issueDetail.message ? (
-                  <span className="block text-sm font-normal text-muted-foreground mt-1">
-                    {issueDetail.message}
-                  </span>
+            <div className="flex items-center justify-between gap-4 pr-8">
+              <div className="min-w-0 flex items-baseline gap-3">
+                <DialogTitle className="text-xl font-bold tabular-nums tracking-tight">
+                  {issueDetail.candidate_index_number || "No index"}
+                </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Resolve validation issue for{" "}
+                  {issueDetail.candidate_name || "unknown candidate"}
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 pt-1">
+                {hasDocument ? (
+                  <div
+                    className="inline-flex rounded-md border bg-background p-0.5"
+                    role="group"
+                    aria-label="Workspace layout"
+                  >
+                    <Button
+                      type="button"
+                      variant={layout === "horizontal" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-8 gap-1.5 px-2.5 text-xs"
+                      onClick={() => setLayoutPreference("horizontal")}
+                      aria-pressed={layout === "horizontal"}
+                      title="Side by side — sheet left, entry right"
+                    >
+                      <Columns2 className="h-3.5 w-3.5" />
+                      Side by side
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={layout === "vertical" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-8 gap-1.5 px-2.5 text-xs"
+                      onClick={() => setLayoutPreference("vertical")}
+                      aria-pressed={layout === "vertical"}
+                      title="Stacked — sheet above, entry below"
+                    >
+                      <Rows2 className="h-3.5 w-3.5" />
+                      Stacked
+                    </Button>
+                  </div>
                 ) : null}
-              </DialogDescription>
-            </>
+                {getIssueTypeBadge(issueDetail.issue_type)}
+                {issues.length > 0 ? (
+                  <span className="text-xs text-muted-foreground tabular-nums">{issuePosition}</span>
+                ) : null}
+              </div>
+            </div>
           ) : (
             <>
               <DialogTitle>Issue Details</DialogTitle>
@@ -340,254 +566,550 @@ export function ValidationIssueWorkspace({
           )}
         </DialogHeader>
 
-        {loadingIssueDetail ? (
-          <div className="flex items-center justify-center py-8">
+        {loadingIssueDetail && !issueDetail ? (
+          <div className="flex flex-1 items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : issueDetail ? (
-          <div className="flex gap-6 flex-1 overflow-hidden min-h-0">
-            {hasImage && (
-              <div className="w-2/3 shrink-0 border-r pr-6 overflow-y-auto flex flex-col">
+          (() => {
+            const metaLine = [
+              issueDetail.subject_code && issueDetail.subject_name
+                ? `${issueDetail.subject_code} · ${issueDetail.subject_name}`
+                : issueDetail.subject_name,
+              issueDetail.school_name,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+
+            const sideBySide = layout === "horizontal" && hasDocument;
+            const stacked = layout === "vertical" && hasDocument;
+
+            const entryControls = issueDetail.status === "pending" ? (
+              <div
+                className={`flex min-w-0 gap-3 ${
+                  sideBySide
+                    ? "flex-col items-stretch"
+                    : stacked
+                      ? "flex-wrap items-end justify-center"
+                      : "flex-wrap items-end"
+                }`}
+              >
+                <div className="shrink-0">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Current
+                  </p>
+                  <p
+                    className={`mt-0.5 font-mono text-muted-foreground tabular-nums min-w-12 ${
+                      stacked ? "text-lg" : "text-base"
+                    }`}
+                  >
+                    {issueDetail.current_score_value ?? (
+                      <span className="italic">—</span>
+                    )}
+                  </p>
+                </div>
                 <div
-                  className="relative bg-muted rounded-lg overflow-auto flex-1 flex items-center justify-center min-h-0"
-                  style={{ minHeight: "400px" }}
+                  className={
+                    sideBySide
+                      ? "w-full"
+                      : stacked
+                        ? "w-[220px]"
+                        : "flex-1 min-w-[120px] max-w-xs"
+                  }
                 >
-                  {imageError ? (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <p>Unable to load document image</p>
-                    </div>
+                  <label
+                    htmlFor="corrected-score"
+                    className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    Corrected
+                  </label>
+                  <Input
+                    ref={correctedScoreInputRef}
+                    id="corrected-score"
+                    value={correctedScore}
+                    onChange={(e) => setCorrectedScore(e.target.value)}
+                    placeholder="e.g. 85"
+                    className={`mt-0.5 font-mono ${
+                      sideBySide || stacked ? "h-12 text-lg" : "h-10 text-base"
+                    }`}
+                    autoComplete="off"
+                  />
+                </div>
+                <Button
+                  onClick={() => void handleResolveIssue()}
+                  disabled={resolvingIssue || ignoringIssue}
+                  className={`gap-2 shrink-0 ${
+                    sideBySide ? "w-full h-11" : stacked ? "h-12 px-6" : "h-10"
+                  }`}
+                >
+                  {resolvingIssue ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Resolving...
+                    </>
                   ) : (
                     <>
-                      {imageLoading && (
-                        <Skeleton className="w-full h-full absolute inset-0 z-10" />
-                      )}
-                      <img
-                        key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${issueDetail.id}`}
-                        src={`${API_BASE_URL}/api/v1/documents/by-extracted-id/${issueDetail.document_id}/download?exam_id=${issueDetail.exam_id}`}
-                        alt={issueDetail.document_file_name || "Document"}
-                        className="w-auto h-auto object-contain"
-                        style={{
-                          maxWidth: "100%",
-                          maxHeight: "100%",
-                          opacity: imageLoading ? 0 : 1,
-                          transition: "opacity 0.2s ease-in-out",
-                        }}
-                        loading="lazy"
-                        onLoad={() => setImageLoading(false)}
-                        onError={() => {
-                          setImageLoading(false);
-                          setImageError(true);
-                        }}
-                      />
+                      <CheckCircle2 className="h-4 w-4" />
+                      Resolve
                     </>
                   )}
-                </div>
+                </Button>
               </div>
-            )}
-
-            <div
-              className={`space-y-6 py-4 overflow-y-auto flex-1 min-h-0 ${
-                hasImage ? "w-1/3" : "w-full"
-              }`}
-            >
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  {getStatusBadge(issueDetail.status)}
-                  {getIssueTypeBadge(issueDetail.issue_type)}
-                  <Badge variant="outline" className="text-xs">
-                    {getTestTypeLabel(issueDetail.test_type)}
-                  </Badge>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-sm">
+                  {issueDetail.status === "resolved" ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="capitalize font-medium">{issueDetail.status}</span>
                 </div>
-                {(issueDetail.subject_name || issueDetail.school_name) && (
-                  <div className="grid grid-cols-1 gap-2 text-sm">
-                    {issueDetail.subject_name && (
-                      <p>
-                        <span className="text-muted-foreground">Subject · </span>
-                        <span className="font-medium">
-                          {issueDetail.subject_code} - {issueDetail.subject_name}
-                        </span>
-                      </p>
-                    )}
-                    {issueDetail.school_name && (
-                      <p>
-                        <span className="text-muted-foreground">School · </span>
-                        <span className="font-medium">{issueDetail.school_name}</span>
-                      </p>
-                    )}
-                    <p>
-                      <span className="text-muted-foreground">Field · </span>
-                      <span className="font-medium">
-                        {getFieldNameLabel(issueDetail.field_name)}
-                      </span>
-                    </p>
-                  </div>
-                )}
+                <p className="font-mono text-base tabular-nums">
+                  {issueDetail.current_score_value ?? "—"}
+                </p>
               </div>
+            );
 
-              <div className="space-y-3 border-t pt-4">
-                <h3 className="font-semibold text-sm">Score</h3>
-                {issueDetail.status === "pending" ? (
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1">
-                      <label className="text-sm font-medium text-muted-foreground">
-                        Current
-                      </label>
-                      <p className="text-sm mt-1 font-mono">
-                        {issueDetail.current_score_value ?? (
-                          <span className="text-muted-foreground">Not set</span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="flex-1">
-                      <label
-                        htmlFor="corrected-score"
-                        className="text-sm font-medium text-muted-foreground"
-                      >
-                        Corrected
-                      </label>
-                      <Input
-                        ref={correctedScoreInputRef}
-                        id="corrected-score"
-                        value={correctedScore}
-                        onChange={(e) => setCorrectedScore(e.target.value)}
-                        placeholder="e.g. 85, A, AA"
-                        className="mt-1"
-                      />
-                    </div>
+            const navControls = (
+              <div className={`flex items-center gap-1.5 shrink-0 ${sideBySide ? "w-full justify-between" : stacked ? "justify-center" : ""}`}>
+                {issues.length > 1 ? (
+                  <div className="flex items-center gap-1.5">
                     <Button
-                      onClick={() => void handleResolveIssue()}
-                      disabled={resolvingIssue || ignoringIssue}
-                      className="gap-2 shrink-0"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleNavigateIssue("prev")}
+                      disabled={currentIndex === 0 || loadingIssueDetail}
+                      className="h-8 w-8 p-0"
+                      aria-label="Previous issue"
                     >
-                      {resolvingIssue ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Resolving...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="h-4 w-4" />
-                          Resolve
-                        </>
-                      )}
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs text-muted-foreground tabular-nums px-1">
+                      {currentIndex !== null ? currentIndex + 1 : 0}/{issues.length}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleNavigateIssue("next")}
+                      disabled={
+                        currentIndex === null ||
+                        currentIndex === issues.length - 1 ||
+                        loadingIssueDetail
+                      }
+                      className="h-8 w-8 p-0"
+                      aria-label="Next issue"
+                    >
+                      <ChevronRight className="h-4 w-4" />
                     </Button>
                   </div>
                 ) : (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">
-                      Current Score Value
-                    </label>
-                    <p className="text-sm mt-1 font-mono">
-                      {issueDetail.current_score_value ?? (
-                        <span className="text-muted-foreground">Not set</span>
+                  <span />
+                )}
+                <div className="flex items-center gap-1">
+                  {issueDetail.status === "pending" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleIgnoreIssue()}
+                      disabled={resolvingIssue || ignoringIssue}
+                      className="h-8 gap-1 text-muted-foreground"
+                    >
+                      {ignoringIssue ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
                       )}
+                      Ignore
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClose}
+                    disabled={resolvingIssue || ignoringIssue}
+                    className="h-8"
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            );
+
+            const entryDock = (
+              <div className="shrink-0 border-t bg-background">
+                {/* Candidate + task context */}
+                <div className="flex items-center justify-between gap-3 px-4 pt-2">
+                  <div className="min-w-0 flex-1 text-center sm:text-left">
+                    <p className="text-base font-bold text-foreground truncate tracking-tight">
+                      {issueDetail.candidate_name || "Unknown candidate"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                      <span className="tabular-nums font-semibold text-foreground">
+                        {issueDetail.candidate_index_number || "No index"}
+                      </span>
+                      {" · "}
+                      {getTaskLine(issueDetail.field_name)}
+                      {metaLine ? ` · ${metaLine}` : ""}
                     </p>
                   </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Enter · resolve · I ignore · ←/→ navigate
-                </p>
-              </div>
+                  {issues.length > 1 ? (
+                    <p className="text-xs text-muted-foreground tabular-nums shrink-0">
+                      {currentIndex !== null ? currentIndex + 1 : 0}/{issues.length}
+                    </p>
+                  ) : null}
+                </div>
 
-              <Collapsible open={allDetailsOpen} onOpenChange={setAllDetailsOpen}>
-                <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors border-t pt-4">
-                  {allDetailsOpen ? (
-                    <ChevronUp className="h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                  View All Details
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 mt-3">
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Message</p>
-                      <p className="text-sm mt-1">{issueDetail.message}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Created</p>
-                        <p>{format(new Date(issueDetail.created_at), "MMM d, yyyy HH:mm")}</p>
+                {/* Primary + nav in one centered row */}
+                <div className="flex flex-wrap items-end justify-center gap-x-3 gap-y-2 px-4 py-2">
+                  {issueDetail.status === "pending" ? (
+                    <>
+                      <div className="shrink-0">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Current
+                        </p>
+                        <p className="mt-0.5 font-mono text-base text-muted-foreground tabular-nums min-w-10">
+                          {issueDetail.current_score_value ?? (
+                            <span className="italic">—</span>
+                          )}
+                        </p>
                       </div>
-                      {issueDetail.resolved_at && (
-                        <div>
-                          <p className="text-muted-foreground">Resolved</p>
-                          <p>
-                            {format(new Date(issueDetail.resolved_at), "MMM d, yyyy HH:mm")}
-                          </p>
+                      <div className="w-44">
+                        <label
+                          htmlFor="corrected-score"
+                          className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                        >
+                          Corrected
+                        </label>
+                        <Input
+                          ref={correctedScoreInputRef}
+                          id="corrected-score"
+                          value={correctedScore}
+                          onChange={(e) => setCorrectedScore(e.target.value)}
+                          placeholder="e.g. 85"
+                          className="mt-0.5 h-10 text-base font-mono text-center"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <Button
+                        onClick={() => void handleResolveIssue()}
+                        disabled={resolvingIssue || ignoringIssue}
+                        className="gap-2 h-10 px-4 shrink-0"
+                      >
+                        {resolvingIssue ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Resolving...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            Resolve
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        {issueDetail.status === "resolved" ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-muted-foreground" />
+                        )}
+                        <span className="capitalize font-medium">{issueDetail.status}</span>
+                      </div>
+                      <p className="font-mono text-base tabular-nums">
+                        {issueDetail.current_score_value ?? "—"}
+                      </p>
+                    </div>
+                  )}
+
+                  {issues.length > 1 ? (
+                    <div className="flex items-center gap-1.5 pl-2 border-l ml-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleNavigateIssue("prev")}
+                        disabled={currentIndex === 0 || loadingIssueDetail}
+                        className="h-9 w-9 p-0"
+                        aria-label="Previous issue"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleNavigateIssue("next")}
+                        disabled={
+                          currentIndex === null ||
+                          currentIndex === issues.length - 1 ||
+                          loadingIssueDetail
+                        }
+                        className="h-9 w-9 p-0"
+                        aria-label="Next issue"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Tertiary actions */}
+                <div className="flex items-center justify-between px-4 pb-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleIgnoreIssue()}
+                    disabled={
+                      issueDetail.status !== "pending" || resolvingIssue || ignoringIssue
+                    }
+                    className={`h-7 gap-1 text-xs text-muted-foreground ${
+                      issueDetail.status !== "pending" ? "invisible" : ""
+                    }`}
+                  >
+                    {ignoringIssue ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <XCircle className="h-3 w-3" />
+                    )}
+                    Ignore
+                  </Button>
+                  <p className="text-[10px] text-muted-foreground hidden sm:block">
+                    Enter · Ctrl+I · ←/→ · Esc
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClose}
+                    disabled={resolvingIssue || ignoringIssue}
+                    className="h-7 text-xs text-muted-foreground"
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            );
+
+            const sideRail = (
+              <div className="w-[280px] max-w-[32vw] shrink-0 border-l bg-background flex flex-col min-h-0">
+                <div className="flex-1 flex flex-col justify-center gap-5 px-4 py-4 overflow-y-auto">
+                  <div className="min-w-0">
+                    <p className="text-lg font-bold leading-snug truncate tracking-tight">
+                      {issueDetail.candidate_name || "Unknown candidate"}
+                    </p>
+                    <p className="text-sm tabular-nums font-semibold text-foreground mt-0.5">
+                      {issueDetail.candidate_index_number || "No index"}
+                    </p>
+                    <p className="text-sm font-medium leading-snug mt-3 text-muted-foreground">
+                      {getTaskLine(issueDetail.field_name)}
+                    </p>
+                    {metaLine ? (
+                      <p className="text-xs text-muted-foreground mt-1 leading-snug">{metaLine}</p>
+                    ) : null}
+                  </div>
+                  {entryControls}
+                  <p className="text-[11px] text-muted-foreground">
+                    Enter · resolve · Ctrl+I ignore · ←/→ · Esc
+                  </p>
+                </div>
+                <div className="border-t px-3 py-2.5 shrink-0">{navControls}</div>
+              </div>
+            );
+
+            const documentPane = hasDocument ? (
+              <div
+                className="min-w-0 min-h-0 flex flex-col flex-1 bg-neutral-100 dark:bg-neutral-900"
+              >
+                {hasImage ? (
+                  <div className="flex items-center gap-1 px-2 py-1 border-b bg-background shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() =>
+                        setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))
+                      }
+                      aria-label="Zoom out"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="text-[11px] tabular-nums w-10 text-center text-muted-foreground">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() =>
+                        setZoom((z) => Math.min(4, Math.round((z + 0.25) * 100) / 100))
+                      }
+                      aria-label="Zoom in"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 text-[11px] px-2"
+                      onClick={() => {
+                        setZoom(1);
+                        if (viewerRef.current) {
+                          viewerRef.current.scrollTop = 0;
+                          viewerRef.current.scrollLeft = 0;
+                        }
+                      }}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Fit
+                    </Button>
+                  </div>
+                ) : null}
+                <div
+                  ref={viewerRef}
+                  className={`relative flex-1 min-h-0 overscroll-contain ${
+                    zoom > 1 ? "overflow-auto" : "overflow-hidden"
+                  }`}
+                  onWheel={handleWheel}
+                >
+                  {hasImage ? (
+                    <>
+                      {imageError ? (
+                        <div className="flex items-center justify-center h-full min-h-48 text-muted-foreground">
+                          <p>Unable to load document image</p>
                         </div>
+                      ) : (
+                        <>
+                          {imageLoading && (
+                            <Skeleton className="absolute inset-0 z-10 rounded-none" />
+                          )}
+                          {zoom <= 1 ? (
+                            <div className="absolute inset-0 flex items-center justify-center p-2">
+                              <img
+                                key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                                src={sheetSrc}
+                                alt={issueDetail.document_file_name || "Score sheet"}
+                                className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
+                                style={{
+                                  transform: zoom < 1 ? `scale(${zoom})` : undefined,
+                                  transformOrigin: "center center",
+                                  opacity: imageLoading ? 0 : 1,
+                                  transition: "opacity 0.2s ease-in-out",
+                                }}
+                                draggable={false}
+                                onLoad={() => setImageLoading(false)}
+                                onError={() => {
+                                  setImageLoading(false);
+                                  setImageError(true);
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              className="flex items-center justify-center p-2"
+                              style={{
+                                width: `${zoom * 100}%`,
+                                height: `${zoom * 100}%`,
+                                minWidth: "100%",
+                                minHeight: "100%",
+                              }}
+                            >
+                              <img
+                                key={`doc-zoom-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                                src={sheetSrc}
+                                alt={issueDetail.document_file_name || "Score sheet"}
+                                className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
+                                style={{
+                                  opacity: imageLoading ? 0 : 1,
+                                  transition: "opacity 0.2s ease-in-out",
+                                }}
+                                draggable={false}
+                                onLoad={() => setImageLoading(false)}
+                                onError={() => {
+                                  setImageLoading(false);
+                                  setImageError(true);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </>
                       )}
+                    </>
+                  ) : (
+                    <iframe
+                      key={`pdf-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                      src={sheetSrc}
+                      title={issueDetail.document_file_name || "Score sheet PDF"}
+                      className="absolute inset-0 w-full h-full border-0 bg-white"
+                    />
+                  )}
+                </div>
+              </div>
+            ) : null;
+
+            if (!hasDocument) {
+              return (
+                <div className="flex flex-1 flex-col min-h-0">
+                  <div className="flex-1 overflow-y-auto px-6 py-6">
+                    <div className="mx-auto w-full max-w-lg space-y-5">
+                      <div className="rounded-md border border-dashed px-4 py-4 text-sm space-y-2">
+                        <div className="flex items-center gap-2 font-medium text-foreground">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          No score sheet attached
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Enter the corrected score from your paper source if available, or
+                          ignore if it cannot be resolved.
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold truncate tracking-tight">
+                          {issueDetail.candidate_name || "Unknown candidate"}
+                        </p>
+                        <p className="text-sm tabular-nums font-semibold text-foreground mt-0.5">
+                          {issueDetail.candidate_index_number || "No index"}
+                        </p>
+                        <p className="text-sm font-medium mt-3 text-muted-foreground">{getTaskLine(issueDetail.field_name)}</p>
+                        {metaLine ? (
+                          <p className="text-xs text-muted-foreground mt-1">{metaLine}</p>
+                        ) : null}
+                      </div>
+                      {entryControls}
+                      <p className="text-xs text-muted-foreground">
+                        Enter · resolve · Ctrl+I ignore · ←/→ navigate · Esc close
+                      </p>
                     </div>
                   </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          </div>
+                  <div className="border-t px-4 py-2 flex justify-end">{navControls}</div>
+                </div>
+              );
+            }
+
+            // Side by side: sheet left + flush mid-height rail (short eye travel).
+            // Stacked: sheet above + entry dock below.
+            if (sideBySide) {
+              return (
+                <div className="flex flex-1 min-h-0 flex-row overflow-hidden">
+                  <div className="flex-1 min-w-0 min-h-0 flex flex-col">{documentPane}</div>
+                  {sideRail}
+                </div>
+              );
+            }
+
+            return (
+              <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col">{documentPane}</div>
+                <div className="shrink-0">{entryDock}</div>
+              </div>
+            );
+          })()
         ) : (
-          <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center text-muted-foreground gap-2">
+            <AlertCircle className="h-4 w-4" />
             Failed to load issue details
-          </div>
-        )}
-
-        {issueDetail && issueDetail.status === "pending" && (
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={handleClose}
-              disabled={resolvingIssue || ignoringIssue}
-            >
-              Close
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => void handleIgnoreIssue()}
-              disabled={resolvingIssue || ignoringIssue}
-              className="gap-2"
-            >
-              {ignoringIssue ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Ignoring...
-                </>
-              ) : (
-                <>
-                  <XCircle className="h-4 w-4" />
-                  Ignore
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        )}
-
-        {issueDetail && issues.length > 1 && (
-          <div className="flex items-center justify-center gap-4 border-t pt-4 px-6">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleNavigateIssue("prev")}
-              disabled={currentIndex === 0 || loadingIssueDetail}
-              className="gap-2"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Previous
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              Issue {currentIndex !== null ? currentIndex + 1 : 0} of {issues.length}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleNavigateIssue("next")}
-              disabled={
-                currentIndex === null ||
-                currentIndex === issues.length - 1 ||
-                loadingIssueDetail
-              }
-              className="gap-2"
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </Button>
           </div>
         )}
       </DialogContent>

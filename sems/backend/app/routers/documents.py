@@ -330,7 +330,10 @@ async def download_document_by_extracted_id(
         return StreamingResponse(
             iter([file_content]),
             media_type=document.mime_type,
-            headers={"Content-Disposition": f'inline; filename="{document.file_name}"'},
+            headers={
+                "Content-Disposition": f'inline; filename="{document.file_name}"',
+                "Cache-Control": "private, max-age=86400, immutable",
+            },
         )
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
@@ -350,7 +353,10 @@ async def download_document(document_id: int, session: DBSessionDep) -> Streamin
         return StreamingResponse(
             iter([file_content]),
             media_type=document.mime_type,
-            headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{document.file_name}"',
+                "Cache-Control": "private, max-age=600, immutable",
+            },
         )
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
