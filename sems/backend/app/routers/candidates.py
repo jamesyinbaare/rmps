@@ -42,7 +42,7 @@ from app.schemas.candidate import (
     SubjectScoreResponse,
 )
 from app.services.photo_validation import PhotoValidationService
-from app.services.storage import LocalStorageBackend, StorageService
+from app.services.storage import create_photo_storage_service
 from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import calculate_grade
 from app.services.candidate_upload import (
@@ -1085,9 +1085,8 @@ async def list_exam_registration_subjects(
 
 # Photo Management Endpoints
 
-# Create photo storage service instance
-photo_storage_service = StorageService()
-photo_storage_service._backend = LocalStorageBackend(base_path=settings.photo_storage_path)
+# Photos use configured STORAGE_BACKEND (local path or GCS photos prefix)
+photo_storage_service = create_photo_storage_service()
 
 
 @router.post("/{candidate_id}/photos", response_model=CandidatePhotoResponse, status_code=status.HTTP_201_CREATED)

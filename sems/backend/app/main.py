@@ -28,7 +28,7 @@ from app.routers import (
     validation_batches,
 )
 from app.services.reducto_queue import reducto_queue_service
-from app.config import logging_settings
+from app.config import logging_settings, settings
 from starlette.types import ASGIApp
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
@@ -170,7 +170,7 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -198,6 +198,11 @@ app.include_router(users.router)
 @app.get("/", status_code=status.HTTP_200_OK)
 def test() -> dict[str, Any]:
     return {"success": True}
+
+
+@app.get("/health", status_code=status.HTTP_200_OK)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

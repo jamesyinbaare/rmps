@@ -66,7 +66,50 @@ import type {
   SheetIdComparisonResponse,
 } from "@/types/document";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+/**
+ * Resolve the public/internal API base URL.
+ * - NEXT_PUBLIC_API_BASE_URL wins when set (build-time or runtime).
+ * - In the browser, derive `sems-api.<parent>` from the current host (exam-tools pattern).
+ * - On the server, prefer INTERNAL_API_BASE_URL (compose service name).
+ */
+export function getApiBaseUrl(): string {
+  const envBase =
+    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL?.trim() : undefined;
+  if (envBase) return envBase.replace(/\/$/, "");
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+
+    const parts = hostname.split(".");
+    if (parts.length >= 3) {
+      const [subdomain, ...rest] = parts;
+      const apiSubdomain = subdomain.endsWith("-api") ? subdomain : `${subdomain}-api`;
+      return `${protocol}//${apiSubdomain}.${rest.join(".")}`;
+    }
+
+    return `${protocol}//${hostname}`;
+  }
+
+  const internal =
+    typeof process !== "undefined" ? process.env.INTERNAL_API_BASE_URL?.trim() : undefined;
+  if (internal) return internal.replace(/\/$/, "");
+
+  return "http://localhost:8000";
+}
+
+/** Lazily resolves so browser hostname derivation and SSR INTERNAL_API_BASE_URL both work. */
+export const API_BASE_URL = {
+  toString() {
+    return getApiBaseUrl();
+  },
+  valueOf() {
+    return getApiBaseUrl();
+  },
+  [Symbol.toPrimitive]() {
+    return getApiBaseUrl();
+  },
+} as unknown as string;
 
 /**
  * Get authentication token from localStorage
