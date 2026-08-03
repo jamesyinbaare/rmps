@@ -1,13 +1,45 @@
-from pydantic_settings import BaseSettings
+import json
+from typing import Annotated, Any, Self
+
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
     database_url: str = ""
     environment: str = "dev"
+    # Comma-separated in env (CORS_ORIGINS); browser origins allowed for credentialed API calls
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        if isinstance(v, str):
+            raw = v.strip()
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+
     # Storage settings
-    storage_backend: str = "local"  # local, s3, azure
+    storage_backend: str = "local"  # local, gcs
     storage_path: str = "storage/documents"
     storage_max_size: int = 50 * 1024 * 1024  # 50MB default
+    gcs_bucket_name: str = ""
+    gcs_project_id: str = ""
+    gcs_credentials_path: str = ""
+    gcs_documents_prefix: str = "sems/documents"
+    gcs_photos_prefix: str = "sems/photos"
+    gcs_score_sheets_prefix: str = "sems/score-sheets"
     # PDF generation settings
     templates_path: str = "templates"  # Path to HTML templates directory
     pdf_output_path: str = "score_sheets"  # Path to save generated PDF score sheets
@@ -146,6 +178,17 @@ class Settings(BaseSettings):
     super_admin_email: str = ""  # Required: Email for the initial SUPER_ADMIN user
     super_admin_password: str = ""  # Required: Password for the initial SUPER_ADMIN user
     super_admin_full_name: str = ""  # Required: Full name for the initial SUPER_ADMIN user
+
+    @model_validator(mode="after")
+    def validate_secret_key_for_environment(self) -> Self:
+        env = (self.environment or "").strip().lower()
+        if env not in ("staging", "production", "prod"):
+            return self
+        if not self.secret_key or self.secret_key == "your-secret-key-change-in-production":
+            raise ValueError(
+                "SECRET_KEY must be set to a non-default value when ENVIRONMENT is staging/production."
+            )
+        return self
 
 
 class LoggingSettings(BaseSettings):

@@ -9,6 +9,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libzbar0 \
     tesseract-ocr \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv.
