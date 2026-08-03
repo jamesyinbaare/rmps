@@ -9,8 +9,10 @@ import {
   ChevronDown,
   ChevronUp,
   Filter,
+  Inbox,
   Loader2,
   Play,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,6 +26,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   getAllExams,
   getMyValidationStats,
@@ -69,6 +76,38 @@ function getIssueTypeLabel(issueType: string) {
   return issueType.replace(/_/g, " ");
 }
 
+function DocNodBadge({ hasDocument }: { hasDocument: boolean }) {
+  const label = hasDocument ? "DOC" : "NOD";
+  const title = hasDocument
+    ? "Has score sheet image"
+    : "No document — enter from paper or other source";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          variant={hasDocument ? "default" : "secondary"}
+          className="shrink-0 cursor-help"
+          title={title}
+        >
+          {label}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="top">{title}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function sortInProgress(batches: ClerkBatchItem[]) {
+  return [...batches].sort((a, b) => {
+    if (b.pending_count !== a.pending_count) {
+      return b.pending_count - a.pending_count;
+    }
+    const aTime = a.assigned_at ? new Date(a.assigned_at).getTime() : 0;
+    const bTime = b.assigned_at ? new Date(b.assigned_at).getTime() : 0;
+    return bTime - aTime;
+  });
+}
+
 type DocFilter = "all" | "doc" | "nod";
 type AllocTab = "in_progress" | "completed";
 
@@ -81,6 +120,7 @@ export default function ClerkDashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [tab, setTab] = useState<AllocTab>("in_progress");
+  const [tabAutoSet, setTabAutoSet] = useState(false);
   const [docFilter, setDocFilter] = useState<DocFilter>("all");
   const [examIdFilter, setExamIdFilter] = useState<number | null>(null);
   const [subjectIdFilter, setSubjectIdFilter] = useState<number | null>(null);
@@ -188,13 +228,63 @@ export default function ClerkDashboardPage() {
   }, []);
 
   const inProgressBatches = useMemo(
-    () => batches.filter((b) => b.progress_status === "in_progress"),
+    () => sortInProgress(batches.filter((b) => b.progress_status === "in_progress")),
     [batches]
   );
   const completedBatches = useMemo(
     () => batches.filter((b) => b.progress_status === "completed"),
     [batches]
   );
+
+  // Land on Completed when In progress is empty (once per load cycle)
+  useEffect(() => {
+    if (loading || tabAutoSet) return;
+    if (inProgressCount === 0 && completedCount > 0) {
+      setTab("completed");
+    } else {
+      setTab("in_progress");
+    }
+    setTabAutoSet(true);
+  }, [loading, inProgressCount, completedCount, tabAutoSet]);
+
+  // Re-evaluate default tab when filters change and data reloads
+  useEffect(() => {
+    setTabAutoSet(false);
+  }, [docFilter, examIdFilter, subjectIdFilter]);
+
+  const resumeBatch = useMemo(() => {
+    if (inProgressBatches.length === 0) return null;
+    return inProgressBatches[0];
+  }, [inProgressBatches]);
+
+  const resumeLabel = useMemo(() => {
+    if (!resumeBatch) return "Resume next";
+    if (inProgressBatches.length === 1) {
+      return `Continue · ${resumeBatch.name}`;
+    }
+    return "Resume next";
+  }, [resumeBatch, inProgressBatches.length]);
+
+  const examFilterLabel = useMemo(() => {
+    if (examIdFilter == null) return null;
+    const exam = exams.find((e) => e.id === examIdFilter);
+    return exam ? `${exam.exam_type} · ${exam.series} ${exam.year}` : `Exam #${examIdFilter}`;
+  }, [examIdFilter, exams]);
+
+  const subjectFilterLabel = useMemo(() => {
+    if (subjectIdFilter == null) return null;
+    const subject = subjects.find((s) => s.id === subjectIdFilter);
+    return subject ? `${subject.code} · ${subject.name}` : `Subject #${subjectIdFilter}`;
+  }, [subjectIdFilter, subjects]);
+
+  const hasActiveFilters =
+    docFilter !== "all" || examIdFilter != null || subjectIdFilter != null;
+
+  const clearFilters = () => {
+    setDocFilter("all");
+    setExamIdFilter(null);
+    setSubjectIdFilter(null);
+  };
 
   const openBatchWork = async (batch: ClerkBatchItem) => {
     const isInProgress = batch.progress_status === "in_progress";
@@ -219,6 +309,15 @@ export default function ClerkDashboardPage() {
         setWorkspaceOpen(true);
       }
     }
+  };
+
+  const handleResumeNext = () => {
+    if (!resumeBatch) return;
+    if (quotaBlocked) {
+      toast.error("Daily resolve quota reached — ask a registrar for an override");
+      return;
+    }
+    void openBatchWork(resumeBatch);
   };
 
   const exitWorkMode = () => {
@@ -281,6 +380,11 @@ export default function ClerkDashboardPage() {
     void loadStats();
   };
 
+  const quotaPct =
+    stats && stats.quota_limit > 0
+      ? Math.min(100, Math.round((stats.resolved_today / stats.quota_limit) * 100))
+      : 0;
+
   if (activeBatch) {
     const isInProgress = activeBatch.progress_status === "in_progress";
     const total = Math.max(
@@ -304,17 +408,15 @@ export default function ClerkDashboardPage() {
                 <div className="space-y-2 min-w-0">
                   <Button variant="ghost" size="sm" className="gap-2 -ml-2" onClick={exitWorkMode}>
                     <ArrowLeft className="h-4 w-4" />
-                    Back to allocations
+                    Back to queue
                   </Button>
                   <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-2xl font-semibold tracking-tight truncate">
                       {activeBatch.name}
                     </h1>
-                    <Badge variant={activeBatch.has_document ? "default" : "secondary"}>
-                      {activeBatch.has_document ? "DOC" : "NOD"}
-                    </Badge>
+                    <DocNodBadge hasDocument={activeBatch.has_document} />
                     {!isInProgress ? (
-                      <Badge variant="outline" className="text-emerald-700 border-emerald-300">
+                      <Badge variant="outline" className="text-primary border-primary/30">
                         Completed
                       </Badge>
                     ) : null}
@@ -338,7 +440,7 @@ export default function ClerkDashboardPage() {
                     </div>
                     <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-emerald-600 transition-all"
+                        className="h-full rounded-full bg-primary transition-all"
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -383,20 +485,31 @@ export default function ClerkDashboardPage() {
                   </div>
                 ) : batchIssuesError ? (
                   <Card>
-                    <CardContent className="flex items-center gap-2 py-8 text-destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      {batchIssuesError}
+                    <CardContent className="flex flex-col items-center gap-3 py-8">
+                      <div className="flex items-center gap-2 text-destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        {batchIssuesError}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          void loadBatchIssues(activeBatch.id, isInProgress)
+                        }
+                      >
+                        Retry
+                      </Button>
                     </CardContent>
                   </Card>
                 ) : batchIssues.length === 0 ? (
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
-                      <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                      <CheckCircle2 className="h-8 w-8 text-primary" />
                       <p className="font-medium text-foreground">
                         {isInProgress ? "Batch complete" : "No issues in this batch"}
                       </p>
                       <Button variant="outline" onClick={exitWorkMode}>
-                        Back to allocations
+                        Back to queue
                       </Button>
                     </CardContent>
                   </Card>
@@ -459,17 +572,25 @@ export default function ClerkDashboardPage() {
   }
 
   return (
-    <DashboardLayout title="My Allocations">
+    <DashboardLayout title="My Queue">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title="My Allocations" showSearch={false} />
+        <TopBar title="My Queue" showSearch={false} />
         <main className="flex-1 overflow-y-auto">
-          <div className="container mx-auto px-6 py-8 space-y-8">
+          <div className="container mx-auto px-6 py-8 space-y-6">
             <section className="space-y-4">
-              <div>
-                <h1 className="text-3xl font-semibold tracking-tight">My batch allocations</h1>
-                <p className="text-muted-foreground mt-1">
-                  Open a batch to resolve remaining issues. Enter to resolve, Ctrl+I to ignore.
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <p className="text-muted-foreground text-sm max-w-xl">
+                  Continue a batch to resolve remaining score issues.
                 </p>
+                <Button
+                  size="lg"
+                  className="gap-2 shrink-0"
+                  onClick={handleResumeNext}
+                  disabled={!resumeBatch || quotaBlocked || loading}
+                >
+                  <Play className="h-4 w-4" />
+                  <span className="truncate max-w-[16rem]">{resumeLabel}</span>
+                </Button>
               </div>
 
               {quotaBlocked && (
@@ -480,108 +601,172 @@ export default function ClerkDashboardPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <StatTile
-                  label="Assigned pending"
-                  value={stats?.assigned_pending_count ?? 0}
-                  accent="text-amber-600"
-                  loading={!stats && loading}
-                />
-                <StatTile
-                  label="Resolved today"
-                  value={stats?.resolved_today ?? 0}
-                  accent="text-emerald-600"
-                  loading={!stats}
-                />
-                <StatTile
-                  label="Quota left"
-                  value={stats?.quota_remaining ?? 0}
-                  accent={quotaBlocked ? "text-destructive" : "text-emerald-600"}
-                  loading={!stats}
-                  hint={
-                    stats
-                      ? `${stats.resolved_today}/${stats.quota_limit}${
-                          stats.quota_overridden ? " · override" : ""
-                        }`
-                      : undefined
-                  }
-                />
+              <div className="rounded-lg border px-4 py-3 space-y-2">
+                {stats ? (
+                  <>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                      <p>
+                        <span className="text-muted-foreground">Quota </span>
+                        <span
+                          className={`font-semibold tabular-nums ${
+                            quotaBlocked ? "text-destructive" : "text-foreground"
+                          }`}
+                        >
+                          {stats.resolved_today}/{stats.quota_limit}
+                        </span>
+                        {stats.quota_overridden ? (
+                          <span className="text-muted-foreground"> · override</span>
+                        ) : null}
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {stats.assigned_pending_count} pending
+                        </span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {stats.quota_remaining} left
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        Resolved today · {stats.resolved_today}
+                      </p>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden max-w-md">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          quotaBlocked ? "bg-destructive" : "bg-primary"
+                        }`}
+                        style={{ width: `${quotaPct}%` }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <Skeleton className="h-8 w-64" />
+                )}
               </div>
             </section>
 
             <section className="space-y-4">
-              <div className="flex items-center justify-end">
-                <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-2">
-                      <Filter className="h-4 w-4" />
-                      Filters
-                      {filtersOpen ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-3">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pb-2">
-                      <SearchableSelect
-                        options={[
-                          { value: "doc", label: "DOC only" },
-                          { value: "nod", label: "NOD only" },
-                        ]}
-                        value={docFilter === "all" ? "all" : docFilter}
-                        onValueChange={(value) => {
-                          if (value === "all" || value === "") setDocFilter("all");
-                          else if (value === "doc" || value === "nod") setDocFilter(value);
-                        }}
-                        placeholder="DOC / NOD"
-                        allowAll
-                        allLabel="All streams"
-                      />
-                      <SearchableSelect
-                        options={exams.map((exam) => ({
-                          value: exam.id,
-                          label: `${exam.exam_type} · ${exam.series} ${exam.year}`,
-                        }))}
-                        value={examIdFilter ?? "all"}
-                        onValueChange={(value) =>
-                          setExamIdFilter(
-                            value === "all" || value === ""
-                              ? null
-                              : typeof value === "number"
-                                ? value
-                                : Number(value)
-                          )
-                        }
-                        placeholder="All exams"
-                        disabled={loadingFilterOptions}
-                        allowAll
-                        allLabel="All exams"
-                      />
-                      <SearchableSelect
-                        options={subjects.map((subject) => ({
-                          value: subject.id,
-                          label: `${subject.code} · ${subject.name}`,
-                        }))}
-                        value={subjectIdFilter ?? "all"}
-                        onValueChange={(value) =>
-                          setSubjectIdFilter(
-                            value === "all" || value === ""
-                              ? null
-                              : typeof value === "number"
-                                ? value
-                                : Number(value)
-                          )
-                        }
-                        placeholder="All subjects"
-                        disabled={loadingFilterOptions}
-                        allowAll
-                        allLabel="All subjects"
-                      />
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2 justify-between">
+                  <div className="flex flex-wrap items-center gap-2 min-h-8">
+                    {!filtersOpen && hasActiveFilters ? (
+                      <>
+                        {docFilter !== "all" ? (
+                          <FilterChip
+                            label={docFilter === "doc" ? "DOC only" : "NOD only"}
+                            onRemove={() => setDocFilter("all")}
+                          />
+                        ) : null}
+                        {examFilterLabel ? (
+                          <FilterChip
+                            label={examFilterLabel}
+                            onRemove={() => setExamIdFilter(null)}
+                          />
+                        ) : null}
+                        {subjectFilterLabel ? (
+                          <FilterChip
+                            label={subjectFilterLabel}
+                            onRemove={() => setSubjectIdFilter(null)}
+                          />
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-muted-foreground"
+                          onClick={clearFilters}
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        DOC = score sheet · NOD = no document
+                      </span>
+                    )}
+                  </div>
+                  <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="gap-2">
+                        <Filter className="h-4 w-4" />
+                        Filters
+                        {hasActiveFilters && !filtersOpen ? (
+                          <span className="tabular-nums text-muted-foreground">
+                            (
+                            {[
+                              docFilter !== "all",
+                              examIdFilter != null,
+                              subjectIdFilter != null,
+                            ].filter(Boolean).length}
+                            )
+                          </span>
+                        ) : null}
+                        {filtersOpen ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pb-2">
+                        <SearchableSelect
+                          options={[
+                            { value: "doc", label: "DOC only (has sheet)" },
+                            { value: "nod", label: "NOD only (no document)" },
+                          ]}
+                          value={docFilter === "all" ? "all" : docFilter}
+                          onValueChange={(value) => {
+                            if (value === "all" || value === "") setDocFilter("all");
+                            else if (value === "doc" || value === "nod") setDocFilter(value);
+                          }}
+                          placeholder="DOC / NOD"
+                          allowAll
+                          allLabel="All streams"
+                        />
+                        <SearchableSelect
+                          options={exams.map((exam) => ({
+                            value: exam.id,
+                            label: `${exam.exam_type} · ${exam.series} ${exam.year}`,
+                          }))}
+                          value={examIdFilter ?? "all"}
+                          onValueChange={(value) =>
+                            setExamIdFilter(
+                              value === "all" || value === ""
+                                ? null
+                                : typeof value === "number"
+                                  ? value
+                                  : Number(value)
+                            )
+                          }
+                          placeholder="All exams"
+                          disabled={loadingFilterOptions}
+                          allowAll
+                          allLabel="All exams"
+                        />
+                        <SearchableSelect
+                          options={subjects.map((subject) => ({
+                            value: subject.id,
+                            label: `${subject.code} · ${subject.name}`,
+                          }))}
+                          value={subjectIdFilter ?? "all"}
+                          onValueChange={(value) =>
+                            setSubjectIdFilter(
+                              value === "all" || value === ""
+                                ? null
+                                : typeof value === "number"
+                                  ? value
+                                  : Number(value)
+                            )
+                          }
+                          placeholder="All subjects"
+                          disabled={loadingFilterOptions}
+                          allowAll
+                          allLabel="All subjects"
+                        />
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </div>
               </div>
 
               <Tabs value={tab} onValueChange={(v) => setTab(v as AllocTab)}>
@@ -601,26 +786,30 @@ export default function ClerkDashboardPage() {
                 </TabsList>
 
                 <TabsContent value="in_progress" className="mt-4">
-                  <BatchCardGrid
+                  <BatchList
                     batches={inProgressBatches}
                     loading={loading}
                     error={error}
-                    emptyTitle="No batches assigned yet"
+                    emptyTitle="Waiting for assignment"
                     emptyDescription="When a registrar assigns batches to you, they will show up here."
+                    emptyIcon="inbox"
                     mode="in_progress"
                     onOpen={openBatchWork}
+                    onRetry={() => void loadBatches()}
                     quotaBlocked={quotaBlocked}
                   />
                 </TabsContent>
                 <TabsContent value="completed" className="mt-4">
-                  <BatchCardGrid
+                  <BatchList
                     batches={completedBatches}
                     loading={loading}
                     error={error}
                     emptyTitle="No completed batches"
                     emptyDescription="Finished batches appear here once all issues are resolved or ignored."
+                    emptyIcon="check"
                     mode="completed"
                     onOpen={openBatchWork}
+                    onRetry={() => void loadBatches()}
                     quotaBlocked={quotaBlocked}
                   />
                 </TabsContent>
@@ -633,14 +822,29 @@ export default function ClerkDashboardPage() {
   );
 }
 
-function BatchCardGrid({
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-1 text-xs max-w-56 hover:bg-muted transition-colors"
+    >
+      <span className="truncate">{label}</span>
+      <X className="h-3 w-3 shrink-0 text-muted-foreground" />
+    </button>
+  );
+}
+
+function BatchList({
   batches,
   loading,
   error,
   emptyTitle,
   emptyDescription,
+  emptyIcon,
   mode,
   onOpen,
+  onRetry,
   quotaBlocked,
 }: {
   batches: ClerkBatchItem[];
@@ -648,15 +852,19 @@ function BatchCardGrid({
   error: string | null;
   emptyTitle: string;
   emptyDescription: string;
+  emptyIcon: "inbox" | "check";
   mode: AllocTab;
   onOpen: (batch: ClerkBatchItem) => void;
+  onRetry: () => void;
   quotaBlocked: boolean;
 }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="rounded-lg border divide-y">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-36 w-full" />
+          <div key={i} className="px-4 py-3">
+            <Skeleton className="h-10 w-full" />
+          </div>
         ))}
       </div>
     );
@@ -664,9 +872,14 @@ function BatchCardGrid({
   if (error) {
     return (
       <Card>
-        <CardContent className="flex items-center gap-2 py-8 text-destructive">
-          <AlertCircle className="h-4 w-4" />
-          {error}
+        <CardContent className="flex flex-col items-center gap-3 py-8">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            {error}
+          </div>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
         </CardContent>
       </Card>
     );
@@ -675,7 +888,11 @@ function BatchCardGrid({
     return (
       <Card>
         <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+          {emptyIcon === "inbox" ? (
+            <Inbox className="h-8 w-8 text-muted-foreground" />
+          ) : (
+            <CheckCircle2 className="h-8 w-8 text-primary" />
+          )}
           <p className="font-medium text-foreground">{emptyTitle}</p>
           <p className="text-sm text-center max-w-sm">{emptyDescription}</p>
         </CardContent>
@@ -684,101 +901,112 @@ function BatchCardGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+    <ul className="rounded-lg border divide-y">
+      {/* Header — desktop */}
+      <li className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide bg-muted/30">
+        <span>Batch</span>
+        <span>Stream</span>
+        <span>Subject</span>
+        <span className="text-right">Remaining</span>
+        <span>Progress</span>
+        <span>Assigned</span>
+        <span className="text-right">Action</span>
+      </li>
       {batches.map((batch) => {
         const total = Math.max(batch.total_count, 1);
         const pct = Math.min(100, Math.round((batch.done_count / total) * 100));
+        const canContinue =
+          mode === "completed" || !(quotaBlocked && batch.pending_count > 0);
+        const meta = [
+          batch.exam_year,
+          batch.subject_code,
+          getTestTypeLabel(batch.test_type),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
         return (
-          <div
-            key={batch.id}
-            className="rounded-lg border px-4 py-4 flex flex-col gap-3 hover:bg-muted/30 transition-colors"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-medium truncate">{batch.name}</p>
-                  <Badge variant={batch.has_document ? "default" : "secondary"} className="shrink-0">
-                    {batch.has_document ? "DOC" : "NOD"}
-                  </Badge>
+          <li key={batch.id}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (canContinue) onOpen(batch);
+              }}
+              onKeyDown={(e) => {
+                if ((e.key === "Enter" || e.key === " ") && canContinue) {
+                  e.preventDefault();
+                  onOpen(batch);
+                }
+              }}
+              className="w-full text-left px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] md:items-center md:gap-3 flex flex-col gap-2"
+            >
+              <div className="min-w-0 flex items-center gap-2 md:contents">
+                <p className="font-medium truncate min-w-0">{batch.name}</p>
+                <div className="md:justify-self-start">
+                  <DocNodBadge hasDocument={batch.has_document} />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {[batch.exam_year, batch.subject_code, getTestTypeLabel(batch.test_type)]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  {batch.subject_name ? ` · ${batch.subject_name}` : ""}
-                </p>
               </div>
-              <Button
-                size="sm"
-                variant={mode === "completed" ? "outline" : "default"}
-                className="shrink-0 gap-1.5"
-                disabled={mode === "in_progress" && quotaBlocked && batch.pending_count > 0}
-                onClick={() => onOpen(batch)}
-              >
-                {mode === "in_progress" ? (
-                  <>
-                    <Play className="h-3.5 w-3.5" />
-                    Continue
-                  </>
-                ) : (
-                  "Review"
-                )}
-              </Button>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>
-                  {mode === "in_progress"
-                    ? `${batch.pending_count} remaining`
-                    : "All clear"}
-                </span>
-                <span className="tabular-nums">
-                  {batch.done_count} / {batch.total_count}
-                </span>
-              </div>
-              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-emerald-600 transition-all"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-            {batch.assigned_at ? (
-              <p className="text-xs text-muted-foreground">
-                Assigned {format(new Date(batch.assigned_at), "MMM d, HH:mm")}
+              <p className="text-xs text-muted-foreground truncate md:text-sm">
+                {meta}
+                {batch.subject_name ? (
+                  <span className="hidden lg:inline"> · {batch.subject_name}</span>
+                ) : null}
               </p>
-            ) : null}
-          </div>
+              <p className="text-sm tabular-nums text-right md:text-right">
+                {mode === "in_progress" ? (
+                  <span className="font-medium">{batch.pending_count}</span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+                <span className="md:hidden text-muted-foreground text-xs ml-1">
+                  remaining · {batch.done_count}/{batch.total_count}
+                </span>
+              </p>
+              <div className="space-y-1 hidden md:block">
+                <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                  <span>
+                    {batch.done_count}/{batch.total_count}
+                  </span>
+                </div>
+                <div className="h-1 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground tabular-nums hidden md:block">
+                {batch.assigned_at
+                  ? format(new Date(batch.assigned_at), "MMM d, HH:mm")
+                  : "—"}
+              </p>
+              <div
+                className="flex justify-end"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="sm"
+                  variant={mode === "completed" ? "outline" : "default"}
+                  className="shrink-0 gap-1.5"
+                  disabled={!canContinue}
+                  onClick={() => onOpen(batch)}
+                >
+                  {mode === "in_progress" ? (
+                    <>
+                      <Play className="h-3.5 w-3.5" />
+                      Continue
+                    </>
+                  ) : (
+                    "Review"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </li>
         );
       })}
-    </div>
-  );
-}
-
-function StatTile({
-  label,
-  value,
-  accent,
-  loading,
-  hint,
-}: {
-  label: string;
-  value: number;
-  accent?: string;
-  loading?: boolean;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-lg border px-4 py-3">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-      {loading ? (
-        <Skeleton className="h-8 w-16 mt-1" />
-      ) : (
-        <>
-          <p className={`text-2xl font-semibold tabular-nums mt-1 ${accent ?? ""}`}>{value}</p>
-          {hint ? <p className="text-xs text-muted-foreground mt-0.5">{hint}</p> : null}
-        </>
-      )}
-    </div>
+    </ul>
   );
 }

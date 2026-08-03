@@ -53,7 +53,7 @@ const getNavMain = (userRole?: UserRole | number): NavSection[] => {
         title: "My Queue",
         url: "/clerk",
         icon: ListTodo,
-        items: [{ title: "Open Issues", url: "/clerk" }],
+        items: [{ title: "Batches", url: "/clerk" }],
       },
       {
         title: "Scores",

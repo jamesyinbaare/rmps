@@ -34,6 +34,11 @@ import {
   ignoreValidationIssue,
   resolveValidationIssue,
 } from "@/lib/api";
+import {
+  createDocumentPrefetchCache,
+  mapPool,
+  type DocumentPrefetchCache,
+} from "@/lib/document-prefetch-cache";
 import type {
   SubjectScoreValidationIssue,
   ValidationIssueDetailResponse,
@@ -43,6 +48,13 @@ import type {
 type WorkspaceLayout = "horizontal" | "vertical";
 
 const LAYOUT_STORAGE_KEY = "sems.validationIssueWorkspace.layout";
+
+/** How many unique upcoming score sheets to keep warm. */
+const PREFETCH_UNIQUE_DOCS = 3;
+/** Max issues to scan ahead when collecting unique documents (NOD-heavy queues). */
+const PREFETCH_ISSUE_SCAN_LIMIT = 15;
+const PREFETCH_DETAIL_CONCURRENCY = 2;
+const PREFETCH_BLOB_CONCURRENCY = 2;
 
 function readStoredLayout(): WorkspaceLayout {
   if (typeof window === "undefined") return "horizontal";
@@ -91,7 +103,7 @@ function getTaskLine(fieldName: string) {
   return `Enter ${getFieldNameLabel(fieldName)} from the sheet`;
 }
 
-function documentUrl(detail: ValidationIssueDetailResponse) {
+function documentUrl(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id">) {
   return `${API_BASE_URL}/api/v1/documents/by-extracted-id/${detail.document_id}/download?exam_id=${detail.exam_id}`;
 }
 
@@ -99,6 +111,15 @@ function documentUrl(detail: ValidationIssueDetailResponse) {
 function documentKey(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null): string | null {
   if (!detail?.document_id || detail.exam_id == null) return null;
   return `${detail.document_id}:${detail.exam_id}`;
+}
+
+function isPrefetchableDocument(
+  detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null
+): detail is Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> & {
+  document_id: string;
+  exam_id: number;
+} {
+  return !!detail?.document_id && detail.exam_id != null;
 }
 
 export interface ValidationIssueWorkspaceProps {
@@ -130,13 +151,27 @@ export function ValidationIssueWorkspace({
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [layout, setLayout] = useState<WorkspaceLayout>("horizontal");
+  /** Bumps when prefetch cache gains/loses blob URLs so the viewer can switch src. */
+  const [prefetchEpoch, setPrefetchEpoch] = useState(0);
   const correctedScoreInputRef = useRef<HTMLInputElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const loadedDocumentKeyRef = useRef<string | null>(null);
+  const detailCacheRef = useRef(new Map<number, ValidationIssueDetailResponse>());
+  const prefetchCacheRef = useRef<DocumentPrefetchCache | null>(null);
+  if (!prefetchCacheRef.current) {
+    prefetchCacheRef.current = createDocumentPrefetchCache();
+  }
+  const prefetchCache = prefetchCacheRef.current;
 
   useEffect(() => {
     setLayout(readStoredLayout());
   }, []);
+
+  useEffect(() => {
+    return prefetchCache.subscribe(() => {
+      setPrefetchEpoch((n) => n + 1);
+    });
+  }, [prefetchCache]);
 
   const setLayoutPreference = (next: WorkspaceLayout) => {
     setLayout(next);
@@ -161,7 +196,11 @@ export function ValidationIssueWorkspace({
     async (issueId: number) => {
       setLoadingIssueDetail(true);
       try {
-        const detail = await getValidationIssue(issueId);
+        const cached = detailCacheRef.current.get(issueId);
+        const detail = cached ?? (await getValidationIssue(issueId));
+        if (!cached) {
+          detailCacheRef.current.set(issueId, detail);
+        }
         const nextDocKey = documentKey(detail);
         // Only blank/reload the sheet when the underlying document changes
         if (nextDocKey !== loadedDocumentKeyRef.current) {
@@ -170,6 +209,15 @@ export function ValidationIssueWorkspace({
         }
         setIssueDetail(detail);
         setCorrectedScore(detail.current_score_value || "");
+
+        // Warm current document immediately
+        if (isPrefetchableDocument(detail) && nextDocKey) {
+          void prefetchCache.ensure(
+            nextDocKey,
+            documentUrl(detail),
+            detail.document_mime_type
+          );
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to load issue details");
         console.error("Error loading issue detail:", err);
@@ -177,7 +225,7 @@ export function ValidationIssueWorkspace({
         setLoadingIssueDetail(false);
       }
     },
-    [resetViewer]
+    [resetViewer, prefetchCache]
   );
 
   useEffect(() => {
@@ -188,9 +236,76 @@ export function ValidationIssueWorkspace({
       setIssueDetail(null);
       setCorrectedScore("");
       loadedDocumentKeyRef.current = null;
+      detailCacheRef.current.clear();
+      prefetchCache.clear();
       resetViewer();
     }
-  }, [open, currentIndex, issues, loadIssueDetail, resetViewer]);
+  }, [open, currentIndex, issues, loadIssueDetail, resetViewer, prefetchCache]);
+
+  // Prefetch upcoming issue details + next N unique document blobs
+  useEffect(() => {
+    if (!open || currentIndex === null) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      const currentKey = documentKey(issueDetail);
+      const upcoming = issues.slice(
+        currentIndex + 1,
+        currentIndex + 1 + PREFETCH_ISSUE_SCAN_LIMIT
+      );
+
+      // Resolve details for upcoming issues (bounded concurrency)
+      await mapPool(upcoming, PREFETCH_DETAIL_CONCURRENCY, async (issue) => {
+        if (cancelled) return;
+        if (detailCacheRef.current.has(issue.id)) return;
+        try {
+          const detail = await getValidationIssue(issue.id);
+          if (cancelled) return;
+          detailCacheRef.current.set(issue.id, detail);
+        } catch {
+          /* skip failed prefetch detail */
+        }
+      });
+
+      if (cancelled) return;
+
+      const uniqueKeys: string[] = [];
+      const keyToDetail = new Map<string, ValidationIssueDetailResponse>();
+      if (currentKey && issueDetail && isPrefetchableDocument(issueDetail)) {
+        uniqueKeys.push(currentKey);
+        keyToDetail.set(currentKey, issueDetail);
+      }
+
+      const targetCount = uniqueKeys.length + PREFETCH_UNIQUE_DOCS;
+      for (const issue of upcoming) {
+        if (uniqueKeys.length >= targetCount) break;
+        const detail = detailCacheRef.current.get(issue.id);
+        if (!detail || !isPrefetchableDocument(detail)) continue;
+        const key = documentKey(detail);
+        if (!key || keyToDetail.has(key)) continue;
+        keyToDetail.set(key, detail);
+        uniqueKeys.push(key);
+      }
+
+      // Window = current + next unique docs (uniqueKeys already ordered that way)
+      prefetchCache.retain(uniqueKeys);
+
+      const toFetch = uniqueKeys.filter((key) => !prefetchCache.get(key));
+      await mapPool(toFetch, PREFETCH_BLOB_CONCURRENCY, async (key) => {
+        if (cancelled) return;
+        const detail = keyToDetail.get(key);
+        if (!detail || !isPrefetchableDocument(detail)) return;
+        await prefetchCache.ensure(key, documentUrl(detail), detail.document_mime_type);
+      });
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentIndex, issues, issueDetail, prefetchCache]);
 
   useEffect(() => {
     if (open && issueDetail?.status === "pending" && !loadingIssueDetail) {
@@ -352,6 +467,21 @@ export function ValidationIssueWorkspace({
       issueDetail.document_mime_type.startsWith("image/"));
 
   const hasDocument = hasImage || hasPdf;
+
+  const currentDocKey = documentKey(issueDetail);
+  // Read cache after prefetchEpoch changes so React re-renders with the new blob URL
+  const prefetchedSheet =
+    prefetchEpoch > -1 && currentDocKey ? prefetchCache.get(currentDocKey) : undefined;
+  const sheetSrc =
+    prefetchedSheet?.blobUrl ??
+    (issueDetail && isPrefetchableDocument(issueDetail) ? documentUrl(issueDetail) : "");
+
+  // Always release blobs if the workspace unmounts
+  useEffect(() => {
+    return () => {
+      prefetchCache.clear();
+    };
+  }, [prefetchCache]);
 
   const handleWheel = (e: React.WheelEvent) => {
     if (!hasImage) return;
@@ -859,8 +989,8 @@ export function ValidationIssueWorkspace({
                           {zoom <= 1 ? (
                             <div className="absolute inset-0 flex items-center justify-center p-2">
                               <img
-                                key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}`}
-                                src={documentUrl(issueDetail)}
+                                key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                                src={sheetSrc}
                                 alt={issueDetail.document_file_name || "Score sheet"}
                                 className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
                                 style={{
@@ -888,8 +1018,8 @@ export function ValidationIssueWorkspace({
                               }}
                             >
                               <img
-                                key={`doc-zoom-${issueDetail.document_id}-${issueDetail.exam_id}`}
-                                src={documentUrl(issueDetail)}
+                                key={`doc-zoom-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                                src={sheetSrc}
                                 alt={issueDetail.document_file_name || "Score sheet"}
                                 className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
                                 style={{
@@ -910,8 +1040,8 @@ export function ValidationIssueWorkspace({
                     </>
                   ) : (
                     <iframe
-                      key={`pdf-${issueDetail.document_id}-${issueDetail.exam_id}`}
-                      src={documentUrl(issueDetail)}
+                      key={`pdf-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                      src={sheetSrc}
                       title={issueDetail.document_file_name || "Score sheet PDF"}
                       className="absolute inset-0 w-full h-full border-0 bg-white"
                     />
