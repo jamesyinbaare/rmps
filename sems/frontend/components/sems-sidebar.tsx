@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Sidebar,
@@ -26,7 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { logout } from "@/lib/api";
+import { getClerkDigitalEntrySetting, logout } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import type { User as SemsUser, UserRole } from "@/types/document";
 import { toast } from "sonner";
@@ -44,25 +44,23 @@ type NavSection = {
   items: NavLeaf[];
 };
 
-const getNavMain = (userRole?: UserRole | number): NavSection[] => {
+const getNavMain = (
+  userRole?: UserRole | number,
+  clerkDigitalEntryEnabled = false
+): NavSection[] => {
   const normalizedRole = normalizeRole(userRole);
 
   if (normalizedRole === "DATACLERK") {
+    const items: NavLeaf[] = [{ title: "Batches", url: "/clerk" }];
+    if (clerkDigitalEntryEnabled) {
+      items.push({ title: "Digital", url: "/scores/data-entry/digital" });
+    }
     return [
       {
-        title: "My Queue",
+        title: "My Work",
         url: "/clerk",
         icon: ListTodo,
-        items: [{ title: "Batches", url: "/clerk" }],
-      },
-      {
-        title: "Scores",
-        url: "/scores",
-        icon: ClipboardCheck,
-        items: [
-          { title: "Digital", url: "/scores/data-entry/digital" },
-          { title: "Manual", url: "/scores/data-entry/manual" },
-        ],
+        items,
       },
     ];
   }
@@ -121,12 +119,12 @@ const getNavMain = (userRole?: UserRole | number): NavSection[] => {
 
   if (normalizedRole === "SUPER_ADMIN" || normalizedRole === "REGISTRAR") {
     baseNav.push({
-      title: "Clerk Ops",
-      url: "/clerk/assign",
+      title: "Data Entry Management",
+      url: "/clerk/manage",
       icon: Layers,
       items: [
-        { title: "Assign & Quotas", url: "/clerk/assign" },
-        { title: "Leaderboard", url: "/clerk/stats" },
+        { title: "Operations", url: "/clerk/manage" },
+        { title: "Assign Work", url: "/clerk/assign" },
       ],
     });
   }
@@ -190,8 +188,30 @@ export function SemsSidebar({
   const searchParams = useSearchParams();
   const router = useRouter();
   const search = searchParams.toString();
+  const [clerkDigitalEntryEnabled, setClerkDigitalEntryEnabled] = useState(false);
 
-  const navItems = useMemo(() => getNavMain(user?.role), [user?.role]);
+  useEffect(() => {
+    if (!user || normalizeRole(user.role) !== "DATACLERK") {
+      setClerkDigitalEntryEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    void getClerkDigitalEntrySetting()
+      .then((res) => {
+        if (!cancelled) setClerkDigitalEntryEnabled(res.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setClerkDigitalEntryEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const navItems = useMemo(
+    () => getNavMain(user?.role, clerkDigitalEntryEnabled),
+    [user?.role, clerkDigitalEntryEnabled]
+  );
 
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     const initial = new Set<string>();

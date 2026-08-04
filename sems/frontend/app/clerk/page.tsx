@@ -6,13 +6,9 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Filter,
   Inbox,
   Loader2,
   Play,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,8 +18,6 @@ import { ValidationIssueWorkspace } from "@/components/ValidationIssueWorkspace"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -32,17 +26,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  getAllExams,
   getMyValidationStats,
   getValidationIssues,
   listMyBatches,
-  listSubjects,
 } from "@/lib/api";
 import type {
   ClerkBatchItem,
-  Exam,
   MyValidationStats,
-  Subject,
   SubjectScoreValidationIssue,
 } from "@/types/document";
 
@@ -108,8 +98,15 @@ function sortInProgress(batches: ClerkBatchItem[]) {
   });
 }
 
-type DocFilter = "all" | "doc" | "nod";
 type AllocTab = "in_progress" | "completed";
+
+function formatActiveExam(batch: ClerkBatchItem | null): string | null {
+  if (!batch) return null;
+  const parts = [batch.exam_type, batch.exam_series, batch.exam_year != null ? String(batch.exam_year) : null]
+    .filter(Boolean);
+  if (parts.length) return parts.join(" · ");
+  return batch.exam_year != null ? `Exam ${batch.exam_year}` : null;
+}
 
 export default function ClerkDashboardPage() {
   const [stats, setStats] = useState<MyValidationStats | null>(null);
@@ -121,14 +118,6 @@ export default function ClerkDashboardPage() {
 
   const [tab, setTab] = useState<AllocTab>("in_progress");
   const [tabAutoSet, setTabAutoSet] = useState(false);
-  const [docFilter, setDocFilter] = useState<DocFilter>("all");
-  const [examIdFilter, setExamIdFilter] = useState<number | null>(null);
-  const [subjectIdFilter, setSubjectIdFilter] = useState<number | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [loadingFilterOptions, setLoadingFilterOptions] = useState(false);
 
   const [activeBatch, setActiveBatch] = useState<ClerkBatchItem | null>(null);
   const [batchIssues, setBatchIssues] = useState<SubjectScoreValidationIssue[]>([]);
@@ -153,13 +142,7 @@ export default function ClerkDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await listMyBatches({
-        status: "all",
-        exam_id: examIdFilter || undefined,
-        subject_id: subjectIdFilter || undefined,
-        has_document:
-          docFilter === "all" ? undefined : docFilter === "doc" ? true : false,
-      });
+      const response = await listMyBatches({ status: "all" });
       setBatches(response.batches);
       setInProgressCount(response.in_progress_count);
       setCompletedCount(response.completed_count);
@@ -171,7 +154,7 @@ export default function ClerkDashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [docFilter, examIdFilter, subjectIdFilter]);
+  }, []);
 
   const loadBatchIssues = useCallback(
     async (batchId: number, pendingOnly: boolean) => {
@@ -202,31 +185,6 @@ export default function ClerkDashboardPage() {
     void loadBatches();
   }, [loadStats, loadBatches]);
 
-  useEffect(() => {
-    const loadFilterOptions = async () => {
-      setLoadingFilterOptions(true);
-      try {
-        const allSubjects: Subject[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const subjectsData = await listSubjects(page, 100);
-          allSubjects.push(...subjectsData);
-          hasMore = subjectsData.length === 100;
-          page++;
-        }
-        const examsData = await getAllExams().catch(() => []);
-        setExams(Array.isArray(examsData) ? examsData : []);
-        setSubjects(allSubjects);
-      } catch {
-        toast.error("Failed to load filters");
-      } finally {
-        setLoadingFilterOptions(false);
-      }
-    };
-    void loadFilterOptions();
-  }, []);
-
   const inProgressBatches = useMemo(
     () => sortInProgress(batches.filter((b) => b.progress_status === "in_progress")),
     [batches]
@@ -235,6 +193,11 @@ export default function ClerkDashboardPage() {
     () => batches.filter((b) => b.progress_status === "completed"),
     [batches]
   );
+
+  const activeExamLabel = useMemo(() => {
+    const sample = inProgressBatches[0] ?? completedBatches[0] ?? batches[0] ?? null;
+    return formatActiveExam(sample);
+  }, [batches, inProgressBatches, completedBatches]);
 
   // Land on Completed when In progress is empty (once per load cycle)
   useEffect(() => {
@@ -246,11 +209,6 @@ export default function ClerkDashboardPage() {
     }
     setTabAutoSet(true);
   }, [loading, inProgressCount, completedCount, tabAutoSet]);
-
-  // Re-evaluate default tab when filters change and data reloads
-  useEffect(() => {
-    setTabAutoSet(false);
-  }, [docFilter, examIdFilter, subjectIdFilter]);
 
   const resumeBatch = useMemo(() => {
     if (inProgressBatches.length === 0) return null;
@@ -264,27 +222,6 @@ export default function ClerkDashboardPage() {
     }
     return "Resume next";
   }, [resumeBatch, inProgressBatches.length]);
-
-  const examFilterLabel = useMemo(() => {
-    if (examIdFilter == null) return null;
-    const exam = exams.find((e) => e.id === examIdFilter);
-    return exam ? `${exam.exam_type} · ${exam.series} ${exam.year}` : `Exam #${examIdFilter}`;
-  }, [examIdFilter, exams]);
-
-  const subjectFilterLabel = useMemo(() => {
-    if (subjectIdFilter == null) return null;
-    const subject = subjects.find((s) => s.id === subjectIdFilter);
-    return subject ? `${subject.code} · ${subject.name}` : `Subject #${subjectIdFilter}`;
-  }, [subjectIdFilter, subjects]);
-
-  const hasActiveFilters =
-    docFilter !== "all" || examIdFilter != null || subjectIdFilter != null;
-
-  const clearFilters = () => {
-    setDocFilter("all");
-    setExamIdFilter(null);
-    setSubjectIdFilter(null);
-  };
 
   const openBatchWork = async (batch: ClerkBatchItem) => {
     const isInProgress = batch.progress_status === "in_progress";
@@ -572,15 +509,15 @@ export default function ClerkDashboardPage() {
   }
 
   return (
-    <DashboardLayout title="My Queue">
+    <DashboardLayout title="My Work">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title="My Queue" showSearch={false} />
+        <TopBar title="My Work" showSearch={false} />
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto px-6 py-8 space-y-6">
             <section className="space-y-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <p className="text-muted-foreground text-sm max-w-xl">
-                  Continue a batch to resolve remaining score issues.
+                  Open a batch to resolve score issues and enter values from the score sheet.
                 </p>
                 <Button
                   size="lg"
@@ -646,127 +583,20 @@ export default function ClerkDashboardPage() {
             </section>
 
             <section className="space-y-4">
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2 justify-between">
-                  <div className="flex flex-wrap items-center gap-2 min-h-8">
-                    {!filtersOpen && hasActiveFilters ? (
-                      <>
-                        {docFilter !== "all" ? (
-                          <FilterChip
-                            label={docFilter === "doc" ? "DOC only" : "NOD only"}
-                            onRemove={() => setDocFilter("all")}
-                          />
-                        ) : null}
-                        {examFilterLabel ? (
-                          <FilterChip
-                            label={examFilterLabel}
-                            onRemove={() => setExamIdFilter(null)}
-                          />
-                        ) : null}
-                        {subjectFilterLabel ? (
-                          <FilterChip
-                            label={subjectFilterLabel}
-                            onRemove={() => setSubjectIdFilter(null)}
-                          />
-                        ) : null}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs text-muted-foreground"
-                          onClick={clearFilters}
-                        >
-                          Clear
-                        </Button>
-                      </>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        DOC = score sheet · NOD = no document
-                      </span>
-                    )}
-                  </div>
-                  <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-                    <CollapsibleTrigger asChild>
-                      <Button variant="ghost" size="sm" className="gap-2">
-                        <Filter className="h-4 w-4" />
-                        Filters
-                        {hasActiveFilters && !filtersOpen ? (
-                          <span className="tabular-nums text-muted-foreground">
-                            (
-                            {[
-                              docFilter !== "all",
-                              examIdFilter != null,
-                              subjectIdFilter != null,
-                            ].filter(Boolean).length}
-                            )
-                          </span>
-                        ) : null}
-                        {filtersOpen ? (
-                          <ChevronUp className="h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-3">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pb-2">
-                        <SearchableSelect
-                          options={[
-                            { value: "doc", label: "DOC only (has sheet)" },
-                            { value: "nod", label: "NOD only (no document)" },
-                          ]}
-                          value={docFilter === "all" ? "all" : docFilter}
-                          onValueChange={(value) => {
-                            if (value === "all" || value === "") setDocFilter("all");
-                            else if (value === "doc" || value === "nod") setDocFilter(value);
-                          }}
-                          placeholder="DOC / NOD"
-                          allowAll
-                          allLabel="All streams"
-                        />
-                        <SearchableSelect
-                          options={exams.map((exam) => ({
-                            value: exam.id,
-                            label: `${exam.exam_type} · ${exam.series} ${exam.year}`,
-                          }))}
-                          value={examIdFilter ?? "all"}
-                          onValueChange={(value) =>
-                            setExamIdFilter(
-                              value === "all" || value === ""
-                                ? null
-                                : typeof value === "number"
-                                  ? value
-                                  : Number(value)
-                            )
-                          }
-                          placeholder="All exams"
-                          disabled={loadingFilterOptions}
-                          allowAll
-                          allLabel="All exams"
-                        />
-                        <SearchableSelect
-                          options={subjects.map((subject) => ({
-                            value: subject.id,
-                            label: `${subject.code} · ${subject.name}`,
-                          }))}
-                          value={subjectIdFilter ?? "all"}
-                          onValueChange={(value) =>
-                            setSubjectIdFilter(
-                              value === "all" || value === ""
-                                ? null
-                                : typeof value === "number"
-                                  ? value
-                                  : Number(value)
-                            )
-                          }
-                          placeholder="All subjects"
-                          disabled={loadingFilterOptions}
-                          allowAll
-                          allLabel="All subjects"
-                        />
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 min-h-8">
+                {activeExamLabel ? (
+                  <p className="text-sm">
+                    <span className="text-muted-foreground">Active exam · </span>
+                    <span className="font-medium">{activeExamLabel}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Open a batch to resolve issues and enter scores from the sheet.
+                  </p>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  DOC = score sheet · NOD = no document
+                </span>
               </div>
 
               <Tabs value={tab} onValueChange={(v) => setTab(v as AllocTab)}>
@@ -790,7 +620,7 @@ export default function ClerkDashboardPage() {
                     batches={inProgressBatches}
                     loading={loading}
                     error={error}
-                    emptyTitle="Waiting for assignment"
+                    emptyTitle="No batches assigned"
                     emptyDescription="When a registrar assigns batches to you, they will show up here."
                     emptyIcon="inbox"
                     mode="in_progress"
@@ -805,7 +635,7 @@ export default function ClerkDashboardPage() {
                     loading={loading}
                     error={error}
                     emptyTitle="No completed batches"
-                    emptyDescription="Finished batches appear here once all issues are resolved or ignored."
+                    emptyDescription="Finished batches appear here once all issues are resolved."
                     emptyIcon="check"
                     mode="completed"
                     onOpen={openBatchWork}
@@ -819,19 +649,6 @@ export default function ClerkDashboardPage() {
         </main>
       </div>
     </DashboardLayout>
-  );
-}
-
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onRemove}
-      className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-1 text-xs max-w-56 hover:bg-muted transition-colors"
-    >
-      <span className="truncate">{label}</span>
-      <X className="h-3 w-3 shrink-0 text-muted-foreground" />
-    </button>
   );
 }
 

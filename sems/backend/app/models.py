@@ -586,6 +586,15 @@ class SubjectScoreValidationIssue(Base):
     resolved_by = relationship("User", foreign_keys=[resolved_by_user_id])
     batch = relationship("IssueBatch", back_populates="issues")
 
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_score_id",
+            "exam_subject_id",
+            "test_type",
+            name="uq_validation_issue_score_exam_test",
+        ),
+    )
+
 
 class CandidatePhoto(Base):
     """Model for candidate passport photographs."""
@@ -625,3 +634,17 @@ class ProcessTracking(Base):
     exam = relationship("Exam")
     school = relationship("School")
     subject = relationship("Subject")
+
+
+class AppSettings(Base):
+    """Singleton application settings row (id=1)."""
+
+    __tablename__ = "app_settings"
+    id = Column(Integer, primary_key=True)
+    clerk_digital_entry_enabled = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])

@@ -55,6 +55,8 @@ import type {
   MyBatchesFilters,
   CreateBatchesRequest,
   CreateBatchesResponse,
+  ClearBatchesRequest,
+  ClearBatchesResponse,
   BatchSummaryResponse,
   ClerkQuotaListResponse,
   ClerkQuotaItem,
@@ -1754,17 +1756,21 @@ export async function getFilteredDocuments(
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents?${params.toString()}`);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/documents?${params.toString()}`
+  );
   return handleResponse<DocumentListResponse>(response);
 }
 
 export async function getDocumentScores(documentId: string): Promise<DocumentScoresResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores`);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores`
+  );
   return handleResponse<DocumentScoresResponse>(response);
 }
 
 export async function updateScore(scoreId: number, data: ScoreUpdate): Promise<ScoreResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/scores/${scoreId}`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/scores/scores/${scoreId}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -1778,13 +1784,16 @@ export async function batchUpdateScores(
   documentId: string,
   data: BatchScoreUpdate
 ): Promise<BatchScoreUpdateResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    }
+  );
   return handleResponse<BatchScoreUpdateResponse>(response);
 }
 
@@ -2337,7 +2346,7 @@ export async function getValidationIssue(issueId: number): Promise<ValidationIss
 
 export async function resolveValidationIssue(
   issueId: number,
-  correctedScore?: string
+  correctedScore: string
 ): Promise<SubjectScoreValidationIssue> {
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/validation/issues/${issueId}/resolve`,
@@ -2347,7 +2356,7 @@ export async function resolveValidationIssue(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        corrected_score: correctedScore !== undefined ? correctedScore : null,
+        corrected_score: correctedScore,
       }),
     }
   );
@@ -2372,8 +2381,15 @@ export async function getMyValidationStats(): Promise<MyValidationStats> {
   return handleResponse<MyValidationStats>(response);
 }
 
-export async function getClerkValidationStats(): Promise<ClerkValidationStatsResponse> {
-  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/stats/clerks`);
+export async function getClerkValidationStats(
+  examId?: number
+): Promise<ClerkValidationStatsResponse> {
+  const params = new URLSearchParams();
+  if (examId) params.append("exam_id", String(examId));
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/stats/clerks${qs ? `?${qs}` : ""}`
+  );
   return handleResponse<ClerkValidationStatsResponse>(response);
 }
 
@@ -2386,6 +2402,17 @@ export async function createIssueBatches(
     body: JSON.stringify(request),
   });
   return handleResponse<CreateBatchesResponse>(response);
+}
+
+export async function clearIssueBatches(
+  request: ClearBatchesRequest
+): Promise<ClearBatchesResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/batches/clear`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  return handleResponse<ClearBatchesResponse>(response);
 }
 
 export async function listMyBatches(
@@ -2492,6 +2519,22 @@ export async function setClerkQuotaOverride(
     }
   );
   return handleResponse<ClerkQuotaItem>(response);
+}
+
+export async function getClerkDigitalEntrySetting(): Promise<{ enabled: boolean }> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/settings/clerk-digital-entry`);
+  return handleResponse<{ enabled: boolean }>(response);
+}
+
+export async function setClerkDigitalEntrySetting(
+  enabled: boolean
+): Promise<{ enabled: boolean }> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/settings/clerk-digital-entry`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return handleResponse<{ enabled: boolean }>(response);
 }
 
 // Result Processing API Functions

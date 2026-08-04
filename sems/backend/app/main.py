@@ -22,6 +22,7 @@ from app.routers import (
     results,
     schools,
     scores,
+    settings as settings_router,
     subjects,
     users,
     validation,
@@ -193,6 +194,7 @@ app.include_router(validation.router)
 app.include_router(validation_batches.router)
 app.include_router(insights.router)
 app.include_router(users.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

@@ -71,13 +71,14 @@ class RunValidationResponse(BaseModel):
     issues_found: int
     issues_resolved: int
     issues_created: int
+    issues_reopened: int = 0
     message: str
 
 
 class ResolveValidationIssueRequest(BaseModel):
     """Request schema for resolving a validation issue."""
 
-    corrected_score: str | None = Field(None, description="Optional corrected score value to apply")
+    corrected_score: str = Field(..., min_length=1, description="Corrected score value to apply")
 
 
 class ValidationIssueDetailResponse(BaseModel):
@@ -116,6 +117,7 @@ class ValidationIssueDetailResponse(BaseModel):
     document_file_name: str | None = None
     document_numeric_id: int | None = None
     document_mime_type: str | None = None
+    max_score: float | None = None
 
     class Config:
         from_attributes = True
@@ -161,8 +163,21 @@ class CreateBatchesRequest(BaseModel):
     target_size: int = Field(500, ge=1, le=5000)
     tolerance: int = Field(50, ge=0, le=5000)
     has_document: bool | None = Field(
-        None, description="True=DOC only, False=NOD only, null=both streams"
+        True,
+        description="True=DOC only (default), False=NOD only, null=both streams",
     )
+
+
+class ClearBatchesRequest(BaseModel):
+    exam_id: int
+    subject_id: int
+    test_type: int = Field(..., ge=1, le=3)
+
+
+class ClearBatchesResponse(BaseModel):
+    batches_deleted: int
+    pending_unbatched: int
+    resolved_preserved: int
 
 
 class IssueBatchResponse(BaseModel):
@@ -213,6 +228,8 @@ class ClerkBatchItem(BaseModel):
     subject_code: str | None = None
     subject_name: str | None = None
     exam_year: int | None = None
+    exam_type: str | None = None
+    exam_series: str | None = None
     test_type: int
     has_document: bool
     issue_count: int
@@ -264,11 +281,20 @@ class BatchSummaryClerkItem(BaseModel):
     full_name: str
     assigned_batches: int
     assigned_pending_issues: int
+    active_exam_id: int | None = None
+    active_exam_label: str | None = None
 
 
 class BatchSummaryResponse(BaseModel):
     unbatched: list[BatchSummaryUnbatchedItem]
     clerks: list[BatchSummaryClerkItem]
+    # Exam-scoped KPIs (populated when exam_id query is set; otherwise global aggregates)
+    pending_unbatched: int = 0
+    pending_assigned: int = 0
+    batch_count_unassigned: int = 0
+    batch_count_assigned: int = 0
+    resolved_in_exam: int = 0
+    clerks_with_work: int = 0
 
 
 # --- Quotas ---
@@ -283,6 +309,8 @@ class ClerkQuotaItem(BaseModel):
     resolved_today: int
     remaining: int
     quota_overridden: bool
+    active_exam_id: int | None = None
+    active_exam_label: str | None = None
 
 
 class ClerkQuotaListResponse(BaseModel):

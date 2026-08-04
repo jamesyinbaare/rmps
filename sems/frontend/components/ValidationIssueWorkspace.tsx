@@ -131,6 +131,8 @@ export interface ValidationIssueWorkspaceProps {
   /** Called after a successful resolve/ignore so the parent can drop the issue from the queue. */
   onHandled?: (issueId: number, action: "resolved" | "ignored") => void;
   resolvedTodayHint?: number;
+  /** Registrar/ops only. Dataclerks cannot ignore. */
+  allowIgnore?: boolean;
 }
 
 export function ValidationIssueWorkspace({
@@ -141,6 +143,7 @@ export function ValidationIssueWorkspace({
   onCurrentIndexChange,
   onHandled,
   resolvedTodayHint,
+  allowIgnore = false,
 }: ValidationIssueWorkspaceProps) {
   const [issueDetail, setIssueDetail] = useState<ValidationIssueDetailResponse | null>(null);
   const [loadingIssueDetail, setLoadingIssueDetail] = useState(false);
@@ -351,9 +354,31 @@ export function ValidationIssueWorkspace({
   const handleResolveIssue = useCallback(async () => {
     if (!issueDetail || issueDetail.status !== "pending") return;
 
+    const trimmed = correctedScore.trim();
+    if (!trimmed) {
+      toast.error("Enter a corrected score");
+      correctedScoreInputRef.current?.focus();
+      return;
+    }
+
+    if (issueDetail.max_score != null && issueDetail.max_score > 0) {
+      const upper = trimmed.toUpperCase();
+      if (!["A", "AA", "AAA"].includes(upper)) {
+        if (trimmed.includes(".")) {
+          toast.error("Score must be a whole number");
+          return;
+        }
+        const num = Number(trimmed);
+        if (!Number.isFinite(num) || num < 0 || num > issueDetail.max_score) {
+          toast.error(`Score must be between 0 and ${issueDetail.max_score}, or A/AA/AAA`);
+          return;
+        }
+      }
+    }
+
     setResolvingIssue(true);
     try {
-      await resolveValidationIssue(issueDetail.id, correctedScore || undefined);
+      await resolveValidationIssue(issueDetail.id, trimmed);
       const todayLabel =
         resolvedTodayHint !== undefined
           ? ` · ${resolvedTodayHint + 1} resolved today`
@@ -368,7 +393,7 @@ export function ValidationIssueWorkspace({
   }, [issueDetail, correctedScore, resolvedTodayHint, finishHandle]);
 
   const handleIgnoreIssue = useCallback(async () => {
-    if (!issueDetail || issueDetail.status !== "pending") return;
+    if (!allowIgnore || !issueDetail || issueDetail.status !== "pending") return;
 
     setIgnoringIssue(true);
     try {
@@ -380,7 +405,7 @@ export function ValidationIssueWorkspace({
     } finally {
       setIgnoringIssue(false);
     }
-  }, [issueDetail, finishHandle]);
+  }, [allowIgnore, issueDetail, finishHandle]);
 
   useEffect(() => {
     if (!open) return;
@@ -410,6 +435,7 @@ export function ValidationIssueWorkspace({
       }
 
       if (
+        allowIgnore &&
         (e.ctrlKey || e.metaKey) &&
         (e.key === "i" || e.key === "I") &&
         issueDetail?.status === "pending"
@@ -446,6 +472,7 @@ export function ValidationIssueWorkspace({
     issueDetail,
     resolvingIssue,
     ignoringIssue,
+    allowIgnore,
     handleResolveIssue,
     handleIgnoreIssue,
     handleNavigateIssue,
@@ -622,13 +649,20 @@ export function ValidationIssueWorkspace({
                     className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                   >
                     Corrected
+                    {issueDetail.max_score != null && issueDetail.max_score > 0
+                      ? ` (max ${issueDetail.max_score})`
+                      : ""}
                   </label>
                   <Input
                     ref={correctedScoreInputRef}
                     id="corrected-score"
                     value={correctedScore}
                     onChange={(e) => setCorrectedScore(e.target.value)}
-                    placeholder="e.g. 85"
+                    placeholder={
+                      issueDetail.max_score != null && issueDetail.max_score > 0
+                        ? `0–${issueDetail.max_score} or A`
+                        : "e.g. 85"
+                    }
                     className={`mt-0.5 font-mono ${
                       sideBySide || stacked ? "h-12 text-lg" : "h-10 text-base"
                     }`}
@@ -707,7 +741,7 @@ export function ValidationIssueWorkspace({
                   <span />
                 )}
                 <div className="flex items-center gap-1">
-                  {issueDetail.status === "pending" ? (
+                  {allowIgnore && issueDetail.status === "pending" ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -780,13 +814,20 @@ export function ValidationIssueWorkspace({
                           className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                         >
                           Corrected
+                          {issueDetail.max_score != null && issueDetail.max_score > 0
+                            ? ` (max ${issueDetail.max_score})`
+                            : ""}
                         </label>
                         <Input
                           ref={correctedScoreInputRef}
                           id="corrected-score"
                           value={correctedScore}
                           onChange={(e) => setCorrectedScore(e.target.value)}
-                          placeholder="e.g. 85"
+                          placeholder={
+                            issueDetail.max_score != null && issueDetail.max_score > 0
+                              ? `0–${issueDetail.max_score} or A`
+                              : "e.g. 85"
+                          }
                           className="mt-0.5 h-10 text-base font-mono text-center"
                           autoComplete="off"
                         />
@@ -876,7 +917,8 @@ export function ValidationIssueWorkspace({
                     Ignore
                   </Button>
                   <p className="text-[10px] text-muted-foreground hidden sm:block">
-                    Enter · Ctrl+I · ←/→ · Esc
+                    Enter · resolve
+                    {allowIgnore ? " · Ctrl+I" : ""} · ←/→ · Esc
                   </p>
                   <Button
                     variant="ghost"
@@ -910,7 +952,8 @@ export function ValidationIssueWorkspace({
                   </div>
                   {entryControls}
                   <p className="text-[11px] text-muted-foreground">
-                    Enter · resolve · Ctrl+I ignore · ←/→ · Esc
+                    Enter · resolve
+                    {allowIgnore ? " · Ctrl+I ignore" : ""} · ←/→ · Esc
                   </p>
                 </div>
                 <div className="border-t px-3 py-2.5 shrink-0">{navControls}</div>
@@ -1061,8 +1104,11 @@ export function ValidationIssueWorkspace({
                           No score sheet attached
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Enter the corrected score from your paper source if available, or
-                          ignore if it cannot be resolved.
+                          Enter the corrected score from your paper source
+                          {issueDetail.max_score != null && issueDetail.max_score > 0
+                            ? ` (0–${issueDetail.max_score}, or A/AA/AAA)`
+                            : ""}
+                          .
                         </p>
                       </div>
                       <div>
@@ -1079,7 +1125,8 @@ export function ValidationIssueWorkspace({
                       </div>
                       {entryControls}
                       <p className="text-xs text-muted-foreground">
-                        Enter · resolve · Ctrl+I ignore · ←/→ navigate · Esc close
+                        Enter · resolve
+                        {allowIgnore ? " · Ctrl+I ignore" : ""} · ←/→ navigate · Esc close
                       </p>
                     </div>
                   </div>

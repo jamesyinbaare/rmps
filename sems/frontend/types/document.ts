@@ -585,6 +585,7 @@ export interface RunValidationResponse {
   issues_found: number;
   issues_resolved: number;
   issues_created: number;
+  issues_reopened?: number;
   message: string;
 }
 
@@ -634,6 +635,7 @@ export interface ValidationIssueDetailResponse {
   document_file_name: string | null;
   document_numeric_id: number | null;
   document_mime_type: string | null;
+  max_score: number | null;
 }
 
 export interface MyValidationStats {
@@ -693,6 +695,8 @@ export interface ClerkBatchItem {
   subject_code: string | null;
   subject_name: string | null;
   exam_year: number | null;
+  exam_type?: string | null;
+  exam_series?: string | null;
   test_type: number;
   has_document: boolean;
   issue_count: number;
@@ -728,6 +732,18 @@ export interface CreateBatchesRequest {
   has_document?: boolean | null;
 }
 
+export interface ClearBatchesRequest {
+  exam_id: number;
+  subject_id: number;
+  test_type: number;
+}
+
+export interface ClearBatchesResponse {
+  batches_deleted: number;
+  pending_unbatched: number;
+  resolved_preserved: number;
+}
+
 export interface CreateBatchesResponse {
   batches: Array<{
     id: number;
@@ -759,11 +775,19 @@ export interface BatchSummaryClerkItem {
   full_name: string;
   assigned_batches: number;
   assigned_pending_issues: number;
+  active_exam_id?: number | null;
+  active_exam_label?: string | null;
 }
 
 export interface BatchSummaryResponse {
   unbatched: BatchSummaryUnbatchedItem[];
   clerks: BatchSummaryClerkItem[];
+  pending_unbatched?: number;
+  pending_assigned?: number;
+  batch_count_unassigned?: number;
+  batch_count_assigned?: number;
+  resolved_in_exam?: number;
+  clerks_with_work?: number;
 }
 
 export interface ClerkQuotaItem {
@@ -775,6 +799,8 @@ export interface ClerkQuotaItem {
   resolved_today: number;
   remaining: number;
   quota_overridden: boolean;
+  active_exam_id?: number | null;
+  active_exam_label?: string | null;
 }
 
 export interface ClerkQuotaListResponse {

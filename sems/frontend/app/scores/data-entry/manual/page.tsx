@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getCandidatesForManualEntry, getAllExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry, findExamId, listSchools, listSchoolProgrammes, listProgrammeSubjects } from "@/lib/api";
+import { getCandidatesForManualEntry, getAllExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry, findExamId, listSchools, listSchoolProgrammes, listProgrammeSubjects, getCurrentUser } from "@/lib/api";
+import { normalizeRole } from "@/lib/role-utils";
 import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, BatchScoreUpdateItem, ExamType, ExamSeries } from "@/types/document";
 import { Loader2, Save, Search, X, Users, Edit, CheckCircle2, AlertCircle, Filter, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +33,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { toast } from "sonner";
 
 export default function ManualEntryPage() {
+  const router = useRouter();
+  const [authChecked, setAuthChecked] = useState(false);
   const [candidates, setCandidates] = useState<CandidateScoreEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +108,13 @@ export default function ManualEntryPage() {
     async function loadFilterOptions() {
       setLoadingFilters(true);
       try {
+        const user = await getCurrentUser().catch(() => null);
+        if (user && normalizeRole(user.role) === "DATACLERK") {
+          router.replace("/clerk");
+          return;
+        }
+        setAuthChecked(true);
+
         // Load exams, schools, and all subjects
         const [examsData, schoolsData, subjectsData] = await Promise.all([
           getAllExams(),
@@ -139,12 +150,13 @@ export default function ManualEntryPage() {
         setProgrammes([]);
       } catch (err) {
         console.error("Error loading filter options:", err);
+        setAuthChecked(true);
       } finally {
         setLoadingFilters(false);
       }
     }
     loadFilterOptions();
-  }, []);
+  }, [router]);
 
   // Load programmes when school is selected (in pending filters)
   useEffect(() => {
@@ -566,6 +578,16 @@ export default function ManualEntryPage() {
     setScoreChanges(new Map());
     toast.info("All changes cleared");
   };
+
+  if (!authChecked) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-1 items-center justify-center h-full">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

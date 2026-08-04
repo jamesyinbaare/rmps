@@ -27,7 +27,7 @@ Root files:
 
 1. **GCP**: Create or reuse a project; enable Compute Engine, Cloud SQL (PostgreSQL), **Cloud Storage**, Secret Manager, and APIs listed in [registration-portal docs](../../../registration-portal/docs/gcp-staging-deployment.md).
 
-2. **VM**: Create an Ubuntu 22.04 VM (e.g. `e2-medium`), attach a service account with **`roles/cloudsql.client`**, **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `exam-tools-staging`) for firewall rules.
+2. **VM**: Create an Ubuntu 22.04 VM (e.g. `e2-medium` for exam-tools alone; use **`e2-standard-2`** when co-locating SEMS), attach a service account with **`roles/cloudsql.client`**, **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `exam-tools-staging`) for firewall rules.
 
 3. **GCS bucket**: Create a bucket (e.g. in `europe-west9`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). Inspector attendance sheets use a separate prefix, `GCS_ATTENDANCE_SHEETS_PREFIX` (default `exam-tools/attendance-sheets`), with human-readable filenames per examination. To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
 
@@ -62,6 +62,18 @@ Root files:
    ```
 
 `prestart.sh` runs **Alembic migrations** and **initial super admin** when the backend container starts.
+
+## Co-located SEMS
+
+SEMS staging shares this VM’s Traefik and Docker network (`monitoring-tools-network-staging`). SEMS does **not** run its own Traefik or Cloud SQL proxy; it joins this network and uses `monitoring-tools-cloud-sql-proxy-staging`.
+
+**Deploy order:**
+
+1. Deploy (or redeploy) exam-tools so Traefik is up and [`traefik/dynamic.staging.yml`](../traefik/dynamic.staging.yml) includes SEMS host routes.
+2. Create Cloud SQL DB/user for SEMS and DNS for `sems*` / `sems-api*` hosts (see [sems GCP staging README](../../../sems/gcp/staging/README.md)).
+3. Deploy SEMS from the `sems/` tree with its own compose project (`./gcp/staging/scripts/deploy.sh` under `sems/`).
+
+Exam-tools `deploy.sh` only stops containers in the exam-tools compose project; SEMS containers are unaffected (brief Traefik restart on exam-tools redeploy is expected).
 
 ## Frontend build note
 
