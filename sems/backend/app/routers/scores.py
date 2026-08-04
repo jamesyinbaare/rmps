@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 
+from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
@@ -24,6 +25,8 @@ from app.models import (
     DataExtractionMethod,
     UnmatchedExtractionRecord,
     UnmatchedRecordStatus,
+    User,
+    UserRole,
 )
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.schemas.score import (
@@ -43,15 +46,50 @@ from app.schemas.score import (
 )
 from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, is_absent, parse_score_value, parse_score_value_safe
 from app.services.results_export import generate_results_export
+from app.services.issue_batch_service import (
+    assigned_document_extracted_ids,
+    clerk_may_access_extracted_id,
+    clerk_may_access_score,
+)
+from app.services.app_settings_service import is_clerk_digital_entry_enabled
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
 
 
+async def _require_clerk_digital_entry_enabled(
+    session: DBSessionDep,
+    current_user: User,
+) -> None:
+    """Block dataclerks from digital score routes when the global toggle is off."""
+    if current_user.role != UserRole.DATACLERK:
+        return
+    if not await is_clerk_digital_entry_enabled(session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Digital entry is disabled for dataclerks",
+        )
+
+
+async def _require_clerk_document_access(
+    session: DBSessionDep,
+    current_user: User,
+    extracted_id: str | None,
+) -> None:
+    if current_user.role != UserRole.DATACLERK:
+        return
+    if not await clerk_may_access_extracted_id(session, current_user.id, extracted_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document is not in a batch assigned to you",
+        )
+
+
 @router.get("/documents", response_model=DocumentListResponse)
 async def get_filtered_documents(
     session: DBSessionDep,
+    current_user: CurrentUserDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     exam_id: int | None = Query(None),
@@ -64,8 +102,25 @@ async def get_filtered_documents(
     extraction_status: str | None = Query(None, description="Filter by extraction status: pending, queued, processing, success, error"),
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
 ) -> DocumentListResponse:
-    """Get documents filtered by exam, school, subject, test_type, and extraction status."""
+    """Get documents filtered by exam, school, subject, test_type, and extraction status.
+
+    Dataclerks only see documents linked to batches assigned to them.
+    """
+    await _require_clerk_digital_entry_enabled(session, current_user)
+
     offset = (page - 1) * page_size
+
+    clerk_assigned_ids: set[str] | None = None
+    if current_user.role == UserRole.DATACLERK:
+        clerk_assigned_ids = await assigned_document_extracted_ids(session, current_user.id)
+        if not clerk_assigned_ids:
+            return DocumentListResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
 
     # Build base query with filters, join with School to get school name
     # Also join with Exam if filtering by exam_type, series, or year
@@ -102,6 +157,8 @@ async def get_filtered_documents(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
+    if clerk_assigned_ids is not None:
+        base_stmt = base_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
     # Get total count with same filters
     count_stmt = select(func.count(Document.id)).select_from(Document)
@@ -135,6 +192,8 @@ async def get_filtered_documents(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
+    if clerk_assigned_ids is not None:
+        count_stmt = count_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
@@ -163,8 +222,15 @@ async def get_filtered_documents(
 
 
 @router.get("/documents/{document_id}/scores", response_model=DocumentScoresResponse)
-async def get_document_scores(document_id: str, session: DBSessionDep) -> DocumentScoresResponse:
+async def get_document_scores(
+    document_id: str,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> DocumentScoresResponse:
     """Get all scores for a specific document."""
+    await _require_clerk_digital_entry_enabled(session, current_user)
+    await _require_clerk_document_access(session, current_user, document_id)
+
     # Validate that document_id matches a Document.extracted_id
     # Look up Document by extracted_id to verify it exists
     doc_stmt = select(Document).where(Document.extracted_id == document_id)
@@ -305,8 +371,15 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
 
 
 @router.put("/scores/{score_id}", response_model=ScoreResponse)
-async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSessionDep) -> ScoreResponse:
+async def update_score(
+    score_id: int,
+    score_update: ScoreUpdate,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> ScoreResponse:
     """Update individual score."""
+    await _require_clerk_digital_entry_enabled(session, current_user)
+
     # Get score with related data
     stmt = (
         select(SubjectScore, SubjectRegistration, ExamRegistration, Candidate, ExamSubject, Subject)
@@ -324,6 +397,13 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score not found")
 
     subject_score, subject_reg, exam_reg, candidate, exam_subject, subject = row
+
+    if current_user.role == UserRole.DATACLERK:
+        if not await clerk_may_access_score(session, current_user.id, subject_score):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Score is not on a sheet assigned to you",
+            )
 
     # Determine extraction method (from parameter or infer from context)
     extraction_method = score_update.extraction_method
@@ -438,9 +518,14 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
 
 @router.post("/documents/{document_id}/scores/batch", response_model=BatchScoreUpdateResponse)
 async def batch_update_scores(
-    document_id: str, batch_update: BatchScoreUpdate, session: DBSessionDep
+    document_id: str,
+    batch_update: BatchScoreUpdate,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
 ) -> BatchScoreUpdateResponse:
     """Batch update/create scores for a document."""
+    await _require_clerk_digital_entry_enabled(session, current_user)
+
     # Note: document_id here refers to Document.extracted_id (string) or Document.id (numeric string)
     # We need to determine which document_id field to use based on the document's test_type
     # First, get the document to determine test_type
@@ -457,6 +542,12 @@ async def batch_update_scores(
 
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    await _require_clerk_document_access(
+        session,
+        current_user,
+        document.extracted_id or document_id,
+    )
 
     # Use document.extracted_id if available, otherwise fall back to the document_id parameter
     # This ensures we use the correct identifier when setting SubjectScore document_id fields

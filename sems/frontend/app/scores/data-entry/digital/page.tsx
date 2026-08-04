@@ -24,10 +24,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, File, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, AlertCircle, Clock, X, Filter, Loader2 } from "lucide-react";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { getFilteredDocuments, getAllExams, listSchools, listSubjects, downloadDocument, findExamId } from "@/lib/api";
+import {
+  getFilteredDocuments,
+  getAllExams,
+  listSchools,
+  listSubjects,
+  downloadDocument,
+  findExamId,
+  getCurrentUser,
+  getClerkDigitalEntrySetting,
+} from "@/lib/api";
+import { normalizeRole } from "@/lib/role-utils";
 import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries } from "@/types/document";
+import { useRouter } from "next/navigation";
 
 export default function ScoreDataEntryPage() {
+  const router = useRouter();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +51,8 @@ export default function ScoreDataEntryPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [hasFetched, setHasFetched] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   // Sorting state
   const [sortColumn, setSortColumn] = useState<keyof Document | null>(null);
@@ -57,6 +71,16 @@ export default function ScoreDataEntryPage() {
   useEffect(() => {
     async function loadFilterOptions() {
       try {
+        const user = await getCurrentUser().catch(() => null);
+        if (user && normalizeRole(user.role) === "DATACLERK") {
+          const setting = await getClerkDigitalEntrySetting().catch(() => ({ enabled: false }));
+          if (!setting.enabled) {
+            router.replace("/clerk");
+            return;
+          }
+        }
+        setAuthChecked(true);
+
         // Load exams
         const allExams = await getAllExams();
 
@@ -89,13 +113,14 @@ export default function ScoreDataEntryPage() {
         setSubjects(allSubjects);
       } catch (error) {
         console.error("Failed to load filter options:", error);
+        setAuthChecked(true);
       } finally {
         setLoadingFilters(false);
       }
     }
 
     loadFilterOptions();
-  }, []);
+  }, [router]);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -106,6 +131,7 @@ export default function ScoreDataEntryPage() {
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
       setTotal(response.total);
+      setHasFetched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
       console.error("Error loading documents:", err);
@@ -272,10 +298,13 @@ export default function ScoreDataEntryPage() {
   };
 
   const handleClearFilters = () => {
-    setExamType(undefined);
-    setExamSeries(undefined);
-    setExamYear(undefined);
-    setFilters({ page: 1, page_size: 20 });
+    setSelectedExamId(undefined);
+    setFilters({ page: 1, page_size: 50 });
+    setHasFetched(false);
+    setDocuments([]);
+    setTotal(0);
+    setTotalPages(1);
+    setCurrentPage(1);
   };
 
   const handleSort = (column: keyof Document) => {
@@ -404,6 +433,7 @@ export default function ScoreDataEntryPage() {
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
       setTotal(response.total);
+      setHasFetched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
       console.error("Error loading documents:", err);
@@ -411,6 +441,16 @@ export default function ScoreDataEntryPage() {
       setLoading(false);
     }
   };
+
+  if (!authChecked) {
+    return (
+      <DashboardLayout title="Digital Data Entry">
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Digital Data Entry">
@@ -595,8 +635,10 @@ export default function ScoreDataEntryPage() {
               <div className="flex flex-col items-center justify-center py-24 text-center">
                 <File className="h-16 w-16 text-muted-foreground mb-4" />
                 <p className="text-lg font-medium mb-2">No documents found</p>
-                <p className="text-sm text-muted-foreground">
-                  {total === 0 ? "Click 'Fetch Documents' to search for documents." : "No documents match the current filters."}
+                <p className="text-sm text-muted-foreground max-w-md">
+                  {total === 0 && !hasFetched
+                    ? "Click 'Fetch Documents' to search for documents."
+                    : "No documents match the current filters."}
                 </p>
               </div>
             ) : (

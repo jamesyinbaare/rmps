@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -64,6 +64,69 @@ def get_score_document_id(score: SubjectScore, test_type: int) -> str | None:
     if test_type == 3:
         return score.pract_document_id
     return None
+
+
+async def assigned_document_extracted_ids(
+    session: AsyncSession,
+    user_id: UUID,
+) -> set[str]:
+    """
+    Distinct Document.extracted_id values linked to batches assigned to the user.
+
+    Join: IssueBatch (assignee) → validation issues → SubjectScore →
+    obj/essay/pract_document_id selected by issue.test_type.
+    """
+    stmt = (
+        select(
+            SubjectScoreValidationIssue.test_type,
+            SubjectScore.obj_document_id,
+            SubjectScore.essay_document_id,
+            SubjectScore.pract_document_id,
+        )
+        .join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id)
+        .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
+        .where(IssueBatch.assigned_to_user_id == user_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    ids: set[str] = set()
+    for test_type, obj_id, essay_id, pract_id in rows:
+        if test_type == 1 and obj_id:
+            ids.add(obj_id)
+        elif test_type == 2 and essay_id:
+            ids.add(essay_id)
+        elif test_type == 3 and pract_id:
+            ids.add(pract_id)
+    return ids
+
+
+async def clerk_may_access_extracted_id(
+    session: AsyncSession,
+    user_id: UUID,
+    extracted_id: str | None,
+) -> bool:
+    if not extracted_id:
+        return False
+    assigned = await assigned_document_extracted_ids(session, user_id)
+    return extracted_id in assigned
+
+
+async def clerk_may_access_score(
+    session: AsyncSession,
+    user_id: UUID,
+    subject_score: SubjectScore,
+) -> bool:
+    """Allow if any of the score's sheet IDs is in the clerk's assigned document set."""
+    assigned = await assigned_document_extracted_ids(session, user_id)
+    if not assigned:
+        return False
+    for doc_id in (
+        subject_score.obj_document_id,
+        subject_score.essay_document_id,
+        subject_score.pract_document_id,
+    ):
+        if doc_id and doc_id in assigned:
+            return True
+    return False
 
 
 def pack_groups(
@@ -358,4 +421,91 @@ async def create_batches(
         "oversized_groups": oversized_groups,
         "created_doc_count": created_doc_count,
         "created_nod_count": created_nod_count,
+    }
+
+
+async def clear_batches(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    subject_id: int,
+    test_type: int,
+) -> dict:
+    """
+    Delete IssueBatch rows for exam+subject+test_type.
+
+    Pending issues in those batches are unbatched (batch_id=NULL) so they can
+    be re-packed. Resolved/ignored issue rows are never deleted; attribution
+    fields are left intact. Deleting batches nulls batch_id via FK ON DELETE SET NULL.
+    """
+    if test_type not in (1, 2, 3):
+        raise ValueError("test_type must be 1, 2, or 3")
+
+    batch_ids = (
+        await session.execute(
+            select(IssueBatch.id).where(
+                IssueBatch.exam_id == exam_id,
+                IssueBatch.subject_id == subject_id,
+                IssueBatch.test_type == test_type,
+            )
+        )
+    ).scalars().all()
+
+    if not batch_ids:
+        return {
+            "batches_deleted": 0,
+            "pending_unbatched": 0,
+            "resolved_preserved": 0,
+        }
+
+    pending_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .where(
+                SubjectScoreValidationIssue.batch_id.in_(batch_ids),
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            )
+        )
+    ).scalar() or 0
+
+    resolved_preserved = (
+        await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .where(
+                SubjectScoreValidationIssue.batch_id.in_(batch_ids),
+                SubjectScoreValidationIssue.status.in_(
+                    [ValidationIssueStatus.RESOLVED, ValidationIssueStatus.IGNORED]
+                ),
+            )
+        )
+    ).scalar() or 0
+
+    await session.execute(
+        update(SubjectScoreValidationIssue)
+        .where(
+            SubjectScoreValidationIssue.batch_id.in_(batch_ids),
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+        )
+        .values(batch_id=None, updated_at=datetime.utcnow())
+    )
+
+    await session.execute(delete(IssueBatch).where(IssueBatch.id.in_(batch_ids)))
+    await session.commit()
+
+    logger.info(
+        "Cleared %s batches for exam=%s subject=%s test_type=%s "
+        "(pending_unbatched=%s resolved_preserved=%s)",
+        len(batch_ids),
+        exam_id,
+        subject_id,
+        test_type,
+        pending_count,
+        resolved_preserved,
+    )
+    return {
+        "batches_deleted": len(batch_ids),
+        "pending_unbatched": pending_count,
+        "resolved_preserved": resolved_preserved,
     }

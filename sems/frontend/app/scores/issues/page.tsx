@@ -1016,6 +1016,7 @@ export default function ValidationIssuesPage() {
           currentIndex={currentIssueIndex}
           onCurrentIndexChange={setCurrentIssueIndex}
           onHandled={handleIssueHandled}
+          allowIgnore
         />
       </div>
     </DashboardLayout>

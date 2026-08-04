@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, and_
 
 from app.dependencies.auth import CurrentUserDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
@@ -40,7 +40,12 @@ from app.schemas.validation import (
     ValidationIssueDetailResponse,
     ValidationIssueListResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document, parse_score_value
+from app.utils.score_utils import (
+    add_extraction_method_to_document,
+    parse_score_value,
+    validate_integer_format,
+    validate_score_range,
+)
 from app.services.validation_job_service import process_validation
 from app.services.clerk_quota_service import (
     count_resolved_today,
@@ -85,7 +90,8 @@ async def run_validation(
             f"Validation completed. Checked {results['total_checked']} scores, "
             f"found {results['issues_found']} issues, "
             f"resolved {results['issues_resolved']} issues, "
-            f"created {results['issues_created']} new issues."
+            f"created {results['issues_created']} new issues, "
+            f"reopened {results.get('issues_reopened', 0)} issues."
         )
 
         logger.info(f"Validation completed: {message}")
@@ -101,6 +107,7 @@ async def run_validation(
             issues_found=results["issues_found"],
             issues_resolved=results["issues_resolved"],
             issues_created=results["issues_created"],
+            issues_reopened=results.get("issues_reopened", 0),
             message=message,
         )
     except Exception as e:
@@ -230,10 +237,21 @@ async def get_my_validation_stats(
 async def get_clerk_validation_stats(
     session: DBSessionDep,
     _: RegistrarDep,
+    exam_id: int | None = Query(None, description="Scope resolutions to this exam"),
 ) -> ClerkValidationStatsResponse:
     """Return ranked attributed resolution stats for data clerks (Registrar+)."""
     day_start = _utc_day_start()
     week_start = _utc_week_start()
+
+    issue_join = SubjectScoreValidationIssue.resolved_by_user_id == User.id
+    if exam_id is not None:
+        # Restrict joined issues to the selected exam via exam_subject
+        issue_join = and_(
+            SubjectScoreValidationIssue.resolved_by_user_id == User.id,
+            SubjectScoreValidationIssue.exam_subject_id.in_(
+                select(ExamSubject.id).where(ExamSubject.exam_id == exam_id)
+            ),
+        )
 
     resolved_today = func.coalesce(
         func.sum(
@@ -279,10 +297,7 @@ async def get_clerk_validation_stats(
             resolved_week.label("resolved_week"),
             resolved_total.label("resolved_total"),
         )
-        .outerjoin(
-            SubjectScoreValidationIssue,
-            SubjectScoreValidationIssue.resolved_by_user_id == User.id,
-        )
+        .outerjoin(SubjectScoreValidationIssue, issue_join)
         .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
         .group_by(User.id, User.full_name)
         .order_by(resolved_total.desc(), User.full_name.asc())
@@ -529,15 +544,19 @@ async def get_validation_issue(
 
     current_score_value = None
     document_id = None
+    max_score = None
     if issue.field_name == "obj_raw_score":
         current_score_value = subject_score.obj_raw_score
         document_id = subject_score.obj_document_id
+        max_score = exam_subject.obj_max_score
     elif issue.field_name == "essay_raw_score":
         current_score_value = subject_score.essay_raw_score
         document_id = subject_score.essay_document_id
+        max_score = exam_subject.essay_max_score
     elif issue.field_name == "pract_raw_score":
         current_score_value = subject_score.pract_raw_score
         document_id = subject_score.pract_document_id
+        max_score = exam_subject.pract_max_score
 
     document_file_name = None
     document_numeric_id = None
@@ -598,6 +617,7 @@ async def get_validation_issue(
         document_file_name=document_file_name,
         document_numeric_id=document_numeric_id,
         document_mime_type=document_mime_type,
+        max_score=max_score,
     )
 
 
@@ -608,7 +628,7 @@ async def resolve_validation_issue(
     session: DBSessionDep,
     current_user: CurrentUserDep,
 ) -> SubjectScoreValidationIssueResponse:
-    """Mark a validation issue as resolved, optionally with a corrected score."""
+    """Mark a validation issue as resolved with a validated corrected score."""
     stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
     result = await session.execute(stmt)
     issue = result.scalar_one_or_none()
@@ -619,67 +639,113 @@ async def resolve_validation_issue(
             detail=f"Validation issue with id {issue_id} not found",
         )
 
+    if issue.status != ValidationIssueStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending issues can be resolved",
+        )
+
     await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=True)
 
-    # If corrected_score is provided, update the SubjectScore field
-    if request.corrected_score is not None:
-        # Get the subject score
-        score_stmt = select(SubjectScore).where(SubjectScore.id == issue.subject_score_id)
-        score_result = await session.execute(score_stmt)
-        subject_score = score_result.scalar_one_or_none()
+    corrected = (request.corrected_score or "").strip()
+    if not corrected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Corrected score is required",
+        )
 
-        if not subject_score:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Subject score with id {issue.subject_score_id} not found",
-            )
+    score_stmt = select(SubjectScore).where(SubjectScore.id == issue.subject_score_id)
+    score_result = await session.execute(score_stmt)
+    subject_score = score_result.scalar_one_or_none()
 
-        # Parse and validate the corrected score
-        try:
-            parsed_score = parse_score_value(request.corrected_score)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid score value: {str(e)}",
-            )
+    if not subject_score:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Subject score with id {issue.subject_score_id} not found",
+        )
 
-        # Update the appropriate field based on issue's field_name
-        if issue.field_name == "obj_raw_score":
-            subject_score.obj_raw_score = parsed_score
-            subject_score.obj_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
-            # Update document if exists
-            if subject_score.obj_document_id:
-                doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
-                doc_result = await session.execute(doc_stmt)
-                doc = doc_result.scalar_one_or_none()
-                if doc:
-                    add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
-                    doc.scores_extraction_status = "success"
-                    doc.scores_extracted_at = datetime.utcnow()
-        elif issue.field_name == "essay_raw_score":
-            subject_score.essay_raw_score = parsed_score
-            subject_score.essay_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
-            # Update document if exists
-            if subject_score.essay_document_id:
-                doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
-                doc_result = await session.execute(doc_stmt)
-                doc = doc_result.scalar_one_or_none()
-                if doc:
-                    add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
-                    doc.scores_extraction_status = "success"
-                    doc.scores_extracted_at = datetime.utcnow()
-        elif issue.field_name == "pract_raw_score":
-            subject_score.pract_raw_score = parsed_score
-            subject_score.pract_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
-            # Update document if exists
-            if subject_score.pract_document_id:
-                doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
-                doc_result = await session.execute(doc_stmt)
-                doc = doc_result.scalar_one_or_none()
-                if doc:
-                    add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
-                    doc.scores_extraction_status = "success"
-                    doc.scores_extracted_at = datetime.utcnow()
+    exam_subject = (
+        await session.execute(select(ExamSubject).where(ExamSubject.id == issue.exam_subject_id))
+    ).scalar_one_or_none()
+    if not exam_subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam subject with id {issue.exam_subject_id} not found",
+        )
+
+    if issue.field_name == "obj_raw_score":
+        max_score = exam_subject.obj_max_score
+    elif issue.field_name == "essay_raw_score":
+        max_score = exam_subject.essay_max_score
+    elif issue.field_name == "pract_raw_score":
+        max_score = exam_subject.pract_max_score
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported field_name: {issue.field_name}",
+        )
+
+    if max_score is None or max_score <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No maximum score configured for this paper",
+        )
+
+    is_valid_format, format_error = validate_integer_format(corrected)
+    if not is_valid_format:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=format_error or "Invalid score format",
+        )
+
+    is_valid_range, range_error = validate_score_range(corrected, max_score)
+    if not is_valid_range:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=range_error or "Score out of range",
+        )
+
+    try:
+        parsed_score = parse_score_value(corrected)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid score value: {str(e)}",
+        ) from e
+
+    if issue.field_name == "obj_raw_score":
+        subject_score.obj_raw_score = parsed_score
+        subject_score.obj_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
+        if subject_score.obj_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+                doc.scores_extraction_status = "success"
+                doc.scores_extracted_at = datetime.utcnow()
+    elif issue.field_name == "essay_raw_score":
+        subject_score.essay_raw_score = parsed_score
+        subject_score.essay_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
+        if subject_score.essay_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+                doc.scores_extraction_status = "success"
+                doc.scores_extracted_at = datetime.utcnow()
+    elif issue.field_name == "pract_raw_score":
+        subject_score.pract_raw_score = parsed_score
+        subject_score.pract_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
+        if subject_score.pract_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+                doc.scores_extraction_status = "success"
+                doc.scores_extracted_at = datetime.utcnow()
 
     issue.status = ValidationIssueStatus.RESOLVED
     issue.resolved_at = datetime.utcnow()
@@ -687,7 +753,6 @@ async def resolve_validation_issue(
     await session.commit()
     await session.refresh(issue)
 
-    # Invalidate cache for this issue and all issue lists
     await cache_service.delete(generate_issue_detail_key(issue_id))
     await cache_service.clear_pattern(generate_issues_pattern())
     logger.debug(f"Cache invalidated after resolving issue {issue_id}")
@@ -701,7 +766,13 @@ async def ignore_validation_issue(
     session: DBSessionDep,
     current_user: CurrentUserDep,
 ) -> SubjectScoreValidationIssueResponse:
-    """Mark a validation issue as ignored."""
+    """Mark a validation issue as ignored. Dataclerks cannot ignore."""
+    if current_user.role == UserRole.DATACLERK:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Data clerks cannot ignore validation issues",
+        )
+
     stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
     result = await session.execute(stmt)
     issue = result.scalar_one_or_none()
@@ -720,7 +791,6 @@ async def ignore_validation_issue(
     await session.commit()
     await session.refresh(issue)
 
-    # Invalidate cache for this issue and all issue lists
     await cache_service.delete(generate_issue_detail_key(issue_id))
     await cache_service.clear_pattern(generate_issues_pattern())
     logger.debug(f"Cache invalidated after ignoring issue {issue_id}")
