@@ -79,7 +79,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
 
 Example for staging:
 ```env
-CORS_ORIGINS=https://reg.jamesyin.com,https://reg-api.jamesyin.com,http://localhost:3001
+CORS_ORIGINS=https://reg.ctvetlabs.com,https://reg-api.ctvetlabs.com,http://localhost:3001
 ```
 
 Default origins (when not set): localhost variants for development.
@@ -116,11 +116,11 @@ Default origins (when not set): localhost variants for development.
 
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
-| `FRONTEND_BASE_URL` | Frontend base URL | `https://staging.yourdomain.com` | Yes |
-| `FRONTEND_API_BASE_URL` | Frontend API base URL | `https://staging-api.yourdomain.com` | Yes |
-| `STAGING_FRONTEND_DOMAIN` | Frontend domain | `staging.yourdomain.com` | Yes |
-| `STAGING_API_DOMAIN` | API domain | `staging-api.yourdomain.com` | Yes |
-| `PAYSTACK_CALLBACK_BASE_URL` | Paystack callback URL | `https://staging.yourdomain.com` | No |
+| `FRONTEND_BASE_URL` | Frontend base URL | `https://reg.ctvetlabs.com` | Yes |
+| `FRONTEND_API_BASE_URL` | Frontend API base URL | `https://reg-api.ctvetlabs.com` | Yes |
+| `STAGING_FRONTEND_DOMAIN` | Frontend domain | `reg.ctvetlabs.com` | Yes |
+| `STAGING_API_DOMAIN` | API domain | `reg-api.ctvetlabs.com` | Yes |
+| `PAYSTACK_CALLBACK_BASE_URL` | Paystack callback URL | `https://reg.ctvetlabs.com` | No |
 
 ## Traefik Configuration
 
@@ -204,7 +204,7 @@ SYSTEM_ADMIN_FULL_NAME=System Administrator
 PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY}  # Load from Secret Manager
 PAYSTACK_PUBLIC_KEY=${PAYSTACK_PUBLIC_KEY}  # Load from Secret Manager
 PAYSTACK_WEBHOOK_SECRET=${PAYSTACK_WEBHOOK_SECRET}  # Load from Secret Manager
-PAYSTACK_CALLBACK_BASE_URL=https://staging.yourdomain.com
+PAYSTACK_CALLBACK_BASE_URL=https://reg.ctvetlabs.com
 
 # Domains
 FRONTEND_BASE_URL=https://staging.yourdomain.com

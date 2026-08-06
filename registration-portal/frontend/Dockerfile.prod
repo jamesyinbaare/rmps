@@ -7,8 +7,8 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package*.json ./
-# --omit=optional skips optional deps that can fail on Alpine Linux
-RUN npm ci --omit=optional
+# Install all deps including optional platform binaries (e.g. lightningcss musl for Tailwind v4)
+RUN npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
