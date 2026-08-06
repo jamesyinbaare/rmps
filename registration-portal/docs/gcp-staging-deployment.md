@@ -185,18 +185,17 @@ export COMPOSE_FILE=compose.staging.gcp.yaml
 Or manually:
 
 ```bash
-# Load secrets
+# Load secrets (if used)
 source gcp/staging/config/load-secrets.sh
 
-# Build and start services
-docker compose -f compose.staging.gcp.yaml build
-docker compose -f compose.staging.gcp.yaml up -d
+# Rolling build + start (keeps volumes; rebuilds only what changed)
+docker compose --env-file .env.staging.gcp -f compose.staging.gcp.yaml up -d --build --remove-orphans
 
-# Run migrations (if using local PostgreSQL)
-docker compose -f compose.staging.gcp.yaml exec registration-backend-staging \
-  alembic upgrade head
+# Config-only restart (no image rebuild)
+SKIP_BUILD=1 ./gcp/staging/scripts/deploy.sh
 ```
 
+Migrations run automatically via backend `prestart.sh` on container start.
 ### 4. Update Domain DNS
 
 Point your domains to the VM's external IP:
@@ -281,10 +280,10 @@ Monitor application health:
 
 ```bash
 # Backend health
-curl https://staging-api.yourdomain.com/health
+curl https://reg-api.ctvetlabs.com/health
 
 # Frontend
-curl -I https://staging.yourdomain.com/
+curl -I https://reg.ctvetlabs.com/
 ```
 
 ## Troubleshooting
@@ -294,12 +293,12 @@ curl -I https://staging.yourdomain.com/
 **Problem:** Browser shows "Not Secure" or Let's Encrypt certificates not generating.
 
 **Prerequisites for ACME certificate issuance:**
-- **DNS**: `reg.jamesyin.com` and `reg-api.jamesyin.com` must have A records pointing to the VM's external IP.
+- **DNS**: `reg.ctvetlabs.com` and `reg-api.ctvetlabs.com` must have A records pointing to the VM's external IP.
 - **Firewall**: Allow inbound TCP 80 and 443 from the internet (Let's Encrypt needs both for HTTP redirect and TLS-ALPN-01 challenge).
 - **Ports**: Traefik must be reachable on port 443 for the TLS-ALPN-01 challenge.
 
 **Diagnostic steps:**
-1. **Trigger certificate request**: Visit `https://reg.jamesyin.com` and `https://reg-api.jamesyin.com`. Traefik requests certs on first HTTPS access.
+1. **Trigger certificate request**: Visit `https://reg.ctvetlabs.com` and `https://reg-api.ctvetlabs.com`. Traefik requests certs on first HTTPS access.
 2. **Check Traefik logs for ACME errors:**
    ```bash
    docker logs registration-traefik-staging 2>&1 | grep -i acme

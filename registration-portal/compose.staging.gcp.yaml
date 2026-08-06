@@ -17,7 +17,7 @@ services:
     labels:
       - "traefik.enable=true"
       # Dashboard (restricted by firewall)
-      - "traefik.http.routers.dashboard-staging.rule=Host(`traefik-staging.jamesyin.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.dashboard-staging.rule=Host(`${STAGING_TRAEFIK_DOMAIN:-traefik-staging.ctvetlabs.com}`)"
       - "traefik.http.routers.dashboard-staging.entrypoints=web"
       - "traefik.http.routers.dashboard-staging.service=api@internal"
     restart: unless-stopped
@@ -48,6 +48,8 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=80
+      # Prefer compose-interpolated URL from .env (must be fully expanded / URL-encoded)
+      - DATABASE_URL=${DATABASE_URL}
     volumes:
       - registration_storage_data:/app/storage/documents
       - registration_photos_data:/app/storage/photos
@@ -65,11 +67,15 @@ services:
       cloud-sql-proxy:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health')\" || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
     networks:
       - registration-network
     labels:
@@ -77,13 +83,13 @@ services:
       # Backend service (must be defined before routers)
       - "traefik.http.services.backend-staging.loadbalancer.server.port=80"
       # Backend API router - Domain-based
-      - "traefik.http.routers.backend-staging.rule=Host(`reg-api.jamesyin.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging.rule=Host(`${STAGING_API_DOMAIN}`)"
       - "traefik.http.routers.backend-staging.entrypoints=websecure"
       - "traefik.http.routers.backend-staging.tls=true"
       - "traefik.http.routers.backend-staging.tls.certresolver=letsencrypt"
       - "traefik.http.routers.backend-staging.service=backend-staging"
       # Backend API router - HTTP (redirect to HTTPS)
-      - "traefik.http.routers.backend-staging-http.rule=Host(`reg-api.jamesyin.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging-http.rule=Host(`${STAGING_API_DOMAIN}`)"
       - "traefik.http.routers.backend-staging-http.entrypoints=web"
       - "traefik.http.routers.backend-staging-http.service=backend-staging"
     deploy:
@@ -100,20 +106,20 @@ services:
       context: frontend
       dockerfile: Dockerfile.prod
       args:
-        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.jamesyin.com} # TODO: Change to the actual domain
+        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.ctvetlabs.com}
     container_name: registration-frontend-staging
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.jamesyin.com} # TODO: Change to the actual domain
+      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.ctvetlabs.com}
     restart: unless-stopped
     depends_on:
       registration-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --no-verbose --tries=1 http://127.0.0.1:3001/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 6
       start_period: 40s
     networks:
       - registration-network
@@ -121,13 +127,13 @@ services:
       - "traefik.enable=true"
       - "traefik.http.services.frontend-staging.loadbalancer.server.port=3001"
       # Frontend router - HTTPS
-      - "traefik.http.routers.frontend-staging.rule=Host(`reg.jamesyin.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging.rule=Host(`${STAGING_FRONTEND_DOMAIN}`)"
       - "traefik.http.routers.frontend-staging.entrypoints=websecure"
       - "traefik.http.routers.frontend-staging.tls=true"
       - "traefik.http.routers.frontend-staging.tls.certresolver=letsencrypt"
       - "traefik.http.routers.frontend-staging.service=frontend-staging"
       # Frontend router - HTTP (redirect to HTTPS)
-      - "traefik.http.routers.frontend-staging-http.rule=Host(`reg.jamesyin.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging-http.rule=Host(`${STAGING_FRONTEND_DOMAIN}`)"
       - "traefik.http.routers.frontend-staging-http.entrypoints=web"
       - "traefik.http.routers.frontend-staging-http.service=frontend-staging"
     deploy:

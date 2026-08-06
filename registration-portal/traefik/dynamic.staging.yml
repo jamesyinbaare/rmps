@@ -5,7 +5,7 @@ http:
   routers:
     # Frontend router - HTTPS
     frontend-staging:
-      rule: "Host(`reg.jamesyin.com`)"
+      rule: "Host(`reg.ctvetlabs.com`)"
       entryPoints:
         - websecure
       service: frontend-staging
@@ -16,7 +16,7 @@ http:
 
     # Frontend router - HTTP (redirect to HTTPS handled by entrypoint)
     frontend-staging-http:
-      rule: "Host(`reg.jamesyin.com`)"
+      rule: "Host(`reg.ctvetlabs.com`)"
       entryPoints:
         - web
       service: frontend-staging
@@ -25,7 +25,7 @@ http:
 
     # Backend router - HTTPS
     backend-staging:
-      rule: "Host(`reg-api.jamesyin.com`)"
+      rule: "Host(`reg-api.ctvetlabs.com`)"
       entryPoints:
         - websecure
       service: backend-staging
@@ -37,7 +37,7 @@ http:
 
     # Backend router - HTTP (redirect to HTTPS handled by entrypoint)
     backend-staging-http:
-      rule: "Host(`reg-api.jamesyin.com`)"
+      rule: "Host(`reg-api.ctvetlabs.com`)"
       entryPoints:
         - web
       service: backend-staging
@@ -73,8 +73,8 @@ http:
           - Authorization
           - X-Requested-With
         accessControlAllowOriginList:
-          - "https://reg.jamesyin.com"
-          - "http://reg.jamesyin.com"  # For development/testing
+          - "https://reg.ctvetlabs.com"
+          - "http://reg.ctvetlabs.com"
         accessControlAllowCredentials: true
         accessControlExposeHeaders:
           - Content-Disposition
