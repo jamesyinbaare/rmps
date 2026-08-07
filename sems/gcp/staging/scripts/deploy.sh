@@ -1,6 +1,6 @@
 #!/bin/bash
-# Deployment script for SEMS staging on the shared exam-tools GCE VM
-# (Traefik + Cloud SQL proxy already running via exam-tools compose).
+# Deployment script for SEMS staging on dedicated GCE VM (sems-vm).
+# Standalone Traefik + Cloud SQL Auth Proxy; reuses existing Cloud SQL instance.
 
 set -e
 
@@ -20,18 +20,16 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-SHARED_NETWORK="${SHARED_NETWORK:-monitoring-tools-network-staging}"
-if ! docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1; then
-    echo "Error: Docker network $SHARED_NETWORK not found."
-    echo "Deploy exam-tools staging first so Traefik and Cloud SQL proxy are running."
-    exit 1
-fi
-
 echo "Loading environment variables from $ENV_FILE..."
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+
+if [ -z "${CLOUD_SQL_CONNECTION_NAME:-}" ]; then
+    echo "Error: CLOUD_SQL_CONNECTION_NAME is not set in $ENV_FILE"
+    exit 1
+fi
 
 export COMPOSE_FILE="${COMPOSE_FILE:-compose.staging.gcp.yaml}"
 echo "Compose file: $COMPOSE_FILE"
@@ -52,7 +50,7 @@ dc pull || true
 echo "Starting services..."
 dc up -d
 
-echo "Waiting for backend to become healthy..."
+echo "Waiting for Cloud SQL proxy to be ready..."
 sleep 15
 
 echo "Checking service status..."
@@ -61,8 +59,8 @@ dc ps
 echo "Verifying backend health..."
 MAX_RETRIES=30
 RETRY_COUNT=0
-API_DOMAIN="${STAGING_API_DOMAIN:-sems-api.jamesyin.com}"
-FRONTEND_DOMAIN="${STAGING_FRONTEND_DOMAIN:-sems.jamesyin.com}"
+API_DOMAIN="${STAGING_API_DOMAIN:-sems-api.ctvetlabs.com}"
+FRONTEND_DOMAIN="${STAGING_FRONTEND_DOMAIN:-sems.ctvetlabs.com}"
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if curl -fsS "https://${API_DOMAIN}/health" > /dev/null 2>&1; then
@@ -76,7 +74,7 @@ done
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     echo "Warning: Backend health check failed after $MAX_RETRIES retries"
-    echo "Check logs with: dc logs sems-backend"
+    echo "Check logs with: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs sems-backend"
 fi
 
 echo "Verifying frontend..."
@@ -93,7 +91,7 @@ done
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     echo "Warning: Frontend check failed after $MAX_RETRIES retries"
-    echo "Check logs with: dc logs sems-frontend"
+    echo "Check logs with: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs sems-frontend"
 fi
 
 echo ""
@@ -102,6 +100,7 @@ echo ""
 echo "Services:"
 echo "  - Frontend: https://${FRONTEND_DOMAIN}"
 echo "  - Backend API: https://${API_DOMAIN}"
+echo "  - Traefik Dashboard: http://$(hostname -I | awk '{print $1}'):8080"
 echo ""
 echo "View logs:"
 echo "  docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs -f"
