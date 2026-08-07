@@ -1,87 +1,77 @@
-# GCP staging deployment (SEMS, shared VM with exam-tools)
+# GCP staging deployment (SEMS on sems-vm)
 
-SEMS staging runs on the **same GCE VM** as exam-tools. Traefik (TLS) and Cloud SQL Auth Proxy stay in the exam-tools compose project. SEMS attaches to Docker network `monitoring-tools-network-staging` and is reached via host-based Traefik routes.
+SEMS staging runs on a **dedicated GCE VM** (`sems-vm`) with its own Traefik (TLS) and Cloud SQL Auth Proxy. It **reuses the existing Cloud SQL** database (`sems_db` / `sems_user`) — no new instance.
 
-**No local data migrations.** Staging starts with an empty Cloud SQL database and empty GCS prefixes (schema via Alembic + `initial_data.py` only).
+Exam-tools Traefik routes for `sems.jamesyin.com` / `sems.ctvet.gov.gh` are **left unchanged**. This stack only serves:
+
+- `https://sems.ctvetlabs.com`
+- `https://sems-api.ctvetlabs.com`
 
 ## Layout
 
 ```
 gcp/staging/
 ├── README.md
-└── scripts/
-    └── deploy.sh
+├── scripts/
+│   └── deploy.sh
+└── infrastructure/
+    ├── firewall-rules.sh
+    └── scripts/
+        └── setup-gce-vm.sh
 ```
 
 Root files:
 
-- [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml) — SEMS backend + frontend only
+- [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml) — Traefik + backend + frontend + Cloud SQL proxy
 - [`.env.staging.gcp.example`](../../.env.staging.gcp.example) — environment template
-
-Shared edge (exam-tools):
-
-- [`exam-tools/compose.staging.gcp.yaml`](../../../exam-tools/compose.staging.gcp.yaml) — Traefik + Cloud SQL proxy
-- [`exam-tools/traefik/dynamic.staging.yml`](../../../exam-tools/traefik/dynamic.staging.yml) — includes SEMS host routes
+- [`traefik/traefik.staging.yml`](../../traefik/traefik.staging.yml) — static Traefik config
+- [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml) — host routers / CORS
 
 ## Prerequisites (ops checklist)
 
-Complete these before the first SEMS deploy:
-
-1. **VM size** — Bump the shared staging VM to **`e2-standard-2`** (or equivalent). `e2-medium` is tight with two Next.js + two FastAPI stacks plus Traefik.
-2. **Exam-tools edge** — Exam-tools staging must already be deployed so that:
-   - Network `monitoring-tools-network-staging` exists
-   - Container `monitoring-tools-cloud-sql-proxy-staging` is reachable
-   - Traefik dynamic config includes SEMS routers (`sems*` / `sems-api*`)
-3. **DNS** — Point `A`/`AAAA` for all four hosts at the VM external IP:
-   - `sems.jamesyin.com`, `sems.ctvet.gov.gh`
-   - `sems-api.jamesyin.com`, `sems-api.ctvet.gov.gh`
-4. **Cloud SQL** — On the **existing** exam-tools Cloud SQL instance, create:
-   - Database: `sems_db`
-   - User: `sems_user` (with password used in `DATABASE_URL`)
-5. **GCS** — Reuse the exam-tools staging bucket. Prefixes (created on first write; no migrate):
-   - `sems/documents`
-   - `sems/photos`
-   - `sems/score-sheets`
-6. **IAM** — VM service account retains `roles/cloudsql.client` and `roles/storage.objectAdmin` (or equivalent) on that bucket.
-7. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`.
-
-## Deploy order
-
-1. Redeploy exam-tools if Traefik routes were updated:
+1. **VM** — Provision `sems-vm` (Ubuntu 22.04). Suggested size: `e2-medium` or larger. Network tag: `sems-staging`.
+2. **VM bootstrap** — SSH in and run `gcp/staging/infrastructure/scripts/setup-gce-vm.sh` (Docker, compose plugin, gcloud).
+3. **Firewall** — From a machine with gcloud access:
 
    ```bash
-   cd exam-tools
-   ./gcp/staging/scripts/deploy.sh
+   export GCP_PROJECT_ID=your-project-id
+   export VM_NETWORK_TAGS=sems-staging
+   ./gcp/staging/infrastructure/firewall-rules.sh
    ```
 
-2. Configure SEMS on the VM:
+4. **IAM** — Attach a service account with at least:
+   - `roles/cloudsql.client` (existing instance)
+   - `roles/storage.objectAdmin` (or equivalent) on the GCS bucket if using GCS
+5. **DNS** — Point `A` records at the VM external IP:
+   - `sems.ctvetlabs.com`
+   - `sems-api.ctvetlabs.com`
+6. **Cloud SQL** — Reuse the existing instance. Ensure `sems_db` and `sems_user` exist (create only if missing). Set `CLOUD_SQL_CONNECTION_NAME` to `project:region:instance`.
+7. **GCS** — Reuse the existing staging bucket and prefixes (`sems/documents`, `sems/photos`, `sems/score-sheets`) unless you intentionally change them.
+8. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `CLOUD_SQL_CONNECTION_NAME`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`.
 
-   ```bash
-   cd sems
-   cp .env.staging.gcp.example .env.staging.gcp
-   # Edit DATABASE_URL (host = monitoring-tools-cloud-sql-proxy-staging),
-   # SECRET_KEY, GCS_*, CORS_ORIGINS, SUPER_ADMIN_*, REDUCTO_API_KEY
-   ```
+## Deploy
 
-3. Deploy SEMS:
+On `sems-vm`:
 
-   ```bash
-   chmod +x gcp/staging/scripts/deploy.sh
-   ./gcp/staging/scripts/deploy.sh
-   ```
+```bash
+cd sems
+cp .env.staging.gcp.example .env.staging.gcp
+# Edit CLOUD_SQL_CONNECTION_NAME, DATABASE_URL (host = sems-cloud-sql-proxy-staging),
+# SECRET_KEY, GCS_*, CORS_ORIGINS, SUPER_ADMIN_*, REDUCTO_API_KEY
+
+chmod +x gcp/staging/scripts/deploy.sh
+./gcp/staging/scripts/deploy.sh
+```
 
 `prestart.sh` runs **Alembic migrations** and **initial super admin** when the backend container starts.
 
 ## Smoke tests
 
-After deploy:
-
-- [ ] `https://monitoring.jamesyin.com` and `https://monitoring-api.jamesyin.com/health` still work (exam-tools unaffected)
-- [ ] `https://sems-api.jamesyin.com/health` → `{"status":"ok"}`
-- [ ] `https://sems.jamesyin.com` loads the UI (valid TLS)
+- [ ] `https://sems-api.ctvetlabs.com/health` → `{"status":"ok"}`
+- [ ] `https://sems.ctvetlabs.com` loads the UI (valid TLS)
 - [ ] Login with the configured super admin (CORS + JWT)
-- [ ] Upload a document and confirm the object appears under `gs://<bucket>/sems/documents/`
-- [ ] Upload a candidate photo and confirm under `gs://<bucket>/sems/photos/`
+- [ ] Upload a document / photo and confirm objects under the configured GCS prefixes
+- [ ] Exam-tools SEMS hosts (if still in DNS) are unaffected by this deploy
 
 ## Frontend build note
 
@@ -90,5 +80,5 @@ After deploy:
 
 ## Related documentation
 
-- [exam-tools GCP staging](../../../exam-tools/gcp/staging/README.md) — shared VM, Traefik, Cloud SQL proxy
-- [registration-portal GCP staging](../../../registration-portal/docs/gcp-staging-deployment.md) — project APIs and service accounts
+- [registration-portal GCP staging](../../../registration-portal/docs/gcp-staging-deployment.md) — project APIs and service accounts pattern
+- Exam-tools Traefik still documents legacy SEMS host routes; this README is the source of truth for `*.ctvetlabs.com` on `sems-vm`

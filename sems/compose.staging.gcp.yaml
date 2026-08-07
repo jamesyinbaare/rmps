@@ -1,7 +1,41 @@
-# SEMS staging on the shared exam-tools GCE VM.
-# Joins Traefik + Cloud SQL proxy on network monitoring-tools-network-staging.
-# Deploy exam-tools first so that network and proxy exist.
+# SEMS staging on dedicated GCE VM (sems-vm).
+# Standalone Traefik + Cloud SQL Auth Proxy; reuses existing Cloud SQL instance.
 services:
+  traefik:
+    image: traefik:v3.6
+    container_name: sems-traefik-staging
+    command:
+      - "--configfile=/etc/traefik/traefik.staging.yml"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik dashboard (restricted by firewall)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.staging.yml:/etc/traefik/traefik.staging.yml:ro
+      - ./traefik/dynamic.staging.yml:/etc/traefik/dynamic.staging.yml:ro
+      - traefik_certs:/certificates
+      - traefik_logs:/var/log/traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard-staging.rule=Host(`traefik-sems.ctvetlabs.com`)"
+      - "traefik.http.routers.dashboard-staging.entrypoints=web"
+      - "traefik.http.routers.dashboard-staging.service=api@internal"
+    restart: unless-stopped
+    networks:
+      - sems-network
+    depends_on:
+      - sems-backend
+      - sems-frontend
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
   sems-backend:
     build:
       context: backend
@@ -20,6 +54,9 @@ services:
         fastapi run app/main.py --port 80
       "
     restart: unless-stopped
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
@@ -27,7 +64,26 @@ services:
       retries: 3
       start_period: 60s
     networks:
-      - monitoring-tools-network
+      - sems-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.backend-staging.loadbalancer.server.port=80"
+      - "traefik.http.routers.backend-staging.rule=Host(`sems-api.ctvetlabs.com`)"
+      - "traefik.http.routers.backend-staging.entrypoints=websecure"
+      - "traefik.http.routers.backend-staging.tls=true"
+      - "traefik.http.routers.backend-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-staging.service=backend-staging"
+      - "traefik.http.routers.backend-staging-http.rule=Host(`sems-api.ctvetlabs.com`)"
+      - "traefik.http.routers.backend-staging-http.entrypoints=web"
+      - "traefik.http.routers.backend-staging-http.service=backend-staging"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
   sems-frontend:
     build:
@@ -36,7 +92,7 @@ services:
     container_name: sems-frontend-staging
     environment:
       - NODE_ENV=production
-      # Server-side fetches inside the frontend container (no NEXT_PUBLIC_API_BASE_URL).
+      # Server-side fetches inside the frontend container (browser derives sems-api.<parent>).
       - INTERNAL_API_BASE_URL=http://sems-backend:80
     restart: unless-stopped
     depends_on:
@@ -49,9 +105,48 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - monitoring-tools-network
+      - sems-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.frontend-staging.loadbalancer.server.port=3001"
+      - "traefik.http.routers.frontend-staging.rule=Host(`sems.ctvetlabs.com`)"
+      - "traefik.http.routers.frontend-staging.entrypoints=websecure"
+      - "traefik.http.routers.frontend-staging.tls=true"
+      - "traefik.http.routers.frontend-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-staging.service=frontend-staging"
+      - "traefik.http.routers.frontend-staging-http.rule=Host(`sems.ctvetlabs.com`)"
+      - "traefik.http.routers.frontend-staging-http.entrypoints=web"
+      - "traefik.http.routers.frontend-staging-http.service=frontend-staging"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Cloud SQL Proxy: backend connects via this to the existing Cloud SQL instance
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
+    container_name: sems-cloud-sql-proxy-staging
+    env_file:
+      - .env.staging.gcp
+    command:
+      - --address=0.0.0.0
+      - --port=5432
+      - ${CLOUD_SQL_CONNECTION_NAME}
+    networks:
+      - sems-network
+    restart: unless-stopped
+
+volumes:
+  traefik_certs:
+    driver: local
+  traefik_logs:
+    driver: local
 
 networks:
-  monitoring-tools-network:
-    external: true
-    name: monitoring-tools-network-staging
+  sems-network:
+    driver: bridge
+    name: sems-network-staging

@@ -1,0 +1,99 @@
+# Dynamic Traefik Configuration for SEMS GCP Staging (sems-vm)
+
+http:
+  routers:
+    frontend-staging:
+      rule: "Host(`sems.ctvetlabs.com`)"
+      entryPoints:
+        - websecure
+      service: frontend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - security-headers
+
+    frontend-staging-http:
+      rule: "Host(`sems.ctvetlabs.com`)"
+      entryPoints:
+        - web
+      service: frontend-staging
+      middlewares:
+        - security-headers
+
+    backend-staging:
+      rule: "Host(`sems-api.ctvetlabs.com`)"
+      entryPoints:
+        - websecure
+      service: backend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - cors-headers
+        - security-headers
+
+    backend-staging-http:
+      rule: "Host(`sems-api.ctvetlabs.com`)"
+      entryPoints:
+        - web
+      service: backend-staging
+      middlewares:
+        - cors-headers
+
+  services:
+    frontend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://sems-frontend-staging:3001"
+
+    backend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://sems-backend-staging:80"
+
+  middlewares:
+    cors-headers:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Requested-With
+        accessControlAllowOriginList:
+          - "https://sems.ctvetlabs.com"
+          - "http://sems.ctvetlabs.com"
+        accessControlAllowCredentials: true
+        accessControlExposeHeaders:
+          - Content-Disposition
+        accessControlMaxAge: 100
+        addVaryHeader: true
+
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+
+tls:
+  options:
+    default:
+      minVersion: "VersionTLS12"
+      sslProtocols:
+        - "TLSv1.2"
+        - "TLSv1.3"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_128_GCM_SHA256"

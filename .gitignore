@@ -30,3 +30,4 @@ sems/grading_boundary_setting.ipynb
 registration-portal/backend/certs/
 registration-portal/backend/test_certs/
 registration-portal/TESTING_CHECKLIST.md
+.env.staging.gcp
