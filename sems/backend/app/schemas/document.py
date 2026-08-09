@@ -62,6 +62,9 @@ class DocumentResponse(DocumentBase):
     scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
     scores_extracted_at: datetime | None = None
+    scores_applied_at: datetime | None = None
+    scores_applied_count: int | None = None
+    scores_unmatched_count: int | None = None
 
     class Config:
         from_attributes = True

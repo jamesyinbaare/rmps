@@ -69,9 +69,13 @@ class Settings(BaseSettings):
         "Extract examination score data from this document. "
         "Focus on the main score table containing candidate information. "
         "For each candidate row, extract: serial number (sn), index number, candidate name, "
-        "attendance (check mark for present, 'A' or 'AA' for absent), score (any positive number or 'A'/'AA' for absent), "
-        "and verification score (any positive number or 'A'/'AA' for absent). "
-        "Note: Scores can be any positive number and are not limited to 100. "
+        "attendance (check mark for present, 'A' or 'AA' for absent), "
+        "score (0 or any positive number, or 'A'/'AA' for absent), "
+        "and verification score (0 or any positive number, or 'A'/'AA' for absent). "
+        "Note: 0 is a valid score (present candidate who scored zero), not absence. "
+        "When the sheet shows 0 for score and/or verify, extract the digit 0 for both fields — "
+        "never use '-', blank, or omit a written zero. "
+        "Scores are non-negative and are not limited to 100. "
         "Also extract sheet metadata: sheet_id, series, paper/test type, centre, and subject. "
         "Preserve exact values as they appear in the document, including check marks and absence indicators."
     )
@@ -104,7 +108,8 @@ class Settings(BaseSettings):
                             "oneOf": [
                                 {
                                     "type": "number",
-                                    "description": "Candidate examination score as a numeric value. Can be any positive number (no upper limit).",
+                                    "minimum": 0,
+                                    "description": "Candidate examination score as a non-negative number (0 or greater). 0 is valid. No upper limit.",
                                 },
                                 {
                                     "type": "string",
@@ -112,13 +117,14 @@ class Settings(BaseSettings):
                                     "description": "Absence indicator. Use 'A' or 'AA' if the candidate was absent (no score available).",
                                 },
                             ],
-                            "description": "Candidate examination score. Can be any positive number or 'A'/'AA' for absent candidates.",
+                            "description": "Candidate examination score. Non-negative number (0 or greater), or 'A'/'AA' for absent candidates. 0 is a valid score, not absence.",
                         },
                         "verify": {
                             "oneOf": [
                                 {
                                     "type": "number",
-                                    "description": "Verification score (duplicate of score field for verification purposes). Can be any positive number (no upper limit).",
+                                    "minimum": 0,
+                                    "description": "Verification score (duplicate of score field for verification purposes). Non-negative number (0 or greater). 0 is valid. No upper limit.",
                                 },
                                 {
                                     "type": "string",
@@ -126,7 +132,7 @@ class Settings(BaseSettings):
                                     "description": "Absence indicator. Use 'A' or 'AA' if the candidate was absent (no verification score available).",
                                 },
                             ],
-                            "description": "Verification score (repeated score for verification). Can be any positive number or 'A'/'AA' for absent candidates.",
+                            "description": "Verification score (repeated score for verification). Non-negative number (0 or greater), or 'A'/'AA' for absent candidates. 0 is a valid score, not absence.",
                         },
                     },
                     "required": ["sn", "index_number", "attend", "score"],

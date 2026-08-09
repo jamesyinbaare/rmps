@@ -108,6 +108,7 @@ const getNavMain = (
       items: [
         { title: "Digital", url: "/scores/data-entry/digital" },
         { title: "Reducto Extraction", url: "/scores/data-entry/reducto-extraction" },
+        { title: "Apply Scores", url: "/scores/data-entry/apply-scores" },
         { title: "Manual", url: "/scores/data-entry/manual" },
         { title: "Processed ICMs", url: "/scores/processed" },
         { title: "Export Results", url: "/scores/export" },

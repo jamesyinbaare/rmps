@@ -156,7 +156,10 @@ class ReductoDataResponse(BaseModel):
 class UpdateScoresFromReductoRequest(BaseModel):
     """Request for updating scores from reducto data."""
 
-    verify: bool = Field(default=False, description="If True, compare score and verify fields before inserting")
+    verify: bool = Field(
+        default=True,
+        description="If True, compare score and verify fields before inserting (default True)",
+    )
 
 
 class UpdateScoresFromReductoResponse(BaseModel):
@@ -164,8 +167,13 @@ class UpdateScoresFromReductoResponse(BaseModel):
 
     updated_count: int
     unmatched_count: int
+    skipped_count: int = 0
+    skipped_records: list[dict] = []
     unmatched_records: list[dict]
     errors: list[dict[str, str]]
+    scores_applied_at: datetime | None = None
+    scores_applied_count: int | None = None
+    scores_unmatched_count: int | None = None
 
 
 class UnmatchedExtractionRecordResponse(BaseModel):

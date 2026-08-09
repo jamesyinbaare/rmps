@@ -257,6 +257,10 @@ class Document(Base):
     scores_extraction_methods = Column(ARRAY(Enum(DataExtractionMethod)), nullable=True)  # Set of extraction methods: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     scores_extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
     scores_extracted_at = Column(DateTime, nullable=True)
+    # When extracted scores were applied into SubjectScore rows
+    scores_applied_at = Column(DateTime, nullable=True)
+    scores_applied_count = Column(Integer, nullable=True)
+    scores_unmatched_count = Column(Integer, nullable=True)
 
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")

@@ -23,6 +23,9 @@ export interface Document {
   scores_extraction_methods: string[] | null; // Set of extraction methods used: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   scores_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
   scores_extracted_at: string | null; // When scores were extracted
+  scores_applied_at: string | null; // When extracted scores were applied to SubjectScore
+  scores_applied_count: number | null;
+  scores_unmatched_count: number | null;
 }
 
 export interface DocumentListResponse {
@@ -439,6 +442,7 @@ export interface ScoreDocumentFilters {
   test_type?: string;
   extraction_status?: string; // Filter by extraction status: pending, queued, processing, success, error
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
+  scores_applied?: boolean; // true=applied, false=not applied
   page?: number;
   page_size?: number;
 }
@@ -528,9 +532,18 @@ export interface ReductoDataResponse {
   extracted_at: string | null;
 }
 
+export interface SkippedVerifyRecord {
+  index_number: string | null;
+  candidate_name: string | null;
+  score: string | number | null;
+  verify: string | number | null;
+}
+
 export interface UpdateScoresFromReductoResponse {
   updated_count: number;
   unmatched_count: number;
+  skipped_count?: number;
+  skipped_records?: SkippedVerifyRecord[];
   unmatched_records: Array<{
     index_number: string | null;
     candidate_name: string | null;
@@ -538,6 +551,9 @@ export interface UpdateScoresFromReductoResponse {
     error?: string;
   }>;
   errors: Array<{ [key: string]: string }>;
+  scores_applied_at?: string | null;
+  scores_applied_count?: number | null;
+  scores_unmatched_count?: number | null;
 }
 
 export interface UnmatchedExtractionRecord {

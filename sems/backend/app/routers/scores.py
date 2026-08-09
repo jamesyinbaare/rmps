@@ -101,6 +101,10 @@ async def get_filtered_documents(
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_status: str | None = Query(None, description="Filter by extraction status: pending, queued, processing, success, error"),
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
+    scores_applied: bool | None = Query(
+        None,
+        description="Filter by whether extracted scores have been applied (true=applied, false=not applied)",
+    ),
 ) -> DocumentListResponse:
     """Get documents filtered by exam, school, subject, test_type, and extraction status.
 
@@ -157,6 +161,10 @@ async def get_filtered_documents(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
+    if scores_applied is True:
+        base_stmt = base_stmt.where(Document.scores_applied_at.isnot(None))
+    elif scores_applied is False:
+        base_stmt = base_stmt.where(Document.scores_applied_at.is_(None))
     if clerk_assigned_ids is not None:
         base_stmt = base_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -192,6 +200,10 @@ async def get_filtered_documents(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
+    if scores_applied is True:
+        count_stmt = count_stmt.where(Document.scores_applied_at.isnot(None))
+    elif scores_applied is False:
+        count_stmt = count_stmt.where(Document.scores_applied_at.is_(None))
     if clerk_assigned_ids is not None:
         count_stmt = count_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -1076,7 +1088,7 @@ async def get_reducto_data(document_id: int, session: DBSessionDep) -> ReductoDa
     )
 
 
-def scores_match(score: str | None, verify: str | None) -> bool:
+def scores_match(score: str | float | None, verify: str | float | None) -> bool:
     """
     Check if score and verify fields match for insertion.
 
@@ -1091,8 +1103,9 @@ def scores_match(score: str | None, verify: str | None) -> bool:
     Returns:
         True if scores match, False otherwise
     """
-    parsed_score = parse_score_value_safe(score) if score else None
-    parsed_verify = parse_score_value_safe(verify) if verify else None
+    # Use parse_score_value_safe directly so numeric 0 is not treated as missing
+    parsed_score = parse_score_value_safe(score)
+    parsed_verify = parse_score_value_safe(verify)
 
     # Both None - consider as match (no data to verify)
     if parsed_score is None and parsed_verify is None:
@@ -1173,10 +1186,12 @@ async def update_scores_from_reducto(
         result = []
         for idx, row in enumerate(rows):
             if isinstance(row, dict):
+                raw_score = row.get("raw_score")
+                score = raw_score if raw_score is not None else row.get("score")
                 candidate = {
                     "index_number": row.get("index_number"),
                     "candidate_name": row.get("candidate_name"),
-                    "score": row.get("raw_score") or row.get("score"),
+                    "score": score,
                     "attend": row.get("attend"),
                     "verify": row.get("verify"),
                     "sn": row.get("sn") or row.get("serial_number") or row.get("row_number") or (idx + 1),
@@ -1272,6 +1287,7 @@ async def update_scores_from_reducto(
     updated_count = 0
     unmatched_count = 0
     skipped_count = 0
+    skipped_records: list[dict] = []
     unmatched_records = []
     errors: list[dict[str, str]] = []
     verify_enabled = request.verify
@@ -1394,6 +1410,14 @@ async def update_scores_from_reducto(
                         f"Skipping candidate {index_number}: score={score_value} and verify={verify_value} do not match"
                     )
                     skipped_count += 1
+                    skipped_records.append(
+                        {
+                            "index_number": index_number,
+                            "candidate_name": candidate_name,
+                            "score": score_value,
+                            "verify": verify_value,
+                        }
+                    )
                     continue
 
             # Update appropriate score field based on test_type
@@ -1420,11 +1444,15 @@ async def update_scores_from_reducto(
             logger.error(f"Error processing candidate {idx+1} (index_number={candidate_data.get('index_number', 'unknown')}): {e}", exc_info=True)
             errors.append({"index_number": candidate_data.get("index_number", "unknown"), "error": str(e)})
 
-    # Update document extraction status
+    # Update document extraction status and applied tracking
     if updated_count > 0:
+        applied_at = datetime.utcnow()
         document.scores_extraction_status = "success"
-        document.scores_extracted_at = datetime.utcnow()
-        logger.info(f"Updated document extraction status to 'success' for document_id={document_id}")
+        document.scores_extracted_at = applied_at
+        document.scores_applied_at = applied_at
+        document.scores_applied_count = updated_count
+        document.scores_unmatched_count = unmatched_count
+        logger.info(f"Updated document extraction status to 'success' and marked applied for document_id={document_id}")
 
     await session.commit()
 
@@ -1436,8 +1464,13 @@ async def update_scores_from_reducto(
     return UpdateScoresFromReductoResponse(
         updated_count=updated_count,
         unmatched_count=unmatched_count,
+        skipped_count=skipped_count,
+        skipped_records=skipped_records,
         unmatched_records=unmatched_records,
         errors=errors,
+        scores_applied_at=document.scores_applied_at,
+        scores_applied_count=document.scores_applied_count,
+        scores_unmatched_count=document.scores_unmatched_count,
     )
 
 
