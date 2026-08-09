@@ -56,6 +56,8 @@ from app.schemas.exam import (
     ResultsProcessingProgress,
     ResultsReleaseProgress,
     ScoreInterpretationProgress,
+    ScoreSheetGenerationJobCreateResponse,
+    ScoreSheetGenerationJobStatusResponse,
     ScoreSheetGenerationResponse,
     ScoringDataEntryProgress,
     SerializationJobCreateResponse,
@@ -74,7 +76,10 @@ from app.services.exam_subject_upload import (
     validate_exam_subject_columns,
 )
 from app.services.scannables_export import generate_core_subjects_export, generate_electives_export
-from app.services.score_sheet_generator import generate_score_sheets
+from app.services.score_sheet_generator import (
+    count_schools_for_score_sheets,
+    process_score_sheet_generation_job,
+)
 from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
 from app.services.serialization import (
     count_schools_for_serialization,
@@ -999,6 +1004,7 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
             ProcessTracking.exam_id == exam_id,
             ProcessTracking.process_type == ProcessType.SCORE_SHEET_GENERATION,
             ProcessTracking.status == ProcessStatus.COMPLETED,
+            ProcessTracking.school_id.isnot(None),
         )
     )
     score_sheet_result = await session.execute(score_sheet_tracking_stmt)
@@ -1787,36 +1793,142 @@ async def export_scannables_electives(
         )
 
 
-@router.post("/{exam_id}/generate-score-sheets", response_model=ScoreSheetGenerationResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{exam_id}/generate-score-sheets",
+    response_model=ScoreSheetGenerationJobCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def generate_exam_score_sheets(
     exam_id: int,
     session: DBSessionDep,
+    background_tasks: BackgroundTasks,
     school_id: int | None = Query(None, description="Optional school ID to generate sheets only for that school"),
     subject_id: int | None = Query(None, description="Optional subject ID to generate sheets only for that subject"),
-    test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
-) -> ScoreSheetGenerationResponse:
+    test_types: list[int] = Query(
+        default=[1, 2],
+        description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]",
+    ),
+) -> ScoreSheetGenerationJobCreateResponse:
     """
-    Generate score sheets for an exam and assign sheet IDs to candidates.
+    Start async score sheet ID assignment for an exam.
 
-    For every school and subject combination:
-    - For every series group, candidates are sorted by index number
-    - Candidates are organized into batches of 25 per sheet
-    - Each sheet gets a unique 13-character ID: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
-    - Sheet IDs are assigned to SubjectScore records (obj_document_id for test_type=1, essay_document_id for test_type=2)
-
-    Example: If a school has 200 candidates and mathematics has been serialized into 4 series,
-    there will be 50 candidates per series, meaning each series will take about 2 pages (sheets).
-
-    This operation will overwrite existing sheet ID assignments.
+    Returns a job id immediately; poll GET /{exam_id}/generate-score-sheets/{job_id} for progress.
     """
-    try:
-        result = await generate_score_sheets(session, exam_id, school_id, subject_id, test_types)
-        return ScoreSheetGenerationResponse.model_validate(result)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Score sheet generation failed: {str(e)}")
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    if not exam_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    if school_id is not None:
+        school_result = await session.execute(select(School).where(School.id == school_id))
+        if not school_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    if subject_id is not None:
+        subject_result = await session.execute(select(Subject).where(Subject.id == subject_id))
+        if not subject_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    normalized_test_types = list(test_types) if test_types else [1, 2]
+    for test_type in normalized_test_types:
+        if test_type not in (1, 2):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Test type must be 1 or 2, got {test_type}",
+            )
+
+    total_schools = await count_schools_for_score_sheets(session, exam_id, school_id, subject_id)
+
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.SCORE_SHEET_GENERATION,
+        school_id=None,
+        subject_id=None,
+        status=ProcessStatus.PENDING,
+        process_metadata={
+            "school_id": school_id,
+            "subject_id": subject_id,
+            "test_types": normalized_test_types,
+            "total_schools": total_schools,
+            "processed_schools": 0,
+            "total_sheets_generated": 0,
+            "total_candidates_assigned": 0,
+            "schools_processed": [],
+            "subjects_processed": [],
+            "sheets_by_series": {},
+            "message": None,
+            "is_job": True,
+        },
+    )
+    session.add(tracking)
+    await session.commit()
+    await session.refresh(tracking)
+
+    background_tasks.add_task(process_score_sheet_generation_job, tracking.id)
+
+    return ScoreSheetGenerationJobCreateResponse(
+        job_id=tracking.id,
+        status=tracking.status.value,
+        total_schools=total_schools,
+        exam_id=exam_id,
+    )
+
+
+@router.get(
+    "/{exam_id}/generate-score-sheets/{job_id}",
+    response_model=ScoreSheetGenerationJobStatusResponse,
+)
+async def get_score_sheet_generation_job_status(
+    exam_id: int,
+    job_id: int,
+    session: DBSessionDep,
+) -> ScoreSheetGenerationJobStatusResponse:
+    """Poll status/progress for a score sheet ID generation job."""
+    tracking_result = await session.execute(
+        select(ProcessTracking).where(
+            ProcessTracking.id == job_id,
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.SCORE_SHEET_GENERATION,
+            ProcessTracking.school_id.is_(None),
+            ProcessTracking.subject_id.is_(None),
+        )
+    )
+    tracking = tracking_result.scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Score sheet generation job not found",
+        )
+
+    metadata = tracking.process_metadata or {}
+    raw_series = metadata.get("sheets_by_series") or {}
+    sheets_by_series: dict[int, int] = {}
+    if isinstance(raw_series, dict):
+        for key, value in raw_series.items():
+            try:
+                sheets_by_series[int(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+
+    return ScoreSheetGenerationJobStatusResponse(
+        job_id=tracking.id,
+        exam_id=exam_id,
+        status=tracking.status.value,
+        total_schools=int(metadata.get("total_schools") or 0),
+        processed_schools=int(metadata.get("processed_schools") or 0),
+        school_id=metadata.get("school_id"),
+        subject_id=metadata.get("subject_id"),
+        test_types=[int(t) for t in (metadata.get("test_types") or [1, 2])],
+        total_sheets_generated=int(metadata.get("total_sheets_generated") or 0),
+        total_candidates_assigned=int(metadata.get("total_candidates_assigned") or 0),
+        schools_processed=metadata.get("schools_processed") or [],
+        subjects_processed=metadata.get("subjects_processed") or [],
+        sheets_by_series=sheets_by_series,
+        message=metadata.get("message"),
+        error_message=tracking.error_message,
+        started_at=tracking.started_at,
+        completed_at=tracking.completed_at,
+    )
 
 
 @router.post("/{exam_id}/generate-pdf-score-sheets", response_model=PdfGenerationResponse, status_code=status.HTTP_200_OK)

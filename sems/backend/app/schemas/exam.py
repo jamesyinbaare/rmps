@@ -214,6 +214,37 @@ class ScoreSheetGenerationResponse(BaseModel):
     message: str
 
 
+class ScoreSheetGenerationJobCreateResponse(BaseModel):
+    """Schema returned when a score sheet ID generation job is accepted."""
+
+    job_id: int
+    status: str
+    total_schools: int
+    exam_id: int
+
+
+class ScoreSheetGenerationJobStatusResponse(BaseModel):
+    """Schema for polling score sheet ID generation job progress."""
+
+    job_id: int
+    exam_id: int
+    status: str
+    total_schools: int
+    processed_schools: int
+    school_id: int | None = None
+    subject_id: int | None = None
+    test_types: list[int] = Field(default_factory=lambda: [1, 2])
+    total_sheets_generated: int = 0
+    total_candidates_assigned: int = 0
+    schools_processed: list[SchoolSheetInfo] = Field(default_factory=list)
+    subjects_processed: list[SubjectSheetInfo] = Field(default_factory=list)
+    sheets_by_series: dict[int, int] = Field(default_factory=dict)
+    message: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class SchoolPdfInfo(BaseModel):
     """Schema for school PDF generation information."""
 

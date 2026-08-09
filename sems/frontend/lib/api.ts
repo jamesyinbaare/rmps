@@ -1803,6 +1803,127 @@ export async function serializeExam(
   };
 }
 
+export interface ScoreSheetGenerationResponse {
+  exam_id: number;
+  total_sheets_generated: number;
+  total_candidates_assigned: number;
+  schools_processed: Array<{
+    school_id: number;
+    school_name: string;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  subjects_processed: Array<{
+    subject_id: number;
+    subject_code: string;
+    subject_name: string;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  sheets_by_series: Record<number, number>;
+  message: string;
+}
+
+export interface ScoreSheetGenerationJobCreateResponse {
+  job_id: number;
+  status: string;
+  total_schools: number;
+  exam_id: number;
+}
+
+export interface ScoreSheetGenerationJobStatusResponse {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  total_schools: number;
+  processed_schools: number;
+  school_id: number | null;
+  subject_id: number | null;
+  test_types: number[];
+  total_sheets_generated: number;
+  total_candidates_assigned: number;
+  schools_processed: ScoreSheetGenerationResponse["schools_processed"];
+  subjects_processed: ScoreSheetGenerationResponse["subjects_processed"];
+  sheets_by_series: Record<number, number>;
+  message: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export async function startGenerateScoreSheets(
+  examId: number,
+  options?: {
+    schoolId?: number | null;
+    subjectId?: number | null;
+    testTypes?: number[];
+  }
+): Promise<ScoreSheetGenerationJobCreateResponse> {
+  const params = new URLSearchParams();
+  if (options?.schoolId != null) {
+    params.append("school_id", options.schoolId.toString());
+  }
+  if (options?.subjectId != null) {
+    params.append("subject_id", options.subjectId.toString());
+  }
+  const testTypes = options?.testTypes?.length ? options.testTypes : [1, 2];
+  testTypes.forEach((t) => params.append("test_types", t.toString()));
+
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-score-sheets?${params.toString()}`;
+  const response = await fetch(url, { method: "POST" });
+  return handleResponse<ScoreSheetGenerationJobCreateResponse>(response);
+}
+
+export async function getGenerateScoreSheetsJob(
+  examId: number,
+  jobId: number
+): Promise<ScoreSheetGenerationJobStatusResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/exams/${examId}/generate-score-sheets/${jobId}`
+  );
+  return handleResponse<ScoreSheetGenerationJobStatusResponse>(response);
+}
+
+/**
+ * Start score sheet ID generation and poll until the background job finishes.
+ */
+export async function generateScoreSheets(
+  examId: number,
+  options?: {
+    schoolId?: number | null;
+    subjectId?: number | null;
+    testTypes?: number[];
+  },
+  onProgress?: (status: ScoreSheetGenerationJobStatusResponse) => void
+): Promise<ScoreSheetGenerationResponse> {
+  const job = await startGenerateScoreSheets(examId, options);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  let status = await getGenerateScoreSheetsJob(examId, job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getGenerateScoreSheetsJob(examId, job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed") {
+    throw new Error(status.error_message || status.message || "Score sheet generation failed");
+  }
+
+  return {
+    exam_id: status.exam_id,
+    total_sheets_generated: status.total_sheets_generated,
+    total_candidates_assigned: status.total_candidates_assigned,
+    schools_processed: status.schools_processed,
+    subjects_processed: status.subjects_processed,
+    sheets_by_series: status.sheets_by_series,
+    message: status.message || "Score sheet generation complete",
+  };
+}
+
 export async function exportScannablesCore(examId: number): Promise<void> {
   const url = `${API_BASE_URL}/api/v1/exams/${examId}/export/scannables/core`;
   const response = await fetch(url, {
