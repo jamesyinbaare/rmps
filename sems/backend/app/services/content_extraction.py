@@ -263,8 +263,9 @@ class ReductoExtractor:
                         # Transform candidates to rows format
                         rows = []
                         for candidate in candidates:
-                            # Extract and normalize score - handle number, string (A/AA), or None
+                            # Extract and normalize score/verify - handle number, string (A/AA), or None
                             score_value = candidate.get("score")
+                            verify_value = candidate.get("verify")
                             try:
                                 # Parse and normalize score value (handles numeric, "A"/"AA", or None)
                                 raw_score = parse_score_value(score_value)
@@ -273,13 +274,19 @@ class ReductoExtractor:
                                 # Invalid format - set to None
                                 raw_score = None
 
+                            try:
+                                verify = parse_score_value(verify_value)
+                            except ValueError as e:
+                                logger.debug(f"Failed to parse verify value '{verify_value}': {e}")
+                                verify = None
+
                             row = {
                                 "index_number": candidate.get("index_number", ""),
                                 "raw_score": raw_score,  # Now stored as string: numeric, "A"/"AA", or None
                                 "sn": candidate.get("sn"),
                                 "candidate_name": candidate.get("candidate_name"),
                                 "attend": candidate.get("attend"),
-                                "verify": candidate.get("verify"),
+                                "verify": verify,  # Normalized like raw_score
                             }
                             rows.append(row)
 

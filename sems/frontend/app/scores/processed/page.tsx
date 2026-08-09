@@ -358,9 +358,9 @@ export default function ProcessedICMsPage() {
           const candidate = {
             index_number: row.index_number || row.indexNumber || null,
             candidate_name: row.candidate_name || row.candidateName || row.name || null,
-            score: row.raw_score || row.rawScore || row.score || null,
+            score: row.raw_score ?? row.rawScore ?? row.score ?? null,
             attend: row.attend || null,
-            verify: row.verify || null,
+            verify: row.verify ?? null,
             sn: row.sn || row.serial_number || row.serialNumber || row.row_number || row.rowNumber || (idx + 1),
           };
           result.push(candidate);
@@ -948,15 +948,27 @@ export default function ProcessedICMsPage() {
                                               : "✓")
                                             : "-"}
                                         </TableCell>
-                                        <TableCell>{candidate.score || "-"}</TableCell>
                                         <TableCell>
-                                          {candidate.verify
-                                            ? (typeof candidate.verify === "string" && (candidate.verify === "A" || candidate.verify === "AA" || candidate.verify === "AAA")
+                                          {candidate.score === null || candidate.score === undefined || candidate.score === ""
+                                            ? "-"
+                                            : String(candidate.score)}
+                                        </TableCell>
+                                        <TableCell>
+                                          {candidate.verify === null ||
+                                          candidate.verify === undefined ||
+                                          candidate.verify === ""
+                                            ? "-"
+                                            : typeof candidate.verify === "string" &&
+                                                (candidate.verify === "A" ||
+                                                  candidate.verify === "AA" ||
+                                                  candidate.verify === "AAA")
                                               ? candidate.verify
-                                              : candidate.verify === true || candidate.verify === "✓" || candidate.verify === "✔" || candidate.verify === "√"
-                                              ? "✓"
-                                              : String(candidate.verify))
-                                            : "-"}
+                                              : candidate.verify === true ||
+                                                  candidate.verify === "✓" ||
+                                                  candidate.verify === "✔" ||
+                                                  candidate.verify === "√"
+                                                ? "✓"
+                                                : String(candidate.verify)}
                                         </TableCell>
                                       </TableRow>
                                     ))}

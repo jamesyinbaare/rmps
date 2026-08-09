@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.config import settings
-from app.core.cache import get_cached_user_by_email, invalidate_user_cache, set_cached_user
+from app.core.cache import invalidate_user_cache, set_cached_user
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -32,14 +32,11 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 @router.post("/login", response_model=Token, status_code=status.HTTP_200_OK)
 async def login(user_credentials: UserLogin, session: DBSessionDep) -> Token:
     """Authenticate user and return JWT token."""
-    # Try to get user from cache first
-    user = get_cached_user_by_email(user_credentials.email)
-
-    # If not in cache, query database
-    if user is None:
-        stmt = select(User).where(User.email == user_credentials.email)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+    # Always load from DB for login so we can update last_login on a attached instance.
+    # (Cached ORM instances from prior requests are detached and unsafe to mutate.)
+    stmt = select(User).where(User.email == user_credentials.email)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
 
     # Verify user exists and password is correct
     if not user or not verify_password(user_credentials.password, user.hashed_password):
@@ -59,8 +56,9 @@ async def login(user_credentials: UserLogin, session: DBSessionDep) -> Token:
     # Update last_login
     user.last_login = datetime.utcnow()
     await session.commit()
+    await session.refresh(user)
 
-    # Update cache with fresh user data
+    # Update cache with fresh user data (snapshot, not live ORM)
     set_cached_user(user)
 
     # Create access token
@@ -179,8 +177,11 @@ async def change_current_user_password(
     current_user: CurrentUserDep,
 ) -> None:
     """Change current user's own password. Requires current password verification."""
+    # Attach cached/transient user to the session before mutating
+    user = await session.merge(current_user)
+
     # Verify current password
-    if not verify_password(password_change.current_password, current_user.hashed_password):
+    if not verify_password(password_change.current_password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect",
@@ -194,11 +195,11 @@ async def change_current_user_password(
         )
 
     # Update password
-    current_user.hashed_password = get_password_hash(password_change.new_password)
+    user.hashed_password = get_password_hash(password_change.new_password)
     await session.commit()
 
     # Invalidate cache
-    invalidate_user_cache(user_id=current_user.id, email=current_user.email)
+    invalidate_user_cache(user_id=user.id, email=user.email)
 
 
 @router.post("/refresh", response_model=TokenRefreshResponse, status_code=status.HTTP_200_OK)

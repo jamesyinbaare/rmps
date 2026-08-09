@@ -62,6 +62,9 @@ class DocumentResponse(DocumentBase):
     scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
     scores_extracted_at: datetime | None = None
+    scores_applied_at: datetime | None = None
+    scores_applied_count: int | None = None
+    scores_unmatched_count: int | None = None
 
     class Config:
         from_attributes = True
@@ -101,6 +104,10 @@ class ReductoQueueRequest(BaseModel):
     """Schema for queuing documents for Reducto extraction."""
 
     document_ids: list[int] = Field(..., description="List of document IDs to queue for extraction")
+    require_extracted_id: bool = Field(
+        default=True,
+        description="If True, skip documents that have no extracted_id",
+    )
 
 
 class DocumentQueueStatus(BaseModel):
@@ -115,6 +122,7 @@ class ReductoQueueResponse(BaseModel):
     """Schema for Reducto queue response."""
 
     queued_count: int
+    skipped_count: int = 0
     documents: list[DocumentQueueStatus]
     queue_length: int
 

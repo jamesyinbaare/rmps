@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -12,87 +12,73 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ReductoDocumentsDataTable } from "@/components/ReductoDocumentsDataTable";
+import { ApplyScoresDataTable, type AppliedView } from "@/components/ApplyScoresDataTable";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import {
-  getFilteredDocuments,
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  bulkUpdateScoresFromReducto,
+  downloadDocument,
   getAllExams,
+  getFilteredDocuments,
   listSchools,
   listSubjects,
-  queueReductoExtraction,
   updateScoresFromReducto,
-  getUnmatchedRecords,
-  downloadDocument,
 } from "@/lib/api";
 import type {
   Document,
   Exam,
-  School,
-  Subject,
-  ScoreDocumentFilters,
-  ExamType,
   ExamSeries,
-  UnmatchedExtractionRecord,
+  ExamType,
+  School,
+  ScoreDocumentFilters,
+  Subject,
 } from "@/types/document";
-import {
-  Loader2,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  FileText,
-  X,
-  Search,
-  AlertCircle,
-} from "lucide-react";
-import { DocumentViewer } from "@/components/DocumentViewer";
+import { Search, X } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-export default function ReductoExtractionPage() {
+export default function ApplyScoresPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<ScoreDocumentFilters>({
     page: 1,
     page_size: 50,
+    extraction_status: "success",
+    scores_applied: false,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<number>>(new Set());
-  const [queuing, setQueuing] = useState(false);
 
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
-
   const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
 
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [isPolling, setIsPolling] = useState(false);
-
-  const [updatingScores, setUpdatingScores] = useState<number | null>(null);
-
-  const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
-  const [loadingUnmatched, setLoadingUnmatched] = useState(false);
-  const [showUnmatched, setShowUnmatched] = useState(false);
-
   const [verifyEnabled, setVerifyEnabled] = useState(true);
-  const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [applyProgress, setApplyProgress] = useState<{ done: number; total: number } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [updatingScores, setUpdatingScores] = useState<number | null>(null);
+
+  const view: AppliedView = filters.scores_applied === true ? "applied" : "ready";
 
   useEffect(() => {
     async function loadFilterOptions() {
@@ -115,84 +101,26 @@ export default function ReductoExtractionPage() {
     loadFilterOptions();
   }, []);
 
-  const loadDocuments = useCallback(async (isPollingUpdate = false) => {
-    if (!isPollingUpdate) {
-      setLoading(true);
-      setError(null);
-    }
+  const loadDocuments = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const response = await getFilteredDocuments(filters);
-      const allDocs = response.items;
-
-      setDocuments((prevDocs) => {
-        if (prevDocs.length !== allDocs.length) {
-          return allDocs;
-        }
-        const prevDocsMap = new Map(prevDocs.map((d) => [d.id, d]));
-        const hasChanges = allDocs.some((newDoc) => {
-          const prevDoc = prevDocsMap.get(newDoc.id);
-          return (
-            !prevDoc ||
-            prevDoc.scores_extraction_status !== newDoc.scores_extraction_status ||
-            prevDoc.scores_extracted_at !== newDoc.scores_extracted_at
-          );
-        });
-        return hasChanges ? allDocs : prevDocs;
-      });
-
-      if (!isPollingUpdate) {
-        setTotal(response.total);
-        setTotalPages(response.total_pages);
-        setCurrentPage(response.page);
-      }
+      setDocuments(response.items);
+      setTotal(response.total);
+      setTotalPages(response.total_pages);
+      setCurrentPage(response.page);
     } catch (err) {
-      if (!isPollingUpdate) {
-        setError(err instanceof Error ? err.message : "Failed to load documents");
-      }
+      setError(err instanceof Error ? err.message : "Failed to load documents");
       console.error("Error loading documents:", err);
     } finally {
-      if (!isPollingUpdate) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   }, [filters]);
 
   useEffect(() => {
-    loadDocuments(false);
+    loadDocuments();
   }, [loadDocuments]);
-
-  useEffect(() => {
-    const hasProcessingDocs = documents.some(
-      (doc) =>
-        doc.scores_extraction_status === "processing" ||
-        doc.scores_extraction_status === "queued"
-    );
-
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-
-    if (!hasProcessingDocs || documents.length === 0) {
-      setIsPolling(false);
-      return;
-    }
-
-    setIsPolling(true);
-    const interval = setInterval(() => {
-      loadDocuments(true);
-    }, 3000);
-
-    pollingIntervalRef.current = interval;
-
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-        pollingIntervalRef.current = null;
-        setIsPolling(false);
-      }
-    };
-  }, [documents, loadDocuments]);
 
   useEffect(() => {
     const newFilters: ScoreDocumentFilters = { ...filters };
@@ -217,17 +145,6 @@ export default function ReductoExtractionPage() {
     setSelectedDocuments(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedExamId, exams]);
-
-  useEffect(() => {
-    if (exams.length > 0 && filters.exam_id) {
-      if (filters.exam_id !== selectedExamId) {
-        setSelectedExamId(filters.exam_id);
-      }
-    } else if (!filters.exam_id && selectedExamId !== undefined) {
-      setSelectedExamId(undefined);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.exam_id, exams]);
 
   const handleFilterChange = (key: keyof ScoreDocumentFilters, value: number | string | undefined) => {
     setFilters((prev) => {
@@ -266,15 +183,22 @@ export default function ReductoExtractionPage() {
       };
     });
 
+  const handleViewChange = (nextView: AppliedView) => {
+    setFilters((prev) => ({
+      ...prev,
+      page: 1,
+      extraction_status: "success",
+      scores_applied: nextView === "applied",
+    }));
+    setSelectedDocuments(new Set());
+  };
+
   const handleSelectDocument = (documentId: number) => {
     setSelectedDocuments((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(documentId)) {
-        newSet.delete(documentId);
-      } else {
-        newSet.add(documentId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
     });
   };
 
@@ -286,37 +210,69 @@ export default function ReductoExtractionPage() {
     }
   };
 
-  const handleQueueForReducto = async () => {
-    if (selectedDocuments.size === 0) {
-      setError("Please select at least one document");
-      return;
-    }
+  const selectedDocs = documents.filter((d) => selectedDocuments.has(d.id));
+  const alreadyAppliedInSelection = selectedDocs.filter((d) => d.scores_applied_at).length;
 
-    setQueuing(true);
+  const runBulkApply = async () => {
+    const ids = Array.from(selectedDocuments);
+    if (ids.length === 0) return;
+
+    setApplying(true);
+    setApplyProgress({ done: 0, total: ids.length });
     setError(null);
     try {
-      const documentIds = Array.from(selectedDocuments);
-      const response = await queueReductoExtraction(documentIds, skipWithoutExtractedId);
-      await loadDocuments(false);
-      setSelectedDocuments(new Set());
-      const parts: string[] = [];
-      if (response.queued_count > 0) {
-        parts.push(`${response.queued_count} document(s) queued for extraction`);
+      const result = await bulkUpdateScoresFromReducto(ids, verifyEnabled, (done, totalCount) => {
+        setApplyProgress({ done, total: totalCount });
+      });
+
+      const parts = [
+        `${result.updated_count} score(s) updated`,
+        `${result.documents_succeeded}/${result.documents_processed} document(s)`,
+      ];
+      if (result.skipped_count > 0) {
+        parts.push(`${result.skipped_count} skipped (verify mismatch)`);
+        const details = result.skipped_records
+          .slice(0, 3)
+          .map(
+            (r) =>
+              `${r.index_number ?? "?"}: ${r.score ?? "—"} ≠ ${r.verify ?? "—"}`
+          );
+        if (details.length > 0) {
+          const more =
+            result.skipped_records.length > details.length
+              ? ` (+${result.skipped_records.length - details.length} more)`
+              : "";
+          parts.push(details.join(", ") + more);
+        }
       }
-      if ((response.skipped_count ?? 0) > 0) {
-        parts.push(`${response.skipped_count} skipped (no extracted ID)`);
+      if (result.unmatched_count > 0) {
+        parts.push(`${result.unmatched_count} unmatched`);
       }
-      if (parts.length > 0) {
-        toast.success(parts.join(" · "));
+      if (result.documents_failed > 0) {
+        parts.push(`${result.documents_failed} failed`);
+      }
+
+      if (result.documents_failed > 0 && result.updated_count === 0) {
+        toast.error(parts.join(" · "));
       } else {
-        toast.message("No documents were queued");
+        toast.success(parts.join(" · "));
+      }
+
+      setSelectedDocuments(new Set());
+      // Stay on Ready view after apply
+      if (view !== "ready") {
+        handleViewChange("ready");
+      } else {
+        await loadDocuments();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue documents for Reducto extraction");
-      console.error("Error queueing documents:", err);
-      toast.error("Failed to queue documents for extraction");
+      const message = err instanceof Error ? err.message : "Failed to apply scores";
+      setError(message);
+      toast.error(message);
     } finally {
-      setQueuing(false);
+      setApplying(false);
+      setApplyProgress(null);
+      setConfirmOpen(false);
     }
   };
 
@@ -324,17 +280,46 @@ export default function ReductoExtractionPage() {
     setUpdatingScores(document.id);
     try {
       const response = await updateScoresFromReducto(document.id, verifyEnabled);
-      toast.success(
-        `Updated ${response.updated_count} score(s). ${response.unmatched_count} unmatched record(s) saved.`
-      );
-      if (response.unmatched_count > 0) {
-        setShowUnmatched(true);
-        loadUnmatchedRecords();
+      const parts = [`${response.updated_count} score(s) updated`];
+      if (response.skipped_count) {
+        parts.push(`${response.skipped_count} skipped (verify mismatch)`);
+        const skipped = response.skipped_records ?? [];
+        const details = skipped
+          .slice(0, 3)
+          .map(
+            (r) =>
+              `${r.index_number ?? "?"}: ${r.score ?? "—"} ≠ ${r.verify ?? "—"}`
+          );
+        if (details.length > 0) {
+          const more =
+            skipped.length > details.length
+              ? ` (+${skipped.length - details.length} more)`
+              : "";
+          parts.push(details.join(", ") + more);
+        }
       }
-      await loadDocuments(false);
+      parts.push(`${response.unmatched_count} unmatched`);
+      toast.success(parts.join(" · "));
+
+      const refreshed = await getFilteredDocuments(filters);
+      setDocuments(refreshed.items);
+      setTotal(refreshed.total);
+      setTotalPages(refreshed.total_pages);
+      setCurrentPage(refreshed.page);
+      const updated = refreshed.items.find((d) => d.id === document.id);
+      if (updated) {
+        setSelectedDocument(updated);
+      } else if (viewerOpen) {
+        // Document left Ready view after apply — close or keep last known
+        setSelectedDocument({
+          ...document,
+          scores_applied_at: response.scores_applied_at ?? new Date().toISOString(),
+          scores_applied_count: response.scores_applied_count ?? response.updated_count,
+          scores_unmatched_count: response.scores_unmatched_count ?? response.unmatched_count,
+        });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update scores");
-      console.error("Error updating scores:", err);
     } finally {
       setUpdatingScores(null);
     }
@@ -366,50 +351,23 @@ export default function ReductoExtractionPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-
       let downloadFilename = doc.file_name;
       if (doc.extracted_id) {
         const fileExtension = doc.file_name.split(".").pop();
         downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
       }
-
       a.download = downloadFilename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (downloadError) {
-      console.error("Failed to download document:", downloadError);
+    } catch {
       toast.error("Failed to download document. Please try again.");
     }
   };
 
-  const loadUnmatchedRecords = async () => {
-    setLoadingUnmatched(true);
-    try {
-      const response = await getUnmatchedRecords({ status: "pending", page: 1, page_size: 50 });
-      setUnmatchedRecords(response.items);
-    } catch (err) {
-      console.error("Error loading unmatched records:", err);
-    } finally {
-      setLoadingUnmatched(false);
-    }
-  };
-
-  const stats = {
-    total,
-    queued: documents.filter((d) => d.scores_extraction_status === "queued").length,
-    processing: documents.filter((d) => d.scores_extraction_status === "processing").length,
-    success: documents.filter((d) => d.scores_extraction_status === "success").length,
-    error: documents.filter((d) => d.scores_extraction_status === "error").length,
-    pending: documents.filter(
-      (d) => !d.scores_extraction_status || d.scores_extraction_status === "pending"
-    ).length,
-  };
-
   const getActiveFilterChips = () => {
     const chips: Array<{ label: string; onRemove: () => void }> = [];
-
     if (selectedExamId) {
       const exam = exams.find((e) => e.id === selectedExamId);
       if (exam) {
@@ -424,14 +382,14 @@ export default function ReductoExtractionPage() {
     if (filters.school_id) {
       const school = schools.find((s) => s.id === filters.school_id);
       chips.push({
-        label: `School: ${school ? `${school.code} - ${school.name}` : `ID: ${filters.school_id}`}`,
+        label: `School: ${school ? `${school.code} - ${school.name}` : filters.school_id}`,
         onRemove: () => handleFilterChange("school_id", undefined),
       });
     }
     if (filters.subject_id) {
       const subject = subjects.find((s) => s.id === filters.subject_id);
       chips.push({
-        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : `ID: ${filters.subject_id}`}`,
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : filters.subject_id}`,
         onRemove: () => handleFilterChange("subject_id", undefined),
       });
     }
@@ -441,130 +399,41 @@ export default function ReductoExtractionPage() {
         onRemove: () => handleFilterChange("test_type", undefined),
       });
     }
-    if (filters.extraction_status) {
-      chips.push({
-        label: `Status: ${filters.extraction_status}`,
-        onRemove: () => handleStatusFilter(undefined),
-      });
-    }
-
     return chips;
-  };
-
-  const handleStatusFilter = (status: string | undefined) => {
-    const newFilters = { ...filters };
-    if (status) {
-      newFilters.extraction_status = status as
-        | "queued"
-        | "processing"
-        | "success"
-        | "error"
-        | "pending";
-    } else {
-      delete newFilters.extraction_status;
-    }
-    newFilters.page = 1;
-    setFilters(newFilters);
-    setSelectedDocuments(new Set());
-  };
-
-  const handleFetchDocuments = () => {
-    loadDocuments(false);
   };
 
   const handleClearFilters = () => {
     setSelectedExamId(undefined);
-    setFilters({ page: 1, page_size: 50 });
+    setFilters({
+      page: 1,
+      page_size: filters.page_size || 50,
+      extraction_status: "success",
+      scores_applied: view === "applied",
+    });
     setSelectedDocuments(new Set());
   };
 
   const hasActiveFilters =
-    selectedExamId ||
-    filters.school_id ||
-    filters.subject_id ||
-    filters.test_type ||
-    filters.extraction_status;
+    !!selectedExamId || !!filters.school_id || !!filters.subject_id || !!filters.test_type;
 
   return (
     <DashboardLayout>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TopBar title="Reducto Extraction" />
+        <TopBar title="Apply Scores" />
 
         <div className="border-b border-border bg-background px-4 py-2">
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
-              Queue and monitor Reducto extraction. When documents succeed, apply scores on the Apply
-              Scores page.
+              Select extracted documents and apply scores into candidate records.
             </p>
             <Button variant="outline" size="sm" className="h-8" asChild>
-              <Link href="/scores/data-entry/apply-scores">Apply Scores</Link>
+              <Link href="/scores/data-entry/reducto-extraction">Reducto Extraction</Link>
             </Button>
           </div>
         </div>
 
-        {!loading && documents.length > 0 && (
-          <div className="border-b border-border bg-background px-4 py-2">
-            <div className="mx-auto flex max-w-[2000px] flex-wrap items-center gap-4">
-              <button
-                type="button"
-                className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => handleStatusFilter(undefined)}
-              >
-                <FileText className="h-4 w-4" />
-                <span className="font-medium">Total:</span>
-                <span className="font-bold text-foreground">{stats.total}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-blue-600"
-                onClick={() => handleStatusFilter("queued")}
-              >
-                <Clock className="h-4 w-4" />
-                <span className="font-medium">Queued:</span>
-                <span className="font-bold text-blue-600">{stats.queued}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-blue-600"
-                onClick={() => handleStatusFilter("processing")}
-              >
-                <Loader2 className={`h-4 w-4 ${stats.processing > 0 ? "animate-spin" : ""}`} />
-                <span className="font-medium">Processing:</span>
-                <span className="font-bold text-blue-600">{stats.processing}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-green-600"
-                onClick={() => handleStatusFilter("success")}
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                <span className="font-medium">Success:</span>
-                <span className="font-bold text-green-600">{stats.success}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-red-600"
-                onClick={() => handleStatusFilter("error")}
-              >
-                <XCircle className="h-4 w-4" />
-                <span className="font-medium">Errors:</span>
-                <span className="font-bold text-red-600">{stats.error}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-yellow-600"
-                onClick={() => handleStatusFilter("pending")}
-              >
-                <AlertCircle className="h-4 w-4" />
-                <span className="font-medium">Pending:</span>
-                <span className="font-bold text-yellow-600">{stats.pending}</span>
-              </button>
-            </div>
-          </div>
-        )}
-
         <div className="border-b border-border bg-background px-4 py-3">
-          <div className="mx-auto max-w-[2000px]">
+          <div className="mx-auto max-w-[2000px] space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <div className="w-[280px]">
                 <SearchableSelect
@@ -573,7 +442,7 @@ export default function ReductoExtractionPage() {
                   onValueChange={handleExamChange}
                   placeholder="Examination"
                   disabled={loadingFilters}
-                  allowAll={true}
+                  allowAll
                   allLabel="All examinations"
                   searchPlaceholder="Search examinations..."
                   emptyMessage="No examinations found"
@@ -599,7 +468,7 @@ export default function ReductoExtractionPage() {
                   }}
                   placeholder="School"
                   disabled={loadingFilters}
-                  allowAll={true}
+                  allowAll
                   allLabel="All schools"
                   searchPlaceholder="Search schools..."
                   emptyMessage="No schools found"
@@ -625,7 +494,7 @@ export default function ReductoExtractionPage() {
                   }}
                   placeholder="Subject"
                   disabled={loadingFilters}
-                  allowAll={true}
+                  allowAll
                   allLabel="All subjects"
                   searchPlaceholder="Search subjects..."
                   emptyMessage="No subjects found"
@@ -650,7 +519,7 @@ export default function ReductoExtractionPage() {
               </Select>
 
               <Button
-                onClick={handleFetchDocuments}
+                onClick={loadDocuments}
                 disabled={loading}
                 size="sm"
                 className="h-8 gap-2"
@@ -661,13 +530,13 @@ export default function ReductoExtractionPage() {
 
               {hasActiveFilters && (
                 <Button variant="outline" size="sm" onClick={handleClearFilters} className="h-8">
-                  Clear All
+                  Reset filters
                 </Button>
               )}
             </div>
 
             {getActiveFilterChips().length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">Active:</span>
                 {getActiveFilterChips().map((chip, index) => (
                   <Badge
@@ -682,87 +551,112 @@ export default function ReductoExtractionPage() {
                 ))}
               </div>
             )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleViewChange("ready")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    view === "ready"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Ready to apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleViewChange("applied")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    view === "applied"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Applied
+                </button>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{total.toLocaleString()}</span>{" "}
+                {view === "ready" ? "ready" : "applied"}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="mx-4 mb-4 mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
-          <ReductoDocumentsDataTable
+          <ApplyScoresDataTable
             documents={documents}
             loading={loading && loadingFilters}
             error={error}
             selectedDocuments={selectedDocuments}
             onSelectDocument={handleSelectDocument}
             onSelectAll={handleSelectAll}
+            onClearSelection={() => setSelectedDocuments(new Set())}
             onRowClick={handleViewDocument}
-            statusFilter={filters.extraction_status}
-            onStatusFilterChange={handleStatusFilter}
+            view={view}
             pageSize={filters.page_size || 50}
             onPageSizeChange={(size) =>
               setFilters((prev) => ({ ...prev, page_size: size, page: 1 }))
             }
             verifyEnabled={verifyEnabled}
             onVerifyEnabledChange={setVerifyEnabled}
-            skipWithoutExtractedId={skipWithoutExtractedId}
-            onSkipWithoutExtractedIdChange={setSkipWithoutExtractedId}
-            queuing={queuing}
-            isPolling={isPolling}
-            onQueue={handleQueueForReducto}
+            applying={applying}
+            applyProgress={applyProgress}
+            onApplySelected={() => setConfirmOpen(true)}
             currentPage={currentPage}
             totalPages={totalPages}
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
           />
         </div>
-
-        {showUnmatched && (
-          <Card className="mx-4 mb-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Unmatched Records</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => setShowUnmatched(false)}>
-                  Hide
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loadingUnmatched ? (
-                <div className="flex h-32 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin" />
-                </div>
-              ) : unmatchedRecords.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No unmatched records found</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index Number</TableHead>
-                      <TableHead>Candidate Name</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {unmatchedRecords.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell>{record.index_number || "-"}</TableCell>
-                        <TableCell>{record.candidate_name || "-"}</TableCell>
-                        <TableCell>{record.score || "-"}</TableCell>
-                        <TableCell>
-                          {record.document_extracted_id || `Doc #${record.document_id}`}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{record.status}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        )}
       </div>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Apply scores to {selectedDocuments.size} document
+              {selectedDocuments.size === 1 ? "" : "s"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <ul className="list-disc space-y-1 pl-4">
+                  <li>
+                    {verifyEnabled
+                      ? "Score and verify fields must match before a score is written."
+                      : "Verify is off — scores will be written without comparing to the verify field."}
+                  </li>
+                  {alreadyAppliedInSelection > 0 && (
+                    <li className="text-amber-700">
+                      {alreadyAppliedInSelection} selected document
+                      {alreadyAppliedInSelection === 1 ? " was" : "s were"} already applied and will
+                      be re-applied.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={applying}>Cancel</AlertDialogCancel>
+            <Button
+              onClick={runBulkApply}
+              disabled={applying}
+              variant={verifyEnabled ? "default" : "destructive"}
+            >
+              {applying
+                ? "Applying..."
+                : verifyEnabled
+                  ? "Apply with verify"
+                  : "Apply without verify"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {selectedDocument && (
         <DocumentViewer

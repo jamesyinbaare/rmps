@@ -1,18 +1,28 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, CheckCircle2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Badge } from "./ui/badge";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "./ui/dialog";
-import type { Document, Exam, School, Subject } from "@/types/document";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./ui/table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import type { Document, Exam, School, Subject, ReductoDataResponse } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
-import { API_BASE_URL, downloadDocument, getExam, listSchools, listSubjects, updateDocumentId } from "@/lib/api";
+import { API_BASE_URL, downloadDocument, getExam, getReductoData, listSchools, listSubjects, updateDocumentId } from "@/lib/api";
 import { toast } from "sonner";
 
 interface DocumentViewerProps {
@@ -25,6 +35,71 @@ interface DocumentViewerProps {
   onDownload?: (document: Document) => void;
   onUpdateId?: (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => Promise<void>;
   onDelete?: (documentId: number) => Promise<void>;
+  /** Show Preview Data toggle that opens extraction panel inside this viewer */
+  enableReductoPreview?: boolean;
+  onUpdateScores?: (document: Document) => void;
+  updatingScores?: boolean;
+}
+
+function parseCandidatesFromData(data: Record<string, any>): any[] {
+  if (!data || typeof data !== "object") {
+    return [];
+  }
+
+  let candidates: any[] = [];
+
+  const extractCandidatesFromRows = (rows: any[]): any[] => {
+    const result: any[] = [];
+    if (!Array.isArray(rows)) {
+      return result;
+    }
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      if (row && typeof row === "object") {
+        result.push({
+          index_number: row.index_number || row.indexNumber || null,
+          candidate_name: row.candidate_name || row.candidateName || row.name || null,
+          score: row.raw_score ?? row.rawScore ?? row.score ?? null,
+          attend: row.attend || null,
+          verify: row.verify ?? null,
+          sn: row.sn || row.serial_number || row.serialNumber || row.row_number || row.rowNumber || idx + 1,
+        });
+      }
+    }
+    return result;
+  };
+
+  if (Array.isArray(data.candidates)) {
+    candidates = data.candidates;
+    if (candidates.length > 0) return candidates;
+  }
+
+  if (candidates.length === 0 && Array.isArray(data.tables)) {
+    for (const table of data.tables) {
+      if (table && typeof table === "object" && Array.isArray(table.rows)) {
+        candidates.push(...extractCandidatesFromRows(table.rows));
+      }
+    }
+    if (candidates.length > 0) return candidates;
+  }
+
+  if (candidates.length === 0 && data.data && typeof data.data === "object") {
+    const nestedData = data.data;
+    if (Array.isArray(nestedData.candidates)) {
+      candidates = nestedData.candidates;
+      if (candidates.length > 0) return candidates;
+    }
+    if (candidates.length === 0 && Array.isArray(nestedData.tables)) {
+      for (const table of nestedData.tables) {
+        if (table && typeof table === "object" && Array.isArray(table.rows)) {
+          candidates.push(...extractCandidatesFromRows(table.rows));
+        }
+      }
+      if (candidates.length > 0) return candidates;
+    }
+  }
+
+  return candidates;
 }
 
 export function DocumentViewer({
@@ -37,6 +112,9 @@ export function DocumentViewer({
   onDownload,
   onUpdateId,
   onDelete,
+  enableReductoPreview,
+  onUpdateScores,
+  updatingScores,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -48,6 +126,10 @@ export function DocumentViewer({
   const [idError, setIdError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [showExtractionPanel, setShowExtractionPanel] = useState(false);
+  const [loadingExtraction, setLoadingExtraction] = useState(false);
+  const [extractionData, setExtractionData] = useState<ReductoDataResponse | null>(null);
+  const [extractionViewMode, setExtractionViewMode] = useState<"table" | "json">("table");
 
   // Guard against undefined/null document
   if (!document) {
@@ -58,6 +140,11 @@ export function DocumentViewer({
   const displayText = document.extracted_id || document.file_name;
   // Show manual ID input only if there's no extracted_id (extraction failed or not yet extracted)
   const needsManualId = !document.extracted_id;
+  const canPreviewExtraction =
+    enableReductoPreview &&
+    (document.scores_extraction_status === "success" ||
+      document.scores_extraction_status === "processing") &&
+    !!document.scores_extraction_data;
 
   const getExtractionMethodLabel = (method: string | null): string => {
     if (!method) return "Unknown";
@@ -123,13 +210,65 @@ export function DocumentViewer({
     loadValidationData();
   }, []);
 
-  // Reset manual ID when document changes
+  // Reset per-document UI when the document changes (keep Preview Data open across next/prev)
   useEffect(() => {
     setManualId(document.extracted_id || "");
     setImageError(false);
     setImageLoading(true);
     setIdError(null);
+    setExtractionData(null);
   }, [document.id, document.extracted_id]);
+
+  // Close preview only when the dialog itself closes
+  useEffect(() => {
+    if (open === false) {
+      setShowExtractionPanel(false);
+      setExtractionData(null);
+      setExtractionViewMode("table");
+    }
+  }, [open]);
+
+  // Reload extraction data when navigating while Preview Data is open
+  useEffect(() => {
+    if (!showExtractionPanel || open === false) {
+      return;
+    }
+
+    const hasExtractionData = !!document.scores_extraction_data;
+    if (!hasExtractionData) {
+      setExtractionData(null);
+      setLoadingExtraction(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingExtraction(true);
+    setExtractionData(null);
+
+    void getReductoData(document.id)
+      .then((data) => {
+        if (!cancelled) {
+          setExtractionData(data);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const errorMessage =
+            err instanceof Error ? err.message : "Failed to load preview data";
+          toast.error(errorMessage);
+          console.error("Error loading preview:", err);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingExtraction(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [document.id, document.scores_extraction_data, showExtractionPanel, open]);
 
   // Fetch exam, school, and subject names
   useEffect(() => {
@@ -386,6 +525,20 @@ export function DocumentViewer({
     }
   };
 
+  const handleToggleExtractionPanel = () => {
+    if (showExtractionPanel) {
+      setShowExtractionPanel(false);
+      return;
+    }
+
+    if (!document.scores_extraction_data) {
+      toast.error("No extraction data available for this document");
+      return;
+    }
+
+    setShowExtractionPanel(true);
+  };
+
   const handlePrevious = () => {
     if (documents && onNavigate && currentIndex !== undefined && currentIndex > 0 && currentIndex < documents.length) {
       onNavigate(currentIndex - 1);
@@ -441,6 +594,61 @@ export function DocumentViewer({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {document.scores_applied_at && (
+              <Badge className="border-transparent bg-green-600 text-white">
+                Applied
+                {document.scores_applied_count != null ? ` · ${document.scores_applied_count}` : ""}
+              </Badge>
+            )}
+            {(canPreviewExtraction || showExtractionPanel) && (
+              <Button
+                variant={showExtractionPanel ? "secondary" : "outline"}
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={handleToggleExtractionPanel}
+                disabled={loadingExtraction || (!showExtractionPanel && !canPreviewExtraction)}
+              >
+                {loadingExtraction ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading...
+                  </>
+                ) : showExtractionPanel ? (
+                  <>
+                    <PanelRightClose className="h-4 w-4" />
+                    Hide Data
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-4 w-4" />
+                    Preview Data
+                  </>
+                )}
+              </Button>
+            )}
+            {onUpdateScores &&
+              document.scores_extraction_status === "success" &&
+              !showExtractionPanel && (
+              <Button
+                variant={document.scores_applied_at ? "outline" : "default"}
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => onUpdateScores(document)}
+                disabled={updatingScores}
+              >
+                {updatingScores ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    {document.scores_applied_at ? "Re-apply Scores" : "Apply Scores"}
+                  </>
+                )}
+              </Button>
+            )}
             {onDelete && (
               <Button
                 variant="outline"
@@ -527,73 +735,235 @@ export function DocumentViewer({
         )}
 
         {/* Document Content Area */}
-        <div className="flex-1 overflow-auto bg-muted/30 p-6 relative">
-          {/* Navigation Buttons */}
-          {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
-            <>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={handlePrevious}
-                disabled={currentIndex === 0}
-                className="absolute left-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={handleNext}
-                disabled={currentIndex === documents.length - 1}
-                className="absolute right-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            </>
-          )}
+        <div className={`flex-1 min-h-0 overflow-hidden bg-muted/30 relative flex ${showExtractionPanel ? "flex-row" : "flex-col"}`}>
+          <div className={`relative overflow-auto p-6 ${showExtractionPanel ? "flex-1 border-r border-border" : "flex-1"}`}>
+            {/* Navigation Buttons */}
+            {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handlePrevious}
+                  disabled={currentIndex === 0}
+                  className="absolute left-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleNext}
+                  disabled={currentIndex === documents.length - 1}
+                  className="absolute right-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </Button>
+              </>
+            )}
 
-          {/* Document Counter */}
-          {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
-              <div className="px-3 py-1 rounded-full bg-background/90 border border-border text-xs text-muted-foreground">
-                {currentIndex + 1} of {documents.length}
+            {/* Document Counter */}
+            {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+                <div className="px-3 py-1 rounded-full bg-background/90 border border-border text-xs text-muted-foreground">
+                  {currentIndex + 1} of {documents.length}
+                </div>
+              </div>
+            )}
+
+            <div className="w-full h-full flex items-center justify-center min-h-0">
+              {imageLoading && !imageError && document.mime_type.startsWith("image/") && (
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
+              )}
+              {!imageError && document.mime_type.startsWith("image/") ? (
+                <img
+                  src={previewUrl}
+                  alt={displayText}
+                  className="w-auto h-auto object-contain"
+                  style={{
+                    maxWidth: 'calc(100% - 3rem)',
+                    maxHeight: 'calc(100% - 3rem)'
+                  }}
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => {
+                    setImageError(true);
+                    setImageLoading(false);
+                  }}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center text-center p-8">
+                  <Icon className="h-16 w-16 text-muted-foreground mb-4" />
+                  <p className="text-sm text-muted-foreground">
+                    Preview not available for this file type
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {fileType} • {formatFileSize(document.file_size)}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {showExtractionPanel && (
+            <div className="flex w-full max-w-xl flex-col overflow-hidden bg-background sm:w-1/2">
+              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-medium">Extracted Data</h3>
+                  <p className="truncate text-xs text-muted-foreground">{document.file_name}</p>
+                  {document.scores_applied_at && (
+                    <p className="mt-1 flex items-center gap-1 text-xs text-green-700">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Applied {new Date(document.scores_applied_at).toLocaleString()}
+                      {document.scores_applied_count != null
+                        ? ` · ${document.scores_applied_count} scores`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+                {onUpdateScores && document.scores_extraction_status === "success" && (
+                  <Button
+                    variant={document.scores_applied_at ? "outline" : "default"}
+                    size="sm"
+                    className="h-8 shrink-0 gap-1.5"
+                    onClick={() => onUpdateScores(document)}
+                    disabled={updatingScores}
+                  >
+                    {updatingScores ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Applying...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4" />
+                        {document.scores_applied_at ? "Re-apply" : "Apply Scores"}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                {loadingExtraction ? (
+                  <div className="flex h-48 items-center justify-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : extractionData ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="font-medium">Status:</span> {extractionData.status}
+                      </div>
+                      <div>
+                        <span className="font-medium">Confidence:</span>{" "}
+                        {extractionData.confidence
+                          ? `${(extractionData.confidence * 100).toFixed(1)}%`
+                          : "N/A"}
+                      </div>
+                      {extractionData.extracted_at && (
+                        <div className="col-span-2">
+                          <span className="font-medium">Extracted At:</span>{" "}
+                          {new Date(extractionData.extracted_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+
+                    <Tabs
+                      value={extractionViewMode}
+                      onValueChange={(value) => setExtractionViewMode(value as "table" | "json")}
+                    >
+                      <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="table">Table View</TabsTrigger>
+                        <TabsTrigger value="json">JSON / Raw</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="table" className="mt-4">
+                        {(() => {
+                          const candidates = parseCandidatesFromData(extractionData.data);
+                          if (candidates.length > 0) {
+                            return (
+                              <div>
+                                <h4 className="mb-2 text-sm font-medium">
+                                  Candidates ({candidates.length})
+                                </h4>
+                                <div className="max-h-[calc(95vh-22rem)] overflow-auto rounded-lg border">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>SN</TableHead>
+                                        <TableHead>Index Number</TableHead>
+                                        <TableHead>Name</TableHead>
+                                        <TableHead>Attendance</TableHead>
+                                        <TableHead>Score</TableHead>
+                                        <TableHead>Verify</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {candidates.map((candidate: any, idx: number) => (
+                                        <TableRow key={idx}>
+                                          <TableCell>{candidate.sn || idx + 1}</TableCell>
+                                          <TableCell>{candidate.index_number || "-"}</TableCell>
+                                          <TableCell>{candidate.candidate_name || "-"}</TableCell>
+                                          <TableCell>
+                                            {candidate.attend
+                                              ? typeof candidate.attend === "string" &&
+                                                (candidate.attend === "A" || candidate.attend === "AA")
+                                                ? candidate.attend
+                                                : "✓"
+                                              : "-"}
+                                          </TableCell>
+                                          <TableCell>
+                                            {candidate.score === null || candidate.score === undefined || candidate.score === ""
+                                              ? "-"
+                                              : String(candidate.score)}
+                                          </TableCell>
+                                          <TableCell>
+                                            {candidate.verify === null ||
+                                            candidate.verify === undefined ||
+                                            candidate.verify === ""
+                                              ? "-"
+                                              : typeof candidate.verify === "string" &&
+                                                  (candidate.verify === "A" || candidate.verify === "AA")
+                                                ? candidate.verify
+                                                : candidate.verify === true ||
+                                                    candidate.verify === "✓" ||
+                                                    candidate.verify === "✔" ||
+                                                    candidate.verify === "√"
+                                                  ? "✓"
+                                                  : String(candidate.verify)}
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="text-sm text-muted-foreground">
+                              <p>No candidate data available in table format.</p>
+                              <p className="mt-2 text-xs">
+                                Try the JSON view for the raw extraction payload.
+                              </p>
+                            </div>
+                          );
+                        })()}
+                      </TabsContent>
+
+                      <TabsContent value="json" className="mt-4">
+                        <pre className="max-h-[calc(95vh-22rem)] overflow-auto rounded bg-muted p-3 text-xs">
+                          {JSON.stringify(extractionData.data, null, 2)}
+                        </pre>
+                      </TabsContent>
+                    </Tabs>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No preview data available</p>
+                )}
               </div>
             </div>
           )}
-
-          <div className="w-full h-full flex items-center justify-center min-h-0">
-            {imageLoading && !imageError && document.mime_type.startsWith("image/") && (
-              <div className="flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-              </div>
-            )}
-            {!imageError && document.mime_type.startsWith("image/") ? (
-              <img
-                src={previewUrl}
-                alt={displayText}
-                className="w-auto h-auto object-contain"
-                style={{
-                  maxWidth: 'calc(100% - 3rem)',
-                  maxHeight: 'calc(100% - 3rem)'
-                }}
-                onLoad={() => setImageLoading(false)}
-                onError={() => {
-                  setImageError(true);
-                  setImageLoading(false);
-                }}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center text-center p-8">
-                <Icon className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-sm text-muted-foreground">
-                  Preview not available for this file type
-                </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {fileType} • {formatFileSize(document.file_size)}
-                </p>
-              </div>
-            )}
-          </div>
         </div>
       </DialogContent>
     </Dialog>

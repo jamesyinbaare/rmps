@@ -2010,6 +2010,9 @@ export async function getFilteredDocuments(
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_status) params.append("extraction_status", filters.extraction_status);
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.scores_applied !== undefined) {
+    params.append("scores_applied", filters.scores_applied ? "true" : "false");
+  }
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -2057,14 +2060,18 @@ export async function batchUpdateScores(
 // Reducto Queue API Functions
 
 export async function queueReductoExtraction(
-  documentIds: number[]
+  documentIds: number[],
+  requireExtractedId: boolean = true
 ): Promise<ReductoQueueResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/queue-reducto-extraction`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ document_ids: documentIds }),
+    body: JSON.stringify({
+      document_ids: documentIds,
+      require_extracted_id: requireExtractedId,
+    }),
   });
   return handleResponse<ReductoQueueResponse>(response);
 }
@@ -2081,16 +2088,75 @@ export async function getReductoData(documentId: number): Promise<ReductoDataRes
 
 export async function updateScoresFromReducto(
   documentId: number,
-  verify: boolean = false
+  verify: boolean = true
 ): Promise<UpdateScoresFromReductoResponse> {
+  // Always send an explicit boolean — API defaults to true when omitted, but we never omit.
+  const verifyFlag = verify !== false;
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/update-from-reducto`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ verify }),
+    body: JSON.stringify({ verify: verifyFlag }),
   });
   return handleResponse<UpdateScoresFromReductoResponse>(response);
+}
+
+export interface BulkUpdateScoresFromReductoResult {
+  documents_processed: number;
+  documents_succeeded: number;
+  documents_failed: number;
+  updated_count: number;
+  unmatched_count: number;
+  skipped_count: number;
+  skipped_records: Array<{
+    index_number: string | null;
+    candidate_name: string | null;
+    score: string | number | null;
+    verify: string | number | null;
+  }>;
+  errors: Array<{ document_id: number; error: string }>;
+}
+
+export async function bulkUpdateScoresFromReducto(
+  documentIds: number[],
+  verify: boolean = true,
+  onProgress?: (done: number, total: number) => void
+): Promise<BulkUpdateScoresFromReductoResult> {
+  const result: BulkUpdateScoresFromReductoResult = {
+    documents_processed: 0,
+    documents_succeeded: 0,
+    documents_failed: 0,
+    updated_count: 0,
+    unmatched_count: 0,
+    skipped_count: 0,
+    skipped_records: [],
+    errors: [],
+  };
+
+  for (let i = 0; i < documentIds.length; i++) {
+    const documentId = documentIds[i];
+    try {
+      const response = await updateScoresFromReducto(documentId, verify);
+      result.documents_succeeded += 1;
+      result.updated_count += response.updated_count;
+      result.unmatched_count += response.unmatched_count;
+      result.skipped_count += response.skipped_count ?? 0;
+      if (response.skipped_records?.length) {
+        result.skipped_records.push(...response.skipped_records);
+      }
+    } catch (err) {
+      result.documents_failed += 1;
+      result.errors.push({
+        document_id: documentId,
+        error: err instanceof Error ? err.message : "Failed to apply scores",
+      });
+    }
+    result.documents_processed += 1;
+    onProgress?.(result.documents_processed, documentIds.length);
+  }
+
+  return result;
 }
 
 export interface UnmatchedRecordsFilters {

@@ -77,37 +77,92 @@ export function DashboardLayout({
     : undefined;
 
   return (
-    <div className="h-svh overflow-hidden">
-      <AppLayout variant="stacked">
-        <AppHeader variant="plain">
-          <AppHeaderBranding
-            logo={<Files size={22} strokeWidth={1.5} aria-hidden />}
-            title="SEMS"
-            subtitle={title}
-          />
-          <AppHeaderActions>
-            <ProfilePopover
-              variant="avatar"
-              loading={loading}
-              user={profileUser}
-              items={[
-                {
-                  icon: <User size={20} strokeWidth={1.5} aria-hidden />,
-                  label: "Account",
-                  onClick: () => router.push("/account"),
-                },
-              ]}
-              onSignOut={() => {
-                void handleSignOut();
-              }}
+    <>
+      <style>{`
+        .sems-dashboard-shell .clet-app-layout__main {
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .sems-table-scroll {
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          scrollbar-width: thin;
+          scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+        }
+
+        .sems-table-scroll:hover {
+          scrollbar-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent) transparent;
+        }
+
+        .sems-table-scroll::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+
+        .sems-table-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .sems-table-scroll::-webkit-scrollbar-thumb {
+          background: color-mix(in oklab, var(--muted-foreground) 28%, transparent);
+          border: 2px solid transparent;
+          border-radius: 999px;
+          background-clip: content-box;
+        }
+
+        .sems-table-scroll:hover::-webkit-scrollbar-thumb {
+          background: color-mix(in oklab, var(--muted-foreground) 48%, transparent);
+          border: 2px solid transparent;
+          background-clip: content-box;
+        }
+
+        .sems-table-scroll::-webkit-scrollbar-thumb:active {
+          background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+          border: 2px solid transparent;
+          background-clip: content-box;
+        }
+
+        .sems-table-scroll::-webkit-scrollbar-corner {
+          background: transparent;
+        }
+      `}</style>
+      <div className="sems-dashboard-shell h-svh overflow-hidden">
+        <AppLayout variant="stacked">
+          <AppHeader variant="plain">
+            <AppHeaderBranding
+              logo={<Files size={22} strokeWidth={1.5} aria-hidden />}
+              title="SEMS"
+              subtitle={title}
             />
-          </AppHeaderActions>
-        </AppHeader>
-        <AppSidebar>
-          <SemsSidebar user={user} loading={loading} />
-        </AppSidebar>
-        <AppBody>{children}</AppBody>
-      </AppLayout>
-    </div>
+            <AppHeaderActions>
+              <ProfilePopover
+                variant="avatar"
+                loading={loading}
+                user={profileUser}
+                items={[
+                  {
+                    icon: <User size={20} strokeWidth={1.5} aria-hidden />,
+                    label: "Account",
+                    onClick: () => router.push("/account"),
+                  },
+                ]}
+                onSignOut={() => {
+                  void handleSignOut();
+                }}
+              />
+            </AppHeaderActions>
+          </AppHeader>
+          <AppSidebar>
+            <SemsSidebar user={user} loading={loading} />
+          </AppSidebar>
+          <AppBody className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+            {children}
+          </AppBody>
+        </AppLayout>
+      </div>
+    </>
   );
 }

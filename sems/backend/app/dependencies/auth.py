@@ -47,7 +47,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Try to get user from cache first
+    # Try cache first (returns a transient User built from a plain snapshot)
     user = get_cached_user(user_id)
     if user is not None:
         return user
@@ -64,7 +64,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Cache the user for future requests
+    # Snapshot column values before the request session closes
     set_cached_user(user)
 
     return user
@@ -74,6 +74,7 @@ async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     """Ensure the current user is active."""
+    # Safe: cached users are transient snapshots with loaded column values
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
