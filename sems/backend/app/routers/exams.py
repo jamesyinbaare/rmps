@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -58,6 +58,8 @@ from app.schemas.exam import (
     ScoreInterpretationProgress,
     ScoreSheetGenerationResponse,
     ScoringDataEntryProgress,
+    SerializationJobCreateResponse,
+    SerializationJobStatusResponse,
     SerializationProgress,
     SerializationResponse,
     SheetIdComparisonResponse,
@@ -74,7 +76,10 @@ from app.services.exam_subject_upload import (
 from app.services.scannables_export import generate_core_subjects_export, generate_electives_export
 from app.services.score_sheet_generator import generate_score_sheets
 from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
-from app.services.serialization import serialize_exam
+from app.services.serialization import (
+    count_schools_for_serialization,
+    process_serialization_job,
+)
 from app.services.template_generator import generate_exam_subject_template
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
@@ -925,10 +930,14 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
         status=registration_status,
     )
 
-    # 2. Serialization - Query ProcessTracking
+    # 2. Serialization - Query ProcessTracking (completed jobs only)
     serialization_tracking_stmt = (
         select(ProcessTracking)
-        .where(ProcessTracking.exam_id == exam_id, ProcessTracking.process_type == ProcessType.SERIALIZATION)
+        .where(
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.SERIALIZATION,
+            ProcessTracking.status == ProcessStatus.COMPLETED,
+        )
         .order_by(ProcessTracking.completed_at.desc())
     )
     serialization_tracking_result = await session.execute(serialization_tracking_stmt)
@@ -1548,43 +1557,124 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
     )
 
 
-@router.post("/{exam_id}/serialize", response_model=SerializationResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{exam_id}/serialize",
+    response_model=SerializationJobCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def serialize_exam_candidates(
     exam_id: int,
     session: DBSessionDep,
+    background_tasks: BackgroundTasks,
     school_id: int | None = Query(None, description="Optional school ID to serialize only that school"),
-    subject_codes: list[str] | None = Query(None, description="List of subject codes to serialize. Subjects not in this list will be assigned default series 1. If not provided, uses exam.subjects_to_serialize if available."),
-) -> SerializationResponse:
+    subject_codes: list[str] | None = Query(
+        None,
+        description=(
+            "List of subject codes to serialize. Subjects not in this list will be assigned "
+            "default series 1. If not provided, uses exam.subjects_to_serialize if available."
+        ),
+    ),
+) -> SerializationJobCreateResponse:
     """
-    Serialize candidates for an exam by assigning series numbers in round-robin fashion.
+    Start async candidate serialization for an exam.
 
-    For subjects specified in subject_codes:
-    - Candidates are sorted by index_number
-    - Series numbers 1 to number_of_series are assigned in round-robin fashion
-    - The assigned series is stored in SubjectRegistration.series
-
-    For subjects NOT in subject_codes:
-    - All subject registrations are assigned a default series of 1
-
-    This operation is idempotent - running it multiple times will overwrite existing series assignments.
+    Returns a job id immediately; poll GET /{exam_id}/serialize/{job_id} for progress.
     """
-    try:
-        # If subject_codes not provided, try to use exam.subjects_to_serialize
-        codes_to_use = subject_codes
-        if codes_to_use is None:
-            exam_stmt = select(Exam).where(Exam.id == exam_id)
-            exam_result = await session.execute(exam_stmt)
-            exam = exam_result.scalar_one_or_none()
-            if exam and exam.subjects_to_serialize:
-                codes_to_use = exam.subjects_to_serialize
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-        result = await serialize_exam(session, exam_id, school_id, codes_to_use)
-        return SerializationResponse.model_validate(result)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Serialization failed: {str(e)}")
+    if school_id is not None:
+        school_stmt = select(School).where(School.id == school_id)
+        school_result = await session.execute(school_stmt)
+        if not school_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    codes_to_use = subject_codes
+    if codes_to_use is None and exam.subjects_to_serialize:
+        codes_to_use = exam.subjects_to_serialize
+    normalized_codes = [str(c).upper().strip() for c in (codes_to_use or []) if c]
+
+    total_schools = await count_schools_for_serialization(session, exam_id, school_id)
+
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.SERIALIZATION,
+        school_id=school_id,
+        subject_id=None,
+        status=ProcessStatus.PENDING,
+        process_metadata={
+            "subject_codes": normalized_codes,
+            "school_id": school_id,
+            "total_schools": total_schools,
+            "processed_schools": 0,
+            "total_candidates_count": 0,
+            "total_schools_count": 0,
+            "subjects_serialized_count": 0,
+            "subjects_defaulted_count": 0,
+            "schools_processed": [],
+            "subjects_processed": [],
+            "subjects_defaulted": [],
+            "message": None,
+        },
+    )
+    session.add(tracking)
+    await session.commit()
+    await session.refresh(tracking)
+
+    background_tasks.add_task(process_serialization_job, tracking.id)
+
+    return SerializationJobCreateResponse(
+        job_id=tracking.id,
+        status=tracking.status.value,
+        total_schools=total_schools,
+        exam_id=exam_id,
+    )
+
+
+@router.get(
+    "/{exam_id}/serialize/{job_id}",
+    response_model=SerializationJobStatusResponse,
+)
+async def get_serialization_job_status(
+    exam_id: int,
+    job_id: int,
+    session: DBSessionDep,
+) -> SerializationJobStatusResponse:
+    """Poll status/progress for an exam serialization job."""
+    tracking_result = await session.execute(
+        select(ProcessTracking).where(
+            ProcessTracking.id == job_id,
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.SERIALIZATION,
+        )
+    )
+    tracking = tracking_result.scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serialization job not found")
+
+    metadata = tracking.process_metadata or {}
+    return SerializationJobStatusResponse(
+        job_id=tracking.id,
+        exam_id=exam_id,
+        status=tracking.status.value,
+        total_schools=int(metadata.get("total_schools") or 0),
+        processed_schools=int(metadata.get("processed_schools") or 0),
+        school_id=metadata.get("school_id"),
+        total_candidates_count=int(metadata.get("total_candidates_count") or 0),
+        total_schools_count=int(metadata.get("total_schools_count") or 0),
+        subjects_serialized_count=int(metadata.get("subjects_serialized_count") or 0),
+        subjects_defaulted_count=int(metadata.get("subjects_defaulted_count") or 0),
+        schools_processed=metadata.get("schools_processed") or [],
+        subjects_processed=metadata.get("subjects_processed") or [],
+        subjects_defaulted=metadata.get("subjects_defaulted") or [],
+        message=metadata.get("message"),
+        error_message=tracking.error_message,
+        started_at=tracking.started_at,
+        completed_at=tracking.completed_at,
+    )
 
 
 @router.get("/{exam_id}/export/scannables/core")

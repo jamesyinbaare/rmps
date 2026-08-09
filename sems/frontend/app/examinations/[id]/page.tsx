@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -27,7 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults, updateExam, exportScannablesCore, exportScannablesElectives } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, type SerializationJobStatusResponse, processExamSubjects, processExamResults, updateExam, exportScannablesCore, exportScannablesElectives } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List, PanelLeftOpen, CheckCircle, XCircle, AlertTriangle, BarChart3, ArrowUpDown, FileSpreadsheet } from "lucide-react";
 import { SubjectInsightsPlayground } from "@/components/SubjectInsightsPlayground";
@@ -96,6 +97,8 @@ export default function ExaminationDetailPage() {
   const [serializing, setSerializing] = useState(false);
   const [serializationResult, setSerializationResult] = useState<SerializationResponse | null>(null);
   const [serializationError, setSerializationError] = useState<string | null>(null);
+  const [serializationProgress, setSerializationProgress] =
+    useState<SerializationJobStatusResponse | null>(null);
   const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<Set<string>>(new Set());
   const [showSerializedSubjects, setShowSerializedSubjects] = useState(false);
   const [serializationSearchQuery, setSerializationSearchQuery] = useState<string>("");
@@ -438,10 +441,16 @@ export default function ExaminationDetailPage() {
     setSerializing(true);
     setSerializationError(null);
     setSerializationResult(null);
+    setSerializationProgress(null);
 
     try {
       const subjectCodesArray = Array.from(selectedSubjectCodes);
-      const result = await serializeExam(examId, subjectCodesArray.length > 0 ? subjectCodesArray : undefined);
+      const result = await serializeExam(
+        examId,
+        subjectCodesArray.length > 0 ? subjectCodesArray : undefined,
+        undefined,
+        (status) => setSerializationProgress(status)
+      );
       setSerializationResult(result);
     } catch (err) {
       setSerializationError(err instanceof Error ? err.message : "Failed to serialize candidates");
@@ -450,6 +459,18 @@ export default function ExaminationDetailPage() {
       setSerializing(false);
     }
   };
+
+  const serializationProgressPercent =
+    serializationProgress && serializationProgress.total_schools > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (serializationProgress.processed_schools / serializationProgress.total_schools) * 100
+          )
+        )
+      : serializing
+        ? 0
+        : null;
 
   const toggleSubjectSelection = async (subjectCode: string) => {
     setSavingSelection(true);
@@ -910,6 +931,34 @@ export default function ExaminationDetailPage() {
                     )}
                   </div>
 
+                  {serializing && (
+                    <div className="space-y-2 rounded-md border p-4">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">
+                          {serializationProgress?.status === "pending"
+                            ? "Queued..."
+                            : "Serializing schools..."}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {serializationProgress
+                            ? `${serializationProgress.processed_schools.toLocaleString()} / ${serializationProgress.total_schools.toLocaleString()} schools`
+                            : "Starting..."}
+                        </span>
+                      </div>
+                      <Progress value={serializationProgressPercent ?? 0} />
+                      {serializationProgress && (
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span>
+                            {serializationProgress.total_candidates_count.toLocaleString()} candidates
+                          </span>
+                          <span>
+                            {serializationProgress.subjects_serialized_count} subjects serialized
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {serializationError && (
                     <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
                       <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
@@ -940,6 +989,7 @@ export default function ExaminationDetailPage() {
                           onClick={() => {
                             setSerializationResult(null);
                             setSerializationError(null);
+                            setSerializationProgress(null);
                           }}
                         >
                           Dismiss

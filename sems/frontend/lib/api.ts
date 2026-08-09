@@ -1707,11 +1707,38 @@ export interface SerializationResponse {
   message: string;
 }
 
-export async function serializeExam(
+export interface SerializationJobCreateResponse {
+  job_id: number;
+  status: string;
+  total_schools: number;
+  exam_id: number;
+}
+
+export interface SerializationJobStatusResponse {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  total_schools: number;
+  processed_schools: number;
+  school_id: number | null;
+  total_candidates_count: number;
+  total_schools_count: number;
+  subjects_serialized_count: number;
+  subjects_defaulted_count: number;
+  schools_processed: SerializationResponse["schools_processed"];
+  subjects_processed: SerializationResponse["subjects_processed"];
+  subjects_defaulted: SerializationResponse["subjects_defaulted"];
+  message: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export async function startSerializeExam(
   examId: number,
   subjectCodes?: string[],
   schoolId?: number | null
-): Promise<SerializationResponse> {
+): Promise<SerializationJobCreateResponse> {
   const params = new URLSearchParams();
   if (schoolId !== undefined && schoolId !== null) {
     params.append("school_id", schoolId.toString());
@@ -1725,7 +1752,55 @@ export async function serializeExam(
   const response = await fetch(url, {
     method: "POST",
   });
-  return handleResponse<SerializationResponse>(response);
+  return handleResponse<SerializationJobCreateResponse>(response);
+}
+
+export async function getSerializeExamJob(
+  examId: number,
+  jobId: number
+): Promise<SerializationJobStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/serialize/${jobId}`);
+  return handleResponse<SerializationJobStatusResponse>(response);
+}
+
+/**
+ * Start exam serialization and poll until the background job finishes.
+ */
+export async function serializeExam(
+  examId: number,
+  subjectCodes?: string[],
+  schoolId?: number | null,
+  onProgress?: (status: SerializationJobStatusResponse) => void
+): Promise<SerializationResponse> {
+  const job = await startSerializeExam(examId, subjectCodes, schoolId);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  let status = await getSerializeExamJob(examId, job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getSerializeExamJob(examId, job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed") {
+    throw new Error(status.error_message || status.message || "Serialization failed");
+  }
+
+  return {
+    exam_id: status.exam_id,
+    school_id: status.school_id,
+    total_candidates_count: status.total_candidates_count,
+    total_schools_count: status.total_schools_count,
+    subjects_serialized_count: status.subjects_serialized_count,
+    subjects_defaulted_count: status.subjects_defaulted_count,
+    schools_processed: status.schools_processed,
+    subjects_processed: status.subjects_processed,
+    subjects_defaulted: status.subjects_defaulted,
+    message: status.message || "Serialization complete",
+  };
 }
 
 export async function exportScannablesCore(examId: number): Promise<void> {

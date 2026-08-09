@@ -152,6 +152,37 @@ class SerializationResponse(BaseModel):
     message: str
 
 
+class SerializationJobCreateResponse(BaseModel):
+    """Schema returned when a serialization job is accepted."""
+
+    job_id: int
+    status: str
+    total_schools: int
+    exam_id: int
+
+
+class SerializationJobStatusResponse(BaseModel):
+    """Schema for polling serialization job progress."""
+
+    job_id: int
+    exam_id: int
+    status: str
+    total_schools: int
+    processed_schools: int
+    school_id: int | None = None
+    total_candidates_count: int = 0
+    total_schools_count: int = 0
+    subjects_serialized_count: int = 0
+    subjects_defaulted_count: int = 0
+    schools_processed: list[SchoolProcessedInfo] = Field(default_factory=list)
+    subjects_processed: list[SubjectProcessedInfo] = Field(default_factory=list)
+    subjects_defaulted: list[SubjectProcessedInfo] = Field(default_factory=list)
+    message: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class SchoolSheetInfo(BaseModel):
     """Schema for school score sheet generation information."""
 
