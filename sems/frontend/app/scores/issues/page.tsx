@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -14,8 +14,6 @@ import {
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   getCurrentUser,
   getValidationIssues,
@@ -33,8 +31,7 @@ import type {
   School,
   Subject,
 } from "@/types/document";
-import { Loader2, AlertCircle, CheckCircle2, XCircle, Play, Filter, ChevronDown, ChevronUp } from "lucide-react";
-import { format } from "date-fns";
+import { Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -44,10 +41,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ValidationIssueWorkspace } from "@/components/ValidationIssueWorkspace";
+import { ValidationIssuesDataTable } from "@/components/ValidationIssuesDataTable";
 
 export default function ValidationIssuesPage() {
   const router = useRouter();
@@ -62,73 +57,75 @@ export default function ValidationIssuesPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
-  // Filters - using arrays for multi-select
-  const [statusFilter, setStatusFilter] = useState<ValidationIssueStatus[]>([]);
-  const [issueTypeFilter, setIssueTypeFilter] = useState<ValidationIssueType[]>([]);
+  const [statusFilter, setStatusFilter] = useState<ValidationIssueStatus | null>(null);
+  const [issueTypeFilter, setIssueTypeFilter] = useState<ValidationIssueType | null>(null);
   const [examIdFilter, setExamIdFilter] = useState<number | null>(null);
   const [schoolIdFilter, setSchoolIdFilter] = useState<number | null>(null);
   const [subjectIdFilter, setSubjectIdFilter] = useState<number | null>(null);
-  const [testTypeFilter, setTestTypeFilter] = useState<number[]>([]);
-  const [subjectTypeFilter, setSubjectTypeFilter] = useState<string[]>([]);
+  const [testTypeFilter, setTestTypeFilter] = useState<number | null>(null);
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<string | null>(null);
 
-  // Validation run dialog
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [runningValidation, setRunningValidation] = useState(false);
 
-  // Filter options for validation
   const [validationExamId, setValidationExamId] = useState<number | null>(null);
   const [validationSchoolId, setValidationSchoolId] = useState<number | null>(null);
   const [validationSubjectId, setValidationSubjectId] = useState<number | null>(null);
 
-  // Options for filters
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilterOptions, setLoadingFilterOptions] = useState(false);
 
-  // Issue detail workspace
   const [issueModalOpen, setIssueModalOpen] = useState(false);
   const [currentIssueIndex, setCurrentIssueIndex] = useState<number | null>(null);
 
-  // Load issues
+  const examOptions = useMemo(
+    () =>
+      exams
+        .slice()
+        .sort((a, b) => {
+          if (b.year !== a.year) return b.year - a.year;
+          if (a.series !== b.series) return a.series.localeCompare(b.series);
+          return (a.exam_type || "").localeCompare(b.exam_type || "");
+        })
+        .map((exam) => {
+          const typeLabel =
+            exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+          return {
+            value: exam.id,
+            label: `${exam.year} ${exam.series} ${typeLabel}`,
+          };
+        }),
+    [exams]
+  );
+
   const loadIssues = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const filters: any = {
+      const filters: {
+        page: number;
+        page_size: number;
+        status?: ValidationIssueStatus;
+        issue_type?: ValidationIssueType;
+        exam_id?: number;
+        school_id?: number;
+        subject_id?: number;
+        test_type?: number;
+        subject_type?: string;
+      } = {
         page,
         page_size: pageSize,
       };
 
-      // Handle multi-select filters - only send to backend if exactly one is selected
-      // If multiple are selected, we'll fetch all and filter on frontend
-      if (statusFilter.length === 1) {
-        filters.status = statusFilter[0];
-      }
-
-      if (issueTypeFilter.length === 1) {
-        filters.issue_type = issueTypeFilter[0];
-      }
-
-      if (examIdFilter) {
-        filters.exam_id = examIdFilter;
-      }
-
-      if (schoolIdFilter) {
-        filters.school_id = schoolIdFilter;
-      }
-
-      if (subjectIdFilter) {
-        filters.subject_id = subjectIdFilter;
-      }
-
-      if (testTypeFilter.length === 1) {
-        filters.test_type = testTypeFilter[0];
-      }
-
-      if (subjectTypeFilter.length === 1) {
-        filters.subject_type = subjectTypeFilter[0];
-      }
+      if (statusFilter) filters.status = statusFilter;
+      if (issueTypeFilter) filters.issue_type = issueTypeFilter;
+      if (examIdFilter) filters.exam_id = examIdFilter;
+      if (schoolIdFilter) filters.school_id = schoolIdFilter;
+      if (subjectIdFilter) filters.subject_id = subjectIdFilter;
+      if (testTypeFilter) filters.test_type = testTypeFilter;
+      if (subjectTypeFilter) filters.subject_type = subjectTypeFilter;
 
       const response = await getValidationIssues(filters);
       setIssues(response.issues);
@@ -147,7 +144,17 @@ export default function ValidationIssuesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, issueTypeFilter, examIdFilter, schoolIdFilter, subjectIdFilter, testTypeFilter, subjectTypeFilter]);
+  }, [
+    page,
+    pageSize,
+    statusFilter,
+    issueTypeFilter,
+    examIdFilter,
+    schoolIdFilter,
+    subjectIdFilter,
+    testTypeFilter,
+    subjectTypeFilter,
+  ]);
 
   useEffect(() => {
     const checkAccess = async () => {
@@ -172,41 +179,25 @@ export default function ValidationIssuesPage() {
     loadIssues();
   }, [authorized, loadIssues]);
 
-  // Load filter options on mount and when dialog opens
-  useEffect(() => {
-    if (!authorized) return;
-    loadFilterOptions();
-  }, [authorized]);
-
-  useEffect(() => {
-    if (runDialogOpen) {
-      loadFilterOptions();
-    }
-  }, [runDialogOpen]);
-
-  const loadFilterOptions = async () => {
+  const loadFilterOptions = useCallback(async () => {
     setLoadingFilterOptions(true);
     try {
-      console.log("Loading filter options...");
-
-      // Fetch all subjects by paginating through all pages
       const allSubjects: Subject[] = [];
-      let page = 1;
+      let subjectsPage = 1;
       let hasMore = true;
 
       while (hasMore) {
         try {
-          const subjectsData = await listSubjects(page, 100);
+          const subjectsData = await listSubjects(subjectsPage, 100);
           allSubjects.push(...subjectsData);
           hasMore = subjectsData.length === 100;
-          page++;
+          subjectsPage++;
         } catch (err) {
           console.error("Error loading subjects page:", err);
           hasMore = false;
         }
       }
 
-      // Load exams, schools
       const [examsData, schoolsData] = await Promise.all([
         getAllExams().catch((err) => {
           console.error("Error loading exams:", err);
@@ -218,7 +209,6 @@ export default function ValidationIssuesPage() {
         }),
       ]);
 
-      console.log("Filter options loaded:", { exams: examsData?.length, schools: schoolsData?.length, subjects: allSubjects.length });
       setExams(Array.isArray(examsData) ? examsData : []);
       setSchools(Array.isArray(schoolsData) ? schoolsData : []);
       setSubjects(allSubjects);
@@ -228,42 +218,37 @@ export default function ValidationIssuesPage() {
     } finally {
       setLoadingFilterOptions(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!authorized) return;
+    void loadFilterOptions();
+  }, [authorized, loadFilterOptions]);
+
+  useEffect(() => {
+    if (runDialogOpen) {
+      void loadFilterOptions();
+    }
+  }, [runDialogOpen, loadFilterOptions]);
 
   const handleRunValidation = async () => {
     setRunningValidation(true);
     try {
-      console.log("Running validation with filters:", {
-        exam_id: validationExamId,
-        school_id: validationSchoolId,
-        subject_id: validationSubjectId,
-      });
-
       const request = {
         exam_id: validationExamId || null,
         school_id: validationSchoolId || null,
         subject_id: validationSubjectId || null,
       };
 
-      console.log("Validation request:", request);
       const result = await runValidation(request);
-      console.log("Validation result:", result);
-
       toast.success(result.message);
       setRunDialogOpen(false);
-      // Reset filters
       setValidationExamId(null);
       setValidationSchoolId(null);
       setValidationSubjectId(null);
-      // Reload issues after validation
       await loadIssues();
     } catch (err) {
       console.error("Error running validation:", err);
-      console.error("Error details:", {
-        message: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-        error: err,
-      });
       const errorMessage = err instanceof Error ? err.message : "Failed to run validation";
       toast.error(errorMessage);
     } finally {
@@ -274,7 +259,6 @@ export default function ValidationIssuesPage() {
   const handleDialogClose = (open: boolean) => {
     setRunDialogOpen(open);
     if (!open) {
-      // Reset filters when dialog closes
       setValidationExamId(null);
       setValidationSchoolId(null);
       setValidationSubjectId(null);
@@ -291,78 +275,7 @@ export default function ValidationIssuesPage() {
     setTotal((prev) => Math.max(0, prev - 1));
   };
 
-  const getStatusBadge = (status: ValidationIssueStatus) => {
-    switch (status) {
-      case "pending":
-        return (
-          <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-            <AlertCircle className="h-3 w-3 mr-1" />
-            Open
-          </Badge>
-        );
-      case "resolved":
-        return (
-          <Badge variant="default" className="bg-green-600 hover:bg-green-700">
-            <CheckCircle2 className="h-3 w-3 mr-1" />
-            Resolved
-          </Badge>
-        );
-      case "ignored":
-        return (
-          <Badge variant="secondary" className="bg-gray-100 text-gray-700">
-            <XCircle className="h-3 w-3 mr-1" />
-            Ignored
-          </Badge>
-        );
-      default:
-        return <Badge>{status}</Badge>;
-    }
-  };
-
-  const getIssueTypeBadge = (issueType: ValidationIssueType) => {
-    switch (issueType) {
-      case "missing_score":
-        return (
-          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-            Missing Score
-          </Badge>
-        );
-      case "invalid_score":
-        return (
-          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-            Invalid Score
-          </Badge>
-        );
-      default:
-        return <Badge>{issueType}</Badge>;
-    }
-  };
-
-  const getTestTypeLabel = (testType: number) => {
-    switch (testType) {
-      case 1:
-        return "Objectives";
-      case 2:
-        return "Essay";
-      case 3:
-        return "Practical";
-      default:
-        return `Type ${testType}`;
-    }
-  };
-
-  const getFieldNameLabel = (fieldName: string) => {
-    switch (fieldName) {
-      case "obj_raw_score":
-        return "Objectives";
-      case "essay_raw_score":
-        return "Essay";
-      case "pract_raw_score":
-        return "Practical";
-      default:
-        return fieldName;
-    }
-  };
+  const resetPage = () => setPage(1);
 
   if (!authChecked || !authorized) {
     return null;
@@ -370,38 +283,50 @@ export default function ValidationIssuesPage() {
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col h-full">
+      <div className="flex h-full flex-col">
         <TopBar title="Validation Issues" />
 
-        <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
-          {/* Header with Actions */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              {/* <h2 className="text-2xl font-semibold">
-                Issues
-              </h2> */}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setRunDialogOpen(true)}
-                className="gap-2"
-              >
-                <Play className="h-4 w-4" />
-                Check missing & invalid scores
-              </Button>
-            </div>
+        <div className="flex flex-1 flex-col gap-4 overflow-hidden p-6">
+          <div className="flex items-center justify-end">
+            <Button variant="outline" onClick={() => setRunDialogOpen(true)} className="gap-2">
+              <Play className="h-4 w-4" />
+              Check missing & invalid scores
+            </Button>
           </div>
 
-          {/* School and Subject Filters Card */}
           <Card>
             <CardContent className="p-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                {/* <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-muted-foreground" />
-                </div> */}
-                <div className="relative flex-1 min-w-[300px]">
-                  <label className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none z-10 bg-background px-1">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="relative min-w-[280px] flex-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
+                    Examination
+                  </label>
+                  <div className="pt-4">
+                    <SearchableSelect
+                      options={examOptions}
+                      value={examIdFilter ? examIdFilter : "all"}
+                      onValueChange={(value) => {
+                        if (value === "all" || value === "") {
+                          setExamIdFilter(null);
+                        } else {
+                          setExamIdFilter(
+                            typeof value === "number" ? value : parseInt(String(value), 10)
+                          );
+                        }
+                        resetPage();
+                      }}
+                      placeholder="Select an examination"
+                      disabled={loadingFilterOptions}
+                      allowAll={true}
+                      allLabel="All examinations"
+                      searchPlaceholder="Search examinations..."
+                      emptyMessage="No examinations found"
+                    />
+                  </div>
+                </div>
+
+                <div className="relative min-w-[280px] flex-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
                     School
                   </label>
                   <div className="pt-4">
@@ -415,9 +340,11 @@ export default function ValidationIssuesPage() {
                         if (value === "all" || value === "") {
                           setSchoolIdFilter(null);
                         } else {
-                          setSchoolIdFilter(typeof value === "number" ? value : parseInt(value as string, 10));
+                          setSchoolIdFilter(
+                            typeof value === "number" ? value : parseInt(String(value), 10)
+                          );
                         }
-                        setPage(1);
+                        resetPage();
                       }}
                       placeholder="Select a school"
                       disabled={loadingFilterOptions}
@@ -429,8 +356,8 @@ export default function ValidationIssuesPage() {
                   </div>
                 </div>
 
-                <div className="relative flex-1 min-w-[300px]">
-                  <label className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none z-10 bg-background px-1">
+                <div className="relative min-w-[280px] flex-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
                     Subject
                   </label>
                   <div className="pt-4">
@@ -444,9 +371,11 @@ export default function ValidationIssuesPage() {
                         if (value === "all" || value === "") {
                           setSubjectIdFilter(null);
                         } else {
-                          setSubjectIdFilter(typeof value === "number" ? value : parseInt(value as string, 10));
+                          setSubjectIdFilter(
+                            typeof value === "number" ? value : parseInt(String(value), 10)
+                          );
                         }
-                        setPage(1);
+                        resetPage();
                       }}
                       placeholder="Select a subject"
                       disabled={loadingFilterOptions}
@@ -461,427 +390,58 @@ export default function ValidationIssuesPage() {
             </CardContent>
           </Card>
 
-          {/* Issues List */}
-          <Card className="flex-1 overflow-hidden flex flex-col">
-            {/* Table Header with Filters - Organized by table field order */}
-            <div className="border-b p-4">
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <Filter className="h-4 w-4 text-muted-foreground" />
-                  </div>
-
-                  {/* Status Filter - matches first column in table */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      Status
-                      {statusFilter.length > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {statusFilter.length}
-                        </Badge>
-                      )}
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-56 p-0" align="start">
-                    <div className="p-2 space-y-2">
-                      <div className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                        <Checkbox
-                          id="status-all"
-                          checked={statusFilter.length === 0}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setStatusFilter([]);
-                              setPage(1);
-                            }
-                          }}
-                        />
-                        <label
-                          htmlFor="status-all"
-                          className="text-sm font-medium leading-none cursor-pointer flex-1"
-                        >
-                          All
-                        </label>
-                      </div>
-                      {(["pending", "resolved", "ignored"] as ValidationIssueStatus[]).map((status) => (
-                        <div key={status} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                          <Checkbox
-                            id={`status-${status}`}
-                            checked={statusFilter.includes(status)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setStatusFilter([...statusFilter, status]);
-                              } else {
-                                setStatusFilter(statusFilter.filter((s) => s !== status));
-                              }
-                              setPage(1);
-                            }}
-                          />
-                          <label
-                            htmlFor={`status-${status}`}
-                            className="text-sm font-medium leading-none cursor-pointer flex-1 capitalize"
-                          >
-                            {status === "pending" ? "Open" : status}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                {/* Issue Type Filter - matches second column in table */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      Type
-                      {issueTypeFilter.length > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {issueTypeFilter.length}
-                        </Badge>
-                      )}
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-56 p-0" align="start">
-                    <div className="p-2 space-y-2">
-                      <div className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                        <Checkbox
-                          id="type-all"
-                          checked={issueTypeFilter.length === 0}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setIssueTypeFilter([]);
-                              setPage(1);
-                            }
-                          }}
-                        />
-                        <label
-                          htmlFor="type-all"
-                          className="text-sm font-medium leading-none cursor-pointer flex-1"
-                        >
-                          All
-                        </label>
-                      </div>
-                      {(["missing_score", "invalid_score"] as ValidationIssueType[]).map((type) => (
-                        <div key={type} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                          <Checkbox
-                            id={`type-${type}`}
-                            checked={issueTypeFilter.includes(type)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setIssueTypeFilter([...issueTypeFilter, type]);
-                              } else {
-                                setIssueTypeFilter(issueTypeFilter.filter((t) => t !== type));
-                              }
-                              setPage(1);
-                            }}
-                          />
-                          <label
-                            htmlFor={`type-${type}`}
-                            className="text-sm font-medium leading-none cursor-pointer flex-1"
-                          >
-                            {type === "missing_score" ? "Missing Score" : "Invalid Score"}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                {/* Test Type Filter - matches third column in table */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      Test Type
-                      {testTypeFilter.length > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {testTypeFilter.length}
-                        </Badge>
-                      )}
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-56 p-0" align="start">
-                    <div className="p-2 space-y-2">
-                      <div className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                        <Checkbox
-                          id="test-type-all"
-                          checked={testTypeFilter.length === 0}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setTestTypeFilter([]);
-                              setPage(1);
-                            }
-                          }}
-                        />
-                        <label
-                          htmlFor="test-type-all"
-                          className="text-sm font-medium leading-none cursor-pointer flex-1"
-                        >
-                          All
-                        </label>
-                      </div>
-                      {[1, 2, 3].map((testType) => (
-                        <div key={testType} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                          <Checkbox
-                            id={`test-type-${testType}`}
-                            checked={testTypeFilter.includes(testType)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setTestTypeFilter([...testTypeFilter, testType]);
-                              } else {
-                                setTestTypeFilter(testTypeFilter.filter((t) => t !== testType));
-                              }
-                              setPage(1);
-                            }}
-                          />
-                          <label
-                            htmlFor={`test-type-${testType}`}
-                            className="text-sm font-medium leading-none cursor-pointer flex-1"
-                          >
-                            {getTestTypeLabel(testType)}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-
-                {/* Subject Type Filter */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      Subject Type
-                      {subjectTypeFilter.length > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {subjectTypeFilter.length}
-                        </Badge>
-                      )}
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-56 p-0" align="start">
-                    <div className="p-2 space-y-2">
-                      <div className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                        <Checkbox
-                          id="subject-type-all"
-                          checked={subjectTypeFilter.length === 0}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSubjectTypeFilter([]);
-                              setPage(1);
-                            }
-                          }}
-                        />
-                        <label
-                          htmlFor="subject-type-all"
-                          className="text-sm font-medium leading-none cursor-pointer flex-1"
-                        >
-                          All
-                        </label>
-                      </div>
-                      {(["CORE", "ELECTIVE"] as const).map((subjectType) => (
-                        <div key={subjectType} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                          <Checkbox
-                            id={`subject-type-${subjectType}`}
-                            checked={subjectTypeFilter.includes(subjectType)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setSubjectTypeFilter([...subjectTypeFilter, subjectType]);
-                              } else {
-                                setSubjectTypeFilter(subjectTypeFilter.filter((t) => t !== subjectType));
-                              }
-                              setPage(1);
-                            }}
-                          />
-                          <label
-                            htmlFor={`subject-type-${subjectType}`}
-                            className="text-sm font-medium leading-none cursor-pointer flex-1"
-                          >
-                            {subjectType}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                </div>
-
-                {/* Page Size Filter - control, not a table field - moved to the right */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      Page Size: {pageSize}
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-48 p-0" align="end">
-                    <div className="p-2 space-y-2">
-                      {[20, 50, 100, 200, 500, 1000].map((size) => (
-                        <div key={size} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
-                          <Checkbox
-                            id={`page-size-${size}`}
-                            checked={pageSize === size}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setPageSize(size);
-                                setPage(1);
-                              }
-                            }}
-                          />
-                          <label
-                            htmlFor={`page-size-${size}`}
-                            className="text-sm font-medium leading-none cursor-pointer flex-1"
-                          >
-                            {size}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-
-            <CardContent className="flex-1 overflow-auto p-0">
-              {loading && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
-              )}
-
-              {error && (
-                <div className="flex items-center justify-center py-8 text-destructive">
-                  {error}
-                </div>
-              )}
-
-              {!loading && !error && issues.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                  <AlertCircle className="h-12 w-12 mb-4 opacity-50" />
-                  <p className="text-lg font-medium">No issues found</p>
-                  <p className="text-sm mt-2">
-                    {statusFilter.length > 0 || issueTypeFilter.length > 0 || testTypeFilter.length > 0
-                      ? "Try adjusting your filters"
-                      : "Run validation to check for issues"}
-                  </p>
-                </div>
-              )}
-
-              {!loading && !error && issues.length > 0 && (
-                <div className="divide-y">
-                  {issues
-                    .filter((issue) => {
-                      // Apply frontend filtering for multi-select
-                      if (statusFilter.length > 0 && !statusFilter.includes(issue.status)) {
-                        return false;
-                      }
-                      if (issueTypeFilter.length > 0 && !issueTypeFilter.includes(issue.issue_type)) {
-                        return false;
-                      }
-                      if (testTypeFilter.length > 0 && !testTypeFilter.includes(issue.test_type)) {
-                        return false;
-                      }
-                      return true;
-                    })
-                    .map((issue, filteredIndex) => {
-                      // Find the original index in the unfiltered array for modal navigation
-                      const originalIndex = issues.findIndex((i) => i.id === issue.id);
-                      return (
-                    <div
-                      key={issue.id}
-                      className="p-4 hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => handleOpenIssueModal(issue, originalIndex)}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 shrink-0">
-                          {getStatusBadge(issue.status)}
-                          {getIssueTypeBadge(issue.issue_type)}
-                          <Badge variant="outline" className="text-xs">
-                            {getTestTypeLabel(issue.test_type)}
-                          </Badge>
-                        </div>
-                        <div className="flex-1 min-w-0 flex items-center gap-4">
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-sm tabular-nums truncate">
-                              {issue.candidate_index_number || "No index"}
-                              {issue.candidate_name ? (
-                                <span className="font-normal text-muted-foreground">
-                                  {" "}
-                                  · {issue.candidate_name}
-                                </span>
-                              ) : null}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                              {getFieldNameLabel(issue.field_name)}
-                              {issue.message ? ` · ${issue.message}` : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-                            <span>
-                              Created {format(new Date(issue.created_at), "MMM d, yyyy")}
-                            </span>
-                            {issue.resolved_at && (
-                              <span>
-                                Resolved {format(new Date(issue.resolved_at), "MMM d, yyyy")}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                      );
-                    })}
-                </div>
-              )}
-            </CardContent>
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <ValidationIssuesDataTable
+              issues={issues}
+              loading={loading}
+              error={error}
+              onRowClick={handleOpenIssueModal}
+              pageSize={pageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                resetPage();
+              }}
+              currentPage={page}
+              totalPages={totalPages}
+              total={total}
+              onPageChange={setPage}
+              statusFilter={statusFilter}
+              onStatusFilterChange={(value) => {
+                setStatusFilter(value);
+                resetPage();
+              }}
+              issueTypeFilter={issueTypeFilter}
+              onIssueTypeFilterChange={(value) => {
+                setIssueTypeFilter(value);
+                resetPage();
+              }}
+              testTypeFilter={testTypeFilter}
+              onTestTypeFilterChange={(value) => {
+                setTestTypeFilter(value);
+                resetPage();
+              }}
+              subjectTypeFilter={subjectTypeFilter}
+              onSubjectTypeFilterChange={(value) => {
+                setSubjectTypeFilter(value);
+                resetPage();
+              }}
+            />
           </Card>
-
-          {/* Pagination */}
-          {!loading && !error && totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">
-                Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, total)} of {total} issues
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Previous
-                </Button>
-                <div className="text-sm">
-                  Page {page} of {totalPages}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Run Validation Dialog */}
         <Dialog open={runDialogOpen} onOpenChange={handleDialogClose}>
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>Run Validation</DialogTitle>
               <DialogDescription>
-                Run validation to check for issues in candidate's subject scores. You can optionally filter by exam, school, or subject.
+                Run validation to check for issues in candidate&apos;s subject scores. You can
+                optionally filter by exam, school, or subject.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              <div className="max-w-md mx-auto">
+              <div className="mx-auto max-w-md">
                 <div className="relative">
-                  <label className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none z-10 bg-background px-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
                     Exam (Optional)
                   </label>
                   <div className="pt-4">
@@ -913,9 +473,9 @@ export default function ValidationIssuesPage() {
                 </div>
               </div>
 
-              <div className="max-w-md mx-auto">
+              <div className="mx-auto max-w-md">
                 <div className="relative">
-                  <label className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none z-10 bg-background px-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
                     School (Optional)
                   </label>
                   <div className="pt-4">
@@ -929,7 +489,9 @@ export default function ValidationIssuesPage() {
                         if (value === "all" || value === "") {
                           setValidationSchoolId(null);
                         } else {
-                          setValidationSchoolId(typeof value === "number" ? value : parseInt(value as string, 10));
+                          setValidationSchoolId(
+                            typeof value === "number" ? value : parseInt(String(value), 10)
+                          );
                         }
                       }}
                       placeholder="Select a school"
@@ -943,9 +505,9 @@ export default function ValidationIssuesPage() {
                 </div>
               </div>
 
-              <div className="max-w-md mx-auto">
+              <div className="mx-auto max-w-md">
                 <div className="relative">
-                  <label className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none z-10 bg-background px-1">
+                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
                     Subject (Optional)
                   </label>
                   <div className="pt-4">
@@ -959,7 +521,9 @@ export default function ValidationIssuesPage() {
                         if (value === "all" || value === "") {
                           setValidationSubjectId(null);
                         } else {
-                          setValidationSubjectId(typeof value === "number" ? value : parseInt(value as string, 10));
+                          setValidationSubjectId(
+                            typeof value === "number" ? value : parseInt(String(value), 10)
+                          );
                         }
                       }}
                       placeholder="Select a subject"
