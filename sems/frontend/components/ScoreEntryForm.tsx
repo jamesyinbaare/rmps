@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, Save } from "lucide-react";
+import { Save } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -17,10 +17,9 @@ import type { Document, ScoreResponse, ScoreUpdate, BatchScoreUpdateItem } from 
 
 interface ScoreEntryFormProps {
   document: Document;
-  onClose: () => void;
 }
 
-export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
+export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
   const [scores, setScores] = useState<ScoreResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -199,11 +198,8 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
   if (loading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="border-b border-border px-4 py-3">
           <h2 className="text-lg font-semibold">Score Entry</h2>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} className="h-8 w-8">
-            <X className="h-4 w-4" />
-          </Button>
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-sm text-muted-foreground">Loading scores...</div>
@@ -214,17 +210,12 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 shrink-0">
-        <div>
-          <h2 className="text-base font-semibold">Score Entry</h2>
-          <p className="text-xs text-muted-foreground">
-            Document: {document.extracted_id || document.file_name}
-          </p>
-        </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} className="h-8 w-8">
-          <X className="h-4 w-4" />
-        </Button>
+      {/* Header — close is owned by the parent modal */}
+      <div className="shrink-0 border-b border-border px-4 py-2">
+        <h2 className="text-base font-semibold">Score Entry</h2>
+        <p className="text-xs text-muted-foreground">
+          Document: {document.extracted_id || document.file_name}
+        </p>
       </div>
 
       {/* Error Message */}

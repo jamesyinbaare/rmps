@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Settings, ChevronDown, Search, X, PanelLeft } from "lucide-react";
+import { ChevronDown, Search, X, PanelLeft } from "lucide-react";
 import { SidebarTrigger } from "@rfdtech/components/next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -108,17 +108,17 @@ export function TopBar({
           </div>
         )}
 
-        {/* Right: Settings and User Avatar */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Mobile Search Button */}
-          {showSearch && onSearch && (
+        {/* Right: mobile search only — profile lives in DashboardLayout AppHeader */}
+        {showSearch && onSearch ? (
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               variant="ghost"
               size="icon-sm"
               className="md:hidden"
               onClick={() => {
-                // Could open a search modal on mobile
-                const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement;
+                const searchInput = document.querySelector(
+                  'input[type="search"]'
+                ) as HTMLInputElement;
                 if (searchInput) {
                   searchInput.focus();
                 }
@@ -126,17 +126,8 @@ export function TopBar({
             >
               <Search className="h-4 w-4" />
             </Button>
-          )}
-          {/* Settings */}
-          <Button variant="ghost" size="icon-sm">
-            <Settings className="h-4 w-4" />
-          </Button>
-
-          {/* User Avatar */}
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-medium">
-            JY
           </div>
-        </div>
+        ) : null}
       </div>
 
       {/* Bottom Row: Filters */}

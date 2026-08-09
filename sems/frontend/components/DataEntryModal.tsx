@@ -283,10 +283,7 @@ export function DataEntryModal({
 
           {/* Right Side: Score Entry Form */}
           <div className="w-full lg:w-1/2 flex flex-col overflow-hidden">
-            <ScoreEntryForm
-              document={document}
-              onClose={handleClose}
-            />
+            <ScoreEntryForm document={document} />
           </div>
         </div>
       </DialogContent>
