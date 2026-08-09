@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
@@ -31,6 +32,15 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import {
   clearIssueBatches,
   createIssueBatches,
   listDocuments,
@@ -39,12 +49,15 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   BatchSummaryUnbatchedItem,
+  ClearBatchesResponse,
+  CreateBatchesResponse,
   Exam,
   RunValidationResponse,
   Subject,
 } from "@/types/document";
 
 type PrepareStep = 1 | 2 | 3;
+type StreamChoice = "doc" | "nod" | "both";
 
 type PrepareBatchesPanelProps = {
   exams: Exam[];
@@ -54,7 +67,22 @@ type PrepareBatchesPanelProps = {
   unbatched: BatchSummaryUnbatchedItem[];
   onChanged: () => Promise<void> | void;
   className?: string;
+  /** When true, exam is controlled by the parent page header. */
+  hideExamSelect?: boolean;
 };
+
+function testTypeLabel(testType: number) {
+  if (testType === 1) return "Paper 1";
+  if (testType === 2) return "Paper 2";
+  if (testType === 3) return "Paper 3";
+  return `Type ${testType}`;
+}
+
+function streamToHasDocument(stream: StreamChoice): boolean | null {
+  if (stream === "doc") return true;
+  if (stream === "nod") return false;
+  return null;
+}
 
 export function PrepareBatchesPanel({
   exams,
@@ -64,9 +92,11 @@ export function PrepareBatchesPanel({
   unbatched,
   onChanged,
   className,
+  hideExamSelect = false,
 }: PrepareBatchesPanelProps) {
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [testType, setTestType] = useState(2);
+  const [stream, setStream] = useState<StreamChoice>("doc");
   const [targetSize, setTargetSize] = useState(500);
   const [tolerance, setTolerance] = useState(50);
   const [prepareStep, setPrepareStep] = useState<PrepareStep>(1);
@@ -80,12 +110,16 @@ export function PrepareBatchesPanel({
   const [clearing, setClearing] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [clearedForScope, setClearedForScope] = useState(false);
+  const [clearResult, setClearResult] = useState<ClearBatchesResponse | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createResult, setCreateResult] = useState<CreateBatchesResponse | null>(null);
 
   useEffect(() => {
     setValidationRanForScope(false);
     setValidationResult(null);
     setClearedForScope(false);
+    setClearResult(null);
+    setCreateResult(null);
     setPrepareStep(1);
   }, [examId, subjectId, testType]);
 
@@ -124,6 +158,33 @@ export function PrepareBatchesPanel({
     return { doc, nod };
   }, [unbatched, examId, subjectId, testType]);
 
+  const unbatchedRows = useMemo(() => {
+    return unbatched.filter((u) => {
+      if (examId != null && u.exam_id !== examId) return false;
+      if (subjectId != null && u.subject_id !== subjectId) return false;
+      if (u.test_type !== testType) return false;
+      return true;
+    });
+  }, [unbatched, examId, subjectId, testType]);
+
+  const creatableCount =
+    stream === "doc"
+      ? unbatchedPreview.doc
+      : stream === "nod"
+        ? unbatchedPreview.nod
+        : unbatchedPreview.doc + unbatchedPreview.nod;
+
+  const assignHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (examId != null) params.set("exam_id", String(examId));
+    if (subjectId != null) params.set("subject_id", String(subjectId));
+    if (testType) params.set("test_type", String(testType));
+    if (stream === "doc") params.set("stream", "doc");
+    if (stream === "nod") params.set("stream", "nod");
+    const qs = params.toString();
+    return qs ? `/clerk/assign?${qs}` : "/clerk/assign";
+  }, [examId, subjectId, testType, stream]);
+
   const handleRunPrepareValidation = async () => {
     if (!examId || !subjectId) {
       toast.error("Select exam and subject");
@@ -156,6 +217,7 @@ export function PrepareBatchesPanel({
         test_type: testType,
       });
       setClearedForScope(true);
+      setClearResult(result);
       setConfirmClearOpen(false);
       setPrepareStep(3);
       toast.success(
@@ -184,12 +246,20 @@ export function PrepareBatchesPanel({
         exam_id: examId,
         subject_id: subjectId,
         test_type: testType,
-        has_document: true,
+        has_document: streamToHasDocument(stream),
         target_size: targetSize,
         tolerance,
       });
+      setCreateResult(result);
+      const parts: string[] = [];
+      if (result.created_doc_count > 0) {
+        parts.push(`${result.created_doc_count} DOC`);
+      }
+      if (result.created_nod_count > 0) {
+        parts.push(`${result.created_nod_count} NOD`);
+      }
       toast.success(
-        `Created ${result.batches.length} DOC batch(es) · ${result.created_doc_count} DOC group(s)`
+        `Created ${result.batches.length} batch(es)${parts.length ? ` · ${parts.join(" · ")}` : ""}`
       );
       await onChanged();
     } catch (err) {
@@ -201,12 +271,13 @@ export function PrepareBatchesPanel({
 
   return (
     <>
-      <section className={cn("rounded-xl border bg-muted/20 p-4 space-y-4", className)}>
+      <section className={cn("rounded-xl border bg-muted/20 p-4 space-y-5", className)}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="font-medium">Prepare batches</h2>
             <p className="text-sm text-muted-foreground">
-              Validate → optional clear → create DOC-only batches for one subject and paper.
+              Validate → optional clear → create DOC and/or NOD batches for one subject and
+              paper.
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs">
@@ -232,52 +303,113 @@ export function PrepareBatchesPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <SearchableSelect
-            options={exams.map((e) => ({
-              value: e.id,
-              label: `${e.exam_type} · ${e.series} ${e.year}`,
-            }))}
-            value={examId ?? "all"}
-            onValueChange={(v) =>
-              onExamIdChange(v === "all" || v === "" ? null : Number(v))
-            }
-            placeholder="Exam"
-            allowAll
-            allLabel="Select exam"
-          />
-          <SearchableSelect
-            options={subjects.map((s) => ({
-              value: s.id,
-              label: `${s.code} · ${s.name}`,
-            }))}
-            value={subjectId ?? "all"}
-            onValueChange={(v) =>
-              setSubjectId(v === "all" || v === "" ? null : Number(v))
-            }
-            placeholder="Subject"
-            allowAll
-            allLabel="Select subject"
-          />
-          <Select value={String(testType)} onValueChange={(v) => setTestType(Number(v))}>
-            <SelectTrigger>
-              <SelectValue placeholder="Test type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Paper 1 (Objectives)</SelectItem>
-              <SelectItem value="2">Paper 2 (Essay)</SelectItem>
-              <SelectItem value="3">Paper 3 (Practical)</SelectItem>
-            </SelectContent>
-          </Select>
+        <div
+          className={cn(
+            "grid gap-3",
+            hideExamSelect ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-3"
+          )}
+        >
+          {!hideExamSelect ? (
+            <div>
+              <Label className="text-xs text-muted-foreground">Examination</Label>
+              <SearchableSelect
+                options={exams.map((e) => ({
+                  value: e.id,
+                  label: `${e.exam_type} · ${e.series} ${e.year}`,
+                }))}
+                value={examId ?? "all"}
+                onValueChange={(v) =>
+                  onExamIdChange(v === "all" || v === "" ? null : Number(v))
+                }
+                placeholder="Exam"
+                allowAll
+                allLabel="Select exam"
+              />
+            </div>
+          ) : null}
+          <div>
+            <Label className="text-xs text-muted-foreground">Subject</Label>
+            <SearchableSelect
+              options={subjects.map((s) => ({
+                value: s.id,
+                label: `${s.code} · ${s.name}`,
+              }))}
+              value={subjectId ?? "all"}
+              onValueChange={(v) =>
+                setSubjectId(v === "all" || v === "" ? null : Number(v))
+              }
+              placeholder="Subject"
+              allowAll
+              allLabel="Select subject"
+            />
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Paper</Label>
+            <Select value={String(testType)} onValueChange={(v) => setTestType(Number(v))}>
+              <SelectTrigger>
+                <SelectValue placeholder="Test type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Paper 1 (Objectives)</SelectItem>
+                <SelectItem value="2">Paper 2 (Essay)</SelectItem>
+                <SelectItem value="3">Paper 3 (Practical)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {examId && examSheetCount === 0 && !checkingSheets ? (
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
             <p>
-              No score sheets uploaded for this exam yet. Validation can still run; only
-              issues with documents will be batched in step 3.
+              No score sheets uploaded for this exam yet. Validation can still run; DOC
+              batches require documents.
             </p>
+          </div>
+        ) : null}
+
+        {examId && subjectId ? (
+          <div className="rounded-lg border overflow-hidden bg-background">
+            <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Unbatched pending preview</p>
+              <p className="text-xs text-muted-foreground tabular-nums">
+                DOC {unbatchedPreview.doc} · NOD {unbatchedPreview.nod}
+              </p>
+            </div>
+            {unbatchedRows.length === 0 ? (
+              <p className="px-3 py-4 text-sm text-muted-foreground">
+                No unbatched pending issues for this scope.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Subject</TableHead>
+                    <TableHead>Paper</TableHead>
+                    <TableHead>Stream</TableHead>
+                    <TableHead className="text-right">Pending</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {unbatchedRows.map((row) => (
+                    <TableRow
+                      key={`${row.subject_id}-${row.test_type}-${row.has_document}`}
+                    >
+                      <TableCell className="font-medium">{row.subject_code}</TableCell>
+                      <TableCell>{testTypeLabel(row.test_type)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-normal">
+                          {row.has_document ? "DOC" : "NOD"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {row.pending_count}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </div>
         ) : null}
 
@@ -315,11 +447,18 @@ export function PrepareBatchesPanel({
               Clear existing batches for this exam, subject, and paper so pending issues can
               be re-packed. Resolved issues and clerk attribution are kept for payment.
             </p>
-            {clearedForScope ? (
-              <p className="text-sm text-emerald-700 flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4" />
-                Batches cleared for this scope.
-              </p>
+            {clearedForScope && clearResult ? (
+              <div className="rounded-lg border bg-background px-3 py-2 text-sm space-y-1">
+                <p className="text-emerald-700 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Batches cleared for this scope.
+                </p>
+                <p className="text-muted-foreground tabular-nums">
+                  {clearResult.batches_deleted} batch(es) deleted ·{" "}
+                  {clearResult.pending_unbatched} pending unbatched ·{" "}
+                  {clearResult.resolved_preserved} resolved preserved
+                </p>
+              </div>
             ) : null}
             <div className="flex flex-wrap gap-2">
               <Button
@@ -342,16 +481,31 @@ export function PrepareBatchesPanel({
         )}
 
         {prepareStep === 3 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Pack pending unbatched issues that have documents (DOC only). Unbatched DOC{" "}
-              {unbatchedPreview.doc}
-              {unbatchedPreview.nod > 0
-                ? ` · ${unbatchedPreview.nod} without documents will be skipped`
-                : ""}
-              .
+              Pack pending unbatched issues for the selected stream. Currently creatable:{" "}
+              <span className="font-medium text-foreground tabular-nums">
+                {creatableCount}
+              </span>{" "}
+              pending (DOC {unbatchedPreview.doc} · NOD {unbatchedPreview.nod}).
             </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-xl">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl">
+              <div>
+                <Label className="text-xs text-muted-foreground">Stream</Label>
+                <Select
+                  value={stream}
+                  onValueChange={(v) => setStream(v as StreamChoice)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="doc">DOC only</SelectItem>
+                    <SelectItem value="nod">NOD only</SelectItem>
+                    <SelectItem value="both">DOC + NOD</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Target size</Label>
                 <Input
@@ -378,12 +532,70 @@ export function PrepareBatchesPanel({
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
                       Creating…
                     </>
-                  ) : (
+                  ) : stream === "doc" ? (
                     "Create DOC batches"
+                  ) : stream === "nod" ? (
+                    "Create NOD batches"
+                  ) : (
+                    "Create batches"
                   )}
                 </Button>
               </div>
             </div>
+
+            {createResult ? (
+              <div className="rounded-lg border bg-background overflow-hidden">
+                <div className="px-3 py-2 border-b bg-muted/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Created {createResult.batches.length} batch
+                      {createResult.batches.length === 1 ? "" : "es"}
+                    </p>
+                    <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
+                      DOC groups {createResult.created_doc_count} · NOD groups{" "}
+                      {createResult.created_nod_count}
+                    </p>
+                  </div>
+                  <Button asChild size="sm">
+                    <Link href={assignHref}>Assign work</Link>
+                  </Button>
+                </div>
+                {createResult.batches.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Batch</TableHead>
+                        <TableHead>Stream</TableHead>
+                        <TableHead className="text-right">Issues</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {createResult.batches.map((b) => (
+                        <TableRow key={b.id}>
+                          <TableCell className="font-medium">{b.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-normal">
+                              {b.has_document ? "DOC" : "NOD"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {b.issue_count}
+                            {b.oversized ? (
+                              <span className="ml-1 text-xs text-amber-700">oversized</span>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="px-3 py-4 text-sm text-muted-foreground">
+                    No new batches were created for this stream and scope.
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
       </section>
@@ -393,8 +605,8 @@ export function PrepareBatchesPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Clear batches for this paper?</AlertDialogTitle>
             <AlertDialogDescription>
-              Deletes batches for the selected exam, subject, and paper and unbatches pending
-              issues. Resolved rows stay for payment.
+              Deletes all batches for the selected exam, subject, and paper (including
+              assigned ones) and unbatches pending issues. Resolved rows stay for payment.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

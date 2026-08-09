@@ -127,8 +127,6 @@ export default function ClerkDashboardPage() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [currentIssueIndex, setCurrentIssueIndex] = useState<number | null>(null);
 
-  const quotaBlocked = (stats?.quota_remaining ?? 1) <= 0;
-
   const loadStats = useCallback(async () => {
     try {
       const data = await getMyValidationStats();
@@ -240,8 +238,7 @@ export default function ClerkDashboardPage() {
             }
           : prev
       );
-      const canAutoOpen = issues.length > 0 && !quotaBlocked;
-      if (canAutoOpen) {
+      if (issues.length > 0) {
         setCurrentIssueIndex(0);
         setWorkspaceOpen(true);
       }
@@ -250,10 +247,6 @@ export default function ClerkDashboardPage() {
 
   const handleResumeNext = () => {
     if (!resumeBatch) return;
-    if (quotaBlocked) {
-      toast.error("Daily resolve quota reached — ask a registrar for an override");
-      return;
-    }
     void openBatchWork(resumeBatch);
   };
 
@@ -268,20 +261,12 @@ export default function ClerkDashboardPage() {
   };
 
   const openIssueAt = (index: number) => {
-    if (quotaBlocked) {
-      toast.error("Daily resolve quota reached");
-      return;
-    }
     if (index < 0 || index >= batchIssues.length) return;
     setCurrentIssueIndex(index);
     setWorkspaceOpen(true);
   };
 
   const handleContinueResolving = () => {
-    if (quotaBlocked) {
-      toast.error("Daily resolve quota reached — ask a registrar for an override");
-      return;
-    }
     if (batchIssues.length === 0) {
       toast.message("No pending issues left in this batch");
       return;
@@ -316,11 +301,6 @@ export default function ClerkDashboardPage() {
     });
     void loadStats();
   };
-
-  const quotaPct =
-    stats && stats.quota_limit > 0
-      ? Math.min(100, Math.round((stats.resolved_today / stats.quota_limit) * 100))
-      : 0;
 
   if (activeBatch) {
     const isInProgress = activeBatch.progress_status === "in_progress";
@@ -388,7 +368,7 @@ export default function ClerkDashboardPage() {
                     size="lg"
                     className="gap-2 shrink-0"
                     onClick={handleContinueResolving}
-                    disabled={batchIssuesLoading || batchIssues.length === 0 || quotaBlocked}
+                    disabled={batchIssuesLoading || batchIssues.length === 0}
                   >
                     {batchIssuesLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -399,14 +379,6 @@ export default function ClerkDashboardPage() {
                   </Button>
                 ) : null}
               </div>
-
-              {quotaBlocked && isInProgress && (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-                  Daily quota reached
-                  {stats ? ` (${stats.resolved_today}/${stats.quota_limit})` : ""}. Ask a
-                  registrar for an override.
-                </div>
-              )}
 
               <section className="space-y-3">
                 <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
@@ -523,61 +495,31 @@ export default function ClerkDashboardPage() {
                   size="lg"
                   className="gap-2 shrink-0"
                   onClick={handleResumeNext}
-                  disabled={!resumeBatch || quotaBlocked || loading}
+                  disabled={!resumeBatch || loading}
                 >
                   <Play className="h-4 w-4" />
                   <span className="truncate max-w-[16rem]">{resumeLabel}</span>
                 </Button>
               </div>
 
-              {quotaBlocked && (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-                  Daily quota reached
-                  {stats ? ` (${stats.resolved_today}/${stats.quota_limit})` : ""}. Ask a
-                  registrar for an override.
-                </div>
-              )}
-
-              <div className="rounded-lg border px-4 py-3 space-y-2">
+              <div className="rounded-lg border px-4 py-3">
                 {stats ? (
-                  <>
-                    <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                      <p>
-                        <span className="text-muted-foreground">Quota </span>
-                        <span
-                          className={`font-semibold tabular-nums ${
-                            quotaBlocked ? "text-destructive" : "text-foreground"
-                          }`}
-                        >
-                          {stats.resolved_today}/{stats.quota_limit}
-                        </span>
-                        {stats.quota_overridden ? (
-                          <span className="text-muted-foreground"> · override</span>
-                        ) : null}
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {stats.assigned_pending_count} pending
-                        </span>
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {stats.quota_remaining} left
-                        </span>
-                      </p>
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        Resolved today · {stats.resolved_today}
-                      </p>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden max-w-md">
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          quotaBlocked ? "bg-destructive" : "bg-primary"
-                        }`}
-                        style={{ width: `${quotaPct}%` }}
-                      />
-                    </div>
-                  </>
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Resolved today · </span>
+                      <span className="font-semibold tabular-nums">
+                        {stats.resolved_today}
+                      </span>
+                    </p>
+                    <p className="text-muted-foreground tabular-nums">
+                      {stats.assigned_pending_count} pending assigned
+                    </p>
+                    <p className="text-muted-foreground tabular-nums">
+                      Week · {stats.resolved_week}
+                    </p>
+                  </div>
                 ) : (
-                  <Skeleton className="h-8 w-64" />
+                  <Skeleton className="h-5 w-64" />
                 )}
               </div>
             </section>
@@ -626,7 +568,6 @@ export default function ClerkDashboardPage() {
                     mode="in_progress"
                     onOpen={openBatchWork}
                     onRetry={() => void loadBatches()}
-                    quotaBlocked={quotaBlocked}
                   />
                 </TabsContent>
                 <TabsContent value="completed" className="mt-4">
@@ -640,7 +581,6 @@ export default function ClerkDashboardPage() {
                     mode="completed"
                     onOpen={openBatchWork}
                     onRetry={() => void loadBatches()}
-                    quotaBlocked={quotaBlocked}
                   />
                 </TabsContent>
               </Tabs>
@@ -662,7 +602,6 @@ function BatchList({
   mode,
   onOpen,
   onRetry,
-  quotaBlocked,
 }: {
   batches: ClerkBatchItem[];
   loading: boolean;
@@ -673,7 +612,6 @@ function BatchList({
   mode: AllocTab;
   onOpen: (batch: ClerkBatchItem) => void;
   onRetry: () => void;
-  quotaBlocked: boolean;
 }) {
   if (loading) {
     return (
@@ -732,8 +670,6 @@ function BatchList({
       {batches.map((batch) => {
         const total = Math.max(batch.total_count, 1);
         const pct = Math.min(100, Math.round((batch.done_count / total) * 100));
-        const canContinue =
-          mode === "completed" || !(quotaBlocked && batch.pending_count > 0);
         const meta = [
           batch.exam_year,
           batch.subject_code,
@@ -747,11 +683,9 @@ function BatchList({
             <div
               role="button"
               tabIndex={0}
-              onClick={() => {
-                if (canContinue) onOpen(batch);
-              }}
+              onClick={() => onOpen(batch)}
               onKeyDown={(e) => {
-                if ((e.key === "Enter" || e.key === " ") && canContinue) {
+                if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   onOpen(batch);
                 }
@@ -807,7 +741,6 @@ function BatchList({
                   size="sm"
                   variant={mode === "completed" ? "outline" : "default"}
                   className="shrink-0 gap-1.5"
-                  disabled={!canContinue}
                   onClick={() => onOpen(batch)}
                 >
                   {mode === "in_progress" ? (

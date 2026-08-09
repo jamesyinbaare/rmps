@@ -54,7 +54,7 @@ function writeCachedProgress(examId: number, data: ExamProgressResponse): void {
   try {
     sessionStorage.setItem(progressCacheKey(examId), JSON.stringify(data));
   } catch {
-    // Ignore quota / private-mode failures
+    // Ignore private-mode / storage failures
   }
 }
 

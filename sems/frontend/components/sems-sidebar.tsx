@@ -124,8 +124,10 @@ const getNavMain = (
       url: "/clerk/manage",
       icon: Layers,
       items: [
-        { title: "Operations", url: "/clerk/manage" },
+        { title: "Overview", url: "/clerk/manage" },
+        { title: "Prepare Batches", url: "/clerk/batches" },
         { title: "Assign Work", url: "/clerk/assign" },
+        { title: "Manage Clerks", url: "/clerk/clerks" },
       ],
     });
   }

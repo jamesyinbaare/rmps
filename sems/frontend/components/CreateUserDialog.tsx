@@ -36,6 +36,8 @@ interface CreateUserDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
   currentUserRole?: UserRole;
+  /** When set, role select is hidden and this role is always submitted. */
+  lockedRole?: UserRole;
 }
 
 export function CreateUserDialog({
@@ -43,6 +45,7 @@ export function CreateUserDialog({
   onOpenChange,
   onSuccess,
   currentUserRole,
+  lockedRole,
 }: CreateUserDialogProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -50,7 +53,7 @@ export function CreateUserDialog({
     password: "",
     confirmPassword: "",
     full_name: "",
-    role: "DATACLERK" as UserRole,
+    role: (lockedRole ?? "DATACLERK") as UserRole,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -69,13 +72,13 @@ export function CreateUserDialog({
         password: "",
         confirmPassword: "",
         full_name: "",
-        role: "DATACLERK",
+        role: lockedRole ?? "DATACLERK",
       });
       setErrors({});
       setShowPassword(false);
       setShowConfirmPassword(false);
     }
-  }, [open]);
+  }, [open, lockedRole]);
 
   const validateForm = (): boolean => {
     const newErrors: typeof errors = {};
@@ -116,10 +119,11 @@ export function CreateUserDialog({
     setLoading(true);
 
     try {
+      const roleToSubmit = lockedRole ?? formData.role;
       console.log("Creating user with data:", {
         email: formData.email.trim(),
         full_name: formData.full_name.trim(),
-        role: formData.role,
+        role: roleToSubmit,
         password_length: formData.password.length,
       });
 
@@ -127,7 +131,7 @@ export function CreateUserDialog({
         email: formData.email.trim(),
         password: formData.password,
         full_name: formData.full_name.trim(),
-        role: formData.role,
+        role: roleToSubmit,
       });
 
       console.log("User created successfully:", result);
@@ -225,30 +229,37 @@ export function CreateUserDialog({
               )}
             </div>
 
-            <div className="space-y-2">
-              <label htmlFor="role" className="text-sm font-medium">
-                Role <span className="text-destructive">*</span>
-              </label>
-              <Select
-                value={formData.role}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, role: value as UserRole }))
-                }
-                disabled={loading}
-                required
-              >
-                <SelectTrigger id="role" className="w-full">
-                  <SelectValue placeholder="Select a role" />
-                </SelectTrigger>
-                <SelectContent>
-                  {getAvailableRoles(currentUserRole).map((role) => (
-                    <SelectItem key={role} value={role}>
-                      {roleLabels[role]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {lockedRole ? (
+              <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2">
+                <p className="text-sm font-medium">Role</p>
+                <p className="text-sm text-muted-foreground">{roleLabels[lockedRole]}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label htmlFor="role" className="text-sm font-medium">
+                  Role <span className="text-destructive">*</span>
+                </label>
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({ ...prev, role: value as UserRole }))
+                  }
+                  disabled={loading}
+                  required
+                >
+                  <SelectTrigger id="role" className="w-full">
+                    <SelectValue placeholder="Select a role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getAvailableRoles(currentUserRole).map((role) => (
+                      <SelectItem key={role} value={role}>
+                        {roleLabels[role]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium">

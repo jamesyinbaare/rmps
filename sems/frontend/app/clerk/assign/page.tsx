@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
@@ -11,6 +11,16 @@ import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -38,28 +48,21 @@ import {
 } from "@/components/ui/table";
 import {
   assignIssueBatches,
-  getAllExams,
   getBatchSummary,
-  getCurrentUser,
-  listClerkQuotas,
+  listClerks,
   listIssueBatches,
-  listSubjects,
   releaseIssueBatches,
 } from "@/lib/api";
-import { normalizeRole } from "@/lib/role-utils";
+import { useDataEntryExamScope } from "@/hooks/useDataEntryExamScope";
 import { cn } from "@/lib/utils";
 import type {
   BatchSummaryResponse,
-  ClerkQuotaItem,
-  Exam,
+  ClerkListItem,
   IssueBatch,
-  Subject,
 } from "@/types/document";
 
 type DocFilter = "all" | "doc" | "nod";
 type AssignTab = "all" | "unassigned" | "assigned";
-
-const EXAM_STORAGE_KEY = "sems.dataEntry.examId";
 
 function testTypeLabel(testType: number) {
   if (testType === 1) return "Paper 1";
@@ -69,13 +72,9 @@ function testTypeLabel(testType: number) {
 }
 
 export default function AssignWorkPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(true);
-  const [authorized, setAuthorized] = useState(false);
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [examId, setExamId] = useState<number | null>(null);
+  const { loading, authorized, exams, subjects, examId, applyExamId } =
+    useDataEntryExamScope({ path: "/clerk/assign" });
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [testType, setTestType] = useState<number | null>(null);
   const [hasDocFilter, setHasDocFilter] = useState<DocFilter>("all");
@@ -84,28 +83,35 @@ export default function AssignWorkPage() {
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
   const [assignClerkId, setAssignClerkId] = useState("");
-  const [quotas, setQuotas] = useState<ClerkQuotaItem[]>([]);
+  const [clerks, setClerks] = useState<ClerkListItem[]>([]);
   const [summary, setSummary] = useState<BatchSummaryResponse | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [confirmAssignOpen, setConfirmAssignOpen] = useState(false);
+  const [confirmReleaseOpen, setConfirmReleaseOpen] = useState(false);
+  const [filtersHydrated, setFiltersHydrated] = useState(false);
 
-  const applyExamId = useCallback(
-    (id: number | null) => {
-      setExamId(id);
-      if (id != null) {
-        try {
-          localStorage.setItem(EXAM_STORAGE_KEY, String(id));
-        } catch {
-          /* ignore */
-        }
-        const params = new URLSearchParams(searchParams.toString());
-        params.set("exam_id", String(id));
-        router.replace(`/clerk/assign?${params.toString()}`);
-      }
-    },
-    [router, searchParams]
-  );
+  useEffect(() => {
+    if (filtersHydrated || loading) return;
+    const subjectFromQuery = searchParams.get("subject_id");
+    const testTypeFromQuery = searchParams.get("test_type");
+    const streamFromQuery = searchParams.get("stream");
+    const clerkFromQuery = searchParams.get("clerk_id");
+
+    if (subjectFromQuery) {
+      const id = Number(subjectFromQuery);
+      if (!Number.isNaN(id)) setSubjectId(id);
+    }
+    if (testTypeFromQuery) {
+      const id = Number(testTypeFromQuery);
+      if (!Number.isNaN(id)) setTestType(id);
+    }
+    if (streamFromQuery === "doc" || streamFromQuery === "nod") {
+      setHasDocFilter(streamFromQuery);
+    }
+    if (clerkFromQuery) setAssignClerkId(clerkFromQuery);
+    setFiltersHydrated(true);
+  }, [filtersHydrated, loading, searchParams]);
 
   const refreshBatches = useCallback(async () => {
     if (!examId) {
@@ -127,66 +133,21 @@ export default function AssignWorkPage() {
     }
   }, [examId, subjectId, testType, hasDocFilter]);
 
-  const refreshSummaryAndQuotas = useCallback(async () => {
-    const [summaryData, quotasData] = await Promise.all([
+  const refreshSummaryAndClerks = useCallback(async () => {
+    const [summaryData, clerksData] = await Promise.all([
       getBatchSummary(examId || undefined),
-      listClerkQuotas(),
+      listClerks(),
     ]);
     setSummary(summaryData);
-    setQuotas(quotasData.clerks);
+    setClerks(clerksData.clerks);
   }, [examId]);
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const user = await getCurrentUser();
-        const role = normalizeRole(user.role);
-        if (role !== "SUPER_ADMIN" && role !== "REGISTRAR") {
-          router.replace("/");
-          return;
-        }
-        setAuthorized(true);
-
-        const examsData = await getAllExams().catch(() => []);
-        const allSubjects: Subject[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const chunk = await listSubjects(page, 100);
-          allSubjects.push(...chunk);
-          hasMore = chunk.length === 100;
-          page++;
-        }
-        setExams(Array.isArray(examsData) ? examsData : []);
-        setSubjects(allSubjects);
-
-        const fromQuery = searchParams.get("exam_id");
-        let initial: number | null = fromQuery ? Number(fromQuery) : null;
-        if (initial == null || Number.isNaN(initial)) {
-          try {
-            const stored = localStorage.getItem(EXAM_STORAGE_KEY);
-            if (stored) initial = Number(stored);
-          } catch {
-            /* ignore */
-          }
-        }
-        if (initial != null && !Number.isNaN(initial)) setExamId(initial);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to load");
-      } finally {
-        setLoading(false);
-      }
-    };
-    void init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
-
-  useEffect(() => {
     if (!authorized) return;
-    void Promise.all([refreshBatches(), refreshSummaryAndQuotas()]).catch((err) =>
+    void Promise.all([refreshBatches(), refreshSummaryAndClerks()]).catch((err) =>
       toast.error(err instanceof Error ? err.message : "Failed to refresh")
     );
-  }, [authorized, refreshBatches, refreshSummaryAndQuotas]);
+  }, [authorized, refreshBatches, refreshSummaryAndClerks]);
 
   const filteredBatches = useMemo(() => {
     if (tab === "unassigned") return batches.filter((b) => !b.assigned_to_user_id);
@@ -202,30 +163,39 @@ export default function AssignWorkPage() {
   const selectedAssigned = selectedBatches.filter((b) => !!b.assigned_to_user_id);
 
   const clerkRows = useMemo(() => {
-    return [...quotas].sort((a, b) => {
+    return [...clerks].sort((a, b) => {
       const loadA =
         summary?.clerks.find((c) => c.user_id === a.user_id)?.assigned_pending_issues ?? 0;
       const loadB =
         summary?.clerks.find((c) => c.user_id === b.user_id)?.assigned_pending_issues ?? 0;
       return loadA - loadB || a.full_name.localeCompare(b.full_name);
     });
-  }, [quotas, summary]);
+  }, [clerks, summary]);
 
-  const selectedClerk = quotas.find((q) => q.user_id === assignClerkId) ?? null;
+  const selectedClerk = clerks.find((q) => q.user_id === assignClerkId) ?? null;
   const selectedClerkLoad = summary?.clerks.find((c) => c.user_id === assignClerkId);
-  const selectedClerkActiveExamId =
-    selectedClerk?.active_exam_id ?? selectedClerkLoad?.active_exam_id ?? null;
-  const selectedClerkActiveExamLabel =
-    selectedClerk?.active_exam_label ?? selectedClerkLoad?.active_exam_label ?? null;
-  const assignBlockedByOtherExam =
-    !!assignClerkId &&
-    selectedClerkActiveExamId != null &&
-    examId != null &&
-    selectedClerkActiveExamId !== examId;
+  const selectedClerkActiveExams =
+    selectedClerk?.active_exams ??
+    selectedClerkLoad?.active_exams ??
+    (selectedClerk?.active_exam_label
+      ? [
+          {
+            exam_id: selectedClerk.active_exam_id ?? 0,
+            exam_label: selectedClerk.active_exam_label,
+            assigned_batches: 0,
+            assigned_pending_issues: 0,
+          },
+        ]
+      : []);
 
   const allVisibleSelected =
     filteredBatches.length > 0 &&
     filteredBatches.every((b) => selectedBatchIds.has(b.id));
+
+  const batchesHref = examId
+    ? `/clerk/batches?exam_id=${examId}`
+    : "/clerk/batches";
+  const clerksHref = "/clerk/clerks";
 
   const toggleSelectAll = () => {
     if (allVisibleSelected) {
@@ -257,12 +227,6 @@ export default function AssignWorkPage() {
       toast.error("Select a clerk and at least one unassigned batch");
       return;
     }
-    if (assignBlockedByOtherExam) {
-      toast.error(
-        `${selectedClerk?.full_name ?? "Clerk"} is on ${selectedClerkActiveExamLabel ?? "another exam"}. Release those batches first.`
-      );
-      return;
-    }
     setAssigning(true);
     try {
       const result = await assignIssueBatches(
@@ -274,7 +238,7 @@ export default function AssignWorkPage() {
       );
       setConfirmAssignOpen(false);
       setSelectedBatchIds(new Set());
-      await Promise.all([refreshBatches(), refreshSummaryAndQuotas()]);
+      await Promise.all([refreshBatches(), refreshSummaryAndClerks()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Assign failed");
     } finally {
@@ -287,18 +251,15 @@ export default function AssignWorkPage() {
       toast.error("Select assigned batches to release");
       return;
     }
-    const ok = window.confirm(
-      `Release ${selectedAssigned.length} assigned batch(es) back to the pool?`
-    );
-    if (!ok) return;
     setReleasing(true);
     try {
       const result = await releaseIssueBatches({
         batch_ids: selectedAssigned.map((b) => b.id),
       });
       toast.success(`Released ${result.released_count} batch(es)`);
+      setConfirmReleaseOpen(false);
       setSelectedBatchIds(new Set());
-      await Promise.all([refreshBatches(), refreshSummaryAndQuotas()]);
+      await Promise.all([refreshBatches(), refreshSummaryAndClerks()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Release failed");
     } finally {
@@ -333,10 +294,10 @@ export default function AssignWorkPage() {
                 <p className="text-muted-foreground mt-1">
                   Review assigned and unassigned batches, then dispatch to a clerk.{" "}
                   <Link
-                    href={examId ? `/clerk/manage?exam_id=${examId}` : "/clerk/manage"}
+                    href={batchesHref}
                     className="underline underline-offset-2 hover:text-foreground"
                   >
-                    Operations
+                    Prepare batches
                   </Link>
                 </p>
               </div>
@@ -423,14 +384,14 @@ export default function AssignWorkPage() {
                       <h2 className="font-medium">Assign to clerk</h2>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Lightest pending load first
+                      Lightest pending load first · clerks may hold multiple exams
                     </p>
                   </div>
                   <div className="flex-1 overflow-y-auto divide-y">
                     {clerkRows.length === 0 ? (
                       <div className="p-6 text-sm text-muted-foreground">
                         No active data clerks.{" "}
-                        <Link href="/clerk/manage" className="underline">
+                        <Link href={clerksHref} className="underline">
                           Create one
                         </Link>
                       </div>
@@ -438,6 +399,19 @@ export default function AssignWorkPage() {
                       clerkRows.map((q) => {
                         const load = summary?.clerks.find((c) => c.user_id === q.user_id);
                         const selected = assignClerkId === q.user_id;
+                        const activeExams =
+                          q.active_exams ??
+                          load?.active_exams ??
+                          (q.active_exam_label
+                            ? [
+                                {
+                                  exam_id: q.active_exam_id ?? 0,
+                                  exam_label: q.active_exam_label,
+                                  assigned_batches: 0,
+                                  assigned_pending_issues: 0,
+                                },
+                              ]
+                            : []);
                         return (
                           <button
                             key={q.user_id}
@@ -459,23 +433,23 @@ export default function AssignWorkPage() {
                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                               <span>{load?.assigned_batches ?? 0} batches</span>
                               <span>{load?.assigned_pending_issues ?? 0} pending</span>
-                              <span
-                                className={cn(
-                                  "tabular-nums",
-                                  q.remaining <= 0 && "text-destructive font-medium"
-                                )}
-                              >
-                                {q.remaining} left
+                              <span className="tabular-nums">
+                                {q.resolved_today} today
                               </span>
                             </div>
-                            {(q.active_exam_label || load?.active_exam_label) && (
-                              <Badge
-                                variant="secondary"
-                                className="mt-2 text-[10px] font-normal"
-                              >
-                                Active: {q.active_exam_label || load?.active_exam_label}
-                              </Badge>
-                            )}
+                            {activeExams.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {activeExams.map((exam) => (
+                                  <Badge
+                                    key={exam.exam_id}
+                                    variant="secondary"
+                                    className="text-[10px] font-normal"
+                                  >
+                                    {exam.exam_label}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : null}
                           </button>
                         );
                       })
@@ -524,15 +498,14 @@ export default function AssignWorkPage() {
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                       </div>
                     ) : filteredBatches.length === 0 ? (
-                      <div className="p-10 text-center text-sm text-muted-foreground">
-                        No batches in this view. Prepare batches from{" "}
-                        <Link
-                          href={`/clerk/manage?exam_id=${examId}`}
-                          className="underline"
-                        >
-                          Operations
-                        </Link>
-                        .
+                      <div className="p-10 text-center text-sm text-muted-foreground space-y-2">
+                        <p>
+                          No batches in this view. Prepare batches first, then return here
+                          to assign.
+                        </p>
+                        <Button asChild size="sm" variant="outline">
+                          <Link href={batchesHref}>Prepare batches</Link>
+                        </Button>
                       </div>
                     ) : (
                       <Table>
@@ -611,17 +584,10 @@ export default function AssignWorkPage() {
                   · {selectedUnassigned.length} unassigned · {selectedAssigned.length}{" "}
                   assigned
                 </span>
-                {assignBlockedByOtherExam ? (
-                  <p className="text-xs text-destructive mt-0.5">
-                    Active exam: {selectedClerkActiveExamLabel}.{" "}
-                    <Link href="/clerk/manage" className="underline underline-offset-2">
-                      Release those batches
-                    </Link>{" "}
-                    before assigning a different examination.
-                  </p>
-                ) : selectedClerkActiveExamLabel ? (
+                {selectedClerkActiveExams.length > 0 ? (
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Active exam: {selectedClerkActiveExamLabel} (same-exam batches only)
+                    Active exams:{" "}
+                    {selectedClerkActiveExams.map((e) => e.exam_label).join(" · ")}
                   </p>
                 ) : null}
               </div>
@@ -629,23 +595,13 @@ export default function AssignWorkPage() {
                 <Button
                   variant="outline"
                   disabled={releasing || selectedAssigned.length === 0}
-                  onClick={() => void handleReleaseSelected()}
+                  onClick={() => setConfirmReleaseOpen(true)}
                 >
-                  {releasing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Releasing…
-                    </>
-                  ) : (
-                    `Release selected (${selectedAssigned.length})`
-                  )}
+                  Release selected ({selectedAssigned.length})
                 </Button>
                 <Button
                   disabled={
-                    assigning ||
-                    !assignClerkId ||
-                    selectedUnassigned.length === 0 ||
-                    assignBlockedByOtherExam
+                    assigning || !assignClerkId || selectedUnassigned.length === 0
                   }
                   onClick={() => setConfirmAssignOpen(true)}
                 >
@@ -684,6 +640,30 @@ export default function AssignWorkPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmReleaseOpen} onOpenChange={setConfirmReleaseOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Release selected batches?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Release {selectedAssigned.length} assigned batch
+              {selectedAssigned.length === 1 ? "" : "es"} back to the unassigned pool?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={releasing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={releasing}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleReleaseSelected();
+              }}
+            >
+              {releasing ? "Releasing…" : "Release selected"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }

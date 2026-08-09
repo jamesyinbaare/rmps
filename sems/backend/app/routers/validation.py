@@ -47,10 +47,6 @@ from app.utils.score_utils import (
     validate_score_range,
 )
 from app.services.validation_job_service import process_validation
-from app.services.clerk_quota_service import (
-    count_resolved_today,
-    get_effective_quota,
-)
 from app.services.cache_service import cache_service
 from app.utils.cache_utils import (
     generate_issues_list_key,
@@ -132,10 +128,8 @@ async def _assert_can_act_on_issue(
     session: DBSessionDep,
     issue: SubjectScoreValidationIssue,
     current_user: User,
-    *,
-    enforce_quota: bool = False,
 ) -> None:
-    """Enforce batch assignment for clerks; optional daily resolve quota."""
+    """Enforce batch assignment for clerks."""
     if current_user.role <= UserRole.REGISTRAR:
         return
 
@@ -153,17 +147,9 @@ async def _assert_can_act_on_issue(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Issue is not assigned to you",
             )
-        if enforce_quota:
-            limit, _ = await get_effective_quota(session, current_user.id)
-            resolved_today = await count_resolved_today(session, current_user.id)
-            if resolved_today >= limit:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Daily resolve quota reached",
-                )
         return
 
-    # Officers: allow without assignment ownership for ops, no quota
+    # Officers: allow without assignment ownership for ops
     return
 
 
@@ -217,18 +203,12 @@ async def get_my_validation_stats(
         open_count = open_result.scalar() or 0
         assigned_pending = 0
 
-    quota_limit, quota_overridden = await get_effective_quota(session, current_user.id)
-    resolved_today = await _count_resolved(day_start)
-
     return MyValidationStatsResponse(
         open_count=open_count,
-        resolved_today=resolved_today,
+        resolved_today=await _count_resolved(day_start),
         resolved_week=await _count_resolved(week_start),
         resolved_total=await _count_resolved(),
         ignored_total=ignored_total_result.scalar() or 0,
-        quota_limit=quota_limit,
-        quota_remaining=max(0, quota_limit - resolved_today),
-        quota_overridden=quota_overridden,
         assigned_pending_count=assigned_pending if current_user.role == UserRole.DATACLERK else open_count,
     )
 
@@ -540,7 +520,7 @@ async def get_validation_issue(
         school,
     ) = row
 
-    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=False)
+    await _assert_can_act_on_issue(session, issue, current_user)
 
     current_score_value = None
     document_id = None
@@ -645,7 +625,7 @@ async def resolve_validation_issue(
             detail="Only pending issues can be resolved",
         )
 
-    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=True)
+    await _assert_can_act_on_issue(session, issue, current_user)
 
     corrected = (request.corrected_score or "").strip()
     if not corrected:
@@ -783,7 +763,7 @@ async def ignore_validation_issue(
             detail=f"Validation issue with id {issue_id} not found",
         )
 
-    await _assert_can_act_on_issue(session, issue, current_user, enforce_quota=False)
+    await _assert_can_act_on_issue(session, issue, current_user)
 
     issue.status = ValidationIssueStatus.IGNORED
     issue.resolved_at = datetime.utcnow()
