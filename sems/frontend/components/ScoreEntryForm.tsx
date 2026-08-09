@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, Save } from "lucide-react";
+import { Save } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -17,10 +17,9 @@ import type { Document, ScoreResponse, ScoreUpdate, BatchScoreUpdateItem } from 
 
 interface ScoreEntryFormProps {
   document: Document;
-  onClose: () => void;
 }
 
-export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
+export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
   const [scores, setScores] = useState<ScoreResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -61,7 +60,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     };
   }, [scores.length]);
 
-  // Load scores for the document
+  // Load scores for the document (scoped to examination — extracted_id is not globally unique)
   useEffect(() => {
     async function loadScores() {
       setLoading(true);
@@ -70,7 +69,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
         // Use extracted_id if available, otherwise use document.id as string
         // The document_id in SubjectScore is a string identifier
         const documentId = document.extracted_id || document.id.toString();
-        const response = await getDocumentScores(documentId);
+        const response = await getDocumentScores(documentId, document.exam_id);
         setScores(response.scores);
 
         // Initialize score values
@@ -92,7 +91,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     }
 
     loadScores();
-  }, [document.id, document.extracted_id]);
+  }, [document.id, document.extracted_id, document.exam_id]);
 
   const handleScoreChange = (scoreId: number, field: keyof ScoreUpdate, value: string) => {
     // Handle empty string as null (not entered)
@@ -159,7 +158,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
       await updateScore(scoreId, scoreUpdate);
       // Reload scores to get updated data
       const documentId = document.extracted_id || document.id.toString();
-      const response = await getDocumentScores(documentId);
+      const response = await getDocumentScores(documentId, document.exam_id);
       setScores(response.scores);
       setHasChanges(false);
     } catch (err) {
@@ -168,7 +167,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     } finally {
       setSaving(false);
     }
-  }, [scoreValues, document.id, document.extracted_id]);
+  }, [scoreValues, document.id, document.extracted_id, document.exam_id]);
 
   const handleBatchSave = async () => {
     if (!hasChanges) return;
@@ -182,10 +181,10 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
       }));
 
       const documentId = document.extracted_id || document.id.toString();
-      await batchUpdateScores(documentId, { scores: batchItems });
+      await batchUpdateScores(documentId, { scores: batchItems }, document.exam_id);
 
       // Reload scores
-      const response = await getDocumentScores(documentId);
+      const response = await getDocumentScores(documentId, document.exam_id);
       setScores(response.scores);
       setHasChanges(false);
     } catch (err) {
@@ -199,11 +198,8 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
   if (loading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="border-b border-border px-4 py-3">
           <h2 className="text-lg font-semibold">Score Entry</h2>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} className="h-8 w-8">
-            <X className="h-4 w-4" />
-          </Button>
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-sm text-muted-foreground">Loading scores...</div>
@@ -214,17 +210,12 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 shrink-0">
-        <div>
-          <h2 className="text-base font-semibold">Score Entry</h2>
-          <p className="text-xs text-muted-foreground">
-            Document: {document.extracted_id || document.file_name}
-          </p>
-        </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} className="h-8 w-8">
-          <X className="h-4 w-4" />
-        </Button>
+      {/* Header — close is owned by the parent modal */}
+      <div className="shrink-0 border-b border-border px-4 py-2">
+        <h2 className="text-base font-semibold">Score Entry</h2>
+        <p className="text-xs text-muted-foreground">
+          Document: {document.extracted_id || document.file_name}
+        </p>
       </div>
 
       {/* Error Message */}

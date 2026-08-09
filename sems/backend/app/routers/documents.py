@@ -1,6 +1,7 @@
 from datetime import datetime
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -350,16 +351,23 @@ async def download_document(document_id: int, session: DBSessionDep) -> Streamin
 
     try:
         file_content = await storage_service.retrieve(document.file_path)
+        safe_name = (document.file_name or f"document-{document.id}").replace('"', "")
+        content_disposition = (
+            f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
+        )
         return StreamingResponse(
             iter([file_content]),
-            media_type=document.mime_type,
+            media_type=document.mime_type or "application/octet-stream",
             headers={
-                "Content-Disposition": f'attachment; filename="{document.file_name}"',
+                "Content-Disposition": content_disposition,
                 "Cache-Control": "private, max-age=600, immutable",
             },
         )
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found in storage. The document record exists but the file is missing.",
+        )
 
 
 @router.get("", response_model=DocumentListResponse)

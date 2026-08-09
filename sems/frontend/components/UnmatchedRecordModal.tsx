@@ -405,7 +405,7 @@ export function UnmatchedRecordModal({
 
             {/* Score Entry Section */}
             <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-              <ScoreEntryForm document={document} onClose={onClose} />
+              <ScoreEntryForm document={document} />
             </div>
           </div>
         </div>

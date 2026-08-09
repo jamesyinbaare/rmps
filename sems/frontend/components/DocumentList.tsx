@@ -10,7 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { downloadDocument, listSchools, listSubjects } from "@/lib/api";
+import {
+  downloadDocument,
+  getDocumentDownloadFilename,
+  listSchools,
+  listSubjects,
+} from "@/lib/api";
 import type { Document, School, Subject } from "@/types/document";
 import { File } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -113,24 +118,7 @@ export function DocumentList({
 
   const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadDocument(doc.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-
-      // Use extracted_id as filename if available, otherwise use file_name
-      let downloadFilename = doc.file_name;
-      if (doc.extracted_id) {
-        // Extract file extension from original filename
-        const fileExtension = doc.file_name.split('.').pop();
-        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
-      }
-
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
     } catch (error) {
       console.error("Failed to download document:", error);
       alert("Failed to download document. Please try again.");

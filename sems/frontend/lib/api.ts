@@ -393,13 +393,44 @@ export async function getDocument(documentId: number): Promise<Document> {
   return handleResponse<Document>(response);
 }
 
-export async function downloadDocument(documentId: number): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/download`);
-  if (!response.ok) {
-    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
-    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+/** Absolute download URL for a document file. */
+export function getDocumentDownloadUrl(documentId: number): string {
+  return `${getApiBaseUrl()}/api/v1/documents/${documentId}/download`;
+}
+
+/** Preferred filename for saving a downloaded document. */
+export function getDocumentDownloadFilename(doc: {
+  file_name: string;
+  extracted_id?: string | null;
+}): string {
+  if (doc.extracted_id) {
+    const fileExtension = doc.file_name.split(".").pop();
+    return fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
   }
-  return response.blob();
+  return doc.file_name;
+}
+
+function triggerAnchorDownload(url: string, filename?: string): void {
+  if (typeof document === "undefined") return;
+  const a = document.createElement("a");
+  a.href = url;
+  if (filename) a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/**
+ * Download a document file via navigation (no CORS).
+ * Backend Content-Disposition: attachment drives the save dialog.
+ * Avoids fetch() which can fail as TypeError: Failed to fetch across localhost origins.
+ */
+export async function downloadDocument(
+  documentId: number,
+  filename?: string
+): Promise<void> {
+  triggerAnchorDownload(getDocumentDownloadUrl(documentId), filename);
 }
 
 export async function deleteDocument(documentId: number): Promise<void> {
@@ -2022,9 +2053,13 @@ export async function getFilteredDocuments(
   return handleResponse<DocumentListResponse>(response);
 }
 
-export async function getDocumentScores(documentId: string): Promise<DocumentScoresResponse> {
+export async function getDocumentScores(
+  documentId: string,
+  examId: number
+): Promise<DocumentScoresResponse> {
+  const params = new URLSearchParams({ exam_id: String(examId) });
   const response = await fetchWithAuth(
-    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores`
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores?${params.toString()}`
   );
   return handleResponse<DocumentScoresResponse>(response);
 }
@@ -2042,10 +2077,12 @@ export async function updateScore(scoreId: number, data: ScoreUpdate): Promise<S
 
 export async function batchUpdateScores(
   documentId: string,
-  data: BatchScoreUpdate
+  data: BatchScoreUpdate,
+  examId: number
 ): Promise<BatchScoreUpdateResponse> {
+  const params = new URLSearchParams({ exam_id: String(examId) });
   const response = await fetchWithAuth(
-    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`,
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch?${params.toString()}`,
     {
       method: "POST",
       headers: {
