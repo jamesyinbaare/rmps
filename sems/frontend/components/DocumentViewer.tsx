@@ -22,7 +22,16 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import type { Document, Exam, School, Subject, ReductoDataResponse } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
-import { API_BASE_URL, downloadDocument, getExam, getReductoData, listSchools, listSubjects, updateDocumentId } from "@/lib/api";
+import {
+  API_BASE_URL,
+  downloadDocument,
+  getDocumentDownloadFilename,
+  getExam,
+  getReductoData,
+  listSchools,
+  listSubjects,
+  updateDocumentId,
+} from "@/lib/api";
 import { toast } from "sonner";
 
 interface DocumentViewerProps {
@@ -388,22 +397,7 @@ export function DocumentViewer({
     } else {
       // Fallback download handler
       try {
-        const blob = await downloadDocument(document.id);
-        const url = window.URL.createObjectURL(blob);
-        const a = window.document.createElement("a");
-        a.href = url;
-
-        let downloadFilename = document.file_name;
-        if (document.extracted_id) {
-          const fileExtension = document.file_name.split('.').pop();
-          downloadFilename = fileExtension ? `${document.extracted_id}.${fileExtension}` : document.extracted_id;
-        }
-
-        a.download = downloadFilename;
-        window.document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        window.document.body.removeChild(a);
+        await downloadDocument(document.id, getDocumentDownloadFilename(document));
       } catch (error) {
         console.error("Failed to download document:", error);
         toast.error("Failed to download document. Please try again.");

@@ -7,7 +7,7 @@ import { TopBar } from "@/components/TopBar";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { Button } from "@/components/ui/button";
 import { Grid3x3, List } from "lucide-react";
-import { downloadDocument } from "@/lib/api";
+import { downloadDocument, getDocumentDownloadFilename } from "@/lib/api";
 import type { Document } from "@/types/document";
 import { Loader2 } from "lucide-react";
 
@@ -25,22 +25,7 @@ export default function FoldersPage() {
 
   const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadDocument(doc.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-
-      let downloadFilename = doc.file_name;
-      if (doc.extracted_id) {
-        const fileExtension = doc.file_name.split(".").pop();
-        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
-      }
-
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
     } catch (error) {
       console.error("Failed to download document:", error);
       alert("Failed to download document. Please try again.");

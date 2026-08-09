@@ -28,6 +28,7 @@ import {
 import {
   bulkUpdateScoresFromReducto,
   downloadDocument,
+  getDocumentDownloadFilename,
   getAllExams,
   getFilteredDocuments,
   listSchools,
@@ -347,20 +348,7 @@ export default function ApplyScoresPage() {
 
   const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadDocument(doc.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      let downloadFilename = doc.file_name;
-      if (doc.extracted_id) {
-        const fileExtension = doc.file_name.split(".").pop();
-        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
-      }
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
     } catch {
       toast.error("Failed to download document. Please try again.");
     }

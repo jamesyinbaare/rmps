@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
@@ -16,8 +16,22 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Grid3x3, List, LayoutGrid, ListChecks, AlertCircle, Trash2, ChevronDown, Database } from "lucide-react";
-import { listDocuments, downloadDocument, updateDocumentId } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Upload, Grid3x3, List, AlertCircle, Trash2, Database, MoreHorizontal } from "lucide-react";
+import {
+  listDocuments,
+  downloadDocument,
+  getDocumentDownloadFilename,
+  updateDocumentId,
+} from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -27,18 +41,28 @@ export default function DocumentsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const filterParam = searchParams.get("filter");
+  const examIdParam = searchParams.get("exam_id");
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<DocumentFiltersType>({
-    page: 1,
-    page_size: 30,
+  const [filters, setFilters] = useState<DocumentFiltersType>(() => {
+    const initial: DocumentFiltersType = {
+      page: 1,
+      page_size: 30,
+    };
+    if (examIdParam) {
+      const examId = parseInt(examIdParam, 10);
+      if (!Number.isNaN(examId)) {
+        initial.exam_id = examId;
+      }
+    }
+    return initial;
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [viewMode, setViewMode] = useState<"grid" | "large-grid" | "list" | "large-list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -52,6 +76,8 @@ export default function DocumentsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
+  const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
+  const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
 
   const loadDocuments = useCallback(async (append = false) => {
     if (append) {
@@ -145,16 +171,31 @@ export default function DocumentsPage() {
       prevSearchQueryRef.current = searchQuery;
       prevFilterParamRef.current = filterParam;
       loadDocuments(false);
-    } else if (pageChanged && (filters.page ?? 1) > 1 && (viewMode === "grid" || viewMode === "large-grid")) {
+    } else if (pageChanged && (filters.page ?? 1) > 1 && viewMode === "grid") {
       // Page changed for infinite scroll
       prevFiltersRef.current = filters;
       loadDocuments(true);
     }
   }, [filters, searchQuery, filterParam, viewMode, loadDocuments]);
 
+  // Keep exam_id in the URL for dashboard deep-links
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (filters.exam_id) {
+      params.set("exam_id", String(filters.exam_id));
+    } else {
+      params.delete("exam_id");
+    }
+    const next = params.toString();
+    const current = searchParams.toString();
+    if (next !== current) {
+      router.replace(`/icm-studio/documents${next ? `?${next}` : ""}`, { scroll: false });
+    }
+  }, [filters.exam_id, router, searchParams]);
+
   // Check if we need to load more content to fill the viewport (after documents load)
   useEffect(() => {
-    if ((viewMode !== "grid" && viewMode !== "large-grid") || !hasMore || loadingMore || loading) return;
+    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
     if (documents.length === 0) return;
 
     const checkIfNeedsMoreContent = () => {
@@ -186,7 +227,7 @@ export default function DocumentsPage() {
 
   // Intersection Observer for infinite scroll (more efficient than scroll events)
   useEffect(() => {
-    if ((viewMode !== "grid" && viewMode !== "large-grid") || !hasMore || loadingMore || loading) return;
+    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
     if (typeof window === "undefined" || !("IntersectionObserver" in window)) return;
 
     const sentinel = document.getElementById("infinite-scroll-sentinel");
@@ -207,7 +248,7 @@ export default function DocumentsPage() {
 
   // Fallback scroll handler (for browsers without Intersection Observer support)
   useEffect(() => {
-    if ((viewMode !== "grid" && viewMode !== "large-grid") || !hasMore || loadingMore || loading) return;
+    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
     if (typeof window === "undefined") return;
     if ("IntersectionObserver" in window) return; // Use Intersection Observer if available
 
@@ -262,13 +303,17 @@ export default function DocumentsPage() {
   };
 
   const handleFilterChange = (filter: string) => {
-    const url = new URL(window.location.href);
+    const params = new URLSearchParams(searchParams.toString());
     if (filter) {
-      url.searchParams.set("filter", filter);
+      params.set("filter", filter);
     } else {
-      url.searchParams.delete("filter");
+      params.delete("filter");
     }
-    router.push(url.pathname + url.search);
+    if (filters.exam_id) {
+      params.set("exam_id", String(filters.exam_id));
+    }
+    const qs = params.toString();
+    router.push(`/icm-studio/documents${qs ? `?${qs}` : ""}`);
   };
 
   const handleSelectionChange = (id: number, selected: boolean) => {
@@ -295,13 +340,8 @@ export default function DocumentsPage() {
     for (const id of selectedIds) {
       const doc = documents.find((d) => d.id === id);
       if (doc) {
-        try {
-          await handleDownload(doc);
-          // Small delay to avoid overwhelming the browser
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          console.error(`Failed to download document ${id}:`, error);
-        }
+        await handleDownload(doc);
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
     setSelectedIds(new Set());
@@ -409,27 +449,15 @@ export default function DocumentsPage() {
 
   const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadDocument(doc.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-
-      // Use extracted_id as filename if available, otherwise use file_name
-      let downloadFilename = doc.file_name;
-      if (doc.extracted_id) {
-        // Extract file extension from original filename
-        const fileExtension = doc.file_name.split('.').pop();
-        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
-      }
-
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
     } catch (error) {
       console.error("Failed to download document:", error);
-      alert("Failed to download document. Please try again.");
+      setDownloadErrorMessage(
+        error instanceof Error && error.message
+          ? error.message
+          : "Failed to download document. Please try again."
+      );
+      setDownloadErrorOpen(true);
     }
   };
 
@@ -501,9 +529,8 @@ export default function DocumentsPage() {
             )}
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <div className="flex items-center gap-2">
-                {/* Upload Scanned ICMs Button */}
+            <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="secondary"
                   onClick={() => setUploadOpen(true)}
@@ -512,7 +539,6 @@ export default function DocumentsPage() {
                   <Upload className="h-4 w-4" />
                   Upload Scanned ICMs
                 </Button>
-                {/* Bulk Selection Toggle */}
                 <Button
                   variant={bulkMode ? "secondary" : "outline"}
                   onClick={() => {
@@ -526,72 +552,56 @@ export default function DocumentsPage() {
                   <Grid3x3 className="h-4 w-4" />
                   {bulkMode ? "Exit Selection" : "Select"}
                 </Button>
-                {/* Failed Extractions Link */}
                 {failedCount !== null && failedCount > 0 && (
                   <Link href="/icm-studio/documents/failed-extractions">
-                    <Button
-                      variant="outline"
-                      className="gap-2"
-                    >
+                    <Button variant="outline" className="gap-2">
                       <AlertCircle className="h-4 w-4 text-destructive" />
                       Failed Extractions
-                      <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-destructive text-destructive-foreground">
+                      <span className="rounded-full bg-destructive px-1.5 py-0.5 text-xs font-medium text-destructive-foreground">
                         {failedCount}
                       </span>
                     </Button>
                   </Link>
                 )}
-                {/* Backfill Button */}
-                <Button
-                  variant="outline"
-                  onClick={() => setBackfillDialogOpen(true)}
-                  className="gap-2"
-                >
-                  <Database className="h-4 w-4" />
-                  Backfill Missing Fields
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-1.5">
+                      <MoreHorizontal className="h-4 w-4" />
+                      More
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuItem
+                      onClick={() => setBackfillDialogOpen(true)}
+                      className="gap-2"
+                    >
+                      <Database className="h-4 w-4" />
+                      Backfill missing fields
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
-              {/* View Toggle Dropdown */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    {viewMode === "grid" && <Grid3x3 className="h-4 w-4" />}
-                    {viewMode === "large-grid" && <LayoutGrid className="h-4 w-4" />}
-                    {viewMode === "list" && <List className="h-4 w-4" />}
-                    {viewMode === "large-list" && <ListChecks className="h-4 w-4" />}
-                    <span className="hidden sm:inline">
-                      {viewMode === "grid" && "Grid"}
-                      {viewMode === "large-grid" && "Large Grid"}
-                      {viewMode === "list" && "List"}
-                      {viewMode === "large-list" && "Large List"}
-                    </span>
-                    <ChevronDown className="h-3 w-3 opacity-50" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuItem onClick={() => setViewMode("grid")} className="gap-2">
-                    <Grid3x3 className="h-4 w-4" />
-                    <span>Grid</span>
-                    {viewMode === "grid" && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setViewMode("large-grid")} className="gap-2">
-                    <LayoutGrid className="h-4 w-4" />
-                    <span>Large Grid</span>
-                    {viewMode === "large-grid" && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setViewMode("list")} className="gap-2">
-                    <List className="h-4 w-4" />
-                    <span>List</span>
-                    {viewMode === "list" && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setViewMode("large-list")} className="gap-2">
-                    <ListChecks className="h-4 w-4" />
-                    <span>Large List</span>
-                    {viewMode === "large-list" && <span className="ml-auto text-xs text-muted-foreground">✓</span>}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div className="flex shrink-0 items-center gap-1 rounded-md border border-border p-0.5">
+                <Button
+                  variant={viewMode === "grid" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 gap-1.5 px-2.5"
+                  onClick={() => setViewMode("grid")}
+                >
+                  <Grid3x3 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Grid</span>
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 gap-1.5 px-2.5"
+                  onClick={() => setViewMode("list")}
+                >
+                  <List className="h-4 w-4" />
+                  <span className="hidden sm:inline">List</span>
+                </Button>
+              </div>
             </div>
 
             <DocumentUpload
@@ -621,17 +631,17 @@ export default function DocumentsPage() {
               selectedIds={selectedIds}
               onSelectionChange={handleSelectionChange}
               bulkMode={bulkMode}
-              infiniteScroll={viewMode === "grid" || viewMode === "large-grid"}
+              infiniteScroll={viewMode === "grid"}
               hasMore={hasMore}
             />
 
-            {!loading && total > 0 && (viewMode === "list" || viewMode === "large-list") && (
-              <div className="px-6 py-4 text-sm text-muted-foreground text-center border-t border-border">
+            {!loading && total > 0 && viewMode === "list" && (
+              <div className="border-t border-border px-6 py-4 text-center text-sm text-muted-foreground">
                 Showing {documents.length} of {total} document{total !== 1 ? "s" : ""}
               </div>
             )}
-            {!loading && total > 0 && (viewMode === "grid" || viewMode === "large-grid") && (
-              <div className="px-6 py-4 text-sm text-muted-foreground text-center border-t border-border">
+            {!loading && total > 0 && viewMode === "grid" && (
+              <div className="border-t border-border px-6 py-4 text-center text-sm text-muted-foreground">
                 Loaded {documents.length} of {total} document{total !== 1 ? "s" : ""}
               </div>
             )}
@@ -666,6 +676,27 @@ export default function DocumentsPage() {
             onOpenChange={setBackfillDialogOpen}
             onSuccess={loadDocuments}
           />
+
+          <AlertDialog
+            open={downloadErrorOpen}
+            onOpenChange={(open) => {
+              setDownloadErrorOpen(open);
+              if (!open) setDownloadErrorMessage(null);
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Download failed</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {downloadErrorMessage ||
+                    "Failed to download document. Please try again."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogAction>OK</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
     </DashboardLayout>
