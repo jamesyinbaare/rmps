@@ -32,6 +32,39 @@ import {
 import { getExamProgress, getAllExams, type Exam, type ExamProgressResponse } from "@/lib/api";
 import { toast } from "sonner";
 
+const PROGRESS_CACHE_PREFIX = "exam-progress-cache:";
+
+function progressCacheKey(examId: number): string {
+  return `${PROGRESS_CACHE_PREFIX}${examId}`;
+}
+
+function readCachedProgress(examId: number): ExamProgressResponse | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(progressCacheKey(examId));
+    if (!raw) return null;
+    return JSON.parse(raw) as ExamProgressResponse;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProgress(examId: number, data: ExamProgressResponse): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(progressCacheKey(examId), JSON.stringify(data));
+  } catch {
+    // Ignore quota / private-mode failures
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
 interface PhaseCardProps {
   title: string;
   description: string;
@@ -171,37 +204,57 @@ export function ExamProgressDashboard() {
     };
 
     loadExams();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only bootstrap exams on mount
   }, []);
 
-  // Load progress when exam is selected
+  // Load progress when exam is selected (stale-while-revalidate + abort prior fetch)
   useEffect(() => {
-    const loadProgress = async () => {
-      if (!selectedExamId) return;
+    if (!selectedExamId) return;
 
+    const controller = new AbortController();
+    const examId = selectedExamId;
+    const cached = readCachedProgress(examId);
+    if (cached) {
+      setProgress(cached);
+      setError(null);
+    } else {
+      setProgress(null);
+    }
+
+    const loadProgress = async () => {
       try {
         setLoadingProgress(true);
         setError(null);
-        const progressData = await getExamProgress(selectedExamId);
+        const progressData = await getExamProgress(examId, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setProgress(progressData);
+        writeCachedProgress(examId, progressData);
       } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) return;
         setError(err instanceof Error ? err.message : "Failed to load progress");
         toast.error("Failed to load examination progress");
       } finally {
-        setLoadingProgress(false);
+        if (!controller.signal.aborted) {
+          setLoadingProgress(false);
+        }
       }
     };
 
-    loadProgress();
+    void loadProgress();
+    return () => controller.abort();
   }, [selectedExamId]);
 
   const handleRefresh = async () => {
     if (!selectedExamId) return;
     try {
       setLoadingProgress(true);
+      setError(null);
       const progressData = await getExamProgress(selectedExamId);
       setProgress(progressData);
+      writeCachedProgress(selectedExamId, progressData);
       toast.success("Progress refreshed");
     } catch (err) {
+      if (isAbortError(err)) return;
       toast.error("Failed to refresh progress");
     } finally {
       setLoadingProgress(false);
@@ -259,7 +312,6 @@ export function ExamProgressDashboard() {
           <Select
             value={selectedExamId?.toString() || ""}
             onValueChange={(value) => setSelectedExamId(parseInt(value, 10))}
-            disabled={loadingProgress}
           >
             <SelectTrigger className="w-[300px]">
               <SelectValue placeholder="Select examination" />
@@ -295,11 +347,24 @@ export function ExamProgressDashboard() {
         </Card>
       )}
 
-      {loadingProgress ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-64" />
-          ))}
+      {loadingProgress && progress && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
+          <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+          <span>Refreshing progress…</span>
+        </div>
+      )}
+
+      {loadingProgress && !progress ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
+            <Clock className="h-4 w-4 shrink-0" />
+            <span>Loading progress… large exams may take a moment.</span>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-64" />
+            ))}
+          </div>
         </div>
       ) : progress ? (
         <>

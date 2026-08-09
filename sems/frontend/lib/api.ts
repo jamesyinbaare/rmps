@@ -1505,8 +1505,13 @@ export async function getExam(id: number): Promise<Exam> {
 /**
  * Get comprehensive progress data for an exam.
  */
-export async function getExamProgress(examId: number): Promise<ExamProgressResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/progress`);
+export async function getExamProgress(
+  examId: number,
+  options?: { signal?: AbortSignal }
+): Promise<ExamProgressResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/progress`, {
+    signal: options?.signal,
+  });
   return handleResponse<ExamProgressResponse>(response);
 }
 
