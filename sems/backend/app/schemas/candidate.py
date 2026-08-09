@@ -146,6 +146,31 @@ class CandidateBulkUploadResponse(BaseModel):
     errors: list[CandidateBulkUploadError]
 
 
+class CandidateBulkUploadJobCreateResponse(BaseModel):
+    """Schema returned when a bulk upload job is accepted."""
+
+    job_id: int
+    status: str
+    total_rows: int
+
+
+class CandidateBulkUploadJobStatusResponse(BaseModel):
+    """Schema for polling bulk upload job progress."""
+
+    job_id: int
+    status: str
+    total_rows: int
+    processed_rows: int
+    successful: int
+    failed: int
+    errors: list[CandidateBulkUploadError] = Field(default_factory=list)
+    errors_truncated: bool = False
+    filename: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class SubjectRequirementsValidationResponse(BaseModel):
     """Schema for subject requirements validation response."""
 

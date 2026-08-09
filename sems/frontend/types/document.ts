@@ -262,6 +262,34 @@ export interface CandidateBulkUploadResponse {
   errors: CandidateBulkUploadError[];
 }
 
+export interface CandidateBulkUploadJobCreateResponse {
+  job_id: number;
+  status: string;
+  total_rows: number;
+}
+
+export interface CandidateBulkUploadJobStatusResponse {
+  job_id: number;
+  status: string;
+  total_rows: number;
+  processed_rows: number;
+  successful: number;
+  failed: number;
+  errors: CandidateBulkUploadError[];
+  errors_truncated: boolean;
+  filename: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SchoolCandidateExamMapResponse {
+  items: Array<{
+    candidate_id: number;
+    exam_ids: number[];
+  }>;
+}
+
 /** Bulk candidate upload: how programme subject requirements are validated. */
 export type SubjectRequirementsValidationMode = "auto" | "may_june" | "nov_dec";
 

@@ -16,6 +16,9 @@ import type {
   ProgrammeBulkUploadResponse,
   Candidate,
   CandidateBulkUploadResponse,
+  CandidateBulkUploadJobCreateResponse,
+  CandidateBulkUploadJobStatusResponse,
+  SchoolCandidateExamMapResponse,
   SubjectRequirementsValidationMode,
   CandidateListResponse,
   CandidatePhoto,
@@ -1024,11 +1027,11 @@ export async function deleteCandidate(id: number): Promise<void> {
   }
 }
 
-export async function uploadCandidatesBulk(
+export async function startCandidatesBulkUpload(
   file: File,
   examId: number,
   subjectRequirementsValidation: SubjectRequirementsValidationMode = "auto"
-): Promise<CandidateBulkUploadResponse> {
+): Promise<CandidateBulkUploadJobCreateResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("exam_id", examId.toString());
@@ -1038,7 +1041,50 @@ export async function uploadCandidatesBulk(
     method: "POST",
     body: formData,
   });
-  return handleResponse<CandidateBulkUploadResponse>(response);
+  return handleResponse<CandidateBulkUploadJobCreateResponse>(response);
+}
+
+export async function getCandidatesBulkUploadJob(
+  jobId: number
+): Promise<CandidateBulkUploadJobStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/bulk-upload/${jobId}`);
+  return handleResponse<CandidateBulkUploadJobStatusResponse>(response);
+}
+
+/**
+ * Start a candidate bulk upload and poll until the background job finishes.
+ * Optionally report intermediate progress via onProgress.
+ */
+export async function uploadCandidatesBulk(
+  file: File,
+  examId: number,
+  subjectRequirementsValidation: SubjectRequirementsValidationMode = "auto",
+  onProgress?: (status: CandidateBulkUploadJobStatusResponse) => void
+): Promise<CandidateBulkUploadResponse> {
+  const job = await startCandidatesBulkUpload(file, examId, subjectRequirementsValidation);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  // Immediate first poll
+  let status = await getCandidatesBulkUploadJob(job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getCandidatesBulkUploadJob(job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed" && status.error_message && status.successful === 0) {
+    throw new Error(status.error_message);
+  }
+
+  return {
+    total_rows: status.total_rows,
+    successful: status.successful,
+    failed: status.failed,
+    errors: status.errors,
+  };
 }
 
 // Candidate Photo API Functions
@@ -1318,6 +1364,16 @@ export async function listCandidateExamRegistrations(candidateId: number): Promi
   return handleResponse<ExamRegistration[]>(response);
 }
 
+/** One-shot map of candidate_id -> exam_ids for every candidate at a school. */
+export async function getSchoolCandidateExamMap(
+  schoolId: number
+): Promise<SchoolCandidateExamMapResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/schools/${schoolId}/candidate-exam-map`
+  );
+  return handleResponse<SchoolCandidateExamMapResponse>(response);
+}
+
 export async function listExamRegistrationSubjects(
   candidateId: number,
   examId: number
@@ -1449,8 +1505,13 @@ export async function getExam(id: number): Promise<Exam> {
 /**
  * Get comprehensive progress data for an exam.
  */
-export async function getExamProgress(examId: number): Promise<ExamProgressResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/progress`);
+export async function getExamProgress(
+  examId: number,
+  options?: { signal?: AbortSignal }
+): Promise<ExamProgressResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/progress`, {
+    signal: options?.signal,
+  });
   return handleResponse<ExamProgressResponse>(response);
 }
 
@@ -1651,11 +1712,38 @@ export interface SerializationResponse {
   message: string;
 }
 
-export async function serializeExam(
+export interface SerializationJobCreateResponse {
+  job_id: number;
+  status: string;
+  total_schools: number;
+  exam_id: number;
+}
+
+export interface SerializationJobStatusResponse {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  total_schools: number;
+  processed_schools: number;
+  school_id: number | null;
+  total_candidates_count: number;
+  total_schools_count: number;
+  subjects_serialized_count: number;
+  subjects_defaulted_count: number;
+  schools_processed: SerializationResponse["schools_processed"];
+  subjects_processed: SerializationResponse["subjects_processed"];
+  subjects_defaulted: SerializationResponse["subjects_defaulted"];
+  message: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export async function startSerializeExam(
   examId: number,
   subjectCodes?: string[],
   schoolId?: number | null
-): Promise<SerializationResponse> {
+): Promise<SerializationJobCreateResponse> {
   const params = new URLSearchParams();
   if (schoolId !== undefined && schoolId !== null) {
     params.append("school_id", schoolId.toString());
@@ -1669,7 +1757,176 @@ export async function serializeExam(
   const response = await fetch(url, {
     method: "POST",
   });
-  return handleResponse<SerializationResponse>(response);
+  return handleResponse<SerializationJobCreateResponse>(response);
+}
+
+export async function getSerializeExamJob(
+  examId: number,
+  jobId: number
+): Promise<SerializationJobStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/serialize/${jobId}`);
+  return handleResponse<SerializationJobStatusResponse>(response);
+}
+
+/**
+ * Start exam serialization and poll until the background job finishes.
+ */
+export async function serializeExam(
+  examId: number,
+  subjectCodes?: string[],
+  schoolId?: number | null,
+  onProgress?: (status: SerializationJobStatusResponse) => void
+): Promise<SerializationResponse> {
+  const job = await startSerializeExam(examId, subjectCodes, schoolId);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  let status = await getSerializeExamJob(examId, job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getSerializeExamJob(examId, job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed") {
+    throw new Error(status.error_message || status.message || "Serialization failed");
+  }
+
+  return {
+    exam_id: status.exam_id,
+    school_id: status.school_id,
+    total_candidates_count: status.total_candidates_count,
+    total_schools_count: status.total_schools_count,
+    subjects_serialized_count: status.subjects_serialized_count,
+    subjects_defaulted_count: status.subjects_defaulted_count,
+    schools_processed: status.schools_processed,
+    subjects_processed: status.subjects_processed,
+    subjects_defaulted: status.subjects_defaulted,
+    message: status.message || "Serialization complete",
+  };
+}
+
+export interface ScoreSheetGenerationResponse {
+  exam_id: number;
+  total_sheets_generated: number;
+  total_candidates_assigned: number;
+  schools_processed: Array<{
+    school_id: number;
+    school_name: string;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  subjects_processed: Array<{
+    subject_id: number;
+    subject_code: string;
+    subject_name: string;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  sheets_by_series: Record<number, number>;
+  message: string;
+}
+
+export interface ScoreSheetGenerationJobCreateResponse {
+  job_id: number;
+  status: string;
+  total_schools: number;
+  exam_id: number;
+}
+
+export interface ScoreSheetGenerationJobStatusResponse {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  total_schools: number;
+  processed_schools: number;
+  school_id: number | null;
+  subject_id: number | null;
+  test_types: number[];
+  total_sheets_generated: number;
+  total_candidates_assigned: number;
+  schools_processed: ScoreSheetGenerationResponse["schools_processed"];
+  subjects_processed: ScoreSheetGenerationResponse["subjects_processed"];
+  sheets_by_series: Record<number, number>;
+  message: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export async function startGenerateScoreSheets(
+  examId: number,
+  options?: {
+    schoolId?: number | null;
+    subjectId?: number | null;
+    testTypes?: number[];
+  }
+): Promise<ScoreSheetGenerationJobCreateResponse> {
+  const params = new URLSearchParams();
+  if (options?.schoolId != null) {
+    params.append("school_id", options.schoolId.toString());
+  }
+  if (options?.subjectId != null) {
+    params.append("subject_id", options.subjectId.toString());
+  }
+  const testTypes = options?.testTypes?.length ? options.testTypes : [1, 2];
+  testTypes.forEach((t) => params.append("test_types", t.toString()));
+
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-score-sheets?${params.toString()}`;
+  const response = await fetch(url, { method: "POST" });
+  return handleResponse<ScoreSheetGenerationJobCreateResponse>(response);
+}
+
+export async function getGenerateScoreSheetsJob(
+  examId: number,
+  jobId: number
+): Promise<ScoreSheetGenerationJobStatusResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/exams/${examId}/generate-score-sheets/${jobId}`
+  );
+  return handleResponse<ScoreSheetGenerationJobStatusResponse>(response);
+}
+
+/**
+ * Start score sheet ID generation and poll until the background job finishes.
+ */
+export async function generateScoreSheets(
+  examId: number,
+  options?: {
+    schoolId?: number | null;
+    subjectId?: number | null;
+    testTypes?: number[];
+  },
+  onProgress?: (status: ScoreSheetGenerationJobStatusResponse) => void
+): Promise<ScoreSheetGenerationResponse> {
+  const job = await startGenerateScoreSheets(examId, options);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  let status = await getGenerateScoreSheetsJob(examId, job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getGenerateScoreSheetsJob(examId, job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed") {
+    throw new Error(status.error_message || status.message || "Score sheet generation failed");
+  }
+
+  return {
+    exam_id: status.exam_id,
+    total_sheets_generated: status.total_sheets_generated,
+    total_candidates_assigned: status.total_candidates_assigned,
+    schools_processed: status.schools_processed,
+    subjects_processed: status.subjects_processed,
+    sheets_by_series: status.sheets_by_series,
+    message: status.message || "Score sheet generation complete",
+  };
 }
 
 export async function exportScannablesCore(examId: number): Promise<void> {

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -27,7 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults, updateExam, exportScannablesCore, exportScannablesElectives } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, generateScoreSheets, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, type SerializationJobStatusResponse, type ScoreSheetGenerationResponse, type ScoreSheetGenerationJobStatusResponse, processExamSubjects, processExamResults, updateExam, exportScannablesCore, exportScannablesElectives } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List, PanelLeftOpen, CheckCircle, XCircle, AlertTriangle, BarChart3, ArrowUpDown, FileSpreadsheet } from "lucide-react";
 import { SubjectInsightsPlayground } from "@/components/SubjectInsightsPlayground";
@@ -96,6 +97,14 @@ export default function ExaminationDetailPage() {
   const [serializing, setSerializing] = useState(false);
   const [serializationResult, setSerializationResult] = useState<SerializationResponse | null>(null);
   const [serializationError, setSerializationError] = useState<string | null>(null);
+  const [serializationProgress, setSerializationProgress] =
+    useState<SerializationJobStatusResponse | null>(null);
+  const [generatingScoreSheets, setGeneratingScoreSheets] = useState(false);
+  const [scoreSheetResult, setScoreSheetResult] = useState<ScoreSheetGenerationResponse | null>(null);
+  const [scoreSheetError, setScoreSheetError] = useState<string | null>(null);
+  const [scoreSheetProgress, setScoreSheetProgress] =
+    useState<ScoreSheetGenerationJobStatusResponse | null>(null);
+  const [scoreSheetTestTypes, setScoreSheetTestTypes] = useState<Set<number>>(new Set([1, 2]));
   const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<Set<string>>(new Set());
   const [showSerializedSubjects, setShowSerializedSubjects] = useState(false);
   const [serializationSearchQuery, setSerializationSearchQuery] = useState<string>("");
@@ -438,10 +447,16 @@ export default function ExaminationDetailPage() {
     setSerializing(true);
     setSerializationError(null);
     setSerializationResult(null);
+    setSerializationProgress(null);
 
     try {
       const subjectCodesArray = Array.from(selectedSubjectCodes);
-      const result = await serializeExam(examId, subjectCodesArray.length > 0 ? subjectCodesArray : undefined);
+      const result = await serializeExam(
+        examId,
+        subjectCodesArray.length > 0 ? subjectCodesArray : undefined,
+        undefined,
+        (status) => setSerializationProgress(status)
+      );
       setSerializationResult(result);
     } catch (err) {
       setSerializationError(err instanceof Error ? err.message : "Failed to serialize candidates");
@@ -449,6 +464,71 @@ export default function ExaminationDetailPage() {
     } finally {
       setSerializing(false);
     }
+  };
+
+  const serializationProgressPercent =
+    serializationProgress && serializationProgress.total_schools > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (serializationProgress.processed_schools / serializationProgress.total_schools) * 100
+          )
+        )
+      : serializing
+        ? 0
+        : null;
+
+  const handleGenerateScoreSheets = async () => {
+    if (!examId) return;
+    if (scoreSheetTestTypes.size === 0) {
+      toast.error("Select at least one test type");
+      return;
+    }
+
+    setGeneratingScoreSheets(true);
+    setScoreSheetError(null);
+    setScoreSheetResult(null);
+    setScoreSheetProgress(null);
+
+    try {
+      const result = await generateScoreSheets(
+        examId,
+        { testTypes: Array.from(scoreSheetTestTypes).sort() },
+        (status) => setScoreSheetProgress(status)
+      );
+      setScoreSheetResult(result);
+      toast.success(result.message);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate score sheet IDs";
+      setScoreSheetError(message);
+      console.error("Error generating score sheet IDs:", err);
+    } finally {
+      setGeneratingScoreSheets(false);
+    }
+  };
+
+  const scoreSheetProgressPercent =
+    scoreSheetProgress && scoreSheetProgress.total_schools > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (scoreSheetProgress.processed_schools / scoreSheetProgress.total_schools) * 100
+          )
+        )
+      : generatingScoreSheets
+        ? 0
+        : null;
+
+  const toggleScoreSheetTestType = (testType: number) => {
+    setScoreSheetTestTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(testType)) {
+        next.delete(testType);
+      } else {
+        next.add(testType);
+      }
+      return next;
+    });
   };
 
   const toggleSubjectSelection = async (subjectCode: string) => {
@@ -910,6 +990,34 @@ export default function ExaminationDetailPage() {
                     )}
                   </div>
 
+                  {serializing && (
+                    <div className="space-y-2 rounded-md border p-4">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">
+                          {serializationProgress?.status === "pending"
+                            ? "Queued..."
+                            : "Serializing schools..."}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {serializationProgress
+                            ? `${serializationProgress.processed_schools.toLocaleString()} / ${serializationProgress.total_schools.toLocaleString()} schools`
+                            : "Starting..."}
+                        </span>
+                      </div>
+                      <Progress value={serializationProgressPercent ?? 0} />
+                      {serializationProgress && (
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span>
+                            {serializationProgress.total_candidates_count.toLocaleString()} candidates
+                          </span>
+                          <span>
+                            {serializationProgress.subjects_serialized_count} subjects serialized
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {serializationError && (
                     <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
                       <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
@@ -940,6 +1048,7 @@ export default function ExaminationDetailPage() {
                           onClick={() => {
                             setSerializationResult(null);
                             setSerializationError(null);
+                            setSerializationProgress(null);
                           }}
                         >
                           Dismiss
@@ -1087,6 +1196,163 @@ export default function ExaminationDetailPage() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Score Sheet ID Generation Card */}
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileSpreadsheet className="h-5 w-5" />
+                    Score Sheet IDs
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Assign expected sheet IDs to candidate scores (batches of 25 per series and test type).
+                    Run serialization first so series groups are set.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Test types</p>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="score-sheet-test-1"
+                          checked={scoreSheetTestTypes.has(1)}
+                          onCheckedChange={() => toggleScoreSheetTestType(1)}
+                          disabled={generatingScoreSheets}
+                        />
+                        <label htmlFor="score-sheet-test-1" className="text-sm cursor-pointer">
+                          Objectives (1)
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="score-sheet-test-2"
+                          checked={scoreSheetTestTypes.has(2)}
+                          onCheckedChange={() => toggleScoreSheetTestType(2)}
+                          disabled={generatingScoreSheets}
+                        />
+                        <label htmlFor="score-sheet-test-2" className="text-sm cursor-pointer">
+                          Essay (2)
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 pt-2 border-t">
+                    <Button
+                      onClick={handleGenerateScoreSheets}
+                      disabled={generatingScoreSheets || scoreSheetTestTypes.size === 0}
+                      className="w-full sm:w-auto"
+                    >
+                      {generatingScoreSheets ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <FileSpreadsheet className="h-4 w-4 mr-2" />
+                          Generate Score Sheet IDs
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {generatingScoreSheets && (
+                    <div className="space-y-2 rounded-md border p-4">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">
+                          {scoreSheetProgress?.status === "pending"
+                            ? "Queued..."
+                            : "Assigning sheet IDs by school..."}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {scoreSheetProgress
+                            ? `${scoreSheetProgress.processed_schools.toLocaleString()} / ${scoreSheetProgress.total_schools.toLocaleString()} schools`
+                            : "Starting..."}
+                        </span>
+                      </div>
+                      <Progress value={scoreSheetProgressPercent ?? 0} />
+                      {scoreSheetProgress && (
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span>
+                            {scoreSheetProgress.total_sheets_generated.toLocaleString()} sheets
+                          </span>
+                          <span>
+                            {scoreSheetProgress.total_candidates_assigned.toLocaleString()} assignments
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {scoreSheetError && (
+                    <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-destructive">Generation Failed</p>
+                        <p className="text-sm text-destructive/80 mt-1">{scoreSheetError}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {scoreSheetResult && (
+                    <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/50 p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1">
+                          <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                              Score Sheet IDs Assigned
+                            </p>
+                            <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                              {scoreSheetResult.message}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setScoreSheetResult(null);
+                            setScoreSheetError(null);
+                            setScoreSheetProgress(null);
+                          }}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="rounded-md bg-white dark:bg-gray-900/50 p-3 border border-green-200 dark:border-green-900/50">
+                          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Sheets</p>
+                          <p className="text-lg font-semibold text-green-900 dark:text-green-100">
+                            {scoreSheetResult.total_sheets_generated.toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="rounded-md bg-white dark:bg-gray-900/50 p-3 border border-green-200 dark:border-green-900/50">
+                          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Assignments</p>
+                          <p className="text-lg font-semibold text-green-900 dark:text-green-100">
+                            {scoreSheetResult.total_candidates_assigned.toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="rounded-md bg-white dark:bg-gray-900/50 p-3 border border-green-200 dark:border-green-900/50">
+                          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Schools</p>
+                          <p className="text-lg font-semibold text-green-900 dark:text-green-100">
+                            {scoreSheetResult.schools_processed.length.toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="rounded-md bg-white dark:bg-gray-900/50 p-3 border border-green-200 dark:border-green-900/50">
+                          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Subjects</p>
+                          <p className="text-lg font-semibold text-green-900 dark:text-green-100">
+                            {scoreSheetResult.subjects_processed.length.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </CardContent>

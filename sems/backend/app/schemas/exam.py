@@ -152,6 +152,37 @@ class SerializationResponse(BaseModel):
     message: str
 
 
+class SerializationJobCreateResponse(BaseModel):
+    """Schema returned when a serialization job is accepted."""
+
+    job_id: int
+    status: str
+    total_schools: int
+    exam_id: int
+
+
+class SerializationJobStatusResponse(BaseModel):
+    """Schema for polling serialization job progress."""
+
+    job_id: int
+    exam_id: int
+    status: str
+    total_schools: int
+    processed_schools: int
+    school_id: int | None = None
+    total_candidates_count: int = 0
+    total_schools_count: int = 0
+    subjects_serialized_count: int = 0
+    subjects_defaulted_count: int = 0
+    schools_processed: list[SchoolProcessedInfo] = Field(default_factory=list)
+    subjects_processed: list[SubjectProcessedInfo] = Field(default_factory=list)
+    subjects_defaulted: list[SubjectProcessedInfo] = Field(default_factory=list)
+    message: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class SchoolSheetInfo(BaseModel):
     """Schema for school score sheet generation information."""
 
@@ -181,6 +212,37 @@ class ScoreSheetGenerationResponse(BaseModel):
     subjects_processed: list[SubjectSheetInfo]
     sheets_by_series: dict[int, int]
     message: str
+
+
+class ScoreSheetGenerationJobCreateResponse(BaseModel):
+    """Schema returned when a score sheet ID generation job is accepted."""
+
+    job_id: int
+    status: str
+    total_schools: int
+    exam_id: int
+
+
+class ScoreSheetGenerationJobStatusResponse(BaseModel):
+    """Schema for polling score sheet ID generation job progress."""
+
+    job_id: int
+    exam_id: int
+    status: str
+    total_schools: int
+    processed_schools: int
+    school_id: int | None = None
+    subject_id: int | None = None
+    test_types: list[int] = Field(default_factory=lambda: [1, 2])
+    total_sheets_generated: int = 0
+    total_candidates_assigned: int = 0
+    schools_processed: list[SchoolSheetInfo] = Field(default_factory=list)
+    subjects_processed: list[SubjectSheetInfo] = Field(default_factory=list)
+    sheets_by_series: dict[int, int] = Field(default_factory=dict)
+    message: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class SchoolPdfInfo(BaseModel):

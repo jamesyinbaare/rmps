@@ -1,7 +1,7 @@
 import logging
-from typing import Literal, cast
+from typing import Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 
@@ -14,6 +14,9 @@ from app.models import (
     ExamRegistration,
     ExamSeries,
     ExamSubject,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
     Programme,
     programme_subjects,
     School,
@@ -24,7 +27,8 @@ from app.models import (
 )
 from app.schemas.candidate import (
     CandidateBulkUploadError,
-    CandidateBulkUploadResponse,
+    CandidateBulkUploadJobCreateResponse,
+    CandidateBulkUploadJobStatusResponse,
     CandidateCreate,
     CandidateListResponse,
     CandidatePhotoListResponse,
@@ -41,18 +45,18 @@ from app.schemas.candidate import (
     SubjectRequirementsValidationResponse,
     SubjectScoreResponse,
 )
-from app.services.photo_validation import PhotoValidationService
-from app.services.storage import create_photo_storage_service
-from app.utils.file_utils import calculate_checksum
-from app.utils.score_utils import calculate_grade
+from app.services.candidate_bulk_upload import (
+    prepare_upload_dataframe,
+    process_candidate_bulk_upload,
+)
 from app.services.candidate_upload import (
     CandidateUploadParseError,
     CandidateUploadValidationError,
-    find_subjects_column,
-    parse_candidate_row,
-    parse_upload_file,
-    validate_required_columns,
 )
+from app.services.photo_validation import PhotoValidationService
+from app.services.storage import create_photo_storage_service, storage_service
+from app.utils.file_utils import calculate_checksum
+from app.utils.score_utils import calculate_grade
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
@@ -256,15 +260,19 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
     return await build_candidate_response(db_candidate, session)
 
 
-@router.post("/bulk-upload", response_model=CandidateBulkUploadResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/bulk-upload",
+    response_model=CandidateBulkUploadJobCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def bulk_upload_candidates(
     session: DBSessionDep,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     exam_id: int = Form(...),
     subject_requirements_validation: str = Form("auto"),
-) -> CandidateBulkUploadResponse:
-    """Bulk upload candidates from Excel or CSV file."""
-    # Validate exam exists
+) -> CandidateBulkUploadJobCreateResponse:
+    """Accept a candidate Excel/CSV upload and process it asynchronously."""
     exam_stmt = select(Exam).where(Exam.id == exam_id)
     exam_result = await session.execute(exam_stmt)
     exam = exam_result.scalar_one_or_none()
@@ -276,260 +284,83 @@ async def bulk_upload_candidates(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="subject_requirements_validation must be one of: auto, may_june, nov_dec",
         )
-    subject_requirements_mode = cast(SubjectRequirementsValidationMode, subject_requirements_validation)
 
-    # Read file content
     file_content = await file.read()
+    filename = file.filename or "upload.xlsx"
 
-    # Parse file
     try:
-        df = parse_upload_file(file_content, file.filename or "unknown")
-        validate_required_columns(df)
+        _, total_rows = await prepare_upload_dataframe(file_content, filename)
     except (CandidateUploadParseError, CandidateUploadValidationError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Find subjects column (comma-separated original_code values)
-    subjects_column = find_subjects_column(df)
+    file_path, _ = await storage_service.save(file_content, filename)
 
-    # Get exam subjects for validation
-    exam_subject_stmt = (
-        select(ExamSubject, Subject)
-        .join(Subject, ExamSubject.subject_id == Subject.id)
-        .where(ExamSubject.exam_id == exam_id)
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.CANDIDATE_BULK_UPLOAD,
+        status=ProcessStatus.PENDING,
+        process_metadata={
+            "filename": filename,
+            "file_path": file_path,
+            "validation_mode": subject_requirements_validation,
+            "total_rows": total_rows,
+            "processed_rows": 0,
+            "successful": 0,
+            "failed": 0,
+            "errors": [],
+            "errors_truncated": False,
+        },
     )
-    exam_subject_result = await session.execute(exam_subject_stmt)
-    exam_subjects_data = exam_subject_result.all()
-    exam_subjects_by_original_code = {
-        subject.original_code: (exam_subject, subject) for exam_subject, subject in exam_subjects_data
-    }
+    session.add(tracking)
+    await session.commit()
+    await session.refresh(tracking)
 
-    # Process each row
-    total_rows = len(df)
-    successful = 0
-    failed = 0
-    errors: list[CandidateBulkUploadError] = []
+    background_tasks.add_task(process_candidate_bulk_upload, tracking.id)
 
-    for idx, row in df.iterrows():
-        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
-        try:
-            # Parse row data
-            candidate_data = parse_candidate_row(row, subjects_column)
+    return CandidateBulkUploadJobCreateResponse(
+        job_id=tracking.id,
+        status=tracking.status.value,
+        total_rows=total_rows,
+    )
 
-            # Validate required fields
-            if not candidate_data["school_code"]:
-                errors.append(
-                    CandidateBulkUploadError(row_number=row_number, error_message="School code is required", field="school_code")
-                )
-                failed += 1
-                continue
 
-            if not candidate_data["name"]:
-                errors.append(
-                    CandidateBulkUploadError(row_number=row_number, error_message="Name is required", field="name")
-                )
-                failed += 1
-                continue
-
-            if not candidate_data["index_number"]:
-                errors.append(
-                    CandidateBulkUploadError(
-                        row_number=row_number, error_message="Index number is required", field="index_number"
-                    )
-                )
-                failed += 1
-                continue
-
-            # Lookup school by code
-            school_stmt = select(School).where(School.code == candidate_data["school_code"])
-            school_result = await session.execute(school_stmt)
-            school = school_result.scalar_one_or_none()
-            if not school:
-                errors.append(
-                    CandidateBulkUploadError(
-                        row_number=row_number,
-                        error_message=f"School with code '{candidate_data['school_code']}' not found",
-                        field="school_code",
-                    )
-                )
-                failed += 1
-                continue
-
-            # Lookup programme by code (if provided)
-            programme = None
-            if candidate_data["programme_code"]:
-                programme_stmt = select(Programme).where(Programme.code == candidate_data["programme_code"])
-                programme_result = await session.execute(programme_stmt)
-                programme = programme_result.scalar_one_or_none()
-                if not programme:
-                    errors.append(
-                        CandidateBulkUploadError(
-                            row_number=row_number,
-                            error_message=f"Programme with code '{candidate_data['programme_code']}' not found",
-                            field="programme_code",
-                        )
-                    )
-                    failed += 1
-                    continue
-
-            # Validate subject original_codes exist and are part of the exam
-            valid_subject_original_codes = []
-            for subject_original_code in candidate_data["subject_original_codes"]:
-                if subject_original_code not in exam_subjects_by_original_code:
-                    errors.append(
-                        CandidateBulkUploadError(
-                            row_number=row_number,
-                            error_message=f"Subject with original_code '{subject_original_code}' not found in exam or not part of this exam",
-                            field="subject_original_code",
-                        )
-                    )
-                    failed += 1
-                    break
-                valid_subject_original_codes.append(subject_original_code)
-            else:
-                # Only continue if all subject original_codes were valid
-                # Note: Empty subjects list is allowed (will be caught by validation for MAY/JUNE if required)
-
-                # Check if (index_number, exam_id) already exists
-                existing_reg_stmt = select(ExamRegistration).where(
-                    ExamRegistration.index_number == candidate_data["index_number"],
-                    ExamRegistration.exam_id == exam_id,
-                )
-                existing_reg_result = await session.execute(existing_reg_stmt)
-                existing_reg = existing_reg_result.scalar_one_or_none()
-                if existing_reg:
-                    errors.append(
-                        CandidateBulkUploadError(
-                            row_number=row_number,
-                            error_message=f"Candidate with index number '{candidate_data['index_number']}' is already registered for this exam",
-                            field="index_number",
-                        )
-                    )
-                    failed += 1
-                    continue
-
-                # Find or create candidate (index_number can be reused across exams)
-                candidate_stmt = select(Candidate).where(
-                    Candidate.index_number == candidate_data["index_number"], Candidate.school_id == school.id
-                )
-                candidate_result = await session.execute(candidate_stmt)
-                candidate = candidate_result.scalar_one_or_none()
-
-                if not candidate:
-                    # Create new candidate
-                    candidate = Candidate(
-                        school_id=school.id,
-                        programme_id=programme.id if programme else None,
-                        name=candidate_data["name"],
-                        index_number=candidate_data["index_number"],
-                    )
-                    session.add(candidate)
-                    await session.flush()
-
-                # Create exam registration
-                exam_registration = ExamRegistration(
-                    candidate_id=candidate.id, exam_id=exam_id, index_number=candidate_data["index_number"]
-                )
-                session.add(exam_registration)
-                await session.flush()
-
-                # Create subject registrations
-                for subject_original_code in valid_subject_original_codes:
-                    exam_subject, subject = exam_subjects_by_original_code[subject_original_code]
-                    subject_registration = SubjectRegistration(
-                        exam_registration_id=exam_registration.id, exam_subject_id=exam_subject.id, series=None
-                    )
-                    session.add(subject_registration)
-                    await session.flush()
-
-                    # Create default subject score
-                    subject_score = SubjectScore(
-                        subject_registration_id=subject_registration.id,
-                        obj_raw_score=None,
-                        essay_raw_score=None,  # Can be None (not entered), numeric string, or "A"/"AA"
-                        pract_raw_score=None,
-                        obj_normalized=None,
-                        essay_normalized=None,
-                        pract_normalized=None,
-                        total_score=0.0,
-                        obj_document_id=None,
-                        essay_document_id=None,
-                        pract_document_id=None,
-                    )
-                    session.add(subject_score)
-
-                # Validate subject registration requirements (for MAY/JUNE exams)
-                # Get all registered subject IDs for this exam registration
-                registered_subject_regs_stmt = select(SubjectRegistration, ExamSubject).join(
-                    ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id
-                ).where(SubjectRegistration.exam_registration_id == exam_registration.id)
-                registered_subject_regs_result = await session.execute(registered_subject_regs_stmt)
-                registered_subject_ids = {exam_subj.subject_id for _, exam_subj in registered_subject_regs_result.all()}
-
-                is_valid, validation_errors = await validate_subject_registration_requirements(
-                    session, exam_registration, registered_subject_ids, validation_mode=subject_requirements_mode
-                )
-
-                if not is_valid:
-                    # Remove the subject registrations and scores we just added
-                    from sqlalchemy import delete as sql_delete
-                    await session.execute(
-                        sql_delete(SubjectScore).where(
-                            SubjectScore.subject_registration_id.in_(
-                                select(SubjectRegistration.id).where(
-                                    SubjectRegistration.exam_registration_id == exam_registration.id
-                                )
-                            )
-                        )
-                    )
-                    await session.execute(
-                        sql_delete(SubjectRegistration).where(
-                            SubjectRegistration.exam_registration_id == exam_registration.id
-                        )
-                    )
-                    # Remove exam registration
-                    await session.delete(exam_registration)
-                    # If candidate was newly created, remove it too
-                    if candidate.id:  # Check if candidate has an ID (was newly created)
-                        # Check if candidate has other exam registrations
-                        other_regs_stmt = select(ExamRegistration).where(
-                            ExamRegistration.candidate_id == candidate.id
-                        )
-                        other_regs_result = await session.execute(other_regs_stmt)
-                        other_regs = other_regs_result.scalars().all()
-                        if not other_regs:
-                            await session.delete(candidate)
-
-                    errors.append(
-                        CandidateBulkUploadError(
-                            row_number=row_number,
-                            error_message=f"Subject registration does not meet programme requirements: {'; '.join(validation_errors)}",
-                            field="subject_original_code",
-                        )
-                    )
-                    failed += 1
-                    continue
-
-                successful += 1
-
-        except Exception as e:
-            errors.append(
-                CandidateBulkUploadError(
-                    row_number=row_number, error_message=f"Unexpected error: {str(e)}", field=None
-                )
-            )
-            failed += 1
-            continue
-
-    # Commit all successful transactions
-    try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to commit transactions: {str(e)}"
+@router.get(
+    "/bulk-upload/{job_id}",
+    response_model=CandidateBulkUploadJobStatusResponse,
+)
+async def get_bulk_upload_job_status(
+    job_id: int,
+    session: DBSessionDep,
+) -> CandidateBulkUploadJobStatusResponse:
+    """Poll status/progress for a candidate bulk-upload job."""
+    tracking_result = await session.execute(
+        select(ProcessTracking).where(
+            ProcessTracking.id == job_id,
+            ProcessTracking.process_type == ProcessType.CANDIDATE_BULK_UPLOAD,
         )
+    )
+    tracking = tracking_result.scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bulk upload job not found")
 
-    return CandidateBulkUploadResponse(total_rows=total_rows, successful=successful, failed=failed, errors=errors)
+    metadata = tracking.process_metadata or {}
+    errors_raw = metadata.get("errors") or []
+    errors = [CandidateBulkUploadError.model_validate(err) for err in errors_raw]
+
+    return CandidateBulkUploadJobStatusResponse(
+        job_id=tracking.id,
+        status=tracking.status.value,
+        total_rows=int(metadata.get("total_rows") or 0),
+        processed_rows=int(metadata.get("processed_rows") or 0),
+        successful=int(metadata.get("successful") or 0),
+        failed=int(metadata.get("failed") or 0),
+        errors=errors,
+        errors_truncated=bool(metadata.get("errors_truncated")),
+        filename=metadata.get("filename"),
+        error_message=tracking.error_message,
+        started_at=tracking.started_at,
+        completed_at=tracking.completed_at,
+    )
 
 
 @router.get("", response_model=CandidateListResponse)

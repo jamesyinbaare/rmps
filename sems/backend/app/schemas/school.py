@@ -55,6 +55,19 @@ class SchoolStatistics(BaseModel):
     documents_by_test_type: dict[str, int]  # "1" or "2" -> count
 
 
+class CandidateExamIds(BaseModel):
+    """Exam IDs registered for a single candidate."""
+
+    candidate_id: int
+    exam_ids: list[int]
+
+
+class SchoolCandidateExamMapResponse(BaseModel):
+    """Batch map of candidate_id -> exam_ids for a school."""
+
+    items: list[CandidateExamIds]
+
+
 class SchoolSubjectAssociation(BaseModel):
     """Schema for school-subject association."""
 

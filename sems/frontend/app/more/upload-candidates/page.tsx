@@ -15,11 +15,13 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { uploadCandidatesBulk, getAllExams } from "@/lib/api";
 import type {
   Exam,
   CandidateBulkUploadResponse,
   CandidateBulkUploadError,
+  CandidateBulkUploadJobStatusResponse,
   ExamType,
   ExamSeries,
   SubjectRequirementsValidationMode,
@@ -42,6 +44,8 @@ export default function UploadCandidatesPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [subjectRequirementsValidation, setSubjectRequirementsValidation] =
     useState<SubjectRequirementsValidationMode>("auto");
+  const [uploadProgress, setUploadProgress] =
+    useState<CandidateBulkUploadJobStatusResponse | null>(null);
 
   // Load exams on mount
   useEffect(() => {
@@ -136,12 +140,14 @@ export default function UploadCandidatesPage() {
     setUploading(true);
     setError(null);
     setResult(null);
+    setUploadProgress(null);
 
     try {
       const response = await uploadCandidatesBulk(
         file,
         parseInt(selectedExamId),
-        subjectRequirementsValidation
+        subjectRequirementsValidation,
+        (status) => setUploadProgress(status)
       );
       setResult(response);
 
@@ -209,6 +215,7 @@ export default function UploadCandidatesPage() {
     setExamYear(undefined);
     setResult(null);
     setError(null);
+    setUploadProgress(null);
     setSubjectRequirementsValidation("auto");
     // Reset file input
     const fileInput = document.getElementById("file-input") as HTMLInputElement;
@@ -216,6 +223,16 @@ export default function UploadCandidatesPage() {
       fileInput.value = "";
     }
   };
+
+  const progressPercent =
+    uploadProgress && uploadProgress.total_rows > 0
+      ? Math.min(
+          100,
+          Math.round((uploadProgress.processed_rows / uploadProgress.total_rows) * 100)
+        )
+      : uploading
+        ? 0
+        : null;
 
   return (
     <DashboardLayout title="Upload Candidates">
@@ -532,6 +549,35 @@ export default function UploadCandidatesPage() {
                   </Alert>
                 )}
 
+                {/* Upload Progress */}
+                {uploading && (
+                  <div className="space-y-2 rounded-md border p-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">
+                        {uploadProgress?.status === "pending"
+                          ? "Queued..."
+                          : "Processing candidates..."}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {uploadProgress
+                          ? `${uploadProgress.processed_rows.toLocaleString()} / ${uploadProgress.total_rows.toLocaleString()}`
+                          : "Starting..."}
+                      </span>
+                    </div>
+                    <Progress value={progressPercent ?? 0} />
+                    {uploadProgress && (
+                      <div className="flex gap-4 text-xs text-muted-foreground">
+                        <span className="text-green-600">
+                          {uploadProgress.successful.toLocaleString()} successful
+                        </span>
+                        <span className="text-red-600">
+                          {uploadProgress.failed.toLocaleString()} failed
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Action Buttons */}
                 <div className="flex items-center gap-4 pt-2">
                   <Button
@@ -542,7 +588,7 @@ export default function UploadCandidatesPage() {
                     {uploading ? (
                       <>
                         <Upload className="mr-2 h-4 w-4 animate-spin" />
-                        Uploading...
+                        Processing...
                       </>
                     ) : (
                       <>
@@ -590,6 +636,11 @@ export default function UploadCandidatesPage() {
                     {result.errors.length > 0 && (
                       <div className="space-y-2">
                         <h4 className="font-medium text-sm">Error Details:</h4>
+                        {uploadProgress?.errors_truncated && (
+                          <p className="text-xs text-muted-foreground">
+                            Showing the first {result.errors.length} errors of {result.failed} failed rows.
+                          </p>
+                        )}
                         <div className="max-h-60 overflow-y-auto border rounded-md">
                           <table className="w-full text-sm">
                             <thead className="bg-muted sticky top-0">
