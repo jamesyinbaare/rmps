@@ -290,6 +290,7 @@ class SheetIdInfo(BaseModel):
     subject_id: int | None = None
     subject_code: str | None = None
     subject_name: str | None = None
+    subject_type: str | None = None  # CORE / ELECTIVE
     series: int | None = None
     sheet_number: int | None = None
     candidate_count: int | None = None  # For expected sheets

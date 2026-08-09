@@ -1049,6 +1049,7 @@ export interface SheetIdInfo {
   subject_id: number | null;
   subject_code: string | null;
   subject_name: string | null;
+  subject_type?: string | null; // CORE / ELECTIVE
   series: number | null;
   sheet_number: number | null;
   candidate_count: number | null; // For expected sheets
