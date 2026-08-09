@@ -18,11 +18,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 import { uploadCandidatesBulk, getAllExams } from "@/lib/api";
 import type {
   Exam,
   CandidateBulkUploadResponse,
   CandidateBulkUploadError,
+  CandidateBulkUploadJobStatusResponse,
   SubjectRequirementsValidationMode,
 } from "@/types/document";
 import { Upload, FileX, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
@@ -43,6 +45,8 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
   const [error, setError] = useState<string | null>(null);
   const [subjectRequirementsValidation, setSubjectRequirementsValidation] =
     useState<SubjectRequirementsValidationMode>("auto");
+  const [uploadProgress, setUploadProgress] =
+    useState<CandidateBulkUploadJobStatusResponse | null>(null);
 
   // Load exams on mount
   useEffect(() => {
@@ -105,12 +109,14 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
     setUploading(true);
     setError(null);
     setResult(null);
+    setUploadProgress(null);
 
     try {
       const response = await uploadCandidatesBulk(
         file,
         parseInt(selectedExamId),
-        subjectRequirementsValidation
+        subjectRequirementsValidation,
+        (status) => setUploadProgress(status)
       );
       setResult(response);
 
@@ -133,6 +139,16 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
       setUploading(false);
     }
   };
+
+  const progressPercent =
+    uploadProgress && uploadProgress.total_rows > 0
+      ? Math.min(
+          100,
+          Math.round((uploadProgress.processed_rows / uploadProgress.total_rows) * 100)
+        )
+      : uploading
+        ? 0
+        : null;
 
   const formatExamName = (exam: Exam) => {
     return `${exam.exam_type} - ${exam.series} ${exam.year}`;
@@ -228,6 +244,22 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
             </Alert>
           )}
 
+          {uploading && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">
+                  {uploadProgress?.status === "pending" ? "Queued..." : "Processing..."}
+                </span>
+                <span className="text-muted-foreground">
+                  {uploadProgress
+                    ? `${uploadProgress.processed_rows.toLocaleString()} / ${uploadProgress.total_rows.toLocaleString()}`
+                    : "Starting..."}
+                </span>
+              </div>
+              <Progress value={progressPercent ?? 0} />
+            </div>
+          )}
+
           {/* Upload Button */}
           <Button
             onClick={handleUpload}
@@ -237,7 +269,7 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
             {uploading ? (
               <>
                 <Upload className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
+                Processing...
               </>
             ) : (
               <>

@@ -5,11 +5,22 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
+from app.models import (
+    Candidate,
+    Document,
+    ExamRegistration,
+    Programme,
+    School,
+    Subject,
+    programme_subjects,
+    school_programmes,
+)
 from app.schemas.programme import SchoolProgrammeAssociation
 from app.schemas.school import (
+    CandidateExamIds,
     SchoolBulkUploadError,
     SchoolBulkUploadResponse,
+    SchoolCandidateExamMapResponse,
     SchoolCreate,
     SchoolResponse,
     SchoolStatistics,
@@ -143,6 +154,39 @@ async def delete_school(school_code: str, session: DBSessionDep) -> None:
 
     await session.delete(school)
     await session.commit()
+
+
+@router.get(
+    "/{school_id}/candidate-exam-map",
+    response_model=SchoolCandidateExamMapResponse,
+)
+async def get_school_candidate_exam_map(
+    school_id: int, session: DBSessionDep
+) -> SchoolCandidateExamMapResponse:
+    """Return exam registration IDs for all candidates at a school in one query."""
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    if not school_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    regs_stmt = (
+        select(ExamRegistration.candidate_id, ExamRegistration.exam_id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .where(Candidate.school_id == school_id)
+        .order_by(ExamRegistration.candidate_id, ExamRegistration.exam_id)
+    )
+    regs_result = await session.execute(regs_stmt)
+
+    exams_by_candidate: dict[int, list[int]] = {}
+    for candidate_id, exam_id in regs_result.all():
+        exams_by_candidate.setdefault(candidate_id, []).append(exam_id)
+
+    return SchoolCandidateExamMapResponse(
+        items=[
+            CandidateExamIds(candidate_id=candidate_id, exam_ids=exam_ids)
+            for candidate_id, exam_ids in exams_by_candidate.items()
+        ]
+    )
 
 
 @router.get("/{school_id}/statistics", response_model=SchoolStatistics)

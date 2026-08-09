@@ -10,7 +10,7 @@ import {
   listCandidates,
   getSchoolById,
   getAllExams,
-  listCandidateExamRegistrations,
+  getSchoolCandidateExamMap,
   listProgrammes,
   listSchools,
   listSchoolProgrammes,
@@ -159,32 +159,6 @@ export default function SchoolCandidatesPage() {
     loadExams();
   }, []);
 
-  // Load exam registrations for candidates
-  const loadCandidateExamRegistrations = async (candidateIds: number[]) => {
-    try {
-      const examMap = new Map<number, Exam[]>();
-
-      await Promise.all(
-        candidateIds.map(async (candidateId) => {
-          try {
-            const examRegs = await listCandidateExamRegistrations(candidateId);
-            const candidateExams = examRegs
-              .map((reg) => exams.find((e) => e.id === reg.exam_id))
-              .filter((e): e is Exam => e !== undefined);
-            examMap.set(candidateId, candidateExams);
-          } catch (err) {
-            console.error(`Failed to load exam registrations for candidate ${candidateId}:`, err);
-            examMap.set(candidateId, []);
-          }
-        })
-      );
-
-      setCandidateExamMap(examMap);
-    } catch (err) {
-      console.error("Failed to load candidate exam registrations:", err);
-    }
-  };
-
   // Fetch candidates with filters
   const handleFetchCandidates = async () => {
     if (!schoolId) return;
@@ -203,8 +177,23 @@ export default function SchoolCandidatesPage() {
         page++;
       }
 
-      // Load exam registrations for all candidates
-      await loadCandidateExamRegistrations(allCandidates.map((c) => c.id));
+      // One batch request instead of N per-candidate /exams calls
+      const examById = new Map(exams.map((exam) => [exam.id, exam]));
+      const examMap = new Map<number, Exam[]>();
+      try {
+        const batch = await getSchoolCandidateExamMap(schoolId);
+        for (const item of batch.items) {
+          examMap.set(
+            item.candidate_id,
+            item.exam_ids
+              .map((examId) => examById.get(examId))
+              .filter((e): e is Exam => e !== undefined)
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load candidate exam registrations:", err);
+      }
+      setCandidateExamMap(examMap);
 
       setCandidates(allCandidates);
     } catch (err) {

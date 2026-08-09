@@ -16,6 +16,9 @@ import type {
   ProgrammeBulkUploadResponse,
   Candidate,
   CandidateBulkUploadResponse,
+  CandidateBulkUploadJobCreateResponse,
+  CandidateBulkUploadJobStatusResponse,
+  SchoolCandidateExamMapResponse,
   SubjectRequirementsValidationMode,
   CandidateListResponse,
   CandidatePhoto,
@@ -1024,11 +1027,11 @@ export async function deleteCandidate(id: number): Promise<void> {
   }
 }
 
-export async function uploadCandidatesBulk(
+export async function startCandidatesBulkUpload(
   file: File,
   examId: number,
   subjectRequirementsValidation: SubjectRequirementsValidationMode = "auto"
-): Promise<CandidateBulkUploadResponse> {
+): Promise<CandidateBulkUploadJobCreateResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("exam_id", examId.toString());
@@ -1038,7 +1041,50 @@ export async function uploadCandidatesBulk(
     method: "POST",
     body: formData,
   });
-  return handleResponse<CandidateBulkUploadResponse>(response);
+  return handleResponse<CandidateBulkUploadJobCreateResponse>(response);
+}
+
+export async function getCandidatesBulkUploadJob(
+  jobId: number
+): Promise<CandidateBulkUploadJobStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/bulk-upload/${jobId}`);
+  return handleResponse<CandidateBulkUploadJobStatusResponse>(response);
+}
+
+/**
+ * Start a candidate bulk upload and poll until the background job finishes.
+ * Optionally report intermediate progress via onProgress.
+ */
+export async function uploadCandidatesBulk(
+  file: File,
+  examId: number,
+  subjectRequirementsValidation: SubjectRequirementsValidationMode = "auto",
+  onProgress?: (status: CandidateBulkUploadJobStatusResponse) => void
+): Promise<CandidateBulkUploadResponse> {
+  const job = await startCandidatesBulkUpload(file, examId, subjectRequirementsValidation);
+  const terminal = new Set(["completed", "failed"]);
+  const pollMs = 1500;
+
+  // Immediate first poll
+  let status = await getCandidatesBulkUploadJob(job.job_id);
+  onProgress?.(status);
+
+  while (!terminal.has(status.status)) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    status = await getCandidatesBulkUploadJob(job.job_id);
+    onProgress?.(status);
+  }
+
+  if (status.status === "failed" && status.error_message && status.successful === 0) {
+    throw new Error(status.error_message);
+  }
+
+  return {
+    total_rows: status.total_rows,
+    successful: status.successful,
+    failed: status.failed,
+    errors: status.errors,
+  };
 }
 
 // Candidate Photo API Functions
@@ -1316,6 +1362,16 @@ export async function removeSchoolFromProgramme(programmeId: number, schoolId: n
 export async function listCandidateExamRegistrations(candidateId: number): Promise<ExamRegistration[]> {
   const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/exams`);
   return handleResponse<ExamRegistration[]>(response);
+}
+
+/** One-shot map of candidate_id -> exam_ids for every candidate at a school. */
+export async function getSchoolCandidateExamMap(
+  schoolId: number
+): Promise<SchoolCandidateExamMapResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/schools/${schoolId}/candidate-exam-map`
+  );
+  return handleResponse<SchoolCandidateExamMapResponse>(response);
 }
 
 export async function listExamRegistrationSubjects(
