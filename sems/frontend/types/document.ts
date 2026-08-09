@@ -449,6 +449,7 @@ export interface ScoreDocumentFilters {
 
 export interface ReductoQueueRequest {
   document_ids: number[];
+  require_extracted_id?: boolean;
 }
 
 export interface DocumentQueueStatus {
@@ -459,6 +460,7 @@ export interface DocumentQueueStatus {
 
 export interface ReductoQueueResponse {
   queued_count: number;
+  skipped_count?: number;
   documents: DocumentQueueStatus[];
   queue_length: number;
 }

@@ -88,6 +88,7 @@ export default function ReductoExtractionPage() {
   const [showUnmatched, setShowUnmatched] = useState(false);
 
   const [verifyEnabled, setVerifyEnabled] = useState(true);
+  const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
 
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -295,11 +296,20 @@ export default function ReductoExtractionPage() {
     setError(null);
     try {
       const documentIds = Array.from(selectedDocuments);
-      const response = await queueReductoExtraction(documentIds);
+      const response = await queueReductoExtraction(documentIds, skipWithoutExtractedId);
       await loadDocuments(false);
       setSelectedDocuments(new Set());
+      const parts: string[] = [];
       if (response.queued_count > 0) {
-        toast.success(`${response.queued_count} document(s) queued for extraction`);
+        parts.push(`${response.queued_count} document(s) queued for extraction`);
+      }
+      if ((response.skipped_count ?? 0) > 0) {
+        parts.push(`${response.skipped_count} skipped (no extracted ID)`);
+      }
+      if (parts.length > 0) {
+        toast.success(parts.join(" · "));
+      } else {
+        toast.message("No documents were queued");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to queue documents for Reducto extraction");
@@ -692,6 +702,8 @@ export default function ReductoExtractionPage() {
             }
             verifyEnabled={verifyEnabled}
             onVerifyEnabledChange={setVerifyEnabled}
+            skipWithoutExtractedId={skipWithoutExtractedId}
+            onSkipWithoutExtractedIdChange={setSkipWithoutExtractedId}
             queuing={queuing}
             isPolling={isPolling}
             onQueue={handleQueueForReducto}

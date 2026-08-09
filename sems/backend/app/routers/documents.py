@@ -690,6 +690,16 @@ async def queue_reducto_extraction(
             )
             continue
 
+        if request.require_extracted_id and not document.extracted_id:
+            document_statuses.append(
+                DocumentQueueStatus(
+                    document_id=document_id,
+                    queue_position=None,
+                    status="skipped_no_extracted_id",
+                )
+            )
+            continue
+
         # Enqueue document
         reducto_queue_service.enqueue_document(document_id)
 
@@ -707,9 +717,12 @@ async def queue_reducto_extraction(
         )
 
     queue_status = reducto_queue_service.get_queue_status()
+    queued_count = len([d for d in document_statuses if d.status == "queued"])
+    skipped_count = len([d for d in document_statuses if d.status == "skipped_no_extracted_id"])
 
     return ReductoQueueResponse(
-        queued_count=len([d for d in document_statuses if d.status == "queued"]),
+        queued_count=queued_count,
+        skipped_count=skipped_count,
         documents=document_statuses,
         queue_length=queue_status["queue_length"],
     )

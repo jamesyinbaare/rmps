@@ -2060,14 +2060,18 @@ export async function batchUpdateScores(
 // Reducto Queue API Functions
 
 export async function queueReductoExtraction(
-  documentIds: number[]
+  documentIds: number[],
+  requireExtractedId: boolean = true
 ): Promise<ReductoQueueResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/queue-reducto-extraction`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ document_ids: documentIds }),
+    body: JSON.stringify({
+      document_ids: documentIds,
+      require_extracted_id: requireExtractedId,
+    }),
   });
   return handleResponse<ReductoQueueResponse>(response);
 }

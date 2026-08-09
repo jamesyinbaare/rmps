@@ -67,6 +67,8 @@ interface ReductoDocumentsDataTableProps {
   onPageSizeChange: (size: number) => void;
   verifyEnabled: boolean;
   onVerifyEnabledChange: (enabled: boolean) => void;
+  skipWithoutExtractedId: boolean;
+  onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
   queuing?: boolean;
   isPolling?: boolean;
   onQueue: () => void;
@@ -141,6 +143,8 @@ export function ReductoDocumentsDataTable({
   onPageSizeChange,
   verifyEnabled,
   onVerifyEnabledChange,
+  skipWithoutExtractedId,
+  onSkipWithoutExtractedIdChange,
   queuing,
   isPolling,
   onQueue,
@@ -338,6 +342,20 @@ export function ReductoDocumentsDataTable({
             />
             <label htmlFor="verify-checkbox" className="cursor-pointer text-sm font-medium">
               Require score = verify
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="skip-without-extracted-id"
+              checked={skipWithoutExtractedId}
+              onCheckedChange={(checked) => onSkipWithoutExtractedIdChange(checked === true)}
+            />
+            <label
+              htmlFor="skip-without-extracted-id"
+              className="cursor-pointer text-sm font-medium"
+            >
+              Skip without extracted ID
             </label>
           </div>
         </div>
