@@ -2022,9 +2022,13 @@ export async function getFilteredDocuments(
   return handleResponse<DocumentListResponse>(response);
 }
 
-export async function getDocumentScores(documentId: string): Promise<DocumentScoresResponse> {
+export async function getDocumentScores(
+  documentId: string,
+  examId: number
+): Promise<DocumentScoresResponse> {
+  const params = new URLSearchParams({ exam_id: String(examId) });
   const response = await fetchWithAuth(
-    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores`
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores?${params.toString()}`
   );
   return handleResponse<DocumentScoresResponse>(response);
 }
@@ -2042,10 +2046,12 @@ export async function updateScore(scoreId: number, data: ScoreUpdate): Promise<S
 
 export async function batchUpdateScores(
   documentId: string,
-  data: BatchScoreUpdate
+  data: BatchScoreUpdate,
+  examId: number
 ): Promise<BatchScoreUpdateResponse> {
+  const params = new URLSearchParams({ exam_id: String(examId) });
   const response = await fetchWithAuth(
-    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`,
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch?${params.toString()}`,
     {
       method: "POST",
       headers: {

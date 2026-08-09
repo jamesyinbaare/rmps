@@ -86,6 +86,45 @@ async def _require_clerk_document_access(
         )
 
 
+async def _resolve_document_for_scores(
+    session: DBSessionDep,
+    document_id: str,
+    exam_id: int,
+) -> Document | None:
+    """Resolve a Document by (extracted_id, exam_id), with numeric id fallback scoped to exam."""
+    doc_stmt = select(Document).where(
+        Document.extracted_id == document_id,
+        Document.exam_id == exam_id,
+    )
+    doc_result = await session.execute(doc_stmt)
+    document = doc_result.scalar_one_or_none()
+
+    if not document and document_id.isdigit():
+        doc_stmt = select(Document).where(
+            Document.id == int(document_id),
+            Document.exam_id == exam_id,
+        )
+        doc_result = await session.execute(doc_stmt)
+        document = doc_result.scalar_one_or_none()
+
+    return document
+
+
+def _document_id_match_condition(document: Document, extracted_id: str):
+    """Match SubjectScore sheet-id column for the document's test type when known."""
+    if document.test_type == "1":
+        return SubjectScore.obj_document_id == extracted_id
+    if document.test_type == "2":
+        return SubjectScore.essay_document_id == extracted_id
+    if document.test_type == "3":
+        return SubjectScore.pract_document_id == extracted_id
+    return or_(
+        SubjectScore.obj_document_id == extracted_id,
+        SubjectScore.essay_document_id == extracted_id,
+        SubjectScore.pract_document_id == extracted_id,
+    )
+
+
 @router.get("/documents", response_model=DocumentListResponse)
 async def get_filtered_documents(
     session: DBSessionDep,
@@ -238,21 +277,18 @@ async def get_document_scores(
     document_id: str,
     session: DBSessionDep,
     current_user: CurrentUserDep,
+    exam_id: int = Query(..., description="Exam ID — extracted_id is only unique within an exam"),
 ) -> DocumentScoresResponse:
-    """Get all scores for a specific document."""
+    """Get all scores for a specific document within an examination."""
     await _require_clerk_digital_entry_enabled(session, current_user)
     await _require_clerk_document_access(session, current_user, document_id)
 
-    # Validate that document_id matches a Document.extracted_id
-    # Look up Document by extracted_id to verify it exists
-    doc_stmt = select(Document).where(Document.extracted_id == document_id)
-    doc_result = await session.execute(doc_stmt)
-    document = doc_result.scalar_one_or_none()
+    document = await _resolve_document_for_scores(session, document_id, exam_id)
 
     if not document:
         logger.warning(
-            f"Document not found with extracted_id={document_id}",
-            extra={"document_id_param": document_id}
+            f"Document not found with extracted_id={document_id} exam_id={exam_id}",
+            extra={"document_id_param": document_id, "exam_id": exam_id},
         )
         # Return empty results instead of error to maintain backward compatibility
         return DocumentScoresResponse(document_id=document_id, scores=[])
@@ -263,6 +299,7 @@ async def get_document_scores(
             extra={
                 "document_id": document.id,
                 "document_id_param": document_id,
+                "exam_id": exam_id,
             }
         )
         return DocumentScoresResponse(document_id=document_id, scores=[])
@@ -272,17 +309,26 @@ async def get_document_scores(
     extracted_id_to_filter = document.extracted_id
 
     logger.info(
-        f"Filtering subject_scores by document extracted_id",
+        f"Filtering subject_scores by document extracted_id and exam",
         extra={
             "document_id_param": document_id,
             "document_extracted_id": extracted_id_to_filter,
             "document_id": document.id,
             "document_test_type": document.test_type,
+            "exam_id": document.exam_id,
+            "subject_id": document.subject_id,
         }
     )
 
-    # Get all scores with document_id matching, join with related tables
-    # Query by any of the three document_id fields (obj, essay, or pract)
+    # Scope to this exam (and subject/test type when known) so shared sheet IDs
+    # across examinations do not leak candidates/fields into the entry form.
+    conditions = [
+        _document_id_match_condition(document, extracted_id_to_filter),
+        ExamRegistration.exam_id == document.exam_id,
+    ]
+    if document.subject_id is not None:
+        conditions.append(ExamSubject.subject_id == document.subject_id)
+
     stmt = (
         select(
             SubjectScore,
@@ -297,13 +343,7 @@ async def get_document_scores(
         .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
         .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
         .join(Subject, ExamSubject.subject_id == Subject.id)
-        .where(
-            or_(
-                SubjectScore.obj_document_id == extracted_id_to_filter,
-                SubjectScore.essay_document_id == extracted_id_to_filter,
-                SubjectScore.pract_document_id == extracted_id_to_filter,
-            )
-        )
+        .where(*conditions)
         .order_by(Candidate.index_number)
     )
 
@@ -311,9 +351,10 @@ async def get_document_scores(
     rows = result.all()
 
     logger.info(
-        f"Found {len(rows)} subject_scores matching document extracted_id",
+        f"Found {len(rows)} subject_scores matching document extracted_id for exam",
         extra={
             "document_extracted_id": extracted_id_to_filter,
+            "exam_id": document.exam_id,
             "matches_count": len(rows),
         }
     )
@@ -534,23 +575,13 @@ async def batch_update_scores(
     batch_update: BatchScoreUpdate,
     session: DBSessionDep,
     current_user: CurrentUserDep,
+    exam_id: int = Query(..., description="Exam ID — extracted_id is only unique within an exam"),
 ) -> BatchScoreUpdateResponse:
-    """Batch update/create scores for a document."""
+    """Batch update/create scores for a document within an examination."""
     await _require_clerk_digital_entry_enabled(session, current_user)
 
-    # Note: document_id here refers to Document.extracted_id (string) or Document.id (numeric string)
-    # We need to determine which document_id field to use based on the document's test_type
-    # First, get the document to determine test_type
-    # Try extracted_id first, then fall back to numeric ID if not found
-    doc_stmt = select(Document).where(Document.extracted_id == document_id)
-    doc_result = await session.execute(doc_stmt)
-    document = doc_result.scalar_one_or_none()
-
-    # If not found by extracted_id and document_id looks like a numeric ID, try by Document.id
-    if not document and document_id.isdigit():
-        doc_stmt = select(Document).where(Document.id == int(document_id))
-        doc_result = await session.execute(doc_stmt)
-        document = doc_result.scalar_one_or_none()
+    # document_id is Document.extracted_id (or numeric Document.id fallback), scoped by exam_id
+    document = await _resolve_document_for_scores(session, document_id, exam_id)
 
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -585,20 +616,33 @@ async def batch_update_scores(
                     extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
 
             if score_item.score_id is not None:
-                # Update existing score
+                # Update existing score — must belong to this document's exam
                 stmt = (
-                    select(SubjectScore, SubjectRegistration)
-                    .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+                    select(SubjectScore, SubjectRegistration, ExamRegistration)
+                    .join(
+                        SubjectRegistration,
+                        SubjectScore.subject_registration_id == SubjectRegistration.id,
+                    )
+                    .join(
+                        ExamRegistration,
+                        SubjectRegistration.exam_registration_id == ExamRegistration.id,
+                    )
                     .where(SubjectScore.id == score_item.score_id)
+                    .where(ExamRegistration.exam_id == document.exam_id)
                 )
                 result = await session.execute(stmt)
                 row = result.first()
                 if not row:
                     failed += 1
-                    errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
+                    errors.append(
+                        {
+                            "score_id": str(score_item.score_id),
+                            "error": "Score not found for this examination",
+                        }
+                    )
                     continue
 
-                subject_score, subject_reg = row
+                subject_score, subject_reg, _exam_reg = row
 
                 # Update fields and set extraction methods per field
                 if score_item.obj_raw_score is not None:
@@ -629,9 +673,16 @@ async def batch_update_scores(
                     add_extraction_method_to_document(document, extraction_method)
 
             else:
-                # Create new score
-                # Verify subject_registration exists
-                reg_stmt = select(SubjectRegistration).where(SubjectRegistration.id == score_item.subject_registration_id)
+                # Create new score — subject registration must belong to this exam
+                reg_stmt = (
+                    select(SubjectRegistration)
+                    .join(
+                        ExamRegistration,
+                        SubjectRegistration.exam_registration_id == ExamRegistration.id,
+                    )
+                    .where(SubjectRegistration.id == score_item.subject_registration_id)
+                    .where(ExamRegistration.exam_id == document.exam_id)
+                )
                 reg_result = await session.execute(reg_stmt)
                 subject_reg = reg_result.scalar_one_or_none()
                 if not subject_reg:
@@ -639,7 +690,7 @@ async def batch_update_scores(
                     errors.append(
                         {
                             "subject_registration_id": str(score_item.subject_registration_id),
-                            "error": "Subject registration not found",
+                            "error": "Subject registration not found for this examination",
                         }
                     )
                     continue

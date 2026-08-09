@@ -61,7 +61,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     };
   }, [scores.length]);
 
-  // Load scores for the document
+  // Load scores for the document (scoped to examination — extracted_id is not globally unique)
   useEffect(() => {
     async function loadScores() {
       setLoading(true);
@@ -70,7 +70,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
         // Use extracted_id if available, otherwise use document.id as string
         // The document_id in SubjectScore is a string identifier
         const documentId = document.extracted_id || document.id.toString();
-        const response = await getDocumentScores(documentId);
+        const response = await getDocumentScores(documentId, document.exam_id);
         setScores(response.scores);
 
         // Initialize score values
@@ -92,7 +92,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     }
 
     loadScores();
-  }, [document.id, document.extracted_id]);
+  }, [document.id, document.extracted_id, document.exam_id]);
 
   const handleScoreChange = (scoreId: number, field: keyof ScoreUpdate, value: string) => {
     // Handle empty string as null (not entered)
@@ -159,7 +159,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
       await updateScore(scoreId, scoreUpdate);
       // Reload scores to get updated data
       const documentId = document.extracted_id || document.id.toString();
-      const response = await getDocumentScores(documentId);
+      const response = await getDocumentScores(documentId, document.exam_id);
       setScores(response.scores);
       setHasChanges(false);
     } catch (err) {
@@ -168,7 +168,7 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
     } finally {
       setSaving(false);
     }
-  }, [scoreValues, document.id, document.extracted_id]);
+  }, [scoreValues, document.id, document.extracted_id, document.exam_id]);
 
   const handleBatchSave = async () => {
     if (!hasChanges) return;
@@ -182,10 +182,10 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
       }));
 
       const documentId = document.extracted_id || document.id.toString();
-      await batchUpdateScores(documentId, { scores: batchItems });
+      await batchUpdateScores(documentId, { scores: batchItems }, document.exam_id);
 
       // Reload scores
-      const response = await getDocumentScores(documentId);
+      const response = await getDocumentScores(documentId, document.exam_id);
       setScores(response.scores);
       setHasChanges(false);
     } catch (err) {
