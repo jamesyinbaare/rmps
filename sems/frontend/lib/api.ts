@@ -61,8 +61,7 @@ import type {
   ClearBatchesRequest,
   ClearBatchesResponse,
   BatchSummaryResponse,
-  ClerkQuotaListResponse,
-  ClerkQuotaItem,
+  ClerkListResponse,
   User,
   UserUpdate,
   UserPasswordReset,
@@ -2848,37 +2847,9 @@ export async function getBatchSummary(examId?: number): Promise<BatchSummaryResp
   return handleResponse<BatchSummaryResponse>(response);
 }
 
-export async function listClerkQuotas(): Promise<ClerkQuotaListResponse> {
-  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/quotas`);
-  return handleResponse<ClerkQuotaListResponse>(response);
-}
-
-export async function setClerkBaseQuota(
-  userId: string,
-  dailyResolveQuota: number
-): Promise<ClerkQuotaItem> {
-  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/quotas/${userId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ daily_resolve_quota: dailyResolveQuota }),
-  });
-  return handleResponse<ClerkQuotaItem>(response);
-}
-
-export async function setClerkQuotaOverride(
-  userId: string,
-  overrideQuota: number | null,
-  reason?: string
-): Promise<ClerkQuotaItem> {
-  const response = await fetchWithAuth(
-    `${API_BASE_URL}/api/v1/validation/quotas/${userId}/override`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ override_quota: overrideQuota, reason: reason ?? null }),
-    }
-  );
-  return handleResponse<ClerkQuotaItem>(response);
+export async function listClerks(): Promise<ClerkListResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/clerks`);
+  return handleResponse<ClerkListResponse>(response);
 }
 
 export async function getClerkDigitalEntrySetting(): Promise<{ enabled: boolean }> {

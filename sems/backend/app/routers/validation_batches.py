@@ -1,4 +1,4 @@
-"""Batch creation, assignment, and clerk quota endpoints."""
+"""Batch creation, assignment, and clerk directory endpoints."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from sqlalchemy.orm import selectinload
 from app.dependencies.auth import CurrentUserDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
-    ClerkDailyQuotaOverride,
-    ClerkQuotaSettings,
     Document,
     Exam,
     ExamSubject,
@@ -33,26 +31,18 @@ from app.schemas.validation import (
     BatchSummaryUnbatchedItem,
     ClearBatchesRequest,
     ClearBatchesResponse,
+    ClerkActiveExamItem,
     ClerkBatchItem,
     ClerkBatchListResponse,
     ClerkBatchProgressStatus,
-    ClerkQuotaItem,
-    ClerkQuotaListResponse,
+    ClerkListItem,
+    ClerkListResponse,
     CreateBatchesRequest,
     CreateBatchesResponse,
     IssueBatchListResponse,
     IssueBatchResponse,
     ReleaseBatchesRequest,
     ReleaseBatchesResponse,
-    SetBaseQuotaRequest,
-    SetQuotaOverrideRequest,
-)
-from app.services.clerk_quota_service import (
-    count_resolved_today,
-    get_base_quota,
-    get_effective_quota,
-    get_today_override,
-    utc_today,
 )
 from app.services.issue_batch_service import clear_batches, create_batches, get_score_document_id
 
@@ -61,27 +51,64 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/validation", tags=["validation-batches"])
 
 
-def _exam_label(exam: Exam) -> str:
-    return f"{exam.exam_type.value} · {exam.series.value} {exam.year}"
+async def _clerk_active_exams(
+    session: DBSessionDep,
+    user_id,
+) -> list[ClerkActiveExamItem]:
+    """Return exams where the clerk currently holds assigned batches."""
+    pending_per_batch = (
+        select(
+            SubjectScoreValidationIssue.batch_id.label("batch_id"),
+            func.count().label("pending_count"),
+        )
+        .where(
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            SubjectScoreValidationIssue.batch_id.is_not(None),
+        )
+        .group_by(SubjectScoreValidationIssue.batch_id)
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(
+                Exam.id,
+                Exam.exam_type,
+                Exam.series,
+                Exam.year,
+                func.count(IssueBatch.id).label("assigned_batches"),
+                func.coalesce(func.sum(pending_per_batch.c.pending_count), 0).label(
+                    "assigned_pending_issues"
+                ),
+            )
+            .select_from(IssueBatch)
+            .join(Exam, Exam.id == IssueBatch.exam_id)
+            .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
+            .where(IssueBatch.assigned_to_user_id == user_id)
+            .group_by(Exam.id, Exam.exam_type, Exam.series, Exam.year)
+            .order_by(Exam.year.desc(), Exam.series.asc(), Exam.exam_type.asc())
+        )
+    ).all()
+    return [
+        ClerkActiveExamItem(
+            exam_id=row.id,
+            exam_label=f"{row.exam_type.value} · {row.series.value} {row.year}",
+            assigned_batches=int(row.assigned_batches or 0),
+            assigned_pending_issues=int(row.assigned_pending_issues or 0),
+        )
+        for row in rows
+    ]
 
 
 async def _clerk_active_exam(
     session: DBSessionDep,
     user_id,
-) -> tuple[int | None, str | None]:
-    """Return (exam_id, label) for the clerk's currently assigned exam, if any."""
-    row = (
-        await session.execute(
-            select(Exam.id, Exam.exam_type, Exam.series, Exam.year)
-            .join(IssueBatch, IssueBatch.exam_id == Exam.id)
-            .where(IssueBatch.assigned_to_user_id == user_id)
-            .limit(1)
-        )
-    ).first()
-    if not row:
-        return None, None
-    exam_id, exam_type, series, year = row
-    return exam_id, f"{exam_type.value} · {series.value} {year}"
+) -> tuple[int | None, str | None, list]:
+    """Return (primary exam_id, label, active_exams list) for the clerk."""
+    active_exams = await _clerk_active_exams(session, user_id)
+    if not active_exams:
+        return None, None, []
+    primary = active_exams[0]
+    return primary.exam_id, primary.exam_label, active_exams
 
 
 @router.post("/batches", response_model=CreateBatchesResponse)
@@ -381,30 +408,6 @@ async def assign_batches(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="All batches in one assign request must belong to the same examination",
         )
-    new_exam_id = next(iter(exam_ids))
-
-    existing = (
-        await session.execute(
-            select(IssueBatch).where(IssueBatch.assigned_to_user_id == clerk.id)
-        )
-    ).scalars().all()
-    other_exam_ids = {b.exam_id for b in existing if b.exam_id != new_exam_id}
-    if other_exam_ids:
-        other_exam_id = next(iter(other_exam_ids))
-        other_exam = (
-            await session.execute(select(Exam).where(Exam.id == other_exam_id))
-        ).scalar_one_or_none()
-        if other_exam:
-            exam_label = _exam_label(other_exam)
-        else:
-            exam_label = f"exam #{other_exam_id}"
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"{clerk.full_name} already has batches assigned for {exam_label}. "
-                "Release those batches before assigning a different examination."
-            ),
-        )
 
     now = datetime.utcnow()
     for batch in batches:
@@ -553,7 +556,9 @@ async def batches_summary(
     clerk_rows = (await session.execute(clerk_stmt)).all()
     clerks: list[BatchSummaryClerkItem] = []
     for r in clerk_rows:
-        active_exam_id, active_exam_label = await _clerk_active_exam(session, r.id)
+        active_exam_id, active_exam_label, active_exams = await _clerk_active_exam(
+            session, r.id
+        )
         clerks.append(
             BatchSummaryClerkItem(
                 user_id=r.id,
@@ -562,6 +567,7 @@ async def batches_summary(
                 assigned_pending_issues=int(r.assigned_pending_issues or 0),
                 active_exam_id=active_exam_id,
                 active_exam_label=active_exam_label,
+                active_exams=active_exams,
             )
         )
 
@@ -621,11 +627,12 @@ async def batches_summary(
     )
 
 
-@router.get("/quotas", response_model=ClerkQuotaListResponse)
-async def list_quotas(
+@router.get("/clerks", response_model=ClerkListResponse)
+async def list_clerks(
     session: DBSessionDep,
     _: RegistrarDep,
-) -> ClerkQuotaListResponse:
+) -> ClerkListResponse:
+    """List active data clerks with current exam assignments."""
     clerks = (
         await session.execute(
             select(User)
@@ -634,143 +641,36 @@ async def list_quotas(
         )
     ).scalars().all()
 
-    items: list[ClerkQuotaItem] = []
+    day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    items: list[ClerkListItem] = []
     for clerk in clerks:
-        base = await get_base_quota(session, clerk.id)
-        override = await get_today_override(session, clerk.id)
-        limit, overridden = await get_effective_quota(session, clerk.id)
-        resolved = await count_resolved_today(session, clerk.id)
-        active_exam_id, active_exam_label = await _clerk_active_exam(session, clerk.id)
+        resolved = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(SubjectScoreValidationIssue)
+                    .where(
+                        SubjectScoreValidationIssue.status
+                        == ValidationIssueStatus.RESOLVED,
+                        SubjectScoreValidationIssue.resolved_by_user_id == clerk.id,
+                        SubjectScoreValidationIssue.resolved_at >= day_start,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        active_exam_id, active_exam_label, active_exams = await _clerk_active_exam(
+            session, clerk.id
+        )
         items.append(
-            ClerkQuotaItem(
+            ClerkListItem(
                 user_id=clerk.id,
                 full_name=clerk.full_name,
-                base_quota=base,
-                override_quota=override.override_quota if override else None,
-                quota_limit=limit,
+                email=clerk.email,
                 resolved_today=resolved,
-                remaining=max(0, limit - resolved),
-                quota_overridden=overridden,
                 active_exam_id=active_exam_id,
                 active_exam_label=active_exam_label,
+                active_exams=active_exams,
             )
         )
-    return ClerkQuotaListResponse(clerks=items)
-
-
-@router.put("/quotas/{user_id}", response_model=ClerkQuotaItem)
-async def set_base_quota(
-    user_id: str,
-    request: SetBaseQuotaRequest,
-    session: DBSessionDep,
-    current_user: RegistrarDep,
-) -> ClerkQuotaItem:
-    from uuid import UUID
-
-    try:
-        uid = UUID(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid user_id") from e
-
-    clerk = (await session.execute(select(User).where(User.id == uid))).scalar_one_or_none()
-    if not clerk or clerk.role != UserRole.DATACLERK:
-        raise HTTPException(status_code=404, detail="Data clerk not found")
-
-    row = (
-        await session.execute(select(ClerkQuotaSettings).where(ClerkQuotaSettings.user_id == uid))
-    ).scalar_one_or_none()
-    now = datetime.utcnow()
-    if row is None:
-        row = ClerkQuotaSettings(
-            user_id=uid,
-            daily_resolve_quota=request.daily_resolve_quota,
-            updated_at=now,
-            updated_by_user_id=current_user.id,
-        )
-        session.add(row)
-    else:
-        row.daily_resolve_quota = request.daily_resolve_quota
-        row.updated_at = now
-        row.updated_by_user_id = current_user.id
-    await session.commit()
-
-    limit, overridden = await get_effective_quota(session, uid)
-    override = await get_today_override(session, uid)
-    resolved = await count_resolved_today(session, uid)
-    active_exam_id, active_exam_label = await _clerk_active_exam(session, uid)
-    return ClerkQuotaItem(
-        user_id=uid,
-        full_name=clerk.full_name,
-        base_quota=request.daily_resolve_quota,
-        override_quota=override.override_quota if override else None,
-        quota_limit=limit,
-        resolved_today=resolved,
-        remaining=max(0, limit - resolved),
-        quota_overridden=overridden,
-        active_exam_id=active_exam_id,
-        active_exam_label=active_exam_label,
-    )
-
-
-@router.put("/quotas/{user_id}/override", response_model=ClerkQuotaItem)
-async def set_quota_override(
-    user_id: str,
-    request: SetQuotaOverrideRequest,
-    session: DBSessionDep,
-    current_user: RegistrarDep,
-) -> ClerkQuotaItem:
-    from uuid import UUID
-
-    try:
-        uid = UUID(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid user_id") from e
-
-    clerk = (await session.execute(select(User).where(User.id == uid))).scalar_one_or_none()
-    if not clerk or clerk.role != UserRole.DATACLERK:
-        raise HTTPException(status_code=404, detail="Data clerk not found")
-
-    today = utc_today()
-    existing = await get_today_override(session, uid, today)
-
-    if request.override_quota is None:
-        if existing:
-            await session.delete(existing)
-            await session.commit()
-    else:
-        if request.override_quota < 1:
-            raise HTTPException(status_code=400, detail="override_quota must be >= 1")
-        if existing:
-            existing.override_quota = request.override_quota
-            existing.reason = request.reason
-            existing.created_by_user_id = current_user.id
-        else:
-            session.add(
-                ClerkDailyQuotaOverride(
-                    user_id=uid,
-                    quota_date=today,
-                    override_quota=request.override_quota,
-                    reason=request.reason,
-                    created_by_user_id=current_user.id,
-                    created_at=datetime.utcnow(),
-                )
-            )
-        await session.commit()
-
-    base = await get_base_quota(session, uid)
-    limit, overridden = await get_effective_quota(session, uid)
-    override = await get_today_override(session, uid)
-    resolved = await count_resolved_today(session, uid)
-    active_exam_id, active_exam_label = await _clerk_active_exam(session, uid)
-    return ClerkQuotaItem(
-        user_id=uid,
-        full_name=clerk.full_name,
-        base_quota=base,
-        override_quota=override.override_quota if override else None,
-        quota_limit=limit,
-        resolved_today=resolved,
-        remaining=max(0, limit - resolved),
-        quota_overridden=overridden,
-        active_exam_id=active_exam_id,
-        active_exam_label=active_exam_label,
-    )
+    return ClerkListResponse(clerks=items)

@@ -690,9 +690,6 @@ export interface MyValidationStats {
   resolved_week: number;
   resolved_total: number;
   ignored_total: number;
-  quota_limit: number;
-  quota_remaining: number;
-  quota_overridden: boolean;
   assigned_pending_count: number;
 }
 
@@ -816,6 +813,13 @@ export interface BatchSummaryUnbatchedItem {
   pending_count: number;
 }
 
+export interface ClerkActiveExamItem {
+  exam_id: number;
+  exam_label: string;
+  assigned_batches: number;
+  assigned_pending_issues: number;
+}
+
 export interface BatchSummaryClerkItem {
   user_id: string;
   full_name: string;
@@ -823,6 +827,7 @@ export interface BatchSummaryClerkItem {
   assigned_pending_issues: number;
   active_exam_id?: number | null;
   active_exam_label?: string | null;
+  active_exams?: ClerkActiveExamItem[];
 }
 
 export interface BatchSummaryResponse {
@@ -836,21 +841,18 @@ export interface BatchSummaryResponse {
   clerks_with_work?: number;
 }
 
-export interface ClerkQuotaItem {
+export interface ClerkListItem {
   user_id: string;
   full_name: string;
-  base_quota: number;
-  override_quota: number | null;
-  quota_limit: number;
+  email?: string | null;
   resolved_today: number;
-  remaining: number;
-  quota_overridden: boolean;
   active_exam_id?: number | null;
   active_exam_label?: string | null;
+  active_exams?: ClerkActiveExamItem[];
 }
 
-export interface ClerkQuotaListResponse {
-  clerks: ClerkQuotaItem[];
+export interface ClerkListResponse {
+  clerks: ClerkListItem[];
 }
 
 export interface RegistrationProgress {

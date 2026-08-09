@@ -131,9 +131,6 @@ class MyValidationStatsResponse(BaseModel):
     resolved_week: int
     resolved_total: int
     ignored_total: int
-    quota_limit: int = 0
-    quota_remaining: int = 0
-    quota_overridden: bool = False
     assigned_pending_count: int = 0
 
 
@@ -276,6 +273,13 @@ class BatchSummaryUnbatchedItem(BaseModel):
     pending_count: int
 
 
+class ClerkActiveExamItem(BaseModel):
+    exam_id: int
+    exam_label: str
+    assigned_batches: int
+    assigned_pending_issues: int
+
+
 class BatchSummaryClerkItem(BaseModel):
     user_id: UUID
     full_name: str
@@ -283,6 +287,7 @@ class BatchSummaryClerkItem(BaseModel):
     assigned_pending_issues: int
     active_exam_id: int | None = None
     active_exam_label: str | None = None
+    active_exams: list[ClerkActiveExamItem] = Field(default_factory=list)
 
 
 class BatchSummaryResponse(BaseModel):
@@ -297,32 +302,18 @@ class BatchSummaryResponse(BaseModel):
     clerks_with_work: int = 0
 
 
-# --- Quotas ---
+# --- Clerks directory ---
 
 
-class ClerkQuotaItem(BaseModel):
+class ClerkListItem(BaseModel):
     user_id: UUID
     full_name: str
-    base_quota: int
-    override_quota: int | None
-    quota_limit: int
-    resolved_today: int
-    remaining: int
-    quota_overridden: bool
+    email: str | None = None
+    resolved_today: int = 0
     active_exam_id: int | None = None
     active_exam_label: str | None = None
+    active_exams: list[ClerkActiveExamItem] = Field(default_factory=list)
 
 
-class ClerkQuotaListResponse(BaseModel):
-    clerks: list[ClerkQuotaItem]
-
-
-class SetBaseQuotaRequest(BaseModel):
-    daily_resolve_quota: int = Field(..., ge=1, le=100000)
-
-
-class SetQuotaOverrideRequest(BaseModel):
-    override_quota: int | None = Field(
-        None, description="Set override (>=1) or null to clear today's override"
-    )
-    reason: str | None = None
+class ClerkListResponse(BaseModel):
+    clerks: list[ClerkListItem]

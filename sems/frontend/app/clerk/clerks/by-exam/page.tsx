@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
 
-/** Leaderboard retired — resolutions live on Manage Clerks. */
-export default function ClerkStatsRedirectPage() {
+/** By-exam roster merged into Manage Clerks exam filter. */
+export default function ClerksByExamRedirectPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    router.replace("/clerk/clerks");
-  }, [router]);
+    const examId = searchParams.get("exam_id");
+    const href = examId
+      ? `/clerk/clerks?exam_id=${encodeURIComponent(examId)}`
+      : "/clerk/clerks";
+    router.replace(href);
+  }, [router, searchParams]);
 
   return (
     <DashboardLayout title="Manage Clerks">
