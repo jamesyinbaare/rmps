@@ -502,7 +502,7 @@ export default function CertificateSettingsPage() {
   };
 
   return (
-    <DashboardLayout title="Results & Certificates">
+    <DashboardLayout title="Certificates">
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <TopBar title="Certificate settings" showSearch={false} />
 

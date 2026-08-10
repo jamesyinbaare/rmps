@@ -79,6 +79,9 @@ import type {
   CertificateTemplateListResponse,
   CertificateFieldCatalogResponse,
   CertificateIssuance,
+  CertificateIssuanceLedgerResponse,
+  CertificateBatchJob,
+  CertificateBatchJobListResponse,
   CertificateLayoutJson,
   CertificateTemplateAsset,
   CertificateTemplateAssetListResponse,
@@ -3167,11 +3170,18 @@ export async function deactivateCertificateTemplate(templateId: number): Promise
 
 export async function previewCertificatePdf(
   registrationId: number,
-  options: { templateId?: number; issuanceDate?: string } = {}
+  options: {
+    templateId?: number;
+    issuanceDate?: string;
+    certificateNumber?: string;
+  } = {}
 ): Promise<Blob> {
   const params = new URLSearchParams();
   if (options.templateId) params.append("template_id", options.templateId.toString());
   if (options.issuanceDate) params.append("issuance_date", options.issuanceDate);
+  if (options.certificateNumber?.trim()) {
+    params.append("certificate_number", options.certificateNumber.trim());
+  }
   const qs = params.toString();
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/certificate/preview${qs ? `?${qs}` : ""}`
@@ -3189,6 +3199,7 @@ export async function generateCertificatePdf(
     reissue?: boolean;
     voidReason?: string;
     issuanceDate?: string;
+    certificateNumber?: string;
   } = {}
 ): Promise<{ blob: Blob; certificateNumber: string | null; issuanceId: string | null }> {
   const params = new URLSearchParams();
@@ -3197,6 +3208,9 @@ export async function generateCertificatePdf(
   if (options.reissue) params.append("reissue", "true");
   if (options.voidReason) params.append("void_reason", options.voidReason);
   if (options.issuanceDate) params.append("issuance_date", options.issuanceDate);
+  if (options.certificateNumber?.trim()) {
+    params.append("certificate_number", options.certificateNumber.trim());
+  }
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/certificate/generate?${params.toString()}`,
     { method: "POST" }
@@ -3296,6 +3310,131 @@ export async function deleteCertificateTemplateAsset(
   if (!response.ok) {
     await handleResponse(response);
   }
+}
+
+// --- Phase 3: batch + ledger ---
+
+export async function createCertificateBatch(body: {
+  exam_id: number;
+  school_id: number;
+  programme_id?: number | null;
+  template_id?: number | null;
+  issuance_date?: string | null;
+  only_fully_graded?: boolean;
+  reissue_existing?: boolean;
+}): Promise<CertificateBatchJob> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/certificates/batches`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return handleResponse<CertificateBatchJob>(response);
+}
+
+export async function listCertificateBatches(options: {
+  examId?: number;
+  schoolId?: number;
+  limit?: number;
+} = {}): Promise<CertificateBatchJobListResponse> {
+  const params = new URLSearchParams();
+  if (options.examId != null) params.append("exam_id", String(options.examId));
+  if (options.schoolId != null) params.append("school_id", String(options.schoolId));
+  if (options.limit != null) params.append("limit", String(options.limit));
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/batches${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<CertificateBatchJobListResponse>(response);
+}
+
+export async function getCertificateBatch(jobId: number): Promise<CertificateBatchJob> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/batches/${jobId}`
+  );
+  return handleResponse<CertificateBatchJob>(response);
+}
+
+export async function cancelCertificateBatch(jobId: number): Promise<CertificateBatchJob> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/batches/${jobId}/cancel`,
+    { method: "POST" }
+  );
+  return handleResponse<CertificateBatchJob>(response);
+}
+
+export async function downloadCertificateBatchZip(jobId: number): Promise<Blob> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/batches/${jobId}/download`
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function listCertificateIssuances(options: {
+  examId?: number;
+  schoolId?: number;
+  programmeId?: number;
+  status?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<CertificateIssuanceLedgerResponse> {
+  const params = new URLSearchParams();
+  if (options.examId != null) params.append("exam_id", String(options.examId));
+  if (options.schoolId != null) params.append("school_id", String(options.schoolId));
+  if (options.programmeId != null) params.append("programme_id", String(options.programmeId));
+  if (options.status) params.append("status", options.status);
+  if (options.search) params.append("search", options.search);
+  if (options.page != null) params.append("page", String(options.page));
+  if (options.pageSize != null) params.append("page_size", String(options.pageSize));
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<CertificateIssuanceLedgerResponse>(response);
+}
+
+export async function bulkMarkCertificatesPrinted(
+  issuanceIds: number[],
+  printed = true
+): Promise<CertificateIssuance[]> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances/bulk-mark-printed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ issuance_ids: issuanceIds, printed }),
+    }
+  );
+  return handleResponse<CertificateIssuance[]>(response);
+}
+
+export async function voidCertificateIssuance(
+  issuanceId: number,
+  reason: string
+): Promise<CertificateIssuance> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances/${issuanceId}/void`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }
+  );
+  return handleResponse<CertificateIssuance>(response);
+}
+
+export async function setIssuanceCertificateNumber(
+  issuanceId: number,
+  certificateNumber: string
+): Promise<CertificateIssuance> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances/${issuanceId}/certificate-number`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ certificate_number: certificateNumber }),
+    }
+  );
+  return handleResponse<CertificateIssuance>(response);
 }
 
 // Insights API Functions

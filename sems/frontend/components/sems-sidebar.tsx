@@ -24,6 +24,7 @@ import {
   Layers,
   User,
   Award,
+  FileBadge,
   type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -64,10 +65,18 @@ const getNavMain = (
         items,
       },
       {
-        title: "Results & Certificates",
+        title: "Results",
         url: "/results",
         icon: Award,
         items: [{ title: "Browse Results", url: "/results" }],
+      },
+      {
+        title: "Certificates",
+        url: "/results/certificates",
+        icon: FileBadge,
+        items: [
+          { title: "Manage Certificates", url: "/results/certificates" },
+        ],
       },
     ];
   }
@@ -124,11 +133,17 @@ const getNavMain = (
       ],
     },
     {
-      title: "Results & Certificates",
+      title: "Results",
       url: "/results",
       icon: Award,
+      items: [{ title: "Browse Results", url: "/results" }],
+    },
+    {
+      title: "Certificates",
+      url: "/results/certificates",
+      icon: FileBadge,
       items: [
-        { title: "Browse Results", url: "/results" },
+        { title: "Manage Certificates", url: "/results/certificates" },
         { title: "Certificate Settings", url: "/results/certificate-settings" },
       ],
     },

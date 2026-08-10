@@ -231,7 +231,7 @@ class CertificateTemplateListResponse(BaseModel):
 class CertificateIssuanceResponse(BaseModel):
     id: int
     exam_registration_id: int
-    certificate_number: str
+    certificate_number: str | None = None
     status: CertificateIssuanceStatus
     layout_snapshot_json: dict[str, Any] | None = None
     grades_snapshot_json: list[dict[str, Any]] | None = None
@@ -252,6 +252,90 @@ class CertificateIssuanceResponse(BaseModel):
 
 class MarkPrintedRequest(BaseModel):
     printed: bool = True
+
+
+class BulkMarkPrintedRequest(BaseModel):
+    issuance_ids: list[int] = Field(..., min_length=1)
+    printed: bool = True
+
+
+class VoidIssuanceRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class SetCertificateNumberRequest(BaseModel):
+    certificate_number: str = Field(..., min_length=1, max_length=64)
+
+
+class CertificateIssuanceLedgerItem(BaseModel):
+    id: int
+    exam_registration_id: int
+    certificate_number: str | None = None
+    status: CertificateIssuanceStatus
+    issuance_date: date | None = None
+    generated_at: datetime
+    printed_at: datetime | None = None
+    void_reason: str | None = None
+    candidate_name: str
+    index_number: str
+    school_id: int
+    school_code: str
+    school_name: str
+    programme_id: int | None = None
+    programme_name: str | None = None
+    exam_id: int
+    exam_label: str
+
+
+class CertificateIssuanceLedgerResponse(BaseModel):
+    items: list[CertificateIssuanceLedgerItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class CertificateBatchJobCreate(BaseModel):
+    exam_id: int
+    school_id: int
+    programme_id: int | None = None
+    template_id: int | None = None
+    issuance_date: date | None = None
+    only_fully_graded: bool = True
+    reissue_existing: bool = False
+
+
+class CertificateBatchJobResponse(BaseModel):
+    id: int
+    status: str
+    exam_id: int
+    school_id: int
+    programme_id: int | None = None
+    template_id: int | None = None
+    issuance_date: date | None = None
+    only_fully_graded: bool
+    reissue_existing: bool
+    progress_current: int
+    progress_total: int
+    current_candidate_name: str | None = None
+    error_message: str | None = None
+    results: dict[str, Any] | None = None
+    zip_storage_path: str | None = None
+    created_by_user_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    school_code: str | None = None
+    school_name: str | None = None
+    programme_name: str | None = None
+    exam_label: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CertificateBatchJobListResponse(BaseModel):
+    items: list[CertificateBatchJobResponse]
+    total: int
 
 
 class CertificateTemplateAssetResponse(BaseModel):

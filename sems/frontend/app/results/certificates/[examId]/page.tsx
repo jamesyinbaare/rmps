@@ -28,7 +28,7 @@ function examLabel(exam: Exam): string {
   return `${typeLabel} — ${exam.series} ${exam.year}`;
 }
 
-export default function ResultsExamSchoolsPage() {
+export default function ManageCertificatesExamSchoolsPage() {
   const params = useParams();
   const router = useRouter();
   const examId = Number(params.examId);
@@ -81,13 +81,13 @@ export default function ResultsExamSchoolsPage() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <DashboardLayout title="Results">
+    <DashboardLayout title="Certificates">
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title={exam ? examLabel(exam) : "Schools"} />
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
-              <Link href="/results">
+              <Link href="/results/certificates">
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 Examinations
               </Link>
@@ -113,6 +113,9 @@ export default function ResultsExamSchoolsPage() {
                 Search
               </Button>
             </form>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/results/certificates/issuances">Issuance ledger</Link>
+            </Button>
           </div>
 
           {error && (
@@ -143,7 +146,7 @@ export default function ResultsExamSchoolsPage() {
                       <TableHead>Region</TableHead>
                       <TableHead className="text-right">Candidates</TableHead>
                       <TableHead className="text-right">Fully graded</TableHead>
-                      <TableHead className="w-[100px]" />
+                      <TableHead className="w-[120px]" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -152,7 +155,9 @@ export default function ResultsExamSchoolsPage() {
                         key={school.school_id}
                         className="cursor-pointer"
                         onClick={() =>
-                          router.push(`/results/${examId}/schools/${school.school_id}`)
+                          router.push(
+                            `/results/certificates/${examId}/schools/${school.school_id}`
+                          )
                         }
                       >
                         <TableCell className="font-mono text-sm">{school.school_code}</TableCell>
@@ -167,8 +172,10 @@ export default function ResultsExamSchoolsPage() {
                             asChild
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <Link href={`/results/${examId}/schools/${school.school_id}`}>
-                              Results
+                            <Link
+                              href={`/results/certificates/${examId}/schools/${school.school_id}`}
+                            >
+                              Certificates
                               <ChevronRight className="ml-1 h-4 w-4" />
                             </Link>
                           </Button>

@@ -669,6 +669,14 @@ class CertificateIssuanceStatus(enum.Enum):
     MATCHED_SCAN = "matched_scan"
 
 
+class CertificateBatchJobStatus(enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class CertificateTemplate(Base):
     """Overlay layout for printing certificates onto pre-printed security stock.
 
@@ -732,7 +740,7 @@ class CertificateIssuance(Base):
     exam_registration_id = Column(
         Integer, ForeignKey("exam_registrations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    certificate_number = Column(String(64), nullable=False, unique=True, index=True)
+    certificate_number = Column(String(64), nullable=True, unique=True, index=True)
     status = Column(
         Enum(
             CertificateIssuanceStatus,
@@ -774,3 +782,50 @@ class CertificateIssuance(Base):
     generated_by = relationship("User", foreign_keys=[generated_by_user_id])
     printed_by = relationship("User", foreign_keys=[printed_by_user_id])
     matched_by = relationship("User", foreign_keys=[matched_by_user_id])
+
+
+class CertificateBatchJob(Base):
+    """Batch certificate generation for a school (optional programme filter)."""
+
+    __tablename__ = "certificate_batch_jobs"
+    id = Column(Integer, primary_key=True)
+    status = Column(
+        Enum(
+            CertificateBatchJobStatus,
+            name="certificatebatchjobstatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=CertificateBatchJobStatus.PENDING,
+        index=True,
+    )
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    programme_id = Column(
+        Integer, ForeignKey("programmes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    template_id = Column(
+        Integer, ForeignKey("certificate_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    issuance_date = Column(Date, nullable=True)
+    only_fully_graded = Column(Boolean, nullable=False, default=True)
+    reissue_existing = Column(Boolean, nullable=False, default=False)
+    progress_current = Column(Integer, nullable=False, default=0)
+    progress_total = Column(Integer, nullable=False, default=0)
+    current_candidate_name = Column(String(255), nullable=True)
+    error_message = Column(Text, nullable=True)
+    # {items: [...], generated_count, skipped_count, error_count, zip_storage_path?}
+    results = Column(JSON, nullable=True)
+    zip_storage_path = Column(String(512), nullable=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    exam = relationship("Exam")
+    school = relationship("School")
+    programme = relationship("Programme")
+    template = relationship("CertificateTemplate")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
