@@ -5,6 +5,7 @@ export interface Document {
   mime_type: string;
   file_size: number;
   checksum: string;
+  upload_status?: string;
   uploaded_at: string;
   school_id: number | null;
   school_name: string | null; // School name from relationship
@@ -42,6 +43,55 @@ export interface BulkUploadResponse {
   failed: number;
   skipped: number;
   document_ids: number[];
+}
+
+export interface UploadInitiateFile {
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  checksum: string;
+}
+
+export interface UploadSlot {
+  document_id: number;
+  file_name: string;
+  checksum: string;
+  upload_url: string;
+  headers: Record<string, string>;
+}
+
+export interface UploadInitiateSkipped {
+  file_name: string;
+  reason: string;
+  existing_document_id?: number | null;
+}
+
+export interface UploadInitiateFailed {
+  file_name: string;
+  error: string;
+}
+
+export interface UploadInitiateResponse {
+  total: number;
+  initiated: number;
+  skipped: number;
+  failed: number;
+  uploads: UploadSlot[];
+  skipped_files: UploadInitiateSkipped[];
+  failed_files: UploadInitiateFailed[];
+}
+
+export interface UploadConfirmItem {
+  document_id: number;
+  status: string;
+  error?: string | null;
+}
+
+export interface UploadConfirmResponse {
+  total: number;
+  confirmed: number;
+  failed: number;
+  results: UploadConfirmItem[];
 }
 
 export interface Exam {

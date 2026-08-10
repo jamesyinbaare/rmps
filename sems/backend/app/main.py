@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+import asyncio
 import json
 import logging
 import uvicorn
@@ -33,6 +34,24 @@ from app.config import logging_settings, settings
 from starlette.types import ASGIApp
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
+logger = logging.getLogger(__name__)
+
+
+async def _abandoned_upload_sweeper_loop() -> None:
+    """Hourly cleanup of abandoned pending_upload document rows."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            result = await documents.cleanup_abandoned_pending_uploads()
+            if result.deleted or result.errors:
+                logger.info(
+                    "abandoned upload sweeper finished",
+                    extra={"deleted": result.deleted, "errors": result.errors},
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("abandoned upload sweeper failed")
 
 
 class CustomFormatter(logging.Formatter):
@@ -110,9 +129,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await ensure_super_admin_user(session)
         # Start Reducto queue worker
         reducto_queue_service.start_worker()
-        yield
-        # Shutdown: Stop queue worker gracefully
-        await reducto_queue_service.stop_worker()
+        sweeper_task = asyncio.create_task(_abandoned_upload_sweeper_loop())
+        try:
+            yield
+        finally:
+            sweeper_task.cancel()
+            try:
+                await sweeper_task
+            except asyncio.CancelledError:
+                pass
+            # Shutdown: Stop queue worker gracefully
+            await reducto_queue_service.stop_worker()
     # Shutdown handled by context manager
 
 

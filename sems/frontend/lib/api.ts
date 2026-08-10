@@ -3,6 +3,9 @@ import type {
   DocumentFilters,
   DocumentListResponse,
   BulkUploadResponse,
+  UploadInitiateFile,
+  UploadInitiateResponse,
+  UploadConfirmResponse,
   Exam,
   ExamListResponse,
   ExamProgressResponse,
@@ -385,6 +388,55 @@ export async function bulkUploadDocuments(files: File[], examId: number): Promis
   });
 
   return handleResponse<BulkUploadResponse>(response);
+}
+
+export async function initiateDocumentUploads(
+  examId: number,
+  files: UploadInitiateFile[]
+): Promise<UploadInitiateResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/uploads/initiate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ exam_id: examId, files }),
+  });
+  return handleResponse<UploadInitiateResponse>(response);
+}
+
+export async function confirmDocumentUploads(
+  documentIds: number[]
+): Promise<UploadConfirmResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/uploads/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  return handleResponse<UploadConfirmResponse>(response);
+}
+
+/** Resolve relative local content URLs against the API base. */
+export function resolveUploadUrl(uploadUrl: string): string {
+  if (uploadUrl.startsWith("http://") || uploadUrl.startsWith("https://")) {
+    return uploadUrl;
+  }
+  const base = getApiBaseUrl().replace(/\/$/, "");
+  return `${base}${uploadUrl.startsWith("/") ? "" : "/"}${uploadUrl}`;
+}
+
+export async function putFileToUploadUrl(
+  uploadUrl: string,
+  file: File,
+  headers: Record<string, string>
+): Promise<void> {
+  const url = resolveUploadUrl(uploadUrl);
+  const response = await fetch(url, {
+    method: "PUT",
+    headers,
+    body: file,
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `Upload PUT failed with status ${response.status}`);
+  }
 }
 
 export async function getDocument(documentId: number): Promise<Document> {
