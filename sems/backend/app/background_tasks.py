@@ -1,4 +1,4 @@
-"""Background task runner for PDF generation jobs."""
+"""Background task runner for PDF generation and certificate batch jobs."""
 
 import asyncio
 import logging
@@ -71,3 +71,50 @@ def start_pdf_generation_job(job_id: int) -> None:
         logger.info(f"Started background task for PDF generation job {job_id}")
     except Exception as e:
         logger.error(f"Error starting background task for job {job_id}: {e}", exc_info=True)
+
+
+async def run_certificate_batch_job(job_id: int) -> None:
+    try:
+        sessionmanager = get_sessionmanager()
+        async with sessionmanager.session() as session:
+            try:
+                from app.services.certificate_batch_service import process_certificate_batch_job
+
+                await process_certificate_batch_job(job_id, session)
+            except Exception as e:
+                logger.error(
+                    "Error processing certificate batch job %s: %s", job_id, e, exc_info=True
+                )
+                try:
+                    from datetime import datetime
+
+                    from app.models import CertificateBatchJob, CertificateBatchJobStatus
+
+                    job = await session.get(CertificateBatchJob, job_id)
+                    if job:
+                        job.status = CertificateBatchJobStatus.FAILED
+                        job.error_message = str(e)
+                        job.completed_at = datetime.utcnow()
+                        await session.commit()
+                except Exception as update_error:
+                    logger.error("Error updating batch job status: %s", update_error, exc_info=True)
+    except Exception as e:
+        logger.error(
+            "Error in background task for certificate batch %s: %s", job_id, e, exc_info=True
+        )
+
+
+def start_certificate_batch_job(job_id: int) -> None:
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                logger.error("No event loop available for certificate batch job %s", job_id)
+                return
+        loop.create_task(run_certificate_batch_job(job_id))
+        logger.info("Started background task for certificate batch job %s", job_id)
+    except Exception as e:
+        logger.error("Error starting certificate batch job %s: %s", job_id, e, exc_info=True)

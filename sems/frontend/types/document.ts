@@ -1301,7 +1301,7 @@ export interface CertificateTemplateAssetListResponse {
 export interface CertificateIssuance {
   id: number;
   exam_registration_id: number;
-  certificate_number: string;
+  certificate_number: string | null;
   status: "generated" | "printed" | "void" | "matched_scan";
   layout_snapshot_json: CertificateLayoutJson | null;
   grades_snapshot_json: Array<Record<string, string>> | null;
@@ -1316,4 +1316,85 @@ export interface CertificateIssuance {
   printed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CertificateIssuanceLedgerItem {
+  id: number;
+  exam_registration_id: number;
+  certificate_number: string | null;
+  status: CertificateIssuance["status"];
+  issuance_date: string | null;
+  generated_at: string;
+  printed_at: string | null;
+  void_reason: string | null;
+  candidate_name: string;
+  index_number: string;
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  programme_id: number | null;
+  programme_name: string | null;
+  exam_id: number;
+  exam_label: string;
+}
+
+export interface CertificateIssuanceLedgerResponse {
+  items: CertificateIssuanceLedgerItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type CertificateBatchJobStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface CertificateBatchJobItem {
+  exam_registration_id: number;
+  candidate_name?: string;
+  index_number?: string;
+  certificate_number?: string;
+  issuance_id?: number;
+  pdf_storage_path?: string;
+  status: "generated" | "skipped" | "error";
+  error?: string;
+}
+
+export interface CertificateBatchJob {
+  id: number;
+  status: CertificateBatchJobStatus;
+  exam_id: number;
+  school_id: number;
+  programme_id: number | null;
+  template_id: number | null;
+  issuance_date: string | null;
+  only_fully_graded: boolean;
+  reissue_existing: boolean;
+  progress_current: number;
+  progress_total: number;
+  current_candidate_name: string | null;
+  error_message: string | null;
+  results: {
+    items?: CertificateBatchJobItem[];
+    generated_count?: number;
+    skipped_count?: number;
+    error_count?: number;
+  } | null;
+  zip_storage_path: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  school_code: string | null;
+  school_name: string | null;
+  programme_name: string | null;
+  exam_label: string | null;
+}
+
+export interface CertificateBatchJobListResponse {
+  items: CertificateBatchJob[];
+  total: number;
 }

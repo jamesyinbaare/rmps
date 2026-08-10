@@ -27,7 +27,7 @@ function examLabel(exam: Exam): string {
   return `${typeLabel} — ${exam.series} ${exam.year}`;
 }
 
-export default function ResultsIndexPage() {
+export default function ManageCertificatesIndexPage() {
   const router = useRouter();
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,14 +50,20 @@ export default function ResultsIndexPage() {
   }, []);
 
   return (
-    <DashboardLayout title="Results">
+    <DashboardLayout title="Certificates">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title="Results by Examination" />
+        <TopBar title="Manage certificates" />
         <div className="flex-1 overflow-y-auto p-6">
-          <p className="mb-6 max-w-2xl text-sm text-muted-foreground">
-            Select an examination to browse candidate results by school. Open a candidate to view
-            raw scores, normalized scores, and grades.
-          </p>
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Select an examination, then a school, to generate certificates for one candidate or
+              the whole school. Candidate pages show grades for confirmation. Assign certificate
+              numbers on the candidate page or the ledger.
+            </p>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/results/certificates/issuances">Issuance ledger</Link>
+            </Button>
+          </div>
 
           {error && (
             <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
@@ -90,7 +96,7 @@ export default function ResultsIndexPage() {
                     <TableRow
                       key={exam.id}
                       className="cursor-pointer"
-                      onClick={() => router.push(`/results/${exam.id}`)}
+                      onClick={() => router.push(`/results/certificates/${exam.id}`)}
                     >
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
@@ -103,7 +109,7 @@ export default function ResultsIndexPage() {
                       <TableCell>{exam.year}</TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" asChild onClick={(e) => e.stopPropagation()}>
-                          <Link href={`/results/${exam.id}`}>
+                          <Link href={`/results/certificates/${exam.id}`}>
                             View
                             <ChevronRight className="ml-1 h-4 w-4" />
                           </Link>

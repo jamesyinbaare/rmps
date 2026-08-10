@@ -1,47 +1,39 @@
-"""Certificate number allocation."""
+"""Certificate number validation helpers (no auto-allocation).
+
+Numbers are entered manually or set later via Phase 4 OCR.
+"""
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CertificateIssuance, Exam, ExamSeries, School
+from fastapi import HTTPException, status
+
+from app.models import CertificateIssuance
 
 
-def series_code(series: ExamSeries) -> str:
-    if series == ExamSeries.MAY_JUNE:
-        return "MJ"
-    return "ND"
+def normalize_certificate_number(value: str | None) -> str | None:
+    """Strip and normalize; empty becomes None."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
-def certificate_number_prefix(exam: Exam, school: School) -> str:
-    return f"{exam.year}{series_code(exam.series)}-{school.code}-"
-
-
-async def allocate_certificate_number(
+async def assert_certificate_number_available(
     session: AsyncSession,
-    exam: Exam,
-    school: School,
-) -> str:
-    """
-    Allocate next unique certificate number for school+exam diet.
-
-    Format: {year}{MJ|ND}-{school_code}-{seq:05d}
-    """
-    prefix = certificate_number_prefix(exam, school)
-    stmt = select(func.count(CertificateIssuance.id)).where(
-        CertificateIssuance.certificate_number.like(f"{prefix}%")
-    )
-    count = (await session.execute(stmt)).scalar() or 0
-    # Also check max numeric suffix to avoid reuse after voids
-    existing_stmt = select(CertificateIssuance.certificate_number).where(
-        CertificateIssuance.certificate_number.like(f"{prefix}%")
-    )
-    existing = (await session.execute(existing_stmt)).scalars().all()
-    max_seq = 0
-    for number in existing:
-        suffix = number[len(prefix) :]
-        if suffix.isdigit():
-            max_seq = max(max_seq, int(suffix))
-    next_seq = max(count, max_seq) + 1
-    return f"{prefix}{next_seq:05d}"
+    number: str,
+    *,
+    exclude_issuance_id: int | None = None,
+) -> None:
+    """Raise 400 if another issuance already uses this certificate number."""
+    stmt = select(CertificateIssuance).where(CertificateIssuance.certificate_number == number)
+    if exclude_issuance_id is not None:
+        stmt = stmt.where(CertificateIssuance.id != exclude_issuance_id)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Certificate number '{number}' is already assigned",
+        )

@@ -1,4 +1,4 @@
-"""Results browser and certificate issuance APIs (Phases 1–2)."""
+"""Results browser and certificate issuance APIs (Phases 1–3)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,14 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 
+from app.background_tasks import start_certificate_batch_job
 from app.dependencies.auth import CurrentUserDep, OfficerDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
+    CertificateBatchJob,
     CertificateIssuance,
+    CertificateIssuanceStatus,
     CertificateTemplate,
     CertificateTemplateAsset,
     Exam,
@@ -29,7 +32,13 @@ from app.models import (
 from app.schemas.certificate import (
     CERTIFICATE_FIELD_CATALOG,
     DEFAULT_CERTIFICATE_LAYOUT,
+    BulkMarkPrintedRequest,
+    CertificateBatchJobCreate,
+    CertificateBatchJobListResponse,
+    CertificateBatchJobResponse,
     CertificateFieldCatalogResponse,
+    CertificateIssuanceLedgerItem,
+    CertificateIssuanceLedgerResponse,
     CertificateIssuanceResponse,
     CertificateTemplateAssetListResponse,
     CertificateTemplateAssetResponse,
@@ -38,6 +47,8 @@ from app.schemas.certificate import (
     CertificateTemplateResponse,
     CertificateTemplateUpdate,
     MarkPrintedRequest,
+    SetCertificateNumberRequest,
+    VoidIssuanceRequest,
 )
 from app.schemas.certificate_results import (
     CandidateResultSummary,
@@ -48,6 +59,7 @@ from app.schemas.certificate_results import (
     SchoolResultsListResponse,
     SubjectResultDetail,
 )
+from app.services import certificate_batch_service as batch_service
 from app.services import certificate_issuance_service as issuance_service
 
 router = APIRouter(prefix="/api/v1/certificates", tags=["certificates"])
@@ -557,6 +569,9 @@ async def preview_certificate(
     issuance_date: date | None = Query(
         None, description="Official completion/issuance date shown on the certificate"
     ),
+    certificate_number: str | None = Query(
+        None, description="Optional certificate number for preview (not auto-assigned)"
+    ),
 ) -> Response:
     _ = current_user
     pdf_bytes = await issuance_service.preview_certificate_pdf(
@@ -564,6 +579,7 @@ async def preview_certificate(
         registration_id,
         template_id=template_id,
         issuance_date=issuance_date,
+        certificate_number=certificate_number,
     )
     return Response(
         content=pdf_bytes,
@@ -586,6 +602,9 @@ async def generate_certificate(
     issuance_date: date | None = Query(
         None, description="Official completion/issuance date (distinct from printed date)"
     ),
+    certificate_number: str | None = Query(
+        None, description="Optional certificate number (manual; leave blank for later OCR)"
+    ),
     download: bool = Query(True, description="If true, response is PDF bytes; issuance JSON via X-Certificate-* headers"),
 ) -> Response | CertificateIssuanceResponse:
     issuance, pdf_bytes = await issuance_service.generate_certificate(
@@ -596,19 +615,27 @@ async def generate_certificate(
         reissue=reissue,
         void_reason=void_reason,
         issuance_date=issuance_date,
+        certificate_number=certificate_number,
     )
     if download:
+        filename = (
+            f"{issuance.certificate_number}.pdf"
+            if issuance.certificate_number
+            else f"issuance_{issuance.id}.pdf"
+        )
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Certificate-Issuance-Id": str(issuance.id),
+            "X-Certificate-Status": issuance.status.value
+            if hasattr(issuance.status, "value")
+            else str(issuance.status),
+        }
+        if issuance.certificate_number:
+            headers["X-Certificate-Number"] = issuance.certificate_number
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{issuance.certificate_number}.pdf"',
-                "X-Certificate-Number": issuance.certificate_number,
-                "X-Certificate-Issuance-Id": str(issuance.id),
-                "X-Certificate-Status": issuance.status.value
-                if hasattr(issuance.status, "value")
-                else str(issuance.status),
-            },
+            headers=headers,
         )
     return CertificateIssuanceResponse.model_validate(issuance)
 
@@ -662,13 +689,34 @@ async def download_issuance_pdf(
         )
     else:
         pdf_bytes = await issuance_service.certificate_storage_service.retrieve(issuance.pdf_storage_path)
+    filename = (
+        f"{issuance.certificate_number}.pdf"
+        if issuance.certificate_number
+        else f"issuance_{issuance.id}.pdf"
+    )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{issuance.certificate_number}.pdf"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@router.patch("/issuances/{issuance_id}/certificate-number", response_model=CertificateIssuanceResponse)
+async def set_issuance_certificate_number(
+    issuance_id: int,
+    body: SetCertificateNumberRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateIssuanceResponse:
+    _ = current_user
+    issuance = await issuance_service.set_certificate_number(
+        session,
+        issuance_id,
+        certificate_number=body.certificate_number,
+    )
+    return CertificateIssuanceResponse.model_validate(issuance)
 
 
 @router.get(
@@ -768,3 +816,228 @@ async def delete_template_asset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     session.delete(asset)
     await session.commit()
+
+
+# --- Phase 3: batch generate + issuance ledger ---
+
+
+def _exam_label(exam: Exam) -> str:
+    exam_type = exam.exam_type.value if hasattr(exam.exam_type, "value") else str(exam.exam_type)
+    series = exam.series.value if hasattr(exam.series, "value") else str(exam.series)
+    return f"{exam_type} · {series} · {exam.year}"
+
+
+def _batch_status_value(job: CertificateBatchJob) -> str:
+    return job.status.value if hasattr(job.status, "value") else str(job.status)
+
+
+async def _serialize_batch_job(
+    session: DBSessionDep,
+    job: CertificateBatchJob,
+) -> CertificateBatchJobResponse:
+    exam = await session.get(Exam, job.exam_id)
+    school = await session.get(School, job.school_id)
+    programme = await session.get(Programme, job.programme_id) if job.programme_id else None
+    base = CertificateBatchJobResponse.model_validate(job)
+    return base.model_copy(
+        update={
+            "status": _batch_status_value(job),
+            "school_code": school.code if school else None,
+            "school_name": school.name if school else None,
+            "programme_name": programme.name if programme else None,
+            "exam_label": _exam_label(exam) if exam else None,
+        }
+    )
+
+
+@router.post(
+    "/batches",
+    response_model=CertificateBatchJobResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_certificate_batch(
+    body: CertificateBatchJobCreate,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateBatchJobResponse:
+    job = await batch_service.create_batch_job(
+        session,
+        exam_id=body.exam_id,
+        school_id=body.school_id,
+        programme_id=body.programme_id,
+        template_id=body.template_id,
+        issuance_date=body.issuance_date,
+        only_fully_graded=body.only_fully_graded,
+        reissue_existing=body.reissue_existing,
+        user_id=current_user.id,
+    )
+    start_certificate_batch_job(job.id)
+    return await _serialize_batch_job(session, job)
+
+
+@router.get("/batches", response_model=CertificateBatchJobListResponse)
+async def list_certificate_batches(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int | None = Query(None),
+    school_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> CertificateBatchJobListResponse:
+    _ = current_user
+    stmt = select(CertificateBatchJob).order_by(CertificateBatchJob.id.desc()).limit(limit)
+    if exam_id is not None:
+        stmt = stmt.where(CertificateBatchJob.exam_id == exam_id)
+    if school_id is not None:
+        stmt = stmt.where(CertificateBatchJob.school_id == school_id)
+    rows = (await session.execute(stmt)).scalars().all()
+    items = [await _serialize_batch_job(session, job) for job in rows]
+    return CertificateBatchJobListResponse(items=items, total=len(items))
+
+
+@router.get("/batches/{job_id}", response_model=CertificateBatchJobResponse)
+async def get_certificate_batch(
+    job_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> CertificateBatchJobResponse:
+    _ = current_user
+    job = await session.get(CertificateBatchJob, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch job not found")
+    return await _serialize_batch_job(session, job)
+
+
+@router.post("/batches/{job_id}/cancel", response_model=CertificateBatchJobResponse)
+async def cancel_certificate_batch(
+    job_id: int,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateBatchJobResponse:
+    _ = current_user
+    job = await batch_service.cancel_batch_job(session, job_id)
+    return await _serialize_batch_job(session, job)
+
+
+@router.get("/batches/{job_id}/download")
+async def download_certificate_batch_zip(
+    job_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    _ = current_user
+    data, filename = await batch_service.get_batch_zip_bytes(session, job_id)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/issuances", response_model=CertificateIssuanceLedgerResponse)
+async def list_certificate_issuances(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int | None = Query(None),
+    school_id: int | None = Query(None),
+    programme_id: int | None = Query(None),
+    status_filter: CertificateIssuanceStatus | None = Query(None, alias="status"),
+    search: str | None = Query(None, description="Candidate name, index, or certificate number"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> CertificateIssuanceLedgerResponse:
+    _ = current_user
+    filters: list[Any] = []
+    if exam_id is not None:
+        filters.append(ExamRegistration.exam_id == exam_id)
+    if school_id is not None:
+        filters.append(Candidate.school_id == school_id)
+    if programme_id is not None:
+        filters.append(Candidate.programme_id == programme_id)
+    if status_filter is not None:
+        filters.append(CertificateIssuance.status == status_filter)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        filters.append(
+            (Candidate.name.ilike(term))
+            | (Candidate.index_number.ilike(term))
+            | (ExamRegistration.index_number.ilike(term))
+            | (CertificateIssuance.certificate_number.ilike(term))
+        )
+
+    base = (
+        select(CertificateIssuance, ExamRegistration, Candidate, School, Programme, Exam)
+        .join(ExamRegistration, CertificateIssuance.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(School, Candidate.school_id == School.id)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .outerjoin(Programme, Candidate.programme_id == Programme.id)
+    )
+    if filters:
+        base = base.where(*filters)
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    stmt = (
+        base.order_by(CertificateIssuance.generated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await session.execute(stmt)).all()
+    items: list[CertificateIssuanceLedgerItem] = []
+    for issuance, exam_reg, candidate, school, programme, exam in rows:
+        items.append(
+            CertificateIssuanceLedgerItem(
+                id=issuance.id,
+                exam_registration_id=exam_reg.id,
+                certificate_number=issuance.certificate_number,
+                status=issuance.status,
+                issuance_date=issuance.issuance_date,
+                generated_at=issuance.generated_at,
+                printed_at=issuance.printed_at,
+                void_reason=issuance.void_reason,
+                candidate_name=candidate.name,
+                index_number=exam_reg.index_number or candidate.index_number,
+                school_id=school.id,
+                school_code=school.code,
+                school_name=school.name,
+                programme_id=programme.id if programme else None,
+                programme_name=programme.name if programme else None,
+                exam_id=exam.id,
+                exam_label=_exam_label(exam),
+            )
+        )
+    return CertificateIssuanceLedgerResponse(
+        items=items, total=total, page=page, page_size=page_size
+    )
+
+
+@router.post("/issuances/bulk-mark-printed", response_model=list[CertificateIssuanceResponse])
+async def bulk_mark_certificates_printed(
+    body: BulkMarkPrintedRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> list[CertificateIssuanceResponse]:
+    updated = await batch_service.bulk_mark_printed(
+        session,
+        body.issuance_ids,
+        user_id=current_user.id,
+        printed=body.printed,
+    )
+    return [CertificateIssuanceResponse.model_validate(i) for i in updated]
+
+
+@router.post("/issuances/{issuance_id}/void", response_model=CertificateIssuanceResponse)
+async def void_certificate_issuance(
+    issuance_id: int,
+    body: VoidIssuanceRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateIssuanceResponse:
+    issuance = await batch_service.void_issuance(
+        session,
+        issuance_id,
+        user_id=current_user.id,
+        reason=body.reason,
+    )
+    return CertificateIssuanceResponse.model_validate(issuance)

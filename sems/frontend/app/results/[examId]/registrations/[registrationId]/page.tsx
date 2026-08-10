@@ -1,21 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -25,20 +16,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  downloadIssuancePdf,
-  generateCertificatePdf,
-  getExamRegistrationResultDetail,
-  getRegistrationCertificateIssuance,
-  markCertificatePrinted,
-  previewCertificatePdf,
-} from "@/lib/api";
-import type {
-  CertificateIssuance,
-  ExamRegistrationResultDetail,
-} from "@/types/document";
-import { ArrowLeft, Download, Eye, Loader2, Printer } from "lucide-react";
-import { toast } from "sonner";
+import { getExamRegistrationResultDetail } from "@/lib/api";
+import type { ExamRegistrationResultDetail } from "@/types/document";
+import { ArrowLeft, Loader2 } from "lucide-react";
 
 function formatNum(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -56,44 +36,14 @@ function gradeBadgeVariant(
   return "outline";
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function RegistrationResultDetailPage() {
   const params = useParams();
   const examId = Number(params.examId);
   const registrationId = Number(params.registrationId);
 
   const [detail, setDetail] = useState<ExamRegistrationResultDetail | null>(null);
-  const [issuance, setIssuance] = useState<CertificateIssuance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [issuanceDate, setIssuanceDate] = useState(
-    () => new Date().toISOString().slice(0, 10)
-  );
-
-  const loadIssuance = useCallback(async () => {
-    if (!registrationId) return;
-    try {
-      const data = await getRegistrationCertificateIssuance(registrationId);
-      setIssuance(data);
-      if (data?.issuance_date) {
-        setIssuanceDate(data.issuance_date);
-      }
-    } catch {
-      setIssuance(null);
-    }
-  }, [registrationId]);
 
   useEffect(() => {
     async function load() {
@@ -103,7 +53,6 @@ export default function RegistrationResultDetailPage() {
       try {
         const data = await getExamRegistrationResultDetail(registrationId);
         setDetail(data);
-        await loadIssuance();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load result detail");
       } finally {
@@ -111,83 +60,10 @@ export default function RegistrationResultDetailPage() {
       }
     }
     load();
-  }, [registrationId, loadIssuance]);
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-
-  const handlePreview = async () => {
-    setPreviewLoading(true);
-    setPreviewOpen(true);
-    try {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const blob = await previewCertificatePdf(registrationId, {
-        issuanceDate,
-      });
-      setPreviewUrl(URL.createObjectURL(blob));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Preview failed");
-      setPreviewOpen(false);
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    setActionLoading(true);
-    try {
-      const result = await generateCertificatePdf(registrationId, {
-        issuanceDate,
-      });
-      downloadBlob(
-        result.blob,
-        `${result.certificateNumber || `certificate-${registrationId}`}.pdf`
-      );
-      toast.success(
-        result.certificateNumber
-          ? `Certificate ${result.certificateNumber} generated`
-          : "Certificate generated"
-      );
-      await loadIssuance();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Generate failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDownloadIssued = async () => {
-    if (!issuance) return;
-    setActionLoading(true);
-    try {
-      const blob = await downloadIssuancePdf(issuance.id);
-      downloadBlob(blob, `${issuance.certificate_number}.pdf`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Download failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleMarkPrinted = async () => {
-    if (!issuance) return;
-    setActionLoading(true);
-    try {
-      const updated = await markCertificatePrinted(issuance.id, true);
-      setIssuance(updated);
-      toast.success("Marked as printed");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to mark printed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  }, [registrationId]);
 
   return (
-    <DashboardLayout title="Results & Certificates">
+    <DashboardLayout title="Results">
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
           title={
@@ -212,55 +88,13 @@ export default function RegistrationResultDetailPage() {
             </Button>
             <div className="flex-1" />
             {!loading && detail && (
-              <>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="issuance-date" className="whitespace-nowrap text-xs text-muted-foreground">
-                    Completion / issuance date
-                  </Label>
-                  <Input
-                    id="issuance-date"
-                    type="date"
-                    className="h-8 w-auto"
-                    value={issuanceDate}
-                    onChange={(e) => setIssuanceDate(e.target.value)}
-                  />
-                </div>
-                <Button variant="outline" size="sm" onClick={handlePreview}>
-                  <Eye className="mr-1 h-4 w-4" />
-                  Preview certificate
-                </Button>
-                <Button size="sm" onClick={handleGenerate} disabled={actionLoading}>
-                  {actionLoading ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-1 h-4 w-4" />
-                  )}
-                  {issuance ? "Re-download / regenerate" : "Generate & download"}
-                </Button>
-                {issuance && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleDownloadIssued}
-                      disabled={actionLoading}
-                    >
-                      Download issued
-                    </Button>
-                    {issuance.status !== "printed" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleMarkPrinted}
-                        disabled={actionLoading}
-                      >
-                        <Printer className="mr-1 h-4 w-4" />
-                        Mark printed
-                      </Button>
-                    )}
-                  </>
-                )}
-              </>
+              <Button variant="outline" size="sm" asChild>
+                <Link
+                  href={`/results/certificates/${examId}/registrations/${registrationId}`}
+                >
+                  Manage certificate
+                </Link>
+              </Button>
             )}
           </div>
 
@@ -276,7 +110,7 @@ export default function RegistrationResultDetailPage() {
             </div>
           ) : !detail ? null : (
             <>
-              <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <div className="text-xs text-muted-foreground">Index number</div>
                   <div className="font-mono font-medium">{detail.index_number}</div>
@@ -306,31 +140,6 @@ export default function RegistrationResultDetailPage() {
                       <Badge variant="secondary">
                         Pending ({detail.subjects_pending} of {detail.subjects_registered})
                       </Badge>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Certificate</div>
-                  <div className="mt-0.5 text-sm">
-                    {issuance ? (
-                      <>
-                        <div className="font-mono text-xs">{issuance.certificate_number}</div>
-                        <Badge variant="outline" className="mt-1">
-                          {issuance.status}
-                        </Badge>
-                        {issuance.issuance_date && (
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            Issued {issuance.issuance_date}
-                          </div>
-                        )}
-                        {issuance.printed_at && (
-                          <div className="text-xs text-muted-foreground">
-                            Printed {new Date(issuance.printed_at).toLocaleString()}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">Not issued</span>
                     )}
                   </div>
                 </div>
@@ -453,30 +262,6 @@ export default function RegistrationResultDetailPage() {
           )}
         </div>
       </div>
-
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Certificate preview</DialogTitle>
-          </DialogHeader>
-          {previewLoading ? (
-            <div className="flex justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : previewUrl ? (
-            <iframe
-              src={previewUrl}
-              className="h-[70vh] w-full rounded border"
-              title="Certificate preview"
-            />
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </DashboardLayout>
   );
 }

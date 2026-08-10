@@ -7,8 +7,17 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -18,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  createCertificateBatch,
   getAllExams,
   listExamSchoolProgrammes,
   listSchoolResults,
@@ -27,7 +37,8 @@ import type {
   Exam,
   ExamProgrammeSummary,
 } from "@/types/document";
-import { ArrowLeft, ChevronRight, Loader2, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, FileStack, Loader2, Search } from "lucide-react";
+import { toast } from "sonner";
 
 function examLabel(exam: Exam): string {
   const typeLabel =
@@ -38,7 +49,7 @@ function examLabel(exam: Exam): string {
   return `${typeLabel} — ${exam.series} ${exam.year}`;
 }
 
-export default function SchoolResultsPage() {
+export default function ManageCertificatesSchoolPage() {
   const params = useParams();
   const router = useRouter();
   const examId = Number(params.examId);
@@ -58,6 +69,14 @@ export default function SchoolResultsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [issuanceDate, setIssuanceDate] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
+  const [onlyFullyGraded, setOnlyFullyGraded] = useState(true);
+  const [reissueExisting, setReissueExisting] = useState(false);
+  const [batchStarting, setBatchStarting] = useState(false);
 
   const fullyGradedCount = useMemo(
     () => candidates.filter((c) => c.is_fully_graded).length,
@@ -99,7 +118,7 @@ export default function SchoolResultsPage() {
       setSchoolCode(data.school_code);
       setSchoolName(data.school_name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load results");
+      setError(err instanceof Error ? err.message : "Failed to load candidates");
     } finally {
       setLoading(false);
     }
@@ -109,25 +128,57 @@ export default function SchoolResultsPage() {
     loadResults();
   }, [loadResults]);
 
+  const handleStartBatch = async () => {
+    setBatchStarting(true);
+    try {
+      const job = await createCertificateBatch({
+        exam_id: examId,
+        school_id: schoolId,
+        programme_id: programmeId ?? null,
+        issuance_date: issuanceDate || null,
+        only_fully_graded: onlyFullyGraded,
+        reissue_existing: reissueExisting,
+      });
+      toast.success("Certificate batch started");
+      setBatchOpen(false);
+      router.push(`/results/batches/${job.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to start batch");
+    } finally {
+      setBatchStarting(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const programmeLabel = programmeId
+    ? programmes.find((p) => p.programme_id === programmeId)?.programme_name
+    : "All programmes";
 
   return (
-    <DashboardLayout title="Results">
+    <DashboardLayout title="Certificates">
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
           title={
             schoolCode
               ? `${schoolCode} — ${schoolName}`
-              : "School results"
+              : "School certificates"
           }
         />
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
-              <Link href={`/results/${examId}`}>
+              <Link href={`/results/certificates/${examId}`}>
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 {exam ? examLabel(exam) : "Schools"}
               </Link>
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/results/certificates/issuances">Issuance ledger</Link>
+            </Button>
+            <Button size="sm" onClick={() => setBatchOpen(true)} disabled={loading}>
+              <FileStack className="mr-1 h-4 w-4" />
+              Generate certificates
             </Button>
           </div>
 
@@ -217,7 +268,7 @@ export default function SchoolResultsPage() {
                         className="cursor-pointer"
                         onClick={() =>
                           router.push(
-                            `/results/${examId}/registrations/${c.exam_registration_id}`
+                            `/results/certificates/${examId}/registrations/${c.exam_registration_id}`
                           )
                         }
                       >
@@ -275,6 +326,61 @@ export default function SchoolResultsPage() {
           )}
         </div>
       </div>
+
+      <Dialog open={batchOpen} onOpenChange={setBatchOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generate certificates</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              Batch generate overlay PDFs for{" "}
+              <span className="font-medium text-foreground">
+                {schoolCode || "this school"}
+              </span>
+              {programmeLabel ? ` · ${programmeLabel}` : ""}. Default includes only fully
+              graded candidates. Certificate numbers are not assigned here — enter them later on
+              the ledger (or via OCR after scanning).
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="batch-date">Completion / issuance date</Label>
+              <Input
+                id="batch-date"
+                type="date"
+                value={issuanceDate}
+                onChange={(e) => setIssuanceDate(e.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2">
+              <Checkbox
+                checked={onlyFullyGraded}
+                onCheckedChange={(checked) => setOnlyFullyGraded(Boolean(checked))}
+              />
+              Only fully graded candidates
+            </label>
+            <label className="flex items-center gap-2">
+              <Checkbox
+                checked={reissueExisting}
+                onCheckedChange={(checked) => setReissueExisting(Boolean(checked))}
+              />
+              Reissue if already generated (voids previous)
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleStartBatch} disabled={batchStarting}>
+              {batchStarting ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <FileStack className="mr-1 h-4 w-4" />
+              )}
+              Start batch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

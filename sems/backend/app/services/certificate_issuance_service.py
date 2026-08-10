@@ -29,7 +29,10 @@ from app.models import (
     SubjectScore,
 )
 from app.schemas.certificate import DEFAULT_CERTIFICATE_LAYOUT
-from app.services.certificate_number_service import allocate_certificate_number
+from app.services.certificate_number_service import (
+    assert_certificate_number_available,
+    normalize_certificate_number,
+)
 from app.services.certificate_pdf_service import (
     DEFAULT_DATE_FORMAT,
     build_certificate_context,
@@ -169,7 +172,7 @@ def build_context_for_registration(
     programme: Programme | None,
     exam: Exam,
     subjects: list[dict[str, Any]],
-    certificate_number: str,
+    certificate_number: str | None,
     issuance_date: date | datetime | str | None,
     layout: dict[str, Any],
 ) -> dict[str, Any]:
@@ -179,7 +182,7 @@ def build_context_for_registration(
         school_name=f"{school.code} — {school.name}",
         school_code=school.code or "",
         programme_name=programme.name if programme else "",
-        certificate_number=certificate_number,
+        certificate_number=certificate_number or "",
         subjects=[{"subject_name": s["subject_name"], "grade": s["grade"]} for s in subjects],
         issuance_date=issuance_date,
         date_format=_layout_date_format(layout),
@@ -188,6 +191,16 @@ def build_context_for_registration(
         exam_series=_exam_enum_value(exam.series),
         exam_description=exam.description or "",
     )
+
+
+def _pdf_filename(issuance: CertificateIssuance | None = None, *, registration_id: int | None = None) -> str:
+    if issuance and issuance.certificate_number:
+        return f"{issuance.certificate_number}.pdf"
+    if issuance:
+        return f"issuance_{issuance.id}.pdf"
+    if registration_id is not None:
+        return f"reg_{registration_id}.pdf"
+    return "certificate.pdf"
 
 
 async def load_template_images(template: CertificateTemplate | None) -> dict[str, bytes]:
@@ -234,7 +247,8 @@ async def preview_certificate_pdf(
     images = await load_template_images(template)
 
     active = await get_active_issuance(session, exam_reg.id)
-    number = certificate_number or (active.certificate_number if active else "PREVIEW-00000")
+    provided = normalize_certificate_number(certificate_number)
+    number = provided or (active.certificate_number if active else None)
     resolved_date = issuance_date or (active.issuance_date if active else date.today())
 
     context = build_context_for_registration(
@@ -266,6 +280,7 @@ async def generate_certificate(
     reissue: bool = False,
     void_reason: str | None = None,
     issuance_date: date | None = None,
+    certificate_number: str | None = None,
 ) -> tuple[CertificateIssuance, bytes]:
     exam_reg, candidate, school, programme, exam, subjects = await load_registration_bundle(
         session, registration_id
@@ -273,6 +288,7 @@ async def generate_certificate(
     template = await resolve_template(session, exam=exam, template_id=template_id)
     width_mm, height_mm, layout = template_page_and_layout(template)
     images = await load_template_images(template)
+    provided = normalize_certificate_number(certificate_number)
 
     active = await get_active_issuance(session, exam_reg.id)
     if active and not reissue:
@@ -283,6 +299,11 @@ async def generate_certificate(
         resolved_date = active.issuance_date or issuance_date or date.today()
         if active.issuance_date is None:
             active.issuance_date = resolved_date
+        if provided is not None and provided != active.certificate_number:
+            await assert_certificate_number_available(
+                session, provided, exclude_issuance_id=active.id
+            )
+            active.certificate_number = provided
         layout_dict = layout_to_use if isinstance(layout_to_use, dict) else layout
         context = build_context_for_registration(
             candidate=candidate,
@@ -303,7 +324,7 @@ async def generate_certificate(
             images=images,
         )
         path, _ = await certificate_storage_service.save(
-            pdf_bytes, f"{active.certificate_number}.pdf"
+            pdf_bytes, _pdf_filename(active, registration_id=exam_reg.id)
         )
         active.pdf_storage_path = path
         active.updated_at = datetime.utcnow()
@@ -319,7 +340,9 @@ async def generate_certificate(
     else:
         superseded_id = None
 
-    number = await allocate_certificate_number(session, exam, school)
+    if provided is not None:
+        await assert_certificate_number_available(session, provided)
+
     resolved_date = issuance_date or date.today()
     context = build_context_for_registration(
         candidate=candidate,
@@ -328,7 +351,7 @@ async def generate_certificate(
         programme=programme,
         exam=exam,
         subjects=subjects,
-        certificate_number=number,
+        certificate_number=provided,
         issuance_date=resolved_date,
         layout=layout,
     )
@@ -339,11 +362,13 @@ async def generate_certificate(
         context=context,
         images=images,
     )
-    path, _ = await certificate_storage_service.save(pdf_bytes, f"{number}.pdf")
+    # Temporary filename until we have an issuance id; renamed path after insert not required
+    save_name = f"{provided}.pdf" if provided else f"reg_{exam_reg.id}.pdf"
+    path, _ = await certificate_storage_service.save(pdf_bytes, save_name)
 
     issuance = CertificateIssuance(
         exam_registration_id=exam_reg.id,
-        certificate_number=number,
+        certificate_number=provided,
         status=CertificateIssuanceStatus.GENERATED,
         layout_snapshot_json=layout,
         grades_snapshot_json=subjects,
@@ -357,6 +382,36 @@ async def generate_certificate(
     await session.commit()
     await session.refresh(issuance)
     return issuance, pdf_bytes
+
+
+async def set_certificate_number(
+    session: AsyncSession,
+    issuance_id: int,
+    *,
+    certificate_number: str,
+) -> CertificateIssuance:
+    issuance = await session.get(CertificateIssuance, issuance_id)
+    if not issuance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issuance not found")
+    if issuance.status == CertificateIssuanceStatus.VOID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot set certificate number on a voided issuance",
+        )
+    number = normalize_certificate_number(certificate_number)
+    if not number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Certificate number is required",
+        )
+    await assert_certificate_number_available(
+        session, number, exclude_issuance_id=issuance.id
+    )
+    issuance.certificate_number = number
+    issuance.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(issuance)
+    return issuance
 
 
 async def mark_issuance_printed(
