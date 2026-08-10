@@ -875,15 +875,18 @@ async def list_exam_registration_subjects(
 
     result = []
     for subject_reg, exam_subject, subject, subject_score in subject_registrations:
-        # Calculate grade if subject_score exists
+        # Calculate grade if subject_score exists — prefer persisted grade
         grade = None
         if subject_score:
-            grade = calculate_grade(
-                subject_score.total_score,
-                exam_subject.grade_ranges_json,
-                subject_score=subject_score,
-                exam_subject=exam_subject,
-            )
+            if subject_score.grade is not None:
+                grade = subject_score.grade
+            else:
+                grade = calculate_grade(
+                    subject_score.total_score,
+                    exam_subject.grade_ranges_json,
+                    subject_score=subject_score,
+                    exam_subject=exam_subject,
+                )
 
         # Create SubjectScoreResponse with grade
         subject_score_response = None

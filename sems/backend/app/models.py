@@ -407,6 +407,11 @@ class SubjectScore(Base):
     obj_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     essay_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     pract_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
+    grade = Column(
+        Enum(Grade, values_callable=lambda enum_cls: [member.value for member in enum_cls]),
+        nullable=True,
+        index=True,
+    )  # Persisted when results are processed; null means not yet graded (Pending)
     subject_registration = relationship("SubjectRegistration", back_populates="subject_score")
 
 

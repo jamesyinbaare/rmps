@@ -23,6 +23,7 @@ import {
   ListTodo,
   Layers,
   User,
+  Award,
   type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -61,6 +62,12 @@ const getNavMain = (
         url: "/clerk",
         icon: ListTodo,
         items,
+      },
+      {
+        title: "Results & Certificates",
+        url: "/results",
+        icon: Award,
+        items: [{ title: "Browse Results", url: "/results" }],
       },
     ];
   }
@@ -114,6 +121,14 @@ const getNavMain = (
         { title: "Export Results", url: "/scores/export" },
         { title: "Unmatched Records", url: "/scores/unmatched-records" },
         { title: "Issues", url: "/scores/issues" },
+      ],
+    },
+    {
+      title: "Results & Certificates",
+      url: "/results",
+      icon: Award,
+      items: [
+        { title: "Browse Results", url: "/results" },
       ],
     },
   ];

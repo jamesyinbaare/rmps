@@ -71,6 +71,10 @@ import type {
   UserListFilters,
   BackfillTestTypeResponse,
   SheetIdComparisonResponse,
+  ExamSchoolListResponse,
+  ExamProgrammeSummary,
+  SchoolResultsListResponse,
+  ExamRegistrationResultDetail,
 } from "@/types/document";
 
 /**
@@ -3017,6 +3021,64 @@ export async function processExamSubjects(
     }
   );
   return handleResponse<ProcessExamResultsResponse>(response);
+}
+
+// Certificates / Results browser API
+
+export async function listExamResultSchools(
+  examId: number,
+  options: { page?: number; page_size?: number; search?: string } = {}
+): Promise<ExamSchoolListResponse> {
+  const params = new URLSearchParams();
+  if (options.page) params.append("page", options.page.toString());
+  if (options.page_size) params.append("page_size", options.page_size.toString());
+  if (options.search) params.append("search", options.search);
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<ExamSchoolListResponse>(response);
+}
+
+export async function listExamSchoolProgrammes(
+  examId: number,
+  schoolId: number
+): Promise<ExamProgrammeSummary[]> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools/${schoolId}/programmes`
+  );
+  return handleResponse<ExamProgrammeSummary[]>(response);
+}
+
+export async function listSchoolResults(
+  examId: number,
+  schoolId: number,
+  options: {
+    programme_id?: number;
+    search?: string;
+    page?: number;
+    page_size?: number;
+  } = {}
+): Promise<SchoolResultsListResponse> {
+  const params = new URLSearchParams();
+  if (options.programme_id) params.append("programme_id", options.programme_id.toString());
+  if (options.search) params.append("search", options.search);
+  if (options.page) params.append("page", options.page.toString());
+  if (options.page_size) params.append("page_size", options.page_size.toString());
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools/${schoolId}/results${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<SchoolResultsListResponse>(response);
+}
+
+export async function getExamRegistrationResultDetail(
+  registrationId: number
+): Promise<ExamRegistrationResultDetail> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/result-detail`
+  );
+  return handleResponse<ExamRegistrationResultDetail>(response);
 }
 
 // Insights API Functions

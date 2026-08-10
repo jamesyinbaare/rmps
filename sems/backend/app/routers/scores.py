@@ -44,7 +44,7 @@ from app.schemas.score import (
     UpdateScoresFromReductoRequest,
     UpdateScoresFromReductoResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, is_absent, parse_score_value, parse_score_value_safe
+from app.utils.score_utils import add_extraction_method_to_document, is_absent, parse_score_value, parse_score_value_safe
 from app.services.results_export import generate_results_export
 from app.services.issue_batch_service import (
     assigned_document_extracted_ids,
@@ -386,13 +386,8 @@ async def get_document_scores(
                 "document_extracted_id": extracted_id_to_filter,
             }
         )
-        # Calculate grade from grade ranges JSON
-        grade = calculate_grade(
-            subject_score.total_score,
-            exam_subject.grade_ranges_json,
-            subject_score=subject_score,
-            exam_subject=exam_subject,
-        )
+        # Prefer persisted grade; fall back to Pending when not yet processed
+        grade = subject_score.grade if subject_score.grade is not None else None
 
         scores.append(
             ScoreResponse(
@@ -536,13 +531,8 @@ async def update_score(
     await session.commit()
     await session.refresh(subject_score)
 
-    # Calculate grade from grade ranges JSON
-    grade = calculate_grade(
-        subject_score.total_score,
-        exam_subject.grade_ranges_json,
-        subject_score=subject_score,
-        exam_subject=exam_subject,
-    )
+    # Prefer persisted grade written by result processing
+    grade = subject_score.grade
 
     return ScoreResponse(
         id=subject_score.id,

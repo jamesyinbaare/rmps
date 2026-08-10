@@ -14,6 +14,7 @@ from app.initial_data import ensure_super_admin_user
 from app.routers import (
     auth,
     candidates,
+    certificates,
     documents,
     exams,
     grades,
@@ -215,6 +216,7 @@ app.include_router(candidates.router)
 app.include_router(programmes.router)
 app.include_router(scores.router)
 app.include_router(results.router)
+app.include_router(certificates.router)
 app.include_router(grades.router)
 app.include_router(pdf_generation_jobs.router)
 app.include_router(validation.router)
