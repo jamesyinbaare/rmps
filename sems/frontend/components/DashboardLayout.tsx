@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AppLayout,
@@ -133,8 +134,23 @@ export function DashboardLayout({
         <AppLayout variant="stacked">
           <AppHeader variant="plain">
             <AppHeaderBranding
-              logo={<Files size={22} strokeWidth={1.5} aria-hidden />}
-              title="SEMS"
+              logo={
+                <Link
+                  href="/"
+                  aria-label="Home"
+                  className="inline-flex text-inherit outline-none focus-visible:opacity-90"
+                >
+                  <Files size={22} strokeWidth={1.5} aria-hidden />
+                </Link>
+              }
+              title={
+                <Link
+                  href="/"
+                  className="text-inherit no-underline outline-none hover:opacity-90 focus-visible:opacity-90"
+                >
+                  SEMS
+                </Link>
+              }
               subtitle={title}
             />
             <AppHeaderActions>

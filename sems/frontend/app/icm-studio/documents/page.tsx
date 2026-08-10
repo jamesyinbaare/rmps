@@ -42,6 +42,7 @@ export default function DocumentsPage() {
   const router = useRouter();
   const filterParam = searchParams.get("filter");
   const examIdParam = searchParams.get("exam_id");
+  const extractionStatusParam = searchParams.get("id_extraction_status");
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +57,13 @@ export default function DocumentsPage() {
       if (!Number.isNaN(examId)) {
         initial.exam_id = examId;
       }
+    }
+    if (
+      extractionStatusParam === "success" ||
+      extractionStatusParam === "pending" ||
+      extractionStatusParam === "error"
+    ) {
+      initial.id_extraction_status = extractionStatusParam;
     }
     return initial;
   });
@@ -78,6 +86,31 @@ export default function DocumentsPage() {
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
+
+  // Sync filters when dashboard deep-link query params change
+  useEffect(() => {
+    const nextExamId = examIdParam ? parseInt(examIdParam, 10) : undefined;
+    const validExamId =
+      nextExamId != null && !Number.isNaN(nextExamId) ? nextExamId : undefined;
+    const nextStatus =
+      extractionStatusParam === "success" ||
+      extractionStatusParam === "pending" ||
+      extractionStatusParam === "error"
+        ? extractionStatusParam
+        : undefined;
+
+    setFilters((prev) => {
+      const examChanged = (prev.exam_id ?? undefined) !== validExamId;
+      const statusChanged = (prev.id_extraction_status ?? undefined) !== nextStatus;
+      if (!examChanged && !statusChanged) return prev;
+      return {
+        ...prev,
+        exam_id: validExamId,
+        id_extraction_status: nextStatus,
+        page: 1,
+      };
+    });
+  }, [examIdParam, extractionStatusParam]);
 
   const loadDocuments = useCallback(async (append = false) => {
     if (append) {
@@ -178,7 +211,7 @@ export default function DocumentsPage() {
     }
   }, [filters, searchQuery, filterParam, viewMode, loadDocuments]);
 
-  // Keep exam_id in the URL for dashboard deep-links
+  // Keep exam_id and id_extraction_status in the URL for dashboard deep-links
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
     if (filters.exam_id) {
@@ -186,12 +219,17 @@ export default function DocumentsPage() {
     } else {
       params.delete("exam_id");
     }
+    if (filters.id_extraction_status) {
+      params.set("id_extraction_status", filters.id_extraction_status);
+    } else {
+      params.delete("id_extraction_status");
+    }
     const next = params.toString();
     const current = searchParams.toString();
     if (next !== current) {
       router.replace(`/icm-studio/documents${next ? `?${next}` : ""}`, { scroll: false });
     }
-  }, [filters.exam_id, router, searchParams]);
+  }, [filters.exam_id, filters.id_extraction_status, router, searchParams]);
 
   // Check if we need to load more content to fill the viewport (after documents load)
   useEffect(() => {

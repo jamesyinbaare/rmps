@@ -537,20 +537,19 @@ export async function backfillFromExtractedId(
 }
 
 export async function listExams(
-  examType: string,
-  series: string,
-  year: number,
+  examType?: string | null,
+  series?: string | null,
+  year?: number | null,
   page = 1,
   pageSize = 100
 ): Promise<ExamListResponse> {
-  // Backend limits page_size to max 100, so cap it here
-  const cappedPageSize = Math.min(pageSize, 100);
+  const cappedPageSize = Math.min(pageSize, 200);
   const params = new URLSearchParams();
   params.append("page", page.toString());
   params.append("page_size", cappedPageSize.toString());
-  params.append("exam_type", examType);
-  params.append("series", series);
-  params.append("year", year.toString());
+  if (examType) params.append("exam_type", examType);
+  if (series) params.append("series", series);
+  if (year != null) params.append("year", year.toString());
 
   const response = await fetch(`${API_BASE_URL}/api/v1/exams?${params.toString()}`);
   return handleResponse<ExamListResponse>(response);
@@ -593,40 +592,43 @@ export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]>
   return handleResponse<Subject[]>(response);
 }
 
+const ALL_EXAMS_CACHE_TTL_MS = 5 * 60 * 1000;
+let allExamsCache: { expiresAt: number; promise: Promise<Exam[]> } | null = null;
+
 /**
- * Get all exams by fetching for all combinations of type, series, and year
- * This is a helper function for components that need to list all available exams
+ * Get all exams via a single paginated list (filters optional on the API).
+ * Results are cached in-memory for 5 minutes to avoid refetch storms across pages.
  */
 export async function getAllExams(): Promise<Exam[]> {
-  const allExamsList: Exam[] = [];
-  const examTypes: ExamType[] = ["Certificate II Examinations", "Advance", "Technician Part I", "Technician Part II", "Technician Part III", "Diploma"];
-  const series: ExamSeries[] = ["MAY/JUNE", "NOV/DEC"];
-  const currentYear = new Date().getFullYear();
-  // Fetch exams for current year and a few years around it
-  const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
-
-  // Fetch exams for all combinations
-  for (const examType of examTypes) {
-    for (const ser of series) {
-      for (const year of years) {
-        try {
-          let page = 1;
-          let hasMore = true;
-          while (hasMore) {
-            const response = await listExams(examType, ser, year, page, 100);
-            allExamsList.push(...response.items);
-            hasMore = page < response.total_pages;
-            page++;
-          }
-        } catch (err) {
-          // Skip if no exams found for this combination
-          continue;
-        }
-      }
-    }
+  const now = Date.now();
+  if (allExamsCache && allExamsCache.expiresAt > now) {
+    return allExamsCache.promise;
   }
 
-  return allExamsList;
+  const promise = (async () => {
+    const allExamsList: Exam[] = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const response = await listExams(null, null, null, page, 200);
+      allExamsList.push(...response.items);
+      hasMore = page < response.total_pages;
+      page++;
+    }
+    return allExamsList;
+  })();
+
+  allExamsCache = {
+    expiresAt: now + ALL_EXAMS_CACHE_TTL_MS,
+    promise,
+  };
+
+  try {
+    return await promise;
+  } catch (err) {
+    allExamsCache = null;
+    throw err;
+  }
 }
 
 /**

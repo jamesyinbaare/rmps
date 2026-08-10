@@ -63,6 +63,8 @@ services:
   postgres:
     image: postgres:18
     restart: always
+    # Default Docker shm is 64MB; large sheet-id compare joins hit DiskFullError on /dev/shm
+    shm_size: "512mb"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s

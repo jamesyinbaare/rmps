@@ -13,7 +13,7 @@ import {
 } from "@/components/TrackICMSDataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import {
   compareSheetIds,
   getAllExams,
@@ -119,7 +120,6 @@ export default function TrackICMSPage() {
     [subjects]
   );
 
-  // Load exams once
   useEffect(() => {
     let cancelled = false;
     const loadExams = async () => {
@@ -143,7 +143,6 @@ export default function TrackICMSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load schools for exam (candidate-based, not document-scan)
   useEffect(() => {
     let cancelled = false;
     const loadSchools = async () => {
@@ -168,7 +167,6 @@ export default function TrackICMSPage() {
     };
   }, [selectedExamId]);
 
-  // Load subjects when school selected; otherwise derive from compare payload
   useEffect(() => {
     let cancelled = false;
     const loadSubjects = async () => {
@@ -204,7 +202,6 @@ export default function TrackICMSPage() {
     };
   }, [selectedExamId, selectedSchoolId]);
 
-  // Compare sheets — do not depend on subjects/exams (avoids double fetch)
   useEffect(() => {
     let cancelled = false;
     const loadComparison = async () => {
@@ -223,7 +220,6 @@ export default function TrackICMSPage() {
         if (cancelled) return;
         setComparison(result);
 
-        // When no school filter, derive subject options from compare payload
         if (!selectedSchoolId) {
           const byId = new Map<number, SubjectOption>();
           for (const sheet of result.expected_sheet_ids_info) {
@@ -256,7 +252,6 @@ export default function TrackICMSPage() {
     };
   }, [selectedExamId, selectedSchoolId, selectedSubjectId, selectedTestType]);
 
-  // Sync filters to URL
   useEffect(() => {
     const params = new URLSearchParams();
     if (selectedExamId) params.set("exam_id", selectedExamId.toString());
@@ -299,22 +294,21 @@ export default function TrackICMSPage() {
 
   const summaryStats = useMemo(() => {
     if (!comparison) return null;
+    const expected = tabSheets.expected.length;
+    const uploaded = tabSheets.uploaded.length;
     const missing = tabSheets.missing;
-    const expected = comparison.total_expected_sheets;
-    const uploaded = comparison.total_uploaded_sheets;
+    const extra = tabSheets.extra.length;
     const completionRate =
       expected > 0 ? ((uploaded / expected) * 100).toFixed(1) : "0";
     return {
       expected,
       uploaded,
       missing: missing.length,
-      extra: tabSheets.extra.length,
+      extra,
       completionRate,
       missingObj: missing.filter((s) => s.test_type === 1).length,
       missingEssay: missing.filter((s) => s.test_type === 2).length,
       missingPract: missing.filter((s) => s.test_type === 3).length,
-      missingCore: missing.filter((s) => s.subject_type === "CORE").length,
-      missingElective: missing.filter((s) => s.subject_type === "ELECTIVE").length,
     };
   }, [comparison, tabSheets]);
 
@@ -484,136 +478,115 @@ export default function TrackICMSPage() {
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <TopBar title="Track ICMS" showSearch={false} />
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <Link href="/icm-studio">
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <ArrowLeft className="h-4 w-4" />
-                  Dashboard
-                </Button>
-              </Link>
-              <p className="text-sm text-muted-foreground">
-                Compare expected score sheets with uploads for an examination.
-              </p>
-            </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Link href="/icm-studio">
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2">
+                <ArrowLeft className="h-4 w-4" />
+                Dashboard
+              </Button>
+            </Link>
+            <p className="text-xs text-muted-foreground sm:text-sm">
+              Compare expected sheets with uploads
+            </p>
           </div>
 
-          <Card className="shrink-0">
-            <CardContent className="space-y-3 p-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="relative min-w-[240px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Examination
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={examOptions}
-                      value={selectedExamId ?? ""}
-                      onValueChange={handleExamChange}
-                      placeholder="Select an examination"
-                      searchPlaceholder="Search examinations..."
-                      emptyMessage="No examinations found"
-                    />
-                  </div>
-                </div>
-
-                <div className="relative min-w-[220px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    School
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={schoolOptions}
-                      value={selectedSchoolId ?? "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setSelectedSchoolId(null);
-                          setSelectedSubjectId(null);
-                        } else {
-                          setSelectedSchoolId(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                          setSelectedSubjectId(null);
-                        }
-                      }}
-                      placeholder="All schools"
-                      disabled={!selectedExamId || loadingFilters}
-                      allowAll
-                      allLabel="All schools"
-                      searchPlaceholder="Search schools..."
-                      emptyMessage="No schools found"
-                    />
-                  </div>
-                </div>
-
-                <div className="relative min-w-[220px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Subject
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={subjectOptions}
-                      value={selectedSubjectId ?? "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setSelectedSubjectId(null);
-                        } else {
-                          setSelectedSubjectId(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                      }}
-                      placeholder="All subjects"
-                      disabled={!selectedExamId || loadingFilters}
-                      allowAll
-                      allLabel="All subjects"
-                      searchPlaceholder="Search subjects..."
-                      emptyMessage="No subjects found"
-                    />
-                  </div>
-                </div>
-
-                <Select
-                  value={selectedTestType?.toString() ?? "all"}
-                  onValueChange={(value) =>
-                    setSelectedTestType(value === "all" ? null : parseInt(value, 10))
+          <div className="shrink-0 space-y-2 rounded-lg border bg-card px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <SearchableSelect
+                className="min-w-[200px] flex-1 basis-[200px]"
+                triggerClassName="h-9"
+                options={examOptions}
+                value={selectedExamId ?? ""}
+                onValueChange={handleExamChange}
+                placeholder="Examination"
+                searchPlaceholder="Search examinations..."
+                emptyMessage="No examinations found"
+              />
+              <SearchableSelect
+                className="min-w-[180px] flex-1 basis-[180px]"
+                triggerClassName="h-9"
+                options={schoolOptions}
+                value={selectedSchoolId ?? "all"}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "") {
+                    setSelectedSchoolId(null);
+                    setSelectedSubjectId(null);
+                  } else {
+                    setSelectedSchoolId(
+                      typeof value === "number" ? value : parseInt(String(value), 10)
+                    );
+                    setSelectedSubjectId(null);
                   }
-                  disabled={!selectedExamId}
-                >
-                  <SelectTrigger className="h-11 w-[140px]">
-                    <SelectValue placeholder="Test type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All tests</SelectItem>
-                    <SelectItem value="1">Objectives</SelectItem>
-                    <SelectItem value="2">Essay</SelectItem>
-                    <SelectItem value="3">Practicals</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={selectedSubjectType ?? "all"}
-                  onValueChange={(value) =>
-                    setSelectedSubjectType(value === "all" ? null : value)
+                }}
+                placeholder="All schools"
+                disabled={!selectedExamId || loadingFilters}
+                allowAll
+                allLabel="All schools"
+                searchPlaceholder="Search schools..."
+                emptyMessage="No schools found"
+              />
+              <SearchableSelect
+                className="min-w-[180px] flex-1 basis-[180px]"
+                triggerClassName="h-9"
+                options={subjectOptions}
+                value={selectedSubjectId ?? "all"}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "") {
+                    setSelectedSubjectId(null);
+                  } else {
+                    setSelectedSubjectId(
+                      typeof value === "number" ? value : parseInt(String(value), 10)
+                    );
                   }
-                  disabled={!selectedExamId}
-                >
-                  <SelectTrigger className="h-11 w-[140px]">
-                    <SelectValue placeholder="Subject type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All types</SelectItem>
-                    <SelectItem value="CORE">Core</SelectItem>
-                    <SelectItem value="ELECTIVE">Elective</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                }}
+                placeholder="All subjects"
+                disabled={!selectedExamId || loadingFilters}
+                allowAll
+                allLabel="All subjects"
+                searchPlaceholder="Search subjects..."
+                emptyMessage="No subjects found"
+              />
+              <Select
+                value={selectedTestType?.toString() ?? "all"}
+                onValueChange={(value) =>
+                  setSelectedTestType(value === "all" ? null : parseInt(value, 10))
+                }
+                disabled={!selectedExamId}
+              >
+                <SelectTrigger className="h-9 w-[130px]">
+                  <SelectValue placeholder="Test type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tests</SelectItem>
+                  <SelectItem value="1">Objectives</SelectItem>
+                  <SelectItem value="2">Essay</SelectItem>
+                  <SelectItem value="3">Practicals</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={selectedSubjectType ?? "all"}
+                onValueChange={(value) =>
+                  setSelectedSubjectType(value === "all" ? null : value)
+                }
+                disabled={!selectedExamId}
+              >
+                <SelectTrigger className="h-9 w-[120px]">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="CORE">Core</SelectItem>
+                  <SelectItem value="ELECTIVE">Elective</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-              {activeFilters.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-2">
+            {(activeFilters.length > 0 || (summaryStats && selectedExamId)) && (
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t pt-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   {activeFilters.map((filter) => (
-                    <Badge key={filter.key} variant="secondary" className="gap-1 pr-1">
+                    <Badge key={filter.key} variant="secondary" className="h-6 gap-1 px-2 text-[11px] pr-1">
                       {filter.label}
                       <button
                         type="button"
@@ -624,32 +597,38 @@ export default function TrackICMSPage() {
                       </button>
                     </Badge>
                   ))}
-                  <Button variant="ghost" size="sm" className="h-7" onClick={clearSecondaryFilters}>
-                    Clear filters
-                  </Button>
+                  {activeFilters.length > 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={clearSecondaryFilters}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
                 </div>
-              ) : null}
-            </CardContent>
-          </Card>
 
-          {summaryStats && selectedExamId ? (
-            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-              <StatChip label="Expected" value={summaryStats.expected} />
-              <StatChip label="Uploaded" value={summaryStats.uploaded} />
-              <StatChip label="Missing" value={summaryStats.missing} emphasize />
-              <StatChip label="Extra" value={summaryStats.extra} />
-              <StatChip label="Complete" value={`${summaryStats.completionRate}%`} />
-              <StatChip
-                label="Missing split"
-                value={`${summaryStats.missingObj}/${summaryStats.missingEssay}/${summaryStats.missingPract}`}
-                hint="Obj / Essay / Pract"
-              />
-            </div>
-          ) : null}
+                {summaryStats && selectedExamId ? (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <StatInline label="Expected" value={summaryStats.expected} />
+                    <StatInline label="Uploaded" value={summaryStats.uploaded} />
+                    <StatInline label="Missing" value={summaryStats.missing} emphasize />
+                    <StatInline label="Extra" value={summaryStats.extra} />
+                    <StatInline label="Complete" value={`${summaryStats.completionRate}%`} />
+                    <StatInline
+                      label="Obj/Essay/Pract"
+                      value={`${summaryStats.missingObj}/${summaryStats.missingEssay}/${summaryStats.missingPract}`}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
 
           <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {!selectedExamId ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 p-10 text-center text-muted-foreground">
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground">
                 <p className="font-medium text-foreground">Select an examination</p>
                 <p className="max-w-sm text-sm">
                   Choose an examination to compare expected score sheets with uploads.
@@ -661,38 +640,36 @@ export default function TrackICMSPage() {
                 onValueChange={(value) => setActiveTab(value as TrackICMSTab)}
                 className="flex min-h-0 flex-1 flex-col"
               >
-                <div className="shrink-0 border-b px-4 pt-3">
-                  <TabsList>
-                    <TabsTrigger value="missing">Missing ({tabSheets.missing.length})</TabsTrigger>
-                    <TabsTrigger value="uploaded">
+                <div className="shrink-0 border-b px-3 pt-2">
+                  <TabsList className="h-9">
+                    <TabsTrigger value="missing" className="text-xs sm:text-sm">
+                      Missing ({tabSheets.missing.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="uploaded" className="text-xs sm:text-sm">
                       Uploaded ({tabSheets.uploaded.length})
                     </TabsTrigger>
-                    <TabsTrigger value="expected">
+                    <TabsTrigger value="expected" className="text-xs sm:text-sm">
                       Expected ({tabSheets.expected.length})
                     </TabsTrigger>
-                    <TabsTrigger value="extra">Extra ({tabSheets.extra.length})</TabsTrigger>
+                    <TabsTrigger value="extra" className="text-xs sm:text-sm">
+                      Extra ({tabSheets.extra.length})
+                    </TabsTrigger>
                   </TabsList>
                 </div>
-                {(["missing", "uploaded", "expected", "extra"] as TrackICMSTab[]).map((tab) => (
-                  <TabsContent
-                    key={tab}
-                    value={tab}
-                    className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
-                    forceMount
-                  >
-                    {activeTab === tab ? (
-                      <TrackICMSDataTable
-                        sheets={currentSheets}
-                        tab={tab}
-                        loading={loading}
-                        error={error}
-                        showExport={tab === "missing"}
-                        onExportCsv={exportToCSV}
-                        onExportExcel={exportToExcel}
-                      />
-                    ) : null}
-                  </TabsContent>
-                ))}
+                <TabsContent
+                  value={activeTab}
+                  className="mt-0 flex min-h-0 flex-1 flex-col"
+                >
+                  <TrackICMSDataTable
+                    sheets={currentSheets}
+                    tab={activeTab}
+                    loading={loading}
+                    error={error}
+                    showExport={activeTab === "missing"}
+                    onExportCsv={exportToCSV}
+                    onExportExcel={exportToExcel}
+                  />
+                </TabsContent>
               </Tabs>
             )}
           </Card>
@@ -702,26 +679,26 @@ export default function TrackICMSPage() {
   );
 }
 
-function StatChip({
+function StatInline({
   label,
   value,
-  hint,
   emphasize,
 }: {
   label: string;
   value: string | number;
-  hint?: string;
   emphasize?: boolean;
 }) {
   return (
-    <div
-      className={`rounded-lg border px-3 py-2 ${
-        emphasize ? "border-amber-300/60 bg-amber-50/60" : "bg-muted/30"
-      }`}
-    >
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold tabular-nums tracking-tight">{value}</div>
-      {hint ? <div className="text-[10px] text-muted-foreground">{hint}</div> : null}
-    </div>
+    <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "font-semibold tabular-nums tracking-tight",
+          emphasize && "text-amber-700 dark:text-amber-400"
+        )}
+      >
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </span>
+    </span>
   );
 }
