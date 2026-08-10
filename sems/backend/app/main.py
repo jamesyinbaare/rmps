@@ -203,7 +203,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Certificate-Number", "X-Certificate-Issuance-Id", "X-Certificate-Status"],
 )
 
 # Include routers

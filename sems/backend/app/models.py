@@ -660,3 +660,117 @@ class AppSettings(Base):
     )
 
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+
+
+class CertificateIssuanceStatus(enum.Enum):
+    GENERATED = "generated"
+    PRINTED = "printed"
+    VOID = "void"
+    MATCHED_SCAN = "matched_scan"
+
+
+class CertificateTemplate(Base):
+    """Overlay layout for printing certificates onto pre-printed security stock.
+
+    Each template belongs to a specific examination (exam_id required).
+    """
+
+    __tablename__ = "certificate_templates"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    # Denormalized from exam for display/filtering; always set from the linked exam.
+    exam_type = Column(
+        Enum(
+            ExamType,
+            name="certificateexamtype",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=True,
+        index=True,
+    )
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_width_mm = Column(Float, nullable=False, default=210.0)
+    page_height_mm = Column(Float, nullable=False, default=297.0)
+    layout_json = Column(JSON, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("Exam")
+    assets = relationship(
+        "CertificateTemplateAsset",
+        back_populates="template",
+        cascade="all, delete-orphan",
+    )
+
+
+class CertificateTemplateAsset(Base):
+    """Uploaded image/file assets for a certificate template (e.g. signature, seal)."""
+
+    __tablename__ = "certificate_template_assets"
+    id = Column(Integer, primary_key=True)
+    template_id = Column(
+        Integer, ForeignKey("certificate_templates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    key = Column(String(64), nullable=False, index=True)
+    label = Column(String(255), nullable=True)
+    file_path = Column(String(512), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    template = relationship("CertificateTemplate", back_populates="assets")
+    __table_args__ = (UniqueConstraint("template_id", "key", name="uq_certificate_template_asset_key"),)
+
+
+class CertificateIssuance(Base):
+    """Audit record for a generated/printed candidate certificate."""
+
+    __tablename__ = "certificate_issuances"
+    id = Column(Integer, primary_key=True)
+    exam_registration_id = Column(
+        Integer, ForeignKey("exam_registrations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    certificate_number = Column(String(64), nullable=False, unique=True, index=True)
+    status = Column(
+        Enum(
+            CertificateIssuanceStatus,
+            name="certificateissuancestatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=CertificateIssuanceStatus.GENERATED,
+        index=True,
+    )
+    layout_snapshot_json = Column(JSON, nullable=True)
+    grades_snapshot_json = Column(JSON, nullable=True)
+    pdf_storage_path = Column(String(512), nullable=True)
+    supersedes_id = Column(
+        Integer, ForeignKey("certificate_issuances.id", ondelete="SET NULL"), nullable=True
+    )
+    void_reason = Column(Text, nullable=True)
+    # Official date shown on the certificate (completion / issuance). Distinct from printed_at.
+    issuance_date = Column(Date, nullable=True, index=True)
+    generated_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    generated_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    printed_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    printed_at = Column(DateTime, nullable=True)
+    scan_document_path = Column(String(512), nullable=True)
+    ocr_certificate_number = Column(String(64), nullable=True)
+    matched_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    matched_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam_registration = relationship("ExamRegistration")
+    supersedes = relationship("CertificateIssuance", remote_side=[id])
+    generated_by = relationship("User", foreign_keys=[generated_by_user_id])
+    printed_by = relationship("User", foreign_keys=[printed_by_user_id])
+    matched_by = relationship("User", foreign_keys=[matched_by_user_id])

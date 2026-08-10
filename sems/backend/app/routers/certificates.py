@@ -1,16 +1,21 @@
-"""Results browser APIs for Certificates module (Phase 1)."""
+"""Results browser and certificate issuance APIs (Phases 1–2)."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, datetime
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 
-from app.dependencies.auth import CurrentUserDep
+from app.dependencies.auth import CurrentUserDep, OfficerDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
+    CertificateIssuance,
+    CertificateTemplate,
+    CertificateTemplateAsset,
     Exam,
     ExamRegistration,
     ExamSubject,
@@ -21,6 +26,19 @@ from app.models import (
     SubjectRegistration,
     SubjectScore,
 )
+from app.schemas.certificate import (
+    CERTIFICATE_FIELD_CATALOG,
+    DEFAULT_CERTIFICATE_LAYOUT,
+    CertificateFieldCatalogResponse,
+    CertificateIssuanceResponse,
+    CertificateTemplateAssetListResponse,
+    CertificateTemplateAssetResponse,
+    CertificateTemplateCreate,
+    CertificateTemplateListResponse,
+    CertificateTemplateResponse,
+    CertificateTemplateUpdate,
+    MarkPrintedRequest,
+)
 from app.schemas.certificate_results import (
     CandidateResultSummary,
     ExamProgrammeSummary,
@@ -30,6 +48,7 @@ from app.schemas.certificate_results import (
     SchoolResultsListResponse,
     SubjectResultDetail,
 )
+from app.services import certificate_issuance_service as issuance_service
 
 router = APIRouter(prefix="/api/v1/certificates", tags=["certificates"])
 
@@ -409,3 +428,343 @@ async def get_exam_registration_result_detail(
         subjects_pending=pending,
         is_fully_graded=is_fully,
     )
+
+
+# --- Phase 2: templates, preview, generate, mark printed ---
+
+
+@router.get("/field-catalog", response_model=CertificateFieldCatalogResponse)
+async def get_certificate_field_catalog(
+    current_user: CurrentUserDep,
+) -> CertificateFieldCatalogResponse:
+    """List available layout fields (exam-sourced data and static/image fields)."""
+    _ = current_user
+    return CertificateFieldCatalogResponse(items=CERTIFICATE_FIELD_CATALOG)
+
+
+@router.get("/templates/default-layout")
+async def get_default_layout(current_user: CurrentUserDep) -> dict[str, Any]:
+    _ = current_user
+    return dict(DEFAULT_CERTIFICATE_LAYOUT)
+
+
+@router.get("/templates", response_model=CertificateTemplateListResponse)
+async def list_certificate_templates(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int | None = Query(None, description="Filter templates for one examination"),
+    active_only: bool = Query(True),
+) -> CertificateTemplateListResponse:
+    _ = current_user
+    stmt = select(CertificateTemplate).order_by(CertificateTemplate.name)
+    if exam_id is not None:
+        stmt = stmt.where(CertificateTemplate.exam_id == exam_id)
+    if active_only:
+        stmt = stmt.where(CertificateTemplate.is_active.is_(True))
+    rows = (await session.execute(stmt)).scalars().all()
+    return CertificateTemplateListResponse(
+        items=[CertificateTemplateResponse.model_validate(r) for r in rows],
+        total=len(rows),
+    )
+
+
+@router.post("/templates", response_model=CertificateTemplateResponse, status_code=status.HTTP_201_CREATED)
+async def create_certificate_template(
+    body: CertificateTemplateCreate,
+    session: DBSessionDep,
+    current_user: RegistrarDep,
+) -> CertificateTemplateResponse:
+    _ = current_user
+    exam = await session.get(Exam, body.exam_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    template = CertificateTemplate(
+        name=body.name,
+        exam_type=exam.exam_type,
+        exam_id=exam.id,
+        page_width_mm=body.page_width_mm,
+        page_height_mm=body.page_height_mm,
+        layout_json=body.layout_json or dict(DEFAULT_CERTIFICATE_LAYOUT),
+        is_active=body.is_active,
+    )
+    session.add(template)
+    await session.commit()
+    await session.refresh(template)
+    return CertificateTemplateResponse.model_validate(template)
+
+
+@router.get("/templates/{template_id}", response_model=CertificateTemplateResponse)
+async def get_certificate_template(
+    template_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> CertificateTemplateResponse:
+    _ = current_user
+    template = await session.get(CertificateTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    return CertificateTemplateResponse.model_validate(template)
+
+
+@router.put("/templates/{template_id}", response_model=CertificateTemplateResponse)
+async def update_certificate_template(
+    template_id: int,
+    body: CertificateTemplateUpdate,
+    session: DBSessionDep,
+    current_user: RegistrarDep,
+) -> CertificateTemplateResponse:
+    _ = current_user
+    template = await session.get(CertificateTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "exam_id" in data and data["exam_id"] is not None:
+        exam = await session.get(Exam, data["exam_id"])
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+        data["exam_type"] = exam.exam_type
+    for key, value in data.items():
+        setattr(template, key, value)
+    template.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(template)
+    return CertificateTemplateResponse.model_validate(template)
+
+
+@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_certificate_template(
+    template_id: int,
+    session: DBSessionDep,
+    current_user: RegistrarDep,
+) -> None:
+    _ = current_user
+    template = await session.get(CertificateTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    template.is_active = False
+    template.updated_at = datetime.utcnow()
+    await session.commit()
+
+
+@router.get("/exam-registrations/{registration_id}/certificate/preview")
+async def preview_certificate(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    template_id: int | None = Query(None),
+    issuance_date: date | None = Query(
+        None, description="Official completion/issuance date shown on the certificate"
+    ),
+) -> Response:
+    _ = current_user
+    pdf_bytes = await issuance_service.preview_certificate_pdf(
+        session,
+        registration_id,
+        template_id=template_id,
+        issuance_date=issuance_date,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="certificate-preview.pdf"'},
+    )
+
+
+@router.post(
+    "/exam-registrations/{registration_id}/certificate/generate",
+    response_model=CertificateIssuanceResponse,
+)
+async def generate_certificate(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+    template_id: int | None = Query(None),
+    reissue: bool = Query(False),
+    void_reason: str | None = Query(None),
+    issuance_date: date | None = Query(
+        None, description="Official completion/issuance date (distinct from printed date)"
+    ),
+    download: bool = Query(True, description="If true, response is PDF bytes; issuance JSON via X-Certificate-* headers"),
+) -> Response | CertificateIssuanceResponse:
+    issuance, pdf_bytes = await issuance_service.generate_certificate(
+        session,
+        registration_id,
+        user_id=current_user.id,
+        template_id=template_id,
+        reissue=reissue,
+        void_reason=void_reason,
+        issuance_date=issuance_date,
+    )
+    if download:
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{issuance.certificate_number}.pdf"',
+                "X-Certificate-Number": issuance.certificate_number,
+                "X-Certificate-Issuance-Id": str(issuance.id),
+                "X-Certificate-Status": issuance.status.value
+                if hasattr(issuance.status, "value")
+                else str(issuance.status),
+            },
+        )
+    return CertificateIssuanceResponse.model_validate(issuance)
+
+
+@router.get(
+    "/exam-registrations/{registration_id}/certificate/issuance",
+    response_model=CertificateIssuanceResponse | None,
+)
+async def get_registration_issuance(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> CertificateIssuanceResponse | None:
+    _ = current_user
+    issuance = await issuance_service.get_active_issuance(session, registration_id)
+    if not issuance:
+        return None
+    return CertificateIssuanceResponse.model_validate(issuance)
+
+
+@router.post("/issuances/{issuance_id}/mark-printed", response_model=CertificateIssuanceResponse)
+async def mark_certificate_printed(
+    issuance_id: int,
+    body: MarkPrintedRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateIssuanceResponse:
+    issuance = await issuance_service.mark_issuance_printed(
+        session, issuance_id, user_id=current_user.id, printed=body.printed
+    )
+    return CertificateIssuanceResponse.model_validate(issuance)
+
+
+@router.get("/issuances/{issuance_id}/download")
+async def download_issuance_pdf(
+    issuance_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    _ = current_user
+    issuance = await session.get(CertificateIssuance, issuance_id)
+    if not issuance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issuance not found")
+    if not issuance.pdf_storage_path:
+        # Regenerate from snapshot
+        pdf_bytes = await issuance_service.preview_certificate_pdf(
+            session,
+            issuance.exam_registration_id,
+            certificate_number=issuance.certificate_number,
+            issuance_date=issuance.issuance_date,
+        )
+    else:
+        pdf_bytes = await issuance_service.certificate_storage_service.retrieve(issuance.pdf_storage_path)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{issuance.certificate_number}.pdf"',
+        },
+    )
+
+
+@router.get(
+    "/templates/{template_id}/assets",
+    response_model=CertificateTemplateAssetListResponse,
+)
+async def list_template_assets(
+    template_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> CertificateTemplateAssetListResponse:
+    _ = current_user
+    template = await session.get(CertificateTemplate, template_id)
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    stmt = (
+        select(CertificateTemplateAsset)
+        .where(CertificateTemplateAsset.template_id == template_id)
+        .order_by(CertificateTemplateAsset.key)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return CertificateTemplateAssetListResponse(
+        items=[CertificateTemplateAssetResponse.model_validate(r) for r in rows],
+        total=len(rows),
+    )
+
+
+@router.post(
+    "/templates/{template_id}/assets",
+    response_model=CertificateTemplateAssetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_template_asset(
+    template_id: int,
+    session: DBSessionDep,
+    current_user: RegistrarDep,
+    file: UploadFile = File(...),
+    key: str = Form(..., description="Asset key referenced by layout image fields, e.g. signature"),
+    label: str | None = Form(None),
+) -> CertificateTemplateAssetResponse:
+    _ = current_user
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    mime = file.content_type or "application/octet-stream"
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image uploads are supported")
+    asset = await issuance_service.upsert_template_asset(
+        session,
+        template_id=template_id,
+        key=key,
+        label=label,
+        content=content,
+        filename=file.filename or f"{key}.png",
+        mime_type=mime,
+    )
+    return CertificateTemplateAssetResponse.model_validate(asset)
+
+
+@router.get("/templates/{template_id}/assets/{asset_key}/file")
+async def get_template_asset_file(
+    template_id: int,
+    asset_key: str,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    _ = current_user
+    stmt = select(CertificateTemplateAsset).where(
+        CertificateTemplateAsset.template_id == template_id,
+        CertificateTemplateAsset.key == asset_key,
+    )
+    asset = (await session.execute(stmt)).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    content = await issuance_service.certificate_storage_service.retrieve(asset.file_path)
+    return Response(
+        content=content,
+        media_type=asset.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{asset.file_name}"'},
+    )
+
+
+@router.delete("/templates/{template_id}/assets/{asset_key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template_asset(
+    template_id: int,
+    asset_key: str,
+    session: DBSessionDep,
+    current_user: RegistrarDep,
+) -> None:
+    _ = current_user
+    stmt = select(CertificateTemplateAsset).where(
+        CertificateTemplateAsset.template_id == template_id,
+        CertificateTemplateAsset.key == asset_key,
+    )
+    asset = (await session.execute(stmt)).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    session.delete(asset)
+    await session.commit()
