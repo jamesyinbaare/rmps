@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     batch_timeout: int = 3600  # 1 hour in seconds
     # Duplicate detection settings
     reject_duplicate_files: bool = True  # If True, reject duplicates; If False, return existing document
+    # Direct-to-storage upload (signed URL / local content PUT)
+    upload_signed_url_ttl_minutes: int = 30
+    upload_initiate_batch_max: int = 200
+    upload_pending_ttl_hours: int = 2
     # Reducto API settings
     reducto_enabled: bool = True
     reducto_api_key: str | None = None

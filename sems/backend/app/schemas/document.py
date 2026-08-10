@@ -44,6 +44,7 @@ class DocumentResponse(DocumentBase):
     id: int
     file_path: str
     checksum: str
+    upload_status: str = "uploaded"
     uploaded_at: datetime
     school_id: int | None
     school_name: str | None = None  # School name from relationship
@@ -89,6 +90,76 @@ class BulkUploadResponse(BaseModel):
     skipped: int  # Skipped files (duplicates, invalid, etc.)
     document_ids: list[int]  # IDs of successfully uploaded documents
 
+
+class UploadInitiateFile(BaseModel):
+    """Metadata for one file in a direct-upload initiate batch."""
+
+    file_name: str = Field(..., min_length=1, max_length=255)
+    mime_type: str = Field(..., min_length=1, max_length=100)
+    file_size: int = Field(..., gt=0)
+    checksum: str = Field(..., min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class UploadInitiateRequest(BaseModel):
+    """Request body for initiating direct-to-storage uploads."""
+
+    exam_id: int
+    files: list[UploadInitiateFile] = Field(..., min_length=1)
+
+
+class UploadSlot(BaseModel):
+    """One minted upload slot (pending document + PUT target)."""
+
+    document_id: int
+    file_name: str
+    checksum: str
+    upload_url: str
+    headers: dict[str, str]
+
+
+class UploadInitiateSkipped(BaseModel):
+    file_name: str
+    reason: str
+    existing_document_id: int | None = None
+
+
+class UploadInitiateFailed(BaseModel):
+    file_name: str
+    error: str
+
+
+class UploadInitiateResponse(BaseModel):
+    total: int
+    initiated: int
+    skipped: int
+    failed: int
+    uploads: list[UploadSlot]
+    skipped_files: list[UploadInitiateSkipped]
+    failed_files: list[UploadInitiateFailed]
+
+
+class UploadConfirmRequest(BaseModel):
+    """Confirm that client PUT(s) completed; backend verifies object existence."""
+
+    document_ids: list[int] = Field(..., min_length=1)
+
+
+class UploadConfirmItem(BaseModel):
+    document_id: int
+    status: str  # confirmed | already_uploaded | failed
+    error: str | None = None
+
+
+class UploadConfirmResponse(BaseModel):
+    total: int
+    confirmed: int
+    failed: int
+    results: list[UploadConfirmItem]
+
+
+class AbandonedUploadCleanupResponse(BaseModel):
+    deleted: int
+    errors: list[str] = Field(default_factory=list)
 
 class ContentExtractionResponse(BaseModel):
     """Schema for content extraction response."""

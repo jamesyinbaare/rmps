@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 
 from app.config import settings
@@ -12,6 +12,7 @@ from app.dependencies.database import DBSessionDep, get_sessionmanager
 from app.dependencies.auth import RegistrarDep
 from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod, School, Subject
 from app.schemas.document import (
+    AbandonedUploadCleanupResponse,
     BackfillTestTypeResponse,
     BulkUploadResponse,
     ContentExtractionResponse,
@@ -22,6 +23,14 @@ from app.schemas.document import (
     ReductoQueueRequest,
     ReductoQueueResponse,
     ReductoStatusResponse,
+    UploadConfirmItem,
+    UploadConfirmRequest,
+    UploadConfirmResponse,
+    UploadInitiateFailed,
+    UploadInitiateRequest,
+    UploadInitiateResponse,
+    UploadInitiateSkipped,
+    UploadSlot,
 )
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.content_extraction import content_extraction_service
@@ -99,6 +108,7 @@ async def upload_document(
         file_size=len(content),
         checksum=checksum,
         exam_id=exam_id,
+        upload_status="uploaded",
         id_extraction_status="pending",
     )
     session.add(db_document)
@@ -154,6 +164,8 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
 
                 # Retrieve file content
                 try:
+                    if document.upload_status != "uploaded":
+                        continue
                     file_content = await storage_service.retrieve(document.file_path)
                 except FileNotFoundError:
                     document.id_extraction_status = "error"
@@ -267,6 +279,7 @@ async def bulk_upload_documents(
                 file_size=len(content),
                 checksum=checksum,
                 exam_id=exam_id,
+                upload_status="uploaded",
                 id_extraction_status="pending",
             )
             session.add(db_document)
@@ -297,6 +310,293 @@ async def bulk_upload_documents(
         skipped=skipped,
         document_ids=document_ids,
     )
+
+
+ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/png"}
+
+
+async def cleanup_abandoned_pending_uploads(*, ttl_hours: int | None = None) -> AbandonedUploadCleanupResponse:
+    """Delete pending_upload documents older than TTL and remove any orphan storage objects."""
+    hours = ttl_hours if ttl_hours is not None else settings.upload_pending_ttl_hours
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    deleted = 0
+    errors: list[str] = []
+
+    sessionmanager = get_sessionmanager()
+    async with sessionmanager.session() as session:
+        stmt = select(Document).where(
+            Document.upload_status == "pending_upload",
+            Document.uploaded_at < cutoff,
+        )
+        result = await session.execute(stmt)
+        pending_docs = list(result.scalars().all())
+
+        for doc in pending_docs:
+            try:
+                await storage_service.delete(doc.file_path)
+            except Exception as exc:
+                errors.append(f"storage delete {doc.id}: {exc}")
+            try:
+                await session.delete(doc)
+                deleted += 1
+            except Exception as exc:
+                errors.append(f"db delete {doc.id}: {exc}")
+
+        await session.commit()
+
+    return AbandonedUploadCleanupResponse(deleted=deleted, errors=errors)
+
+
+@router.post("/uploads/initiate", response_model=UploadInitiateResponse, status_code=status.HTTP_201_CREATED)
+async def initiate_document_uploads(
+    body: UploadInitiateRequest,
+    session: DBSessionDep,
+) -> UploadInitiateResponse:
+    """Mint pending Document rows and return direct PUT URLs (GCS signed or local content path)."""
+    if len(body.files) > settings.upload_initiate_batch_max:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch size exceeds maximum of {settings.upload_initiate_batch_max}",
+        )
+
+    exam_stmt = select(Exam).where(Exam.id == body.exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam with id {body.exam_id} not found",
+        )
+
+    uploads: list[UploadSlot] = []
+    skipped_files: list[UploadInitiateSkipped] = []
+    failed_files: list[UploadInitiateFailed] = []
+    seen_checksums: set[str] = set()
+
+    for item in body.files:
+        file_name = item.file_name
+        try:
+            checksum = item.checksum.lower()
+            if item.mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
+                skipped_files.append(
+                    UploadInitiateSkipped(file_name=file_name, reason="unsupported_mime_type")
+                )
+                continue
+            if item.file_size > settings.storage_max_size:
+                skipped_files.append(
+                    UploadInitiateSkipped(file_name=file_name, reason="file_too_large")
+                )
+                continue
+            if checksum in seen_checksums:
+                skipped_files.append(
+                    UploadInitiateSkipped(file_name=file_name, reason="duplicate_in_batch")
+                )
+                continue
+            seen_checksums.add(checksum)
+
+            duplicate_stmt = select(Document).where(Document.checksum == checksum)
+            duplicate_result = await session.execute(duplicate_stmt)
+            existing = duplicate_result.scalar_one_or_none()
+            if existing:
+                skipped_files.append(
+                    UploadInitiateSkipped(
+                        file_name=file_name,
+                        reason="duplicate_checksum",
+                        existing_document_id=existing.id,
+                    )
+                )
+                continue
+
+            relative_path = storage_service.allocate_path(file_name)
+            db_document = Document(
+                file_path=relative_path,
+                file_name=file_name,
+                mime_type=item.mime_type,
+                file_size=item.file_size,
+                checksum=checksum,
+                exam_id=body.exam_id,
+                upload_status="pending_upload",
+                id_extraction_status="pending",
+            )
+            session.add(db_document)
+            await session.flush()
+
+            headers = {"Content-Type": item.mime_type}
+            if storage_service.backend_name == "gcs":
+                upload_url = await storage_service.create_signed_put_url(
+                    relative_path,
+                    content_type=item.mime_type,
+                )
+            else:
+                upload_url = f"/api/v1/documents/uploads/{db_document.id}/content"
+
+            uploads.append(
+                UploadSlot(
+                    document_id=db_document.id,
+                    file_name=file_name,
+                    checksum=checksum,
+                    upload_url=upload_url,
+                    headers=headers,
+                )
+            )
+        except Exception as exc:
+            logger.exception("Failed to initiate upload for %s", file_name)
+            failed_files.append(UploadInitiateFailed(file_name=file_name, error=str(exc)))
+
+    await session.commit()
+
+    return UploadInitiateResponse(
+        total=len(body.files),
+        initiated=len(uploads),
+        skipped=len(skipped_files),
+        failed=len(failed_files),
+        uploads=uploads,
+        skipped_files=skipped_files,
+        failed_files=failed_files,
+    )
+
+
+@router.put("/uploads/{document_id}/content", status_code=status.HTTP_204_NO_CONTENT)
+async def put_document_upload_content(
+    document_id: int,
+    request: Request,
+    session: DBSessionDep,
+) -> Response:
+    """Receive file bytes for a pending local-storage upload slot."""
+    if storage_service.backend_name != "local":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content PUT endpoint is only used with local storage backend",
+        )
+
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if document.upload_status != "pending_upload":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document upload_status is {document.upload_status}, expected pending_upload",
+        )
+
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty body")
+    if len(content) > settings.storage_max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {settings.storage_max_size} bytes",
+        )
+    if document.file_size and len(content) != document.file_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Body size {len(content)} does not match expected file_size {document.file_size}",
+        )
+
+    content_type = request.headers.get("content-type") or document.mime_type
+    await storage_service.save_at_path(
+        document.file_path,
+        content,
+        content_type=content_type,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/uploads/confirm", response_model=UploadConfirmResponse)
+async def confirm_document_uploads(
+    body: UploadConfirmRequest,
+    session: DBSessionDep,
+    background_tasks: BackgroundTasks,
+) -> UploadConfirmResponse:
+    """Verify storage objects exist, mark uploaded, and enqueue ID extraction."""
+    if len(body.document_ids) > settings.upload_initiate_batch_max:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch size exceeds maximum of {settings.upload_initiate_batch_max}",
+        )
+
+    results: list[UploadConfirmItem] = []
+    confirmed_ids: list[int] = []
+
+    for document_id in body.document_ids:
+        try:
+            stmt = select(Document).where(Document.id == document_id)
+            result = await session.execute(stmt)
+            document = result.scalar_one_or_none()
+            if not document:
+                results.append(
+                    UploadConfirmItem(document_id=document_id, status="failed", error="not_found")
+                )
+                continue
+
+            if document.upload_status == "uploaded":
+                results.append(
+                    UploadConfirmItem(document_id=document_id, status="already_uploaded")
+                )
+                continue
+
+            if document.upload_status != "pending_upload":
+                results.append(
+                    UploadConfirmItem(
+                        document_id=document_id,
+                        status="failed",
+                        error=f"unexpected_status:{document.upload_status}",
+                    )
+                )
+                continue
+
+            size = await storage_service.get_size(document.file_path)
+            if size is None:
+                results.append(
+                    UploadConfirmItem(
+                        document_id=document_id,
+                        status="failed",
+                        error="object_missing",
+                    )
+                )
+                continue
+            if size != document.file_size:
+                results.append(
+                    UploadConfirmItem(
+                        document_id=document_id,
+                        status="failed",
+                        error=f"size_mismatch:expected={document.file_size},actual={size}",
+                    )
+                )
+                continue
+
+            document.upload_status = "uploaded"
+            document.uploaded_at = datetime.utcnow()
+            confirmed_ids.append(document_id)
+            results.append(UploadConfirmItem(document_id=document_id, status="confirmed"))
+        except Exception as exc:
+            logger.exception("Failed to confirm upload for document %s", document_id)
+            results.append(
+                UploadConfirmItem(document_id=document_id, status="failed", error=str(exc))
+            )
+
+    await session.commit()
+
+    if confirmed_ids:
+        background_tasks.add_task(_extract_ids_for_documents, confirmed_ids)
+
+    confirmed = sum(1 for r in results if r.status in ("confirmed", "already_uploaded"))
+    failed = sum(1 for r in results if r.status == "failed")
+    return UploadConfirmResponse(
+        total=len(body.document_ids),
+        confirmed=confirmed,
+        failed=failed,
+        results=results,
+    )
+
+
+@router.post("/uploads/cleanup-abandoned", response_model=AbandonedUploadCleanupResponse)
+async def cleanup_abandoned_uploads_endpoint(
+    _current_user: RegistrarDep,
+) -> AbandonedUploadCleanupResponse:
+    """Remove abandoned pending_upload rows older than TTL (and their storage objects)."""
+    return await cleanup_abandoned_pending_uploads()
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -412,6 +712,9 @@ async def list_documents(
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
 
+    # Incomplete direct uploads are not listed until confirm succeeds
+    base_stmt = base_stmt.where(Document.upload_status == "uploaded")
+
     # Get total count with same filters
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         count_stmt = select(func.count(Document.id)).select_from(Document).join(Exam, Document.exam_id == Exam.id)
@@ -436,6 +739,8 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
+
+    count_stmt = count_stmt.where(Document.upload_status == "uploaded")
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 

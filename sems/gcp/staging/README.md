@@ -47,6 +47,18 @@ Root files:
    - `sems-api.ctvetlabs.com`
 6. **Cloud SQL** — Reuse the existing instance. Ensure `sems_db` and `sems_user` exist (create only if missing). Set `CLOUD_SQL_CONNECTION_NAME` to `project:region:instance`.
 7. **GCS** — Reuse the existing staging bucket and prefixes (`sems/documents`, `sems/photos`, `sems/score-sheets`) unless you intentionally change them.
+   - **Browser direct uploads** (signed PUT URLs) require bucket CORS. Apply once per bucket:
+
+     ```bash
+     gsutil cors set gcp/gcs-cors-documents.json gs://YOUR_BUCKET_NAME
+     gsutil cors get gs://YOUR_BUCKET_NAME
+     ```
+
+     Edit [`gcp/gcs-cors-documents.json`](../gcs-cors-documents.json) to include every SPA origin that will upload (staging/prod). Methods must include `PUT` and `OPTIONS`.
+   - **Signed URL IAM:** the backend runtime SA must be able to sign blobs:
+     - Prefer a SA JSON key via `GCS_CREDENTIALS_PATH`, **or**
+     - On GCE/Cloud Run ADC: grant the VM/runtime SA `roles/iam.serviceAccountTokenCreator` on itself (or `iam.serviceAccounts.signBlob`) so V4 signed URLs work without a private key file.
+   - Object create/delete still needs `roles/storage.objectAdmin` (or equivalent) on the bucket.
 8. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `CLOUD_SQL_CONNECTION_NAME`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`.
 
 ## Deploy
@@ -71,6 +83,7 @@ chmod +x gcp/staging/scripts/deploy.sh
 - [ ] `https://sems.ctvetlabs.com` loads the UI (valid TLS)
 - [ ] Login with the configured super admin (CORS + JWT)
 - [ ] Upload a document / photo and confirm objects under the configured GCS prefixes
+- [ ] Bulk document upload from the UI uses initiate → browser PUT → confirm (not multipart through the API for large batches)
 - [ ] Exam-tools SEMS hosts (if still in DNS) are unaffected by this deploy
 
 ## Frontend build note

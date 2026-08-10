@@ -238,6 +238,8 @@ class Document(Base):
     mime_type = Column(String(100), nullable=False)
     file_size = Column(Integer, nullable=False)
     checksum = Column(String(64), nullable=False, index=True)  # SHA256
+    # pending_upload = URL minted, bytes not confirmed; uploaded = object verified; failed = abandoned/rejected
+    upload_status = Column(String(20), default="uploaded", nullable=False, index=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
