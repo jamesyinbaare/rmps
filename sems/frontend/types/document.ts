@@ -1124,3 +1124,99 @@ export interface SheetIdComparisonResponse {
   uploaded_sheet_ids_info: SheetIdInfo[];
   extra_sheet_ids_info: SheetIdInfo[];
 }
+
+// Results & Certificates browser (Phase 1)
+
+export interface ExamSchoolSummary {
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  region: string | null;
+  candidate_count: number;
+  fully_graded_count: number;
+}
+
+export interface ExamSchoolListResponse {
+  items: ExamSchoolSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ExamProgrammeSummary {
+  programme_id: number;
+  programme_code: string;
+  programme_name: string;
+  candidate_count: number;
+}
+
+export interface CandidateResultSummary {
+  exam_registration_id: number;
+  candidate_id: number;
+  candidate_name: string;
+  index_number: string;
+  programme_id: number | null;
+  programme_code: string | null;
+  programme_name: string | null;
+  subjects_registered: number;
+  subjects_graded: number;
+  subjects_pending: number;
+  is_fully_graded: boolean;
+}
+
+export interface SchoolResultsListResponse {
+  items: CandidateResultSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  exam_id: number;
+}
+
+export interface SubjectResultDetail {
+  subject_registration_id: number;
+  exam_subject_id: number;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string | null;
+  series: number | null;
+  obj_raw_score: string | null;
+  essay_raw_score: string | null;
+  pract_raw_score: string | null;
+  obj_normalized: number | null;
+  essay_normalized: number | null;
+  pract_normalized: number | null;
+  total_score: number | null;
+  grade: string | null;
+  obj_max_score: number | null;
+  essay_max_score: number | null;
+  pract_max_score: number | null;
+  has_score: boolean;
+}
+
+export interface ExamRegistrationResultDetail {
+  exam_registration_id: number;
+  exam_id: number;
+  exam_type: string;
+  exam_year: number;
+  exam_series: string;
+  candidate_id: number;
+  candidate_name: string;
+  index_number: string;
+  date_of_birth: string | null;
+  gender: string | null;
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  programme_id: number | null;
+  programme_code: string | null;
+  programme_name: string | null;
+  subjects: SubjectResultDetail[];
+  subjects_registered: number;
+  subjects_graded: number;
+  subjects_pending: number;
+  is_fully_graded: boolean;
+}
