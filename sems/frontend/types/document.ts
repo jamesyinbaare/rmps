@@ -1220,3 +1220,100 @@ export interface ExamRegistrationResultDetail {
   subjects_pending: number;
   is_fully_graded: boolean;
 }
+
+// Certificate templates & issuance (Phase 2)
+
+export type CertificateFieldSource = "exam_data" | "static";
+export type CertificateLayoutFieldType = "text" | "subjects" | "image";
+
+export type CertificateLayoutField = {
+  key: string;
+  type?: CertificateLayoutFieldType;
+  label?: string;
+  x_mm: number;
+  y_mm: number;
+  font_size?: number;
+  align?: "left" | "center" | "right";
+  max_width_mm?: number;
+  line_height_mm?: number;
+  columns?: string[];
+  /** For image fields */
+  asset_key?: string;
+  width_mm?: number;
+  height_mm?: number;
+  /** For custom static text fields */
+  static_value?: string;
+};
+
+export type CertificateLayoutJson = {
+  fields: CertificateLayoutField[];
+  date_format?: string;
+};
+
+export interface CertificateFieldCatalogItem {
+  key: string;
+  label: string;
+  source: CertificateFieldSource;
+  type: CertificateLayoutFieldType;
+  description: string;
+  unique: boolean;
+  defaults: Partial<CertificateLayoutField> & { key?: string };
+}
+
+export interface CertificateFieldCatalogResponse {
+  items: CertificateFieldCatalogItem[];
+}
+
+export interface CertificateTemplate {
+  id: number;
+  name: string;
+  exam_type: string | null;
+  exam_id: number;
+  page_width_mm: number;
+  page_height_mm: number;
+  layout_json: CertificateLayoutJson;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CertificateTemplateListResponse {
+  items: CertificateTemplate[];
+  total: number;
+}
+
+export interface CertificateTemplateAsset {
+  id: number;
+  template_id: number;
+  key: string;
+  label: string | null;
+  file_name: string;
+  mime_type: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CertificateTemplateAssetListResponse {
+  items: CertificateTemplateAsset[];
+  total: number;
+}
+
+export interface CertificateIssuance {
+  id: number;
+  exam_registration_id: number;
+  certificate_number: string;
+  status: "generated" | "printed" | "void" | "matched_scan";
+  layout_snapshot_json: CertificateLayoutJson | null;
+  grades_snapshot_json: Array<Record<string, string>> | null;
+  pdf_storage_path: string | null;
+  supersedes_id: number | null;
+  void_reason: string | null;
+  /** Official completion/issuance date on the certificate (YYYY-MM-DD). Distinct from printed_at. */
+  issuance_date: string | null;
+  generated_by_user_id: string | null;
+  generated_at: string;
+  printed_by_user_id: string | null;
+  printed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

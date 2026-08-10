@@ -129,6 +129,7 @@ const getNavMain = (
       icon: Award,
       items: [
         { title: "Browse Results", url: "/results" },
+        { title: "Certificate Settings", url: "/results/certificate-settings" },
       ],
     },
   ];

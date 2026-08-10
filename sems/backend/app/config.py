@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     gcs_documents_prefix: str = "sems/documents"
     gcs_photos_prefix: str = "sems/photos"
     gcs_score_sheets_prefix: str = "sems/score-sheets"
+    gcs_certificates_prefix: str = "sems/certificates"
     # PDF generation settings
     templates_path: str = "templates"  # Path to HTML templates directory
     pdf_output_path: str = "score_sheets"  # Path to save generated PDF score sheets
+    certificate_output_path: str = "storage/certificates"  # Local path for certificate PDFs
     # Extraction settings
     barcode_enabled: bool = True
     ocr_enabled: bool = True

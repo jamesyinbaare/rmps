@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "d1e2f3a4b5c6"
 down_revision: str | Sequence[str] | None = "c0d1e2f3a4b5"
@@ -31,7 +32,7 @@ GRADE_VALUES = (
 
 
 def upgrade() -> None:
-    grade_enum = sa.Enum(*GRADE_VALUES, name="grade")
+    grade_enum = postgresql.ENUM(*GRADE_VALUES, name="grade", create_type=False)
     grade_enum.create(op.get_bind(), checkfirst=True)
     op.add_column(
         "subject_scores",
@@ -43,4 +44,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_subject_scores_grade", table_name="subject_scores")
     op.drop_column("subject_scores", "grade")
-    sa.Enum(name="grade").drop(op.get_bind(), checkfirst=True)
+    postgresql.ENUM(name="grade").drop(op.get_bind(), checkfirst=True)

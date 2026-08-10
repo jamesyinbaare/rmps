@@ -75,6 +75,13 @@ import type {
   ExamProgrammeSummary,
   SchoolResultsListResponse,
   ExamRegistrationResultDetail,
+  CertificateTemplate,
+  CertificateTemplateListResponse,
+  CertificateFieldCatalogResponse,
+  CertificateIssuance,
+  CertificateLayoutJson,
+  CertificateTemplateAsset,
+  CertificateTemplateAssetListResponse,
 } from "@/types/document";
 
 /**
@@ -3079,6 +3086,216 @@ export async function getExamRegistrationResultDetail(
     `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/result-detail`
   );
   return handleResponse<ExamRegistrationResultDetail>(response);
+}
+
+export async function listCertificateTemplates(
+  options: { examId?: number; activeOnly?: boolean } = {}
+): Promise<CertificateTemplateListResponse> {
+  const params = new URLSearchParams();
+  params.append("active_only", String(options.activeOnly ?? true));
+  if (options.examId != null) params.append("exam_id", String(options.examId));
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates?${params.toString()}`
+  );
+  return handleResponse<CertificateTemplateListResponse>(response);
+}
+
+export async function getCertificateFieldCatalog(): Promise<CertificateFieldCatalogResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/certificates/field-catalog`);
+  return handleResponse<CertificateFieldCatalogResponse>(response);
+}
+
+export async function getCertificateTemplate(templateId: number): Promise<CertificateTemplate> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}`
+  );
+  return handleResponse<CertificateTemplate>(response);
+}
+
+export async function getDefaultCertificateLayout(): Promise<CertificateLayoutJson> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/default-layout`
+  );
+  return handleResponse<CertificateLayoutJson>(response);
+}
+
+export async function createCertificateTemplate(body: {
+  name: string;
+  exam_id: number;
+  page_width_mm?: number;
+  page_height_mm?: number;
+  layout_json?: CertificateLayoutJson;
+  is_active?: boolean;
+}): Promise<CertificateTemplate> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/certificates/templates`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return handleResponse<CertificateTemplate>(response);
+}
+
+export async function updateCertificateTemplate(
+  templateId: number,
+  body: Partial<{
+    name: string;
+    exam_id: number;
+    page_width_mm: number;
+    page_height_mm: number;
+    layout_json: CertificateLayoutJson;
+    is_active: boolean;
+  }>
+): Promise<CertificateTemplate> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }
+  );
+  return handleResponse<CertificateTemplate>(response);
+}
+
+export async function deactivateCertificateTemplate(templateId: number): Promise<void> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function previewCertificatePdf(
+  registrationId: number,
+  options: { templateId?: number; issuanceDate?: string } = {}
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (options.templateId) params.append("template_id", options.templateId.toString());
+  if (options.issuanceDate) params.append("issuance_date", options.issuanceDate);
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/certificate/preview${qs ? `?${qs}` : ""}`
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function generateCertificatePdf(
+  registrationId: number,
+  options: {
+    templateId?: number;
+    reissue?: boolean;
+    voidReason?: string;
+    issuanceDate?: string;
+  } = {}
+): Promise<{ blob: Blob; certificateNumber: string | null; issuanceId: string | null }> {
+  const params = new URLSearchParams();
+  params.append("download", "true");
+  if (options.templateId) params.append("template_id", options.templateId.toString());
+  if (options.reissue) params.append("reissue", "true");
+  if (options.voidReason) params.append("void_reason", options.voidReason);
+  if (options.issuanceDate) params.append("issuance_date", options.issuanceDate);
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/certificate/generate?${params.toString()}`,
+    { method: "POST" }
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return {
+    blob: await response.blob(),
+    certificateNumber: response.headers.get("X-Certificate-Number"),
+    issuanceId: response.headers.get("X-Certificate-Issuance-Id"),
+  };
+}
+
+export async function getRegistrationCertificateIssuance(
+  registrationId: number
+): Promise<CertificateIssuance | null> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exam-registrations/${registrationId}/certificate/issuance`
+  );
+  if (response.status === 204) return null;
+  const data = await handleResponse<CertificateIssuance | null>(response);
+  return data;
+}
+
+export async function markCertificatePrinted(
+  issuanceId: number,
+  printed = true
+): Promise<CertificateIssuance> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances/${issuanceId}/mark-printed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ printed }),
+    }
+  );
+  return handleResponse<CertificateIssuance>(response);
+}
+
+export async function downloadIssuancePdf(issuanceId: number): Promise<Blob> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/issuances/${issuanceId}/download`
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function listCertificateTemplateAssets(
+  templateId: number
+): Promise<CertificateTemplateAssetListResponse> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}/assets`
+  );
+  return handleResponse<CertificateTemplateAssetListResponse>(response);
+}
+
+export async function uploadCertificateTemplateAsset(
+  templateId: number,
+  file: File,
+  key: string,
+  label?: string
+): Promise<CertificateTemplateAsset> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("key", key);
+  if (label) form.append("label", label);
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+  const headers: HeadersInit = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Do not set Content-Type — browser must set multipart boundary for FormData
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}/assets`,
+    {
+      method: "POST",
+      headers,
+      body: form,
+    }
+  );
+  return handleResponse<CertificateTemplateAsset>(response);
+}
+
+export function getCertificateTemplateAssetUrl(templateId: number, assetKey: string): string {
+  return `${API_BASE_URL}/api/v1/certificates/templates/${templateId}/assets/${encodeURIComponent(assetKey)}/file`;
+}
+
+export async function deleteCertificateTemplateAsset(
+  templateId: number,
+  assetKey: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/templates/${templateId}/assets/${encodeURIComponent(assetKey)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
 }
 
 // Insights API Functions
