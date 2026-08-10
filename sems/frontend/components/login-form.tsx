@@ -10,10 +10,18 @@ import {
   FieldControl,
   Input,
 } from "@rfdtech/components/next";
-import { getCurrentUser, login } from "@/lib/api";
+import { getCurrentUser, login, LoginError } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import { toast } from "sonner";
 import { resetLogoutNotification } from "@/lib/auth-utils";
+
+function isExpectedLoginFailure(error: unknown): error is LoginError {
+  if (!(error instanceof LoginError)) return false;
+  if (error.status === 400 || error.status === 401) return true;
+  return /incorrect email or password|invalid credentials|unauthorized/i.test(
+    error.message
+  );
+}
 
 export function LoginForm({
   className,
@@ -26,6 +34,7 @@ export function LoginForm({
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [generalError, setGeneralError] = useState("");
+  const [credentialsInvalid, setCredentialsInvalid] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -33,6 +42,7 @@ export function LoginForm({
     setEmailError("");
     setPasswordError("");
     setGeneralError("");
+    setCredentialsInvalid(false);
 
     if (!email.trim()) {
       setEmailError("Email is required");
@@ -65,10 +75,18 @@ export function LoginForm({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Login failed";
-      setGeneralError(errorMessage);
-      toast.error(errorMessage);
-      console.error("Login error:", error);
-      setPassword("");
+
+      if (isExpectedLoginFailure(error)) {
+        setGeneralError(errorMessage);
+        setCredentialsInvalid(true);
+        setPasswordError("Check your email and password");
+        setPassword("");
+      } else {
+        setGeneralError(errorMessage);
+        toast.error(errorMessage);
+        console.error("Login error:", error);
+        setPassword("");
+      }
     } finally {
       setLoading(false);
     }
@@ -103,7 +121,7 @@ export function LoginForm({
         </div>
       ) : null}
 
-      <Field invalid={Boolean(emailError)}>
+      <Field invalid={Boolean(emailError) || credentialsInvalid}>
         <FieldLabel htmlFor="email">Email</FieldLabel>
         <FieldControl>
           <Input
@@ -116,9 +134,11 @@ export function LoginForm({
               setEmail(e.target.value);
               if (emailError) setEmailError("");
               if (generalError) setGeneralError("");
+              if (passwordError) setPasswordError("");
+              if (credentialsInvalid) setCredentialsInvalid(false);
             }}
             disabled={loading}
-            invalid={Boolean(emailError)}
+            invalid={Boolean(emailError) || credentialsInvalid}
             autoComplete="email"
             data-form-type="other"
           />
@@ -126,7 +146,7 @@ export function LoginForm({
         {emailError ? <FieldError>{emailError}</FieldError> : null}
       </Field>
 
-      <Field invalid={Boolean(passwordError)}>
+      <Field invalid={Boolean(passwordError) || credentialsInvalid}>
         <FieldLabel htmlFor="password">Password</FieldLabel>
         <FieldControl>
           <Input
@@ -138,9 +158,11 @@ export function LoginForm({
               setPassword(e.target.value);
               if (passwordError) setPasswordError("");
               if (generalError) setGeneralError("");
+              if (emailError) setEmailError("");
+              if (credentialsInvalid) setCredentialsInvalid(false);
             }}
             disabled={loading}
-            invalid={Boolean(passwordError)}
+            invalid={Boolean(passwordError) || credentialsInvalid}
             autoComplete="current-password"
             data-form-type="other"
           />

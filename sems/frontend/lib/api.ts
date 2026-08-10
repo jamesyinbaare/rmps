@@ -3383,6 +3383,17 @@ export interface TokenResponse {
   token_type: string;
 }
 
+/** Expected login failure (wrong credentials, validation) — not a crash. */
+export class LoginError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "LoginError";
+    this.status = status;
+  }
+}
+
 /**
  * Login user and get access token.
  */
@@ -3406,18 +3417,24 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
       if (contentType && contentType.includes("application/json") && text) {
         try {
           const error: ApiError = JSON.parse(text);
-          errorDetail = error.detail || text;
+          const detail = error.detail;
+          errorDetail =
+            typeof detail === "string"
+              ? detail
+              : detail
+                ? JSON.stringify(detail)
+                : text;
         } catch {
           errorDetail = text;
         }
       } else if (text) {
         errorDetail = text;
       }
-    } catch (e) {
+    } catch {
       errorDetail = `HTTP error! status: ${response.status}`;
     }
 
-    throw new Error(errorDetail);
+    throw new LoginError(errorDetail, response.status);
   }
 
   const tokenData = await response.json();
