@@ -174,32 +174,36 @@ async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
 async def list_exams(
     session: DBSessionDep,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    exam_type: ExamType = Query(..., description="Examination type"),
-    series: ExamSeries = Query(..., description="Examination series"),
-    year: int = Query(..., ge=1900, le=2100, description="Examination year"),
+    page_size: int = Query(20, ge=1, le=200),
+    exam_type: ExamType | None = Query(None, description="Optional examination type filter"),
+    series: ExamSeries | None = Query(None, description="Optional examination series filter"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Optional examination year filter"),
 ) -> ExamListResponse:
-    """List exams with pagination, filtering by examination type, series, and year."""
+    """List exams with pagination. Filters are optional; omit them to list all exams."""
     offset = (page - 1) * page_size
 
-    # Build query with required filters
-    base_stmt = select(Exam).where(
-        Exam.exam_type == exam_type,
-        Exam.series == series,
-        Exam.year == year,
-    )
+    filters = []
+    if exam_type is not None:
+        filters.append(Exam.exam_type == exam_type)
+    if series is not None:
+        filters.append(Exam.series == series)
+    if year is not None:
+        filters.append(Exam.year == year)
 
-    # Get total count
-    count_stmt = select(func.count(Exam.id)).where(
-        Exam.exam_type == exam_type,
-        Exam.series == series,
-        Exam.year == year,
-    )
+    base_stmt = select(Exam)
+    count_stmt = select(func.count(Exam.id))
+    if filters:
+        base_stmt = base_stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
-    # Get exams
-    stmt = base_stmt.offset(offset).limit(page_size).order_by(Exam.year.desc(), Exam.created_at.desc())
+    stmt = (
+        base_stmt.offset(offset)
+        .limit(page_size)
+        .order_by(Exam.year.desc(), Exam.created_at.desc())
+    )
     result = await session.execute(stmt)
     exams = result.scalars().all()
 

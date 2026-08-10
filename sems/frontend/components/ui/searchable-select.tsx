@@ -26,6 +26,8 @@ interface SearchableSelectProps {
   allLabel?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  className?: string;
+  triggerClassName?: string;
 }
 
 export function SearchableSelect({
@@ -38,6 +40,8 @@ export function SearchableSelect({
   allLabel = "All",
   searchPlaceholder = "Search...",
   emptyMessage = "No options found",
+  className,
+  triggerClassName,
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -81,14 +85,14 @@ export function SearchableSelect({
   };
 
   return (
-    <div ref={triggerRef} className="w-full">
+    <div ref={triggerRef} className={cn("w-full", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             role="combobox"
             aria-expanded={open}
-            className="w-full justify-between h-11"
+            className={cn("w-full justify-between h-11", triggerClassName)}
             disabled={disabled}
           >
           <span className="truncate">
