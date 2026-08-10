@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -18,7 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   confirmDocumentUploads,
   getAllExams,
@@ -26,7 +29,18 @@ import {
   putFileToUploadUrl,
 } from "@/lib/api";
 import type { Exam, UploadSlot } from "@/types/document";
-import { Upload, File } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Upload,
+  FileImage,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Download,
+  Loader2,
+  Images,
+  Trash2,
+} from "lucide-react";
 
 interface DocumentUploadProps {
   open: boolean;
@@ -38,6 +52,27 @@ const BATCH_SIZE = 200;
 const PUT_CONCURRENCY = 8;
 
 type FailureRow = { file_name: string; error: string };
+
+function skipReasonLabel(reason: string): string {
+  switch (reason) {
+    case "duplicate_checksum":
+      return "already uploaded";
+    case "duplicate_in_batch":
+      return "duplicate in this selection";
+    case "unsupported_mime_type":
+      return "unsupported file type";
+    case "file_too_large":
+      return "file too large";
+    default:
+      return reason;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 async function sha256Hex(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -77,9 +112,22 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [failures, setFailures] = useState<FailureRow[]>([]);
+  const [alreadyUploaded, setAlreadyUploaded] = useState<string[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [summary, setSummary] = useState<{
+    confirmed: number;
+    failed: number;
+    alreadyUploaded: number;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const totalBytes = useMemo(
+    () => files.reduce((sum, file) => sum + file.size, 0),
+    [files]
+  );
+
   useEffect(() => {
+    if (!open) return;
     async function loadExams() {
       try {
         const allExams = await getAllExams();
@@ -89,48 +137,84 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
       }
     }
     loadExams();
-  }, []);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setFiles([]);
+      setSelectedExamId("");
+      setUploading(false);
+      setUploadProgress(0);
+      setStatusLabel("");
+      setError(null);
+      setSuccess(null);
+      setFailures([]);
+      setAlreadyUploaded([]);
+      setSummary(null);
+      setIsDragging(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [open]);
+
+  const addFiles = (incoming: File[]) => {
+    const validFiles = incoming.filter((file) => {
+      return file.type === "image/jpeg" || file.type === "image/png";
+    });
+    if (validFiles.length !== incoming.length) {
+      setError("Some files were skipped. Only JPEG and PNG images are allowed.");
+    } else {
+      setError(null);
+    }
+    if (validFiles.length === 0) return;
+    setFiles((prev) => [...prev, ...validFiles]);
+    setSuccess(null);
+    setSummary(null);
+    setFailures([]);
+    setAlreadyUploaded([]);
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
-    const validFiles = selectedFiles.filter((file) => {
-      const isValidType = file.type === "image/jpeg" || file.type === "image/png";
-      if (!isValidType) {
-        setError(`File ${file.name} is not a valid image type (JPEG/PNG required)`);
-        return false;
-      }
-      return true;
-    });
-    setFiles((prev) => [...prev, ...validFiles]);
-    setError(null);
+    addFiles(Array.from(e.target.files || []));
+    e.target.value = "";
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!uploading) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    const validFiles = droppedFiles.filter((file) => {
-      const isValidType = file.type === "image/jpeg" || file.type === "image/png";
-      return isValidType;
-    });
-    if (validFiles.length !== droppedFiles.length) {
-      setError("Some files were rejected. Only JPEG and PNG images are allowed.");
-    }
-    setFiles((prev) => [...prev, ...validFiles]);
+    setIsDragging(false);
+    if (uploading) return;
+    addFiles(Array.from(e.dataTransfer.files));
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const clearFiles = () => {
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const downloadFailures = () => {
     if (failures.length === 0) return;
-    const csv = ["file_name,error", ...failures.map((f) => `"${f.file_name.replace(/"/g, '""')}","${f.error.replace(/"/g, '""')}"`)].join("\n");
+    const csv = [
+      "file_name,error",
+      ...failures.map(
+        (f) => `"${f.file_name.replace(/"/g, '""')}","${f.error.replace(/"/g, '""')}"`
+      ),
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -155,13 +239,16 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
     setError(null);
     setSuccess(null);
     setFailures([]);
+    setAlreadyUploaded([]);
+    setSummary(null);
     setUploadProgress(0);
-    setStatusLabel("Hashing files...");
+    setStatusLabel("Preparing files…");
 
     const examId = parseInt(selectedExamId, 10);
     const allFailures: FailureRow[] = [];
+    const alreadyUploadedNames: string[] = [];
     let confirmedCount = 0;
-    let skippedCount = 0;
+    let alreadyUploadedCount = 0;
     let failedCount = 0;
 
     try {
@@ -179,14 +266,14 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
           });
         }
         setUploadProgress(Math.round(((i + 1) / files.length) * 20));
-        setStatusLabel(`Hashing files... ${i + 1}/${files.length}`);
+        setStatusLabel(`Checking file integrity… ${i + 1} of ${files.length}`);
       }
 
       const totalWaves = Math.max(1, Math.ceil(hashed.length / BATCH_SIZE));
       for (let wave = 0; wave < hashed.length; wave += BATCH_SIZE) {
         const waveIndex = Math.floor(wave / BATCH_SIZE) + 1;
         const batch = hashed.slice(wave, wave + BATCH_SIZE);
-        setStatusLabel(`Initiating batch ${waveIndex}/${totalWaves}...`);
+        setStatusLabel(`Reserving upload slots… batch ${waveIndex} of ${totalWaves}`);
 
         const initiate = await initiateDocumentUploads(
           examId,
@@ -198,10 +285,18 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
           }))
         );
 
-        skippedCount += initiate.skipped;
         failedCount += initiate.failed;
         for (const skipped of initiate.skipped_files) {
-          allFailures.push({ file_name: skipped.file_name, error: skipped.reason });
+          if (skipped.reason === "duplicate_checksum") {
+            alreadyUploadedCount += 1;
+            alreadyUploadedNames.push(skipped.file_name);
+          } else {
+            failedCount += 1;
+            allFailures.push({
+              file_name: skipped.file_name,
+              error: skipReasonLabel(skipped.reason),
+            });
+          }
         }
         for (const failed of initiate.failed_files) {
           allFailures.push({ file_name: failed.file_name, error: failed.error });
@@ -212,7 +307,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
           fileByChecksum.has(slot.checksum)
         );
 
-        setStatusLabel(`Uploading batch ${waveIndex}/${totalWaves}...`);
+        setStatusLabel(`Uploading to storage… batch ${waveIndex} of ${totalWaves}`);
         const putResults = await mapPool(putTargets, PUT_CONCURRENCY, async (slot) => {
           const file = fileByChecksum.get(slot.checksum);
           if (!file) {
@@ -238,14 +333,17 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
           } else {
             failedCount += 1;
             allFailures.push({
-              file_name: "file_name" in result && result.file_name ? result.file_name : `document_${result.document_id}`,
+              file_name:
+                "file_name" in result && result.file_name
+                  ? result.file_name
+                  : `document_${result.document_id}`,
               error: result.error,
             });
           }
         }
 
         if (succeededIds.length > 0) {
-          setStatusLabel(`Confirming batch ${waveIndex}/${totalWaves}...`);
+          setStatusLabel(`Confirming uploads… batch ${waveIndex} of ${totalWaves}`);
           const confirm = await confirmDocumentUploads(succeededIds);
           for (const item of confirm.results) {
             if (item.status === "confirmed" || item.status === "already_uploaded") {
@@ -263,27 +361,35 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
         const progressBase = 20;
         const progressSpan = 80;
         setUploadProgress(
-          Math.round(progressBase + (progressSpan * Math.min(wave + BATCH_SIZE, hashed.length)) / Math.max(hashed.length, 1))
+          Math.round(
+            progressBase +
+              (progressSpan * Math.min(wave + BATCH_SIZE, hashed.length)) /
+                Math.max(hashed.length, 1)
+          )
         );
       }
 
       setFailures(allFailures);
+      setAlreadyUploaded(alreadyUploadedNames);
+      setSummary({
+        confirmed: confirmedCount,
+        failed: failedCount,
+        alreadyUploaded: alreadyUploadedCount,
+      });
       setSuccess(
-        `Upload complete: ${confirmedCount} confirmed, ${failedCount} failed, ${skippedCount} skipped`
+        failedCount === 0
+          ? "Upload finished successfully."
+          : "Upload finished with some issues."
       );
       setUploadProgress(100);
       setStatusLabel("Done");
 
       if (confirmedCount > 0) {
         setFiles([]);
-        setSelectedExamId("");
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
         onUploadSuccess?.();
-        if (failedCount === 0 && skippedCount === 0) {
-          onOpenChange(false);
-        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload files");
@@ -293,46 +399,118 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
     }
   };
 
+  const canUpload = !uploading && files.length > 0 && !!selectedExamId;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Upload Documents</DialogTitle>
-          <DialogDescription>
-            Upload JPEG or PNG images. Files go directly to storage; the API only confirms after the object exists.
-          </DialogDescription>
+      <DialogContent
+        className="flex max-h-[90vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        showCloseButton={!uploading}
+      >
+        <DialogHeader className="shrink-0 space-y-1 border-b px-6 py-5 text-left">
+          <div className="flex items-start gap-3 pr-8">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Images className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <DialogTitle className="text-xl">Upload documents</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                Add JPEG or PNG exam sheets. Files upload directly to storage in large batches,
+                then the system confirms each file before processing.
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Examination *</label>
-            <Select value={selectedExamId} onValueChange={setSelectedExamId} disabled={uploading}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select an examination" />
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          <div className="space-y-2">
+            <Label htmlFor="exam-select" className="text-sm font-medium">
+              Examination
+            </Label>
+            <Select
+              value={selectedExamId}
+              onValueChange={setSelectedExamId}
+              disabled={uploading}
+            >
+              <SelectTrigger id="exam-select" className="h-11 w-full">
+                <SelectValue placeholder="Choose the examination these sheets belong to" />
               </SelectTrigger>
               <SelectContent>
                 {exams.map((exam) => (
                   <SelectItem key={exam.id} value={exam.id.toString()}>
-                    {exam.exam_type} ({exam.year})
+                    {exam.exam_type} · {exam.series} · {exam.year}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div>
-            <label className="text-sm font-medium">Files</label>
-            <div
-              className="mt-2 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-gray-400 transition-colors"
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="mx-auto h-12 w-12 text-gray-400" />
-              <p className="mt-2 text-sm text-gray-600">
-                Drag and drop files here, or click to select
-              </p>
-              <p className="text-xs text-gray-500 mt-1">JPEG or PNG images only — large batches supported</p>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-sm font-medium">Files</Label>
+              {files.length > 0 && !uploading && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5 text-muted-foreground"
+                  onClick={clearFiles}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Clear all
+                </Button>
+              )}
             </div>
+
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="Select files to upload"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (!uploading) fileInputRef.current?.click();
+                }
+              }}
+              className={cn(
+                "group relative rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all outline-none",
+                uploading
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer",
+                isDragging
+                  ? "border-primary bg-primary/5 shadow-[inset_0_0_0_1px] shadow-primary/20"
+                  : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/40 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+              )}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => {
+                if (!uploading) fileInputRef.current?.click();
+              }}
+            >
+              <div
+                className={cn(
+                  "mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl transition-colors",
+                  isDragging ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
+                )}
+              >
+                <Upload className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-medium text-foreground">
+                {isDragging ? "Drop images to add them" : "Drag and drop images here"}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                or{" "}
+                <span className="font-medium text-primary underline-offset-2 group-hover:underline">
+                  browse files
+                </span>
+              </p>
+              <p className="mt-3 text-xs text-muted-foreground">
+                JPEG and PNG · large folders supported · up to {formatBytes(50 * 1024 * 1024)} per
+                file
+              </p>
+            </div>
+
             <Input
               ref={fileInputRef}
               type="file"
@@ -345,85 +523,212 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
           </div>
 
           {files.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Selected files ({files.length}):</p>
-              <div className="space-y-1 max-h-40 overflow-y-auto">
-                {files.slice(0, 50).map((file, index) => (
+            <div className="overflow-hidden rounded-xl border bg-card">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="rounded-md px-2.5 py-1">
+                    {files.length.toLocaleString()} file{files.length === 1 ? "" : "s"}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {formatBytes(totalBytes)} total
+                  </span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  Showing {Math.min(files.length, 80).toLocaleString()}
+                  {files.length > 80 ? ` of ${files.length.toLocaleString()}` : ""}
+                </span>
+              </div>
+              <div className="max-h-52 divide-y overflow-y-auto">
+                {files.slice(0, 80).map((file, index) => (
                   <div
-                    key={`${file.name}-${file.size}-${index}`}
-                    className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
+                    key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <File className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{file.name}</span>
-                      <span className="text-gray-500 shrink-0">
-                        ({(file.size / 1024).toFixed(2)} KB)
-                      </span>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                      <FileImage className="h-4 w-4" />
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeFile(index)}
-                      disabled={uploading}
-                    >
-                      Remove
-                    </Button>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{file.name}</p>
+                      <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                    </div>
+                    {!uploading && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeFile(index)}
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 ))}
-                {files.length > 50 && (
-                  <p className="text-xs text-gray-500 px-2">…and {files.length - 50} more</p>
-                )}
               </div>
+              {files.length > 80 && (
+                <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+                  …and {(files.length - 80).toLocaleString()} more ready to upload
+                </div>
+              )}
             </div>
           )}
 
           {uploading && (
-            <div className="space-y-2">
-              <Progress value={uploadProgress} />
-              <p className="text-sm text-gray-600">{statusLabel || "Uploading files..."}</p>
+            <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  Uploading
+                </div>
+                <span className="tabular-nums text-sm text-muted-foreground">
+                  {uploadProgress}%
+                </span>
+              </div>
+              <Progress value={uploadProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground">{statusLabel}</p>
             </div>
           )}
 
           {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {success && (
-            <Alert>
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          )}
-
-          {failures.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive">
-                {failures.length} file(s) had issues.{" "}
-                <button type="button" className="underline" onClick={downloadFailures}>
-                  Download failure list
-                </button>
-              </p>
-              <div className="max-h-24 overflow-y-auto text-xs text-muted-foreground space-y-1">
-                {failures.slice(0, 10).map((f, i) => (
-                  <div key={`${f.file_name}-${i}`}>
-                    {f.file_name}: {f.error}
-                  </div>
-                ))}
-              </div>
+            <div className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{error}</p>
             </div>
           )}
 
-          <Button
-            onClick={handleUpload}
-            disabled={uploading || files.length === 0 || !selectedExamId}
-            className="w-full"
-          >
-            {uploading
-              ? "Uploading..."
-              : `Upload ${files.length} file${files.length !== 1 ? "s" : ""}`}
-          </Button>
+          {summary && (
+            <div className="space-y-3 rounded-xl border bg-card p-4">
+              <div className="flex items-start gap-3">
+                {summary.failed === 0 ? (
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                )}
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium">{success}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Confirmed files are queued for ID extraction.
+                  </p>
+                </div>
+              </div>
+              <Separator />
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg bg-emerald-500/10 px-3 py-2.5 text-center">
+                  <p className="text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {summary.confirmed.toLocaleString()}
+                  </p>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Confirmed
+                  </p>
+                </div>
+                <div className="rounded-lg bg-sky-500/10 px-3 py-2.5 text-center">
+                  <p className="text-lg font-semibold tabular-nums text-sky-700 dark:text-sky-400">
+                    {summary.alreadyUploaded.toLocaleString()}
+                  </p>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Already there
+                  </p>
+                </div>
+                <div className="rounded-lg bg-destructive/10 px-3 py-2.5 text-center">
+                  <p className="text-lg font-semibold tabular-nums text-destructive">
+                    {summary.failed.toLocaleString()}
+                  </p>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Failed
+                  </p>
+                </div>
+              </div>
+
+              {alreadyUploaded.length > 0 && (
+                <details className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+                  <summary className="cursor-pointer font-medium text-muted-foreground">
+                    {alreadyUploaded.length.toLocaleString()} already uploaded
+                  </summary>
+                  <div className="mt-2 max-h-24 space-y-1 overflow-y-auto text-muted-foreground">
+                    {alreadyUploaded.slice(0, 20).map((name, i) => (
+                      <div key={`${name}-${i}`} className="truncate">
+                        {name}
+                      </div>
+                    ))}
+                    {alreadyUploaded.length > 20 && (
+                      <div>…and {(alreadyUploaded.length - 20).toLocaleString()} more</div>
+                    )}
+                  </div>
+                </details>
+              )}
+
+              {failures.length > 0 && (
+                <div className="space-y-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-destructive">
+                      {failures.length.toLocaleString()} file(s) need attention
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1.5 text-xs"
+                      onClick={downloadFailures}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      CSV
+                    </Button>
+                  </div>
+                  <div className="max-h-28 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                    {failures.slice(0, 12).map((f, i) => (
+                      <div key={`${f.file_name}-${i}`} className="truncate">
+                        <span className="font-medium text-foreground/80">{f.file_name}</span>
+                        {" — "}
+                        {f.error}
+                      </div>
+                    ))}
+                    {failures.length > 12 && (
+                      <div>…and {(failures.length - 12).toLocaleString()} more in the CSV</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-6 py-4 sm:justify-between">
+          <p className="hidden text-xs text-muted-foreground sm:block sm:max-w-[46%]">
+            {files.length > 0
+              ? `${files.length.toLocaleString()} ready · ${formatBytes(totalBytes)}`
+              : "Select an examination, then add images to begin."}
+          </p>
+          <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={uploading}
+            >
+              {summary ? "Close" : "Cancel"}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleUpload}
+              disabled={!canUpload}
+              className="min-w-40 gap-2"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Upload
+                  {files.length > 0 ? ` ${files.length.toLocaleString()}` : ""}
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

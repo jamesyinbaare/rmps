@@ -313,6 +313,32 @@ async def bulk_upload_documents(
 
 
 ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/png"}
+REUSABLE_UPLOAD_STATUSES = frozenset({"pending_upload", "failed"})
+
+
+async def _mint_upload_slot(
+    *,
+    document_id: int,
+    file_name: str,
+    checksum: str,
+    mime_type: str,
+    relative_path: str,
+) -> UploadSlot:
+    headers = {"Content-Type": mime_type}
+    if storage_service.backend_name == "gcs":
+        upload_url = await storage_service.create_signed_put_url(
+            relative_path,
+            content_type=mime_type,
+        )
+    else:
+        upload_url = f"/api/v1/documents/uploads/{document_id}/content"
+    return UploadSlot(
+        document_id=document_id,
+        file_name=file_name,
+        checksum=checksum,
+        upload_url=upload_url,
+        headers=headers,
+    )
 
 
 async def cleanup_abandoned_pending_uploads(*, ttl_hours: int | None = None) -> AbandonedUploadCleanupResponse:
@@ -398,10 +424,38 @@ async def initiate_document_uploads(
             duplicate_result = await session.execute(duplicate_stmt)
             existing = duplicate_result.scalar_one_or_none()
             if existing:
+                if existing.upload_status == "uploaded":
+                    skipped_files.append(
+                        UploadInitiateSkipped(
+                            file_name=file_name,
+                            reason="duplicate_checksum",
+                            existing_document_id=existing.id,
+                        )
+                    )
+                    continue
+                if existing.upload_status in REUSABLE_UPLOAD_STATUSES:
+                    # Incomplete prior attempt: remint URL so the client can retry PUT+confirm
+                    existing.file_name = file_name
+                    existing.mime_type = item.mime_type
+                    existing.file_size = item.file_size
+                    existing.exam_id = body.exam_id
+                    existing.upload_status = "pending_upload"
+                    existing.uploaded_at = datetime.utcnow()
+                    await session.flush()
+                    uploads.append(
+                        await _mint_upload_slot(
+                            document_id=existing.id,
+                            file_name=file_name,
+                            checksum=checksum,
+                            mime_type=item.mime_type,
+                            relative_path=existing.file_path,
+                        )
+                    )
+                    continue
                 skipped_files.append(
                     UploadInitiateSkipped(
                         file_name=file_name,
-                        reason="duplicate_checksum",
+                        reason=f"unexpected_status:{existing.upload_status}",
                         existing_document_id=existing.id,
                     )
                 )
@@ -421,22 +475,13 @@ async def initiate_document_uploads(
             session.add(db_document)
             await session.flush()
 
-            headers = {"Content-Type": item.mime_type}
-            if storage_service.backend_name == "gcs":
-                upload_url = await storage_service.create_signed_put_url(
-                    relative_path,
-                    content_type=item.mime_type,
-                )
-            else:
-                upload_url = f"/api/v1/documents/uploads/{db_document.id}/content"
-
             uploads.append(
-                UploadSlot(
+                await _mint_upload_slot(
                     document_id=db_document.id,
                     file_name=file_name,
                     checksum=checksum,
-                    upload_url=upload_url,
-                    headers=headers,
+                    mime_type=item.mime_type,
+                    relative_path=relative_path,
                 )
             )
         except Exception as exc:
