@@ -1297,6 +1297,7 @@ export async function getPhotoAlbum(filters: PhotoAlbumFilters = {}): Promise<Ph
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
   if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
   if (filters.has_photo !== undefined) params.append("has_photo", filters.has_photo.toString());
+  if (filters.search_query?.trim()) params.append("search_query", filters.search_query.trim());
 
   const response = await fetch(`${API_BASE_URL}/api/v1/candidates/photos/album?${params.toString()}`);
   return handleResponse<PhotoAlbumResponse>(response);
