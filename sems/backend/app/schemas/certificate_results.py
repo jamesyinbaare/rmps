@@ -27,6 +27,32 @@ class ExamSchoolListResponse(BaseModel):
     page_size: int
 
 
+class ExamResultsSummary(BaseModel):
+    """Exam-level results KPIs for the results dashboard."""
+
+    exam_id: int
+    school_count: int
+    candidate_count: int
+    fully_graded_count: int
+    pending_count: int
+    completion_percentage: float
+
+
+class SchoolResultsSummary(BaseModel):
+    """School-level results KPIs for one examination."""
+
+    exam_id: int
+    school_id: int
+    school_code: str
+    school_name: str
+    region: str | None = None
+    candidate_count: int
+    fully_graded_count: int
+    pending_count: int
+    completion_percentage: float
+    programme_count: int
+
+
 class ExamProgrammeSummary(BaseModel):
     """Programme available for filtering within an exam+school."""
 
@@ -50,6 +76,9 @@ class CandidateResultSummary(BaseModel):
     subjects_graded: int
     subjects_pending: int
     is_fully_graded: bool
+    issuance_id: int | None = None
+    certificate_number: str | None = None
+    issuance_status: CertificateIssuanceStatus | None = None
 
 
 class SchoolResultsListResponse(BaseModel):
@@ -86,6 +115,8 @@ class IssueFormProgrammeGroup(BaseModel):
 class IssueFormCandidatesResponse(BaseModel):
     items: list[IssueFormCandidate]
     total: int
+    page: int = 1
+    page_size: int = 50
     school_id: int
     school_code: str
     school_name: str

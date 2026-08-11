@@ -1,8 +1,9 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCurrentUser } from "@/components/CurrentUserProvider";
 import {
   AppLayout,
   AppHeader,
@@ -14,9 +15,8 @@ import {
 import { ProfilePopover } from "@rfdtech/components";
 import { Files, User } from "lucide-react";
 import { SemsSidebar } from "@/components/sems-sidebar";
-import { getCurrentUser, logout } from "@/lib/api";
+import { logout } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
-import type { User as SemsUser } from "@/types/document";
 import { toast } from "sonner";
 
 interface DashboardLayoutProps {
@@ -36,26 +36,7 @@ export function DashboardLayout({
   title = "All files",
 }: DashboardLayoutProps) {
   const router = useRouter();
-  const [user, setUser] = useState<SemsUser | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadUser = async () => {
-      try {
-        const currentUser = await getCurrentUser();
-        if (!cancelled) setUser(currentUser);
-      } catch (error) {
-        console.error("Error loading user:", error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void loadUser();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { user, loading } = useCurrentUser();
 
   const handleSignOut = async () => {
     try {

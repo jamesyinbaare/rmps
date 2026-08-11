@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { examLabel } from "@/components/results/exam-label";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useDebounce } from "@/hooks/use-debounce";
 import {
   Table,
   TableBody,
@@ -15,22 +19,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getAllExams, listExamResultSchools } from "@/lib/api";
+import { getExam, listExamResultSchools } from "@/lib/api";
 import type { Exam, ExamSchoolSummary } from "@/types/document";
-import { ArrowLeft, ChevronRight, Loader2, Search } from "lucide-react";
-
-function examLabel(exam: Exam): string {
-  const typeLabel =
-    exam.exam_type === "Certificate II Examinations" ||
-    exam.exam_type === "Certificate II Examination"
-      ? "Certificate II"
-      : exam.exam_type;
-  return `${typeLabel} — ${exam.series} ${exam.year}`;
-}
+import { Search } from "lucide-react";
 
 export default function ManageCertificatesExamSchoolsPage() {
   const params = useParams();
-  const router = useRouter();
   const examId = Number(params.examId);
 
   const [exam, setExam] = useState<Exam | null>(null);
@@ -38,22 +32,25 @@ export default function ManageCertificatesExamSchoolsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
-  const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const search = useDebounce(searchInput.trim(), 300);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadExam() {
       try {
-        const exams = await getAllExams();
-        setExam(exams.find((e) => e.id === examId) ?? null);
+        setExam(await getExam(examId));
       } catch {
         setExam(null);
       }
     }
     if (examId) loadExam();
   }, [examId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const loadSchools = useCallback(async () => {
     if (!examId) return;
@@ -83,36 +80,24 @@ export default function ManageCertificatesExamSchoolsPage() {
   return (
     <DashboardLayout title="Certificates">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title={exam ? examLabel(exam) : "Schools"} />
+        <TopBar title={exam ? examLabel(exam) : "Schools"} showSearch={false} />
         <div className="flex-1 overflow-y-auto p-6">
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              { label: exam ? examLabel(exam) : "Examination" },
+            ]}
+          />
           <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/results/certificates">
-                <ArrowLeft className="mr-1 h-4 w-4" />
-                Examinations
-              </Link>
-            </Button>
-            <form
-              className="flex flex-1 items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setPage(1);
-                setSearch(searchInput.trim());
-              }}
-            >
-              <div className="relative max-w-sm flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="Search schools..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                />
-              </div>
-              <Button type="submit" variant="secondary" size="sm">
-                Search
-              </Button>
-            </form>
+            <div className="relative max-w-sm flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search schools..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/results/certificates/issuances">Issuance ledger</Link>
             </Button>
@@ -125,12 +110,12 @@ export default function ManageCertificatesExamSchoolsPage() {
           )}
 
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <TableSkeleton rows={10} cols={5} />
           ) : schools.length === 0 ? (
             <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
-              No schools with registrations for this examination.
+              {search
+                ? "No schools match this search."
+                : "No schools with registrations for this examination."}
             </div>
           ) : (
             <>
@@ -146,42 +131,29 @@ export default function ManageCertificatesExamSchoolsPage() {
                       <TableHead>Region</TableHead>
                       <TableHead className="text-right">Candidates</TableHead>
                       <TableHead className="text-right">Fully graded</TableHead>
-                      <TableHead className="w-[120px]" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {schools.map((school) => (
-                      <TableRow
-                        key={school.school_id}
-                        className="cursor-pointer"
-                        onClick={() =>
-                          router.push(
-                            `/results/certificates/${examId}/schools/${school.school_id}`
-                          )
-                        }
-                      >
-                        <TableCell className="font-mono text-sm">{school.school_code}</TableCell>
-                        <TableCell className="font-medium">{school.school_name}</TableCell>
-                        <TableCell>{school.region ?? "—"}</TableCell>
-                        <TableCell className="text-right">{school.candidate_count}</TableCell>
-                        <TableCell className="text-right">{school.fully_graded_count}</TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            asChild
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                    {schools.map((school) => {
+                      const href = `/results/certificates/${examId}/schools/${school.school_id}`;
+                      return (
+                        <TableRow key={school.school_id} className="relative">
+                          <TableCell className="font-mono text-sm">
                             <Link
-                              href={`/results/certificates/${examId}/schools/${school.school_id}`}
+                              href={href}
+                              className="hover:underline after:absolute after:inset-0"
+                              aria-label={`${school.school_code} — ${school.school_name}`}
                             >
-                              Certificates
-                              <ChevronRight className="ml-1 h-4 w-4" />
+                              {school.school_code}
                             </Link>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell className="font-medium">{school.school_name}</TableCell>
+                          <TableCell>{school.region ?? "—"}</TableCell>
+                          <TableCell className="text-right">{school.candidate_count}</TableCell>
+                          <TableCell className="text-right">{school.fully_graded_count}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

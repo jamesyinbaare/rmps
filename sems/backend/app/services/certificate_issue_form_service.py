@@ -13,7 +13,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
-from sqlalchemy import func, select
+from sqlalchemy import or_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -84,6 +84,8 @@ def issue_form_filters(
     school_id: int,
     include_unnumbered: bool = False,
     programme_id: int | None = None,
+    search: str | None = None,
+    number_status: str | None = None,
 ) -> list:
     filters = [
         ExamRegistration.exam_id == exam_id,
@@ -91,8 +93,26 @@ def issue_form_filters(
     ]
     if programme_id is not None:
         filters.append(Candidate.programme_id == programme_id)
-    if not include_unnumbered:
+    status_key = (number_status or "").strip().lower()
+    if status_key == "numbered" or (not include_unnumbered and status_key != "missing"):
         filters.append(CertificateIssuance.certificate_number.is_not(None))
+    elif status_key == "missing":
+        filters.append(
+            or_(
+                CertificateIssuance.id.is_(None),
+                CertificateIssuance.certificate_number.is_(None),
+            )
+        )
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        filters.append(
+            or_(
+                Candidate.name.ilike(term),
+                Candidate.index_number.ilike(term),
+                ExamRegistration.index_number.ilike(term),
+                CertificateIssuance.certificate_number.ilike(term),
+            )
+        )
     return filters
 
 
@@ -108,27 +128,25 @@ def _active_issuance_subquery():
     )
 
 
-async def load_issue_form_rows(
-    session: AsyncSession,
+def _issue_form_base_stmt(
     *,
     exam_id: int,
     school_id: int,
     include_unnumbered: bool = False,
     programme_id: int | None = None,
-) -> list[tuple[CertificateIssuance | None, ExamRegistration, Candidate, Programme | None]]:
-    """Registered candidates for the school/exam, with their latest non-void issuance.
-
-    Default includes only candidates who already have a certificate number.
-    ``include_unnumbered`` adds the rest of the school's registered candidates.
-    """
+    search: str | None = None,
+    number_status: str | None = None,
+):
     latest = _active_issuance_subquery()
     filters = issue_form_filters(
         exam_id=exam_id,
         school_id=school_id,
         include_unnumbered=include_unnumbered,
         programme_id=programme_id,
+        search=search,
+        number_status=number_status,
     )
-    stmt = (
+    return (
         select(CertificateIssuance, ExamRegistration, Candidate, Programme)
         .select_from(ExamRegistration)
         .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
@@ -136,11 +154,99 @@ async def load_issue_form_rows(
         .outerjoin(latest, latest.c.exam_registration_id == ExamRegistration.id)
         .outerjoin(CertificateIssuance, CertificateIssuance.id == latest.c.issuance_id)
         .where(*filters)
-        .order_by(
-            Programme.code.asc().nulls_last(),
-            ExamRegistration.index_number,
-            Candidate.name,
+    )
+
+
+async def load_issue_form_rows(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    school_id: int,
+    include_unnumbered: bool = False,
+    programme_id: int | None = None,
+    search: str | None = None,
+    number_status: str | None = None,
+    offset: int | None = None,
+    limit: int | None = None,
+) -> list[tuple[CertificateIssuance | None, ExamRegistration, Candidate, Programme | None]]:
+    """Registered candidates for the school/exam, with their latest non-void issuance.
+
+    Default includes only candidates who already have a certificate number.
+    ``include_unnumbered`` adds the rest of the school's registered candidates.
+    """
+    stmt = _issue_form_base_stmt(
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+    ).order_by(
+        Programme.code.asc().nulls_last(),
+        ExamRegistration.index_number,
+        Candidate.name,
+    )
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list((await session.execute(stmt)).all())
+
+
+async def count_issue_form_rows(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    school_id: int,
+    include_unnumbered: bool = False,
+    programme_id: int | None = None,
+    search: str | None = None,
+    number_status: str | None = None,
+) -> int:
+    base = _issue_form_base_stmt(
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+    ).with_only_columns(ExamRegistration.id).order_by(None)
+    stmt = select(func.count()).select_from(base.subquery())
+    return (await session.execute(stmt)).scalar() or 0
+
+
+async def load_issue_form_programme_groups(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    school_id: int,
+    include_unnumbered: bool = False,
+    search: str | None = None,
+    number_status: str | None = None,
+) -> list[tuple[int | None, str | None, str | None, int]]:
+    latest = _active_issuance_subquery()
+    filters = issue_form_filters(
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        search=search,
+        number_status=number_status,
+    )
+    stmt = (
+        select(
+            Programme.id,
+            Programme.code,
+            Programme.name,
+            func.count(ExamRegistration.id),
         )
+        .select_from(ExamRegistration)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .outerjoin(Programme, Candidate.programme_id == Programme.id)
+        .outerjoin(latest, latest.c.exam_registration_id == ExamRegistration.id)
+        .outerjoin(CertificateIssuance, CertificateIssuance.id == latest.c.issuance_id)
+        .where(*filters)
+        .group_by(Programme.id, Programme.code, Programme.name)
+        .order_by(Programme.code.asc().nulls_last())
     )
     return list((await session.execute(stmt)).all())
 

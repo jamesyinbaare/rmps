@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
+import { IssuanceStatusBadge } from "@/components/certificates/issuance-status";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +14,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useDebounce } from "@/hooks/use-debounce";
+import { examLabel } from "@/components/results/exam-label";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +41,7 @@ import {
 import {
   createCertificateBatch,
   downloadCertificateIssueForm,
-  getAllExams,
+  getExam,
   listExamSchoolProgrammes,
   listSchoolResults,
 } from "@/lib/api";
@@ -38,17 +50,8 @@ import type {
   Exam,
   ExamProgrammeSummary,
 } from "@/types/document";
-import { ArrowLeft, ChevronRight, FileStack, Loader2, Search } from "lucide-react";
+import { FileStack, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-
-function examLabel(exam: Exam): string {
-  const typeLabel =
-    exam.exam_type === "Certificate II Examinations" ||
-    exam.exam_type === "Certificate II Examination"
-      ? "Certificate II"
-      : exam.exam_type;
-  return `${typeLabel} — ${exam.series} ${exam.year}`;
-}
 
 export default function ManageCertificatesSchoolPage() {
   const params = useParams();
@@ -65,8 +68,9 @@ export default function ManageCertificatesSchoolPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
-  const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const search = useDebounce(searchInput.trim(), 300);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +95,11 @@ export default function ManageCertificatesSchoolPage() {
     async function loadMeta() {
       setLoadingFilters(true);
       try {
-        const [exams, progs] = await Promise.all([
-          getAllExams(),
+        const [examData, progs] = await Promise.all([
+          getExam(examId),
           listExamSchoolProgrammes(examId, schoolId),
         ]);
-        setExam(exams.find((e) => e.id === examId) ?? null);
+        setExam(examData);
         setProgrammes(progs);
       } catch {
         /* detail errors handled by results load */
@@ -116,6 +120,7 @@ export default function ManageCertificatesSchoolPage() {
         page_size: pageSize,
         programme_id: programmeId,
         search: search || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
       });
       setCandidates(data.items);
       setTotal(data.total);
@@ -126,7 +131,11 @@ export default function ManageCertificatesSchoolPage() {
     } finally {
       setLoading(false);
     }
-  }, [examId, schoolId, page, pageSize, programmeId, search]);
+  }, [examId, schoolId, page, pageSize, programmeId, search, statusFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
 
   useEffect(() => {
     loadResults();
@@ -189,16 +198,28 @@ export default function ManageCertificatesSchoolPage() {
           }
         />
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href={`/results/certificates/${examId}`}>
-                <ArrowLeft className="mr-1 h-4 w-4" />
-                {exam ? examLabel(exam) : "Schools"}
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              {
+                label: exam ? examLabel(exam) : "Examination",
+                href: `/results/certificates/${examId}`,
+              },
+              {
+                label: schoolCode ? `${schoolCode} — ${schoolName}` : "School",
+              },
+            ]}
+          />
+          <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/results/certificates/issuances?examId=${examId}&schoolId=${schoolId}`}>
+                Issuance ledger
               </Link>
             </Button>
-            <div className="flex-1" />
             <Button variant="outline" size="sm" asChild>
-              <Link href="/results/certificates/issuances">Issuance ledger</Link>
+              <Link href={`/results/batches?examId=${examId}&schoolId=${schoolId}`}>
+                Batches
+              </Link>
             </Button>
             <Button
               variant="outline"
@@ -239,27 +260,38 @@ export default function ManageCertificatesSchoolPage() {
                 placeholder="Filter by programme"
               />
             </div>
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setPage(1);
-                setSearch(searchInput.trim());
-              }}
-            >
-              <div className="relative w-64">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="Name or index number..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                />
-              </div>
-              <Button type="submit" variant="secondary" size="sm">
-                Search
-              </Button>
-            </form>
+            <div className="w-44">
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                Status
+              </label>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  setPage(1);
+                  setStatusFilter(value);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="ready">Ready</SelectItem>
+                  <SelectItem value="pending">Pending grades</SelectItem>
+                  <SelectItem value="issued">Issued</SelectItem>
+                  <SelectItem value="not_issued">Not issued</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Name or index number..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </div>
           </div>
 
           {error && (
@@ -269,9 +301,7 @@ export default function ManageCertificatesSchoolPage() {
           )}
 
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <TableSkeleton rows={8} cols={7} />
           ) : candidates.length === 0 ? (
             <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
               No candidates found for this filter.
@@ -292,71 +322,85 @@ export default function ManageCertificatesSchoolPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Programme</TableHead>
                       <TableHead>Subjects</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-10" />
+                      <TableHead>Grades</TableHead>
+                      <TableHead>Cert #</TableHead>
+                      <TableHead>Issuance</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {candidates.map((c) => (
-                      <TableRow
-                        key={c.exam_registration_id}
-                        className="cursor-pointer"
-                        onClick={() =>
-                          router.push(
-                            `/results/certificates/${examId}/registrations/${c.exam_registration_id}`
-                          )
-                        }
-                      >
-                        <TableCell className="font-mono text-xs">{c.index_number}</TableCell>
-                        <TableCell className="font-medium">{c.candidate_name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {c.programme_code || "—"}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {c.subjects_graded}/{c.subjects_registered}
-                          {c.subjects_pending > 0 && (
-                            <span className="text-muted-foreground">
-                              {" "}
-                              ({c.subjects_pending} pending)
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {c.is_fully_graded ? (
-                            <Badge>Ready</Badge>
-                          ) : (
-                            <Badge variant="outline">Pending</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {candidates.map((c) => {
+                      const href = `/results/certificates/${examId}/registrations/${c.exam_registration_id}`;
+                      return (
+                        <TableRow key={c.exam_registration_id} className="relative">
+                          <TableCell className="font-mono text-xs">
+                            <Link
+                              href={href}
+                              className="hover:underline after:absolute after:inset-0"
+                              aria-label={`${c.index_number} — ${c.candidate_name}`}
+                            >
+                              {c.index_number}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="font-medium">{c.candidate_name}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {c.programme_code || "—"}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {c.subjects_graded}/{c.subjects_registered}
+                            {c.subjects_pending > 0 && (
+                              <span className="text-muted-foreground">
+                                {" "}
+                                ({c.subjects_pending} pending)
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {c.is_fully_graded ? (
+                              <Badge>Ready</Badge>
+                            ) : (
+                              <Badge variant="outline">Pending</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {c.certificate_number || (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <IssuanceStatusBadge
+                              status={c.issuance_status}
+                              certificateNumber={c.certificate_number}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
-              <div className="mt-4 flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
+              {totalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fraunces, Source_Sans_3 } from "next/font/google";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -15,28 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { examLabel } from "@/components/results/exam-label";
 import { useDebounce } from "@/hooks/use-debounce";
 import { getAllExams, listExamResultSchools } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Exam, ExamSchoolSummary } from "@/types/document";
-import { ArrowLeft, Check, ChevronRight, Loader2, Search } from "lucide-react";
+import { Check, ChevronRight, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-
-const display = Fraunces({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--font-issue-display",
-});
-
-const body = Source_Sans_3({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-issue-body",
-});
-
-function examLabel(exam: Exam): string {
-  return `${exam.exam_type} · ${exam.series} · ${exam.year}`;
-}
 
 const PREVIEW_ROWS = [
   { name: "Abena Mensah", index: "24/001/012", cert: "CERT-10482" },
@@ -75,19 +60,13 @@ export default function CertificateIssueFormsPage() {
       setSchoolsLoading(false);
       return;
     }
-    if (!searchTerm) {
-      setSchools([]);
-      setSchoolsError(null);
-      setSchoolsLoading(false);
-      return;
-    }
     let cancelled = false;
     setSchoolsLoading(true);
     setSchoolsError(null);
     listExamResultSchools(examId, {
       page: 1,
       page_size: 50,
-      search: searchTerm,
+      search: searchTerm || undefined,
       include_counts: false,
     })
       .then((data) => {
@@ -128,14 +107,7 @@ export default function CertificateIssueFormsPage() {
 
   return (
     <DashboardLayout title="Certificates">
-      <div
-        className={cn(
-          "flex flex-1 flex-col overflow-hidden",
-          display.variable,
-          body.variable
-        )}
-        style={{ fontFamily: "var(--font-issue-body), system-ui, sans-serif" }}
-      >
+      <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="Certificate issue forms" showSearch={false} />
 
         <div className="relative flex-1 overflow-y-auto">
@@ -158,13 +130,12 @@ export default function CertificateIssueFormsPage() {
 
           <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-8 px-5 py-6 sm:px-8 sm:py-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <Link
-                href="/results/certificates"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-teal-800"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Manage certificates
-              </Link>
+              <CertificateBreadcrumbs
+                items={[
+                  { label: "Certificates", href: "/results/certificates" },
+                  { label: "Issue forms" },
+                ]}
+              />
               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
                 {[
                   { n: 1, label: "Exam" },
@@ -203,7 +174,7 @@ export default function CertificateIssueFormsPage() {
                 </p>
                 <h1
                   className="max-w-lg text-4xl font-semibold leading-[1.1] tracking-tight text-slate-900 sm:text-5xl"
-                  style={{ fontFamily: "var(--font-issue-display), Georgia, serif" }}
+                  style={{ fontFamily: "Georgia, serif" }}
                 >
                   Issue forms
                 </h1>
@@ -224,7 +195,7 @@ export default function CertificateIssueFormsPage() {
                   <div className="border-b border-slate-900/10 px-6 py-5 pl-7">
                     <div
                       className="text-lg font-semibold text-slate-900"
-                      style={{ fontFamily: "var(--font-issue-display), Georgia, serif" }}
+                      style={{ fontFamily: "Georgia, serif" }}
                     >
                       Certificate issue form
                     </div>
@@ -335,10 +306,6 @@ export default function CertificateIssueFormsPage() {
                             ) : schoolsError ? (
                               <div className="px-4 py-10 text-center text-sm text-red-500">
                                 {schoolsError}
-                              </div>
-                            ) : !schoolQuery.trim() ? (
-                              <div className="px-4 py-10 text-center text-sm text-slate-400">
-                                Search by school name or code
                               </div>
                             ) : schools.length === 0 ? (
                               <div className="px-4 py-10 text-center text-sm text-slate-400">

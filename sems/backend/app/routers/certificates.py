@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 
 from app.background_tasks import start_certificate_batch_job
 from app.dependencies.auth import CurrentUserDep, OfficerDep, RegistrarDep
@@ -62,9 +62,11 @@ from app.schemas.certificate_results import (
     CandidateResultSummary,
     ExamProgrammeSummary,
     ExamRegistrationResultDetail,
+    ExamResultsSummary,
     ExamSchoolListResponse,
     ExamSchoolSummary,
     IssueFormCandidate,
+    SchoolResultsSummary,
     IssueFormCandidatesResponse,
     IssueFormProgrammeGroup,
     SchoolResultsListResponse,
@@ -163,6 +165,70 @@ def _school_region_label(region: object) -> str | None:
     return str(region)
 
 
+def _has_subjects_exists():
+    """Registration has at least one subject registration."""
+    return exists(
+        select(SubjectRegistration.id).where(
+            SubjectRegistration.exam_registration_id == ExamRegistration.id
+        )
+    )
+
+
+def _has_incomplete_subject_exists():
+    """Registration has a subject with a missing or Pending grade."""
+    return exists(
+        select(SubjectRegistration.id)
+        .outerjoin(SubjectScore, SubjectRegistration.id == SubjectScore.subject_registration_id)
+        .where(
+            SubjectRegistration.exam_registration_id == ExamRegistration.id,
+            or_(
+                SubjectScore.id.is_(None),
+                SubjectScore.grade.is_(None),
+                SubjectScore.grade == Grade.PENDING,
+            ),
+        )
+    )
+
+
+def _fully_graded_exists():
+    return and_(_has_subjects_exists(), ~_has_incomplete_subject_exists())
+
+
+def _active_issuance_exists():
+    return exists(
+        select(CertificateIssuance.id).where(
+            CertificateIssuance.exam_registration_id == ExamRegistration.id,
+            CertificateIssuance.status != CertificateIssuanceStatus.VOID,
+        )
+    )
+
+
+async def _latest_issuances_for_registrations(
+    session: DBSessionDep,
+    registration_ids: list[int],
+) -> dict[int, CertificateIssuance]:
+    if not registration_ids:
+        return {}
+    stmt = (
+        select(CertificateIssuance)
+        .where(
+            CertificateIssuance.exam_registration_id.in_(registration_ids),
+            CertificateIssuance.status != CertificateIssuanceStatus.VOID,
+        )
+        .order_by(CertificateIssuance.generated_at.desc(), CertificateIssuance.id.desc())
+    )
+    by_reg: dict[int, CertificateIssuance] = {}
+    for issuance in (await session.execute(stmt)).scalars().all():
+        by_reg.setdefault(issuance.exam_registration_id, issuance)
+    return by_reg
+
+
+def _completion_percentage(fully_graded: int, candidate_count: int) -> float:
+    if candidate_count <= 0:
+        return 0.0
+    return round(fully_graded / candidate_count * 100.0, 1)
+
+
 @router.get("/exams/{exam_id}/schools", response_model=ExamSchoolListResponse)
 async def list_exam_schools(
     exam_id: int,
@@ -174,6 +240,10 @@ async def list_exam_schools(
     include_counts: bool = Query(
         True,
         description="When false, skip candidate and fully-graded aggregates for faster search",
+    ),
+    include_fully_graded: bool = Query(
+        True,
+        description="When false, skip fully-graded aggregates and return 0 for that column",
     ),
 ) -> ExamSchoolListResponse:
     """List schools with candidate registrations for an exam."""
@@ -249,30 +319,26 @@ async def list_exam_schools(
     )
     rows = (await session.execute(stmt)).all()
 
-    # Fully graded counts for schools on this page
     school_ids = [r.id for r in rows]
     fully_graded_by_school: dict[int, int] = defaultdict(int)
-    if school_ids:
-        reg_stmt = (
-            select(ExamRegistration.id, Candidate.school_id)
+    if include_fully_graded and school_ids:
+        graded_stmt = (
+            select(
+                Candidate.school_id,
+                func.count(ExamRegistration.id).label("fully_graded_count"),
+            )
+            .select_from(ExamRegistration)
             .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
             .where(
                 ExamRegistration.exam_id == exam_id,
                 Candidate.school_id.in_(school_ids),
+                _fully_graded_exists(),
             )
+            .group_by(Candidate.school_id)
         )
-        reg_rows = (await session.execute(reg_stmt)).all()
-        reg_ids = [r.id for r in reg_rows]
-        school_by_reg = {r.id: r.school_id for r in reg_rows}
-        by_reg = await _load_subject_rows_for_registrations(session, reg_ids)
-        for reg_id, subject_rows in by_reg.items():
-            _reg, _g, _p, is_fully = _summarize_subjects(subject_rows)
-            if is_fully:
-                fully_graded_by_school[school_by_reg[reg_id]] += 1
-        # Registrations with zero subjects are not fully graded
-        for reg_id, school_id in school_by_reg.items():
-            if reg_id not in by_reg:
-                pass  # remains 0 contribution
+        graded_rows = (await session.execute(graded_stmt)).all()
+        for school_id, count in graded_rows:
+            fully_graded_by_school[school_id] = count
 
     items = [
         ExamSchoolSummary(
@@ -287,6 +353,54 @@ async def list_exam_schools(
     ]
 
     return ExamSchoolListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/exams/{exam_id}/summary", response_model=ExamResultsSummary)
+async def get_exam_results_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> ExamResultsSummary:
+    """Exam-level results KPIs: schools, candidates, and grading completion."""
+    _ = current_user
+
+    exam = await session.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    school_count = (
+        await session.execute(
+            select(func.count(func.distinct(Candidate.school_id)))
+            .select_from(ExamRegistration)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(ExamRegistration.exam_id == exam_id)
+        )
+    ).scalar() or 0
+
+    candidate_count = (
+        await session.execute(
+            select(func.count(ExamRegistration.id)).where(ExamRegistration.exam_id == exam_id)
+        )
+    ).scalar() or 0
+
+    fully_graded_count = (
+        await session.execute(
+            select(func.count(ExamRegistration.id)).where(
+                ExamRegistration.exam_id == exam_id,
+                _fully_graded_exists(),
+            )
+        )
+    ).scalar() or 0
+
+    pending_count = max(0, candidate_count - fully_graded_count)
+    return ExamResultsSummary(
+        exam_id=exam_id,
+        school_count=school_count,
+        candidate_count=candidate_count,
+        fully_graded_count=fully_graded_count,
+        pending_count=pending_count,
+        completion_percentage=_completion_percentage(fully_graded_count, candidate_count),
+    )
 
 
 @router.get(
@@ -339,6 +453,73 @@ async def list_exam_school_programmes(
 
 
 @router.get(
+    "/exams/{exam_id}/schools/{school_id}/summary",
+    response_model=SchoolResultsSummary,
+)
+async def get_school_results_summary(
+    exam_id: int,
+    school_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> SchoolResultsSummary:
+    """School-level results KPIs for one examination."""
+    _ = current_user
+
+    exam = await session.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+    school = await session.get(School, school_id)
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    school_filters = [
+        ExamRegistration.exam_id == exam_id,
+        Candidate.school_id == school_id,
+    ]
+
+    candidate_count = (
+        await session.execute(
+            select(func.count(ExamRegistration.id))
+            .select_from(ExamRegistration)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(*school_filters)
+        )
+    ).scalar() or 0
+
+    fully_graded_count = (
+        await session.execute(
+            select(func.count(ExamRegistration.id))
+            .select_from(ExamRegistration)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(*school_filters, _fully_graded_exists())
+        )
+    ).scalar() or 0
+
+    programme_count = (
+        await session.execute(
+            select(func.count(func.distinct(Candidate.programme_id)))
+            .select_from(ExamRegistration)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(*school_filters, Candidate.programme_id.is_not(None))
+        )
+    ).scalar() or 0
+
+    pending_count = max(0, candidate_count - fully_graded_count)
+    return SchoolResultsSummary(
+        exam_id=exam_id,
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        region=_school_region_label(school.region),
+        candidate_count=candidate_count,
+        fully_graded_count=fully_graded_count,
+        pending_count=pending_count,
+        completion_percentage=_completion_percentage(fully_graded_count, candidate_count),
+        programme_count=programme_count,
+    )
+
+
+@router.get(
     "/exams/{exam_id}/schools/{school_id}/results",
     response_model=SchoolResultsListResponse,
 )
@@ -349,6 +530,10 @@ async def list_school_results(
     current_user: CurrentUserDep,
     programme_id: int | None = Query(None),
     search: str | None = Query(None, description="Filter by candidate name or index number"),
+    status: str | None = Query(
+        None,
+        description="ready | pending | issued | not_issued",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> SchoolResultsListResponse:
@@ -375,6 +560,15 @@ async def list_school_results(
             | (Candidate.index_number.ilike(term))
             | (ExamRegistration.index_number.ilike(term))
         )
+    status_key = (status or "").strip().lower()
+    if status_key == "ready":
+        filters.append(_fully_graded_exists())
+    elif status_key == "pending":
+        filters.append(~_fully_graded_exists())
+    elif status_key == "issued":
+        filters.append(_active_issuance_exists())
+    elif status_key == "not_issued":
+        filters.append(~_active_issuance_exists())
 
     count_stmt = (
         select(func.count(ExamRegistration.id))
@@ -396,10 +590,12 @@ async def list_school_results(
     rows = (await session.execute(stmt)).all()
     reg_ids = [exam_reg.id for exam_reg, _c, _p in rows]
     by_reg = await _load_subject_rows_for_registrations(session, reg_ids)
+    issuances = await _latest_issuances_for_registrations(session, reg_ids)
 
     items: list[CandidateResultSummary] = []
     for exam_reg, candidate, programme in rows:
         registered, graded, pending, is_fully = _summarize_subjects(by_reg.get(exam_reg.id, []))
+        issuance = issuances.get(exam_reg.id)
         items.append(
             CandidateResultSummary(
                 exam_registration_id=exam_reg.id,
@@ -413,6 +609,9 @@ async def list_school_results(
                 subjects_graded=graded,
                 subjects_pending=pending,
                 is_fully_graded=is_fully,
+                issuance_id=issuance.id if issuance else None,
+                certificate_number=issuance.certificate_number if issuance else None,
+                issuance_status=issuance.status if issuance else None,
             )
         )
 
@@ -435,6 +634,10 @@ async def _issue_form_candidates_response(
     school_id: int,
     include_unnumbered: bool,
     programme_id: int | None,
+    search: str | None = None,
+    number_status: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
 ) -> IssueFormCandidatesResponse:
     exam = await session.get(Exam, exam_id)
     school = await session.get(School, school_id)
@@ -443,21 +646,28 @@ async def _issue_form_candidates_response(
     if not school:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
+    total = await issue_form_service.count_issue_form_rows(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+    )
     rows = await issue_form_service.load_issue_form_rows(
         session,
         exam_id=exam_id,
         school_id=school_id,
         include_unnumbered=include_unnumbered,
         programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+        offset=(page - 1) * page_size,
+        limit=page_size,
     )
     items: list[IssueFormCandidate] = []
-    programme_counts: dict[tuple[int | None, str | None, str | None], int] = {}
     for issuance, exam_reg, candidate, programme in rows:
-        prog_id = programme.id if programme else None
-        prog_code = programme.code if programme else None
-        prog_name = programme.name if programme else None
-        key = (prog_id, prog_code, prog_name)
-        programme_counts[key] = programme_counts.get(key, 0) + 1
         items.append(
             IssueFormCandidate(
                 issuance_id=issuance.id if issuance else None,
@@ -467,11 +677,19 @@ async def _issue_form_candidates_response(
                 index_number=exam_reg.index_number or candidate.index_number or "",
                 certificate_number=issuance.certificate_number if issuance else None,
                 status=issuance.status if issuance else None,
-                programme_id=prog_id,
-                programme_code=prog_code,
-                programme_name=prog_name,
+                programme_id=programme.id if programme else None,
+                programme_code=programme.code if programme else None,
+                programme_name=programme.name if programme else None,
             )
         )
+    programme_rows = await issue_form_service.load_issue_form_programme_groups(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        search=search,
+        number_status=number_status,
+    )
     programmes = [
         IssueFormProgrammeGroup(
             programme_id=prog_id,
@@ -479,11 +697,13 @@ async def _issue_form_candidates_response(
             programme_name=prog_name,
             candidate_count=count,
         )
-        for (prog_id, prog_code, prog_name), count in programme_counts.items()
+        for prog_id, prog_code, prog_name, count in programme_rows
     ]
     return IssueFormCandidatesResponse(
         items=items,
-        total=len(items),
+        total=total,
+        page=page,
+        page_size=page_size,
         school_id=school.id,
         school_code=school.code,
         school_name=school.name,
@@ -507,6 +727,10 @@ async def list_exam_school_issue_form_candidates(
         description="Include registered candidates that do not yet have a certificate number",
     ),
     programme_id: int | None = Query(None),
+    search: str | None = Query(None),
+    number_status: str | None = Query(None, description="all | numbered | missing"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
 ) -> IssueFormCandidatesResponse:
     _ = current_user
     return await _issue_form_candidates_response(
@@ -515,6 +739,10 @@ async def list_exam_school_issue_form_candidates(
         school_id=school_id,
         include_unnumbered=include_unnumbered,
         programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -842,16 +1070,15 @@ async def download_issuance_pdf(
     issuance = await session.get(CertificateIssuance, issuance_id)
     if not issuance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issuance not found")
-    if not issuance.pdf_storage_path:
-        # Regenerate from snapshot
-        pdf_bytes = await issuance_service.preview_certificate_pdf(
-            session,
-            issuance.exam_registration_id,
-            certificate_number=issuance.certificate_number,
-            issuance_date=issuance.issuance_date,
-        )
-    else:
-        pdf_bytes = await issuance_service.certificate_storage_service.retrieve(issuance.pdf_storage_path)
+    try:
+        pdf_bytes = await issuance_service.get_issuance_pdf_bytes(session, issuance)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate PDF is missing and could not be regenerated",
+        ) from exc
     filename = (
         f"{issuance.certificate_number}.pdf"
         if issuance.certificate_number
@@ -873,11 +1100,11 @@ async def set_issuance_certificate_number(
     session: DBSessionDep,
     current_user: OfficerDep,
 ) -> CertificateIssuanceResponse:
-    _ = current_user
     issuance = await issuance_service.set_certificate_number(
         session,
         issuance_id,
         certificate_number=body.certificate_number,
+        user_id=current_user.id,
     )
     return CertificateIssuanceResponse.model_validate(issuance)
 
@@ -1408,6 +1635,10 @@ async def list_issue_form_candidates(
         description="Include registered candidates that do not yet have a certificate number",
     ),
     programme_id: int | None = Query(None),
+    search: str | None = Query(None),
+    number_status: str | None = Query(None, description="all | numbered | missing"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
 ) -> IssueFormCandidatesResponse:
     _ = current_user
     return await _issue_form_candidates_response(
@@ -1416,6 +1647,10 @@ async def list_issue_form_candidates(
         school_id=school_id,
         include_unnumbered=include_unnumbered,
         programme_id=programme_id,
+        search=search,
+        number_status=number_status,
+        page=page,
+        page_size=page_size,
     )
 
 

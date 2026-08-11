@@ -1143,6 +1143,28 @@ export interface ExamSchoolListResponse {
   page_size: number;
 }
 
+export interface ExamResultsSummary {
+  exam_id: number;
+  school_count: number;
+  candidate_count: number;
+  fully_graded_count: number;
+  pending_count: number;
+  completion_percentage: number;
+}
+
+export interface SchoolResultsSummary {
+  exam_id: number;
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  region: string | null;
+  candidate_count: number;
+  fully_graded_count: number;
+  pending_count: number;
+  completion_percentage: number;
+  programme_count: number;
+}
+
 export interface ExamProgrammeSummary {
   programme_id: number;
   programme_code: string;
@@ -1162,6 +1184,9 @@ export interface CandidateResultSummary {
   subjects_graded: number;
   subjects_pending: number;
   is_fully_graded: boolean;
+  issuance_id: number | null;
+  certificate_number: string | null;
+  issuance_status: CertificateIssuance["status"] | null;
 }
 
 export interface SchoolResultsListResponse {
@@ -1198,6 +1223,8 @@ export interface IssueFormProgrammeGroup {
 export interface IssueFormCandidatesResponse {
   items: IssueFormCandidate[];
   total: number;
+  page?: number;
+  page_size?: number;
   school_id: number;
   school_code: string;
   school_name: string;

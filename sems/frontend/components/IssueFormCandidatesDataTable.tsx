@@ -1,17 +1,17 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import Link from "next/link";
 import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { Badge } from "@/components/ui/badge";
+import { IssuanceStatusBadge } from "@/components/certificates/issuance-status";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,14 +29,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { IssueFormCandidate } from "@/types/document";
+import type { IssueFormCandidate, IssueFormProgrammeGroup } from "@/types/document";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { useState } from "react";
 
 type NumberFilter = "all" | "numbered" | "missing";
 
 interface IssueFormCandidatesDataTableProps {
   candidates: IssueFormCandidate[];
   loading?: boolean;
+  examId: number;
+  programmes?: IssueFormProgrammeGroup[];
+  total: number;
+  page: number;
+  pageSize: number;
+  search: string;
+  programmeFilter: string;
+  numberFilter: NumberFilter;
+  onSearchChange: (value: string) => void;
+  onProgrammeChange: (value: string) => void;
+  onNumberFilterChange: (value: NumberFilter) => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
 }
 
 function programmeLabel(row: IssueFormCandidate): string {
@@ -50,56 +64,26 @@ function programmeKey(row: IssueFormCandidate): string {
   return row.programme_id != null ? String(row.programme_id) : "none";
 }
 
-function statusLabel(status: IssueFormCandidate["status"]): string {
-  if (!status) return "—";
-  if (status === "matched_scan") return "Matched";
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
 export function IssueFormCandidatesDataTable({
   candidates,
   loading,
+  examId,
+  programmes = [],
+  total,
+  page,
+  pageSize,
+  search,
+  programmeFilter,
+  numberFilter,
+  onSearchChange,
+  onProgrammeChange,
+  onNumberFilterChange,
+  onPageChange,
+  onPageSizeChange,
 }: IssueFormCandidatesDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "index_number", desc: false },
   ]);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const [programmeFilter, setProgrammeFilter] = useState<string>("all");
-  const [numberFilter, setNumberFilter] = useState<NumberFilter>("all");
-  const [pagination, setPagination] = useState({
-    pageIndex: 0,
-    pageSize: 50,
-  });
-
-  const programmeOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of candidates) {
-      map.set(programmeKey(row), programmeLabel(row));
-    }
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [candidates]);
-
-  const filteredCandidates = useMemo(() => {
-    const q = globalFilter.trim().toLowerCase();
-    return candidates.filter((row) => {
-      if (programmeFilter !== "all" && programmeKey(row) !== programmeFilter) {
-        return false;
-      }
-      if (numberFilter === "numbered" && !row.certificate_number) {
-        return false;
-      }
-      if (numberFilter === "missing" && row.certificate_number) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        row.candidate_name.toLowerCase().includes(q) ||
-        row.index_number.toLowerCase().includes(q) ||
-        (row.certificate_number || "").toLowerCase().includes(q) ||
-        programmeLabel(row).toLowerCase().includes(q)
-      );
-    });
-  }, [candidates, globalFilter, programmeFilter, numberFilter]);
 
   const columns = useMemo<ColumnDef<IssueFormCandidate>[]>(
     () => [
@@ -107,7 +91,13 @@ export function IssueFormCandidatesDataTable({
         accessorKey: "candidate_name",
         header: "Name",
         cell: ({ row }) => (
-          <div className="font-medium">{row.original.candidate_name}</div>
+          <Link
+            href={`/results/certificates/${examId}/registrations/${row.original.exam_registration_id}`}
+            className="font-medium hover:underline after:absolute after:inset-0"
+            aria-label={`${row.original.index_number} — ${row.original.candidate_name}`}
+          >
+            {row.original.candidate_name}
+          </Link>
         ),
       },
       {
@@ -138,34 +128,25 @@ export function IssueFormCandidatesDataTable({
         accessorKey: "status",
         header: "Status",
         cell: ({ row }) => (
-          <Badge variant="secondary">{statusLabel(row.original.status)}</Badge>
+          <IssuanceStatusBadge
+            status={row.original.status}
+            certificateNumber={row.original.certificate_number}
+          />
         ),
       },
     ],
-    []
+    [examId]
   );
 
-  const tableData = useMemo(() => {
-    return [...filteredCandidates].sort((a, b) => {
-      const byProgramme = programmeLabel(a).localeCompare(programmeLabel(b));
-      if (byProgramme !== 0) return byProgramme;
-      return a.index_number.localeCompare(b.index_number);
-    });
-  }, [filteredCandidates]);
-
   const table = useReactTable({
-    data: tableData,
+    data: candidates,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
-    onPaginationChange: setPagination,
-    state: {
-      sorting,
-      pagination,
-    },
+    manualPagination: true,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    state: { sorting },
   });
 
   const pageRows = table.getRowModel().rows;
@@ -183,36 +164,10 @@ export function IssueFormCandidatesDataTable({
     return groups;
   }, [pageRows]);
 
-  const programmeTotals = useMemo(() => {
-    const map = new Map<string, { label: string; count: number }>();
-    for (const row of filteredCandidates) {
-      const key = programmeKey(row);
-      const current = map.get(key);
-      if (current) {
-        current.count += 1;
-      } else {
-        map.set(key, { label: programmeLabel(row), count: 1 });
-      }
-    }
-    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
-  }, [filteredCandidates]);
-
-  const showGroups = programmeTotals.length > 1;
-  const totalFiltered = filteredCandidates.length;
-  const startIndex =
-    totalFiltered === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
-  const endIndex = Math.min(
-    pagination.pageIndex * pagination.pageSize + pageRows.length,
-    totalFiltered
-  );
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
-        Loading candidates…
-      </div>
-    );
-  }
+  const showGroups = programmes.length > 1;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startIndex = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endIndex = Math.min(page * pageSize, total);
 
   return (
     <div className="space-y-4">
@@ -221,51 +176,45 @@ export function IssueFormCandidatesDataTable({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search name, index, certificate, or programme"
-            value={globalFilter}
-            onChange={(e) => {
-              setGlobalFilter(e.target.value);
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-            }}
+            placeholder="Search name, index, or certificate"
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
             className="pl-9"
           />
-          {globalFilter && (
+          {search && (
             <Button
               variant="ghost"
               size="sm"
               className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
-              onClick={() => setGlobalFilter("")}
+              onClick={() => onSearchChange("")}
             >
               <X className="h-4 w-4" />
             </Button>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={programmeFilter}
-            onValueChange={(value) => {
-              setProgrammeFilter(value);
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-            }}
-          >
+          <Select value={programmeFilter} onValueChange={onProgrammeChange}>
             <SelectTrigger className="h-9 w-[220px]">
               <SelectValue placeholder="Programme" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All programmes</SelectItem>
-              {programmeOptions.map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
+              {programmes.map((item) => (
+                <SelectItem
+                  key={item.programme_id ?? "none"}
+                  value={item.programme_id != null ? String(item.programme_id) : "none"}
+                >
+                  {item.programme_code
+                    ? `${item.programme_code} — ${item.programme_name}`
+                    : item.programme_name || "No programme"}{" "}
+                  ({item.candidate_count})
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Select
             value={numberFilter}
-            onValueChange={(value) => {
-              setNumberFilter(value as NumberFilter);
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-            }}
+            onValueChange={(value) => onNumberFilterChange(value as NumberFilter)}
           >
             <SelectTrigger className="h-9 w-[180px]">
               <SelectValue placeholder="Certificate no." />
@@ -277,8 +226,8 @@ export function IssueFormCandidatesDataTable({
             </SelectContent>
           </Select>
           <Select
-            value={String(pagination.pageSize)}
-            onValueChange={(value) => table.setPageSize(Number(value))}
+            value={String(pageSize)}
+            onValueChange={(value) => onPageSizeChange(Number(value))}
           >
             <SelectTrigger className="h-9 w-[88px]">
               <SelectValue />
@@ -292,116 +241,116 @@ export function IssueFormCandidatesDataTable({
         </div>
       </div>
 
-      {programmeTotals.length > 0 && (
+      {programmes.length > 0 && (
         <p className="text-sm text-muted-foreground">
-          {programmeTotals.length} programme
-          {programmeTotals.length === 1 ? "" : "s"} · {totalFiltered} candidate
-          {totalFiltered === 1 ? "" : "s"}
+          {programmes.length} programme{programmes.length === 1 ? "" : "s"} · {total} candidate
+          {total === 1 ? "" : "s"}
         </p>
       )}
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : (
-                      <div
-                        className={
-                          header.column.getCanSort()
-                            ? "cursor-pointer select-none hover:text-foreground"
-                            : ""
-                        }
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                        {{
-                          asc: " ↑",
-                          desc: " ↓",
-                        }[header.column.getIsSorted() as string] ?? null}
-                      </div>
-                    )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {pageRows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  {candidates.length === 0
-                    ? "No candidates on this issue form."
-                    : "No candidates match the current filters."}
-                </TableCell>
-              </TableRow>
-            ) : showGroups ? (
-              groupedPage.map((group, groupIndex) => (
-                <GroupRows
-                  key={`${group.key}-${groupIndex}`}
-                  label={group.label}
-                  count={
-                    programmeTotals.find((item) => item.label === group.label)
-                      ?.count ?? group.rows.length
-                  }
-                  colSpan={columns.length}
-                >
-                  {group.rows.map((row) => (
-                    <TableRow key={row.id}>
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </GroupRows>
-              ))
-            ) : (
-              pageRows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
+      {loading ? (
+        <TableSkeleton rows={8} cols={5} />
+      ) : (
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id}>
+                      {header.isPlaceholder ? null : (
+                        <div
+                          className={
+                            header.column.getCanSort()
+                              ? "cursor-pointer select-none hover:text-foreground"
+                              : ""
+                          }
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {{
+                            asc: " ↑",
+                            desc: " ↓",
+                          }[header.column.getIsSorted() as string] ?? null}
+                        </div>
+                      )}
+                    </TableHead>
                   ))}
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {pageRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={columns.length} className="h-24 text-center">
+                    No candidates match the current filters.
+                  </TableCell>
+                </TableRow>
+              ) : showGroups ? (
+                groupedPage.map((group, groupIndex) => (
+                  <GroupRows
+                    key={`${group.key}-${groupIndex}`}
+                    label={group.label}
+                    count={
+                      programmes.find((item) => {
+                        const key =
+                          item.programme_id != null ? String(item.programme_id) : "none";
+                        return key === group.key;
+                      })?.candidate_count ?? group.rows.length
+                    }
+                    colSpan={columns.length}
+                  >
+                    {group.rows.map((row) => (
+                      <TableRow key={row.id} className="relative">
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </GroupRows>
+                ))
+              ) : (
+                pageRows.map((row) => (
+                  <TableRow key={row.id} className="relative">
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
-      {totalFiltered > 0 && (
+      {total > 0 && totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            Showing {startIndex} to {endIndex} of {totalFiltered} candidate
-            {totalFiltered === 1 ? "" : "s"}
+            Showing {startIndex} to {endIndex} of {total} candidate
+            {total === 1 ? "" : "s"}
           </p>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
+              onClick={() => onPageChange(page - 1)}
+              disabled={page <= 1}
             >
               <ChevronLeft className="mr-1 h-4 w-4" />
               Previous
             </Button>
             <span className="text-sm text-muted-foreground">
-              Page {table.getState().pagination.pageIndex + 1} of{" "}
-              {table.getPageCount() || 1}
+              Page {page} of {totalPages}
             </span>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
+              onClick={() => onPageChange(page + 1)}
+              disabled={page >= totalPages}
             >
               Next
               <ChevronRight className="ml-1 h-4 w-4" />

@@ -1,14 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
+import { IssuanceStatusBadge } from "@/components/certificates/issuance-status";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { examLabel } from "@/components/results/exam-label";
 import { TopBar } from "@/components/TopBar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useDebounce } from "@/hooks/use-debounce";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Dialog,
   DialogContent,
@@ -32,23 +37,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  bulkMarkCertificatesPrinted,
   downloadIssuancePdf,
   getAllExams,
   listCertificateIssuances,
+  listExamResultSchools,
+  listExamSchoolProgrammes,
   setIssuanceCertificateNumber,
   voidCertificateIssuance,
 } from "@/lib/api";
 import type {
   CertificateIssuanceLedgerItem,
   Exam,
+  ExamProgrammeSummary,
+  ExamSchoolSummary,
 } from "@/types/document";
-import { ArrowLeft, Download, Loader2, Pencil, Printer, Search, Ban } from "lucide-react";
+import { Download, Pencil, Search, Ban } from "lucide-react";
 import { toast } from "sonner";
-
-function examLabel(exam: Exam): string {
-  return `${exam.exam_type} · ${exam.series} · ${exam.year}`;
-}
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -59,18 +63,30 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function IssuanceLedgerPage() {
+function IssuanceLedgerInner() {
+  const searchParams = useSearchParams();
   const [exams, setExams] = useState<Exam[]>([]);
-  const [examId, setExamId] = useState<number | "all">("all");
+  const [examId, setExamId] = useState<number | "all">(() => {
+    const raw = searchParams.get("examId");
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : "all";
+  });
+  const [schoolId, setSchoolId] = useState<number | "all">(() => {
+    const raw = searchParams.get("schoolId");
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : "all";
+  });
+  const [programmeId, setProgrammeId] = useState<number | "all">("all");
+  const [schools, setSchools] = useState<ExamSchoolSummary[]>([]);
+  const [programmes, setProgrammes] = useState<ExamProgrammeSummary[]>([]);
   const [status, setStatus] = useState<string>("all");
   const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  const search = useDebounce(searchInput.trim(), 300);
   const [items, setItems] = useState<CertificateIssuanceLedgerItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
   const [voidTarget, setVoidTarget] = useState<CertificateIssuanceLedgerItem | null>(null);
   const [voidReason, setVoidReason] = useState("");
@@ -83,11 +99,52 @@ export default function IssuanceLedgerPage() {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    if (examId === "all") {
+      setSchools([]);
+      setSchoolId("all");
+      setProgrammes([]);
+      setProgrammeId("all");
+      return;
+    }
+    listExamResultSchools(examId, {
+      page: 1,
+      page_size: 200,
+      include_counts: false,
+    })
+      .then(async (data) => {
+        let items = data.items;
+        if (data.total > items.length) {
+          const more = await listExamResultSchools(examId, {
+            page: 2,
+            page_size: 200,
+            include_counts: false,
+          });
+          items = [...items, ...more.items];
+        }
+        setSchools(items);
+      })
+      .catch(() => setSchools([]));
+  }, [examId]);
+
+  useEffect(() => {
+    if (examId === "all" || schoolId === "all") {
+      setProgrammes([]);
+      setProgrammeId("all");
+      return;
+    }
+    listExamSchoolProgrammes(examId, schoolId)
+      .then(setProgrammes)
+      .catch(() => setProgrammes([]));
+  }, [examId, schoolId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await listCertificateIssuances({
         examId: examId === "all" ? undefined : examId,
+        schoolId: schoolId === "all" ? undefined : schoolId,
+        programmeId: programmeId === "all" ? undefined : programmeId,
         status: status === "all" ? undefined : status,
         search: search || undefined,
         page,
@@ -95,48 +152,20 @@ export default function IssuanceLedgerPage() {
       });
       setItems(data.items);
       setTotal(data.total);
-      setSelected(new Set());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load ledger");
     } finally {
       setLoading(false);
     }
-  }, [examId, status, search, page, pageSize]);
+  }, [examId, schoolId, programmeId, status, search, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, examId, schoolId, programmeId, status]);
 
   useEffect(() => {
     load();
   }, [load]);
-
-  const toggleAll = (checked: boolean) => {
-    if (!checked) {
-      setSelected(new Set());
-      return;
-    }
-    setSelected(new Set(items.filter((i) => i.status !== "void").map((i) => i.id)));
-  };
-
-  const toggleOne = (id: number, checked: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
-  const handleBulkPrint = async () => {
-    if (selected.size === 0) return;
-    setActionLoading(true);
-    try {
-      await bulkMarkCertificatesPrinted([...selected], true);
-      toast.success(`Marked ${selected.size} as printed`);
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Bulk print failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   const handleVoid = async () => {
     if (!voidTarget || !voidReason.trim()) return;
@@ -186,28 +215,12 @@ export default function IssuanceLedgerPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="Manage certificates · Ledger" showSearch={false} />
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/results/certificates">
-                <ArrowLeft className="mr-1 h-4 w-4" />
-                Manage certificates
-              </Link>
-            </Button>
-            <div className="flex-1" />
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={selected.size === 0 || actionLoading}
-              onClick={handleBulkPrint}
-            >
-              {actionLoading ? (
-                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-              ) : (
-                <Printer className="mr-1 h-4 w-4" />
-              )}
-              Mark printed ({selected.size})
-            </Button>
-          </div>
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              { label: "Ledger" },
+            ]}
+          />
 
           <div className="mb-4 flex flex-wrap items-end gap-3">
             <div className="w-72">
@@ -217,6 +230,8 @@ export default function IssuanceLedgerPage() {
                 onValueChange={(v) => {
                   setPage(1);
                   setExamId(v === "all" ? "all" : Number(v));
+                  setSchoolId("all");
+                  setProgrammeId("all");
                 }}
               >
                 <SelectTrigger>
@@ -231,6 +246,45 @@ export default function IssuanceLedgerPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="w-64">
+              <Label className="mb-1 text-xs text-muted-foreground">School</Label>
+              <SearchableSelect
+                options={schools.map((s) => ({
+                  value: s.school_id,
+                  label: `${s.school_code} — ${s.school_name}`,
+                }))}
+                value={schoolId === "all" ? "all" : schoolId}
+                onValueChange={(value) => {
+                  setPage(1);
+                  if (value === "all" || value === "") setSchoolId("all");
+                  else setSchoolId(Number(value));
+                  setProgrammeId("all");
+                }}
+                allowAll
+                allLabel="All schools"
+                disabled={examId === "all"}
+                placeholder="All schools"
+              />
+            </div>
+            <div className="w-56">
+              <Label className="mb-1 text-xs text-muted-foreground">Programme</Label>
+              <SearchableSelect
+                options={programmes.map((p) => ({
+                  value: p.programme_id,
+                  label: `${p.programme_code} — ${p.programme_name}`,
+                }))}
+                value={programmeId === "all" ? "all" : programmeId}
+                onValueChange={(value) => {
+                  setPage(1);
+                  if (value === "all" || value === "") setProgrammeId("all");
+                  else setProgrammeId(Number(value));
+                }}
+                allowAll
+                allLabel="All programmes"
+                disabled={schoolId === "all"}
+                placeholder="All programmes"
+              />
             </div>
             <div className="w-40">
               <Label className="mb-1 text-xs text-muted-foreground">Status</Label>
@@ -253,36 +307,22 @@ export default function IssuanceLedgerPage() {
                 </SelectContent>
               </Select>
             </div>
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setPage(1);
-                setSearch(searchInput.trim());
-              }}
-            >
-              <div>
-                <Label className="mb-1 text-xs text-muted-foreground">Search</Label>
-                <div className="relative w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    className="pl-9"
-                    placeholder="Name, index, or cert #"
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                  />
-                </div>
+            <div>
+              <Label className="mb-1 text-xs text-muted-foreground">Search</Label>
+              <div className="relative w-64">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="Name, index, or cert #"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                />
               </div>
-              <Button type="submit" variant="secondary" size="sm">
-                Search
-              </Button>
-            </form>
+            </div>
           </div>
 
           {loading ? (
-            <div className="flex justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <TableSkeleton rows={8} cols={6} />
           ) : items.length === 0 ? (
             <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
               No issuances found.
@@ -296,18 +336,6 @@ export default function IssuanceLedgerPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-10">
-                        <Checkbox
-                          checked={
-                            items.filter((i) => i.status !== "void").length > 0 &&
-                            items
-                              .filter((i) => i.status !== "void")
-                              .every((i) => selected.has(i.id))
-                          }
-                          onCheckedChange={(v) => toggleAll(Boolean(v))}
-                          aria-label="Select all"
-                        />
-                      </TableHead>
                       <TableHead>Certificate #</TableHead>
                       <TableHead>Candidate</TableHead>
                       <TableHead>School</TableHead>
@@ -319,21 +347,18 @@ export default function IssuanceLedgerPage() {
                   <TableBody>
                     {items.map((item) => (
                       <TableRow key={item.id}>
-                        <TableCell>
-                          <Checkbox
-                            checked={selected.has(item.id)}
-                            disabled={item.status === "void"}
-                            onCheckedChange={(v) => toggleOne(item.id, Boolean(v))}
-                            aria-label={`Select ${item.certificate_number || item.index_number}`}
-                          />
-                        </TableCell>
                         <TableCell className="font-mono text-xs">
                           {item.certificate_number || (
                             <span className="text-muted-foreground">Not assigned</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <div className="font-medium">{item.candidate_name}</div>
+                          <Link
+                            href={`/results/certificates/${item.exam_id}/registrations/${item.exam_registration_id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {item.candidate_name}
+                          </Link>
                           <div className="font-mono text-xs text-muted-foreground">
                             {item.index_number}
                           </div>
@@ -345,7 +370,10 @@ export default function IssuanceLedgerPage() {
                           <div className="text-xs text-muted-foreground">{item.exam_label}</div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{item.status}</Badge>
+                          <IssuanceStatusBadge
+                            status={item.status}
+                            certificateNumber={item.certificate_number}
+                          />
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {item.issuance_date || "—"}
@@ -399,27 +427,29 @@ export default function IssuanceLedgerPage() {
                   </TableBody>
                 </Table>
               </div>
-              <div className="mt-4 flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
+              {totalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -490,5 +520,22 @@ export default function IssuanceLedgerPage() {
         </DialogContent>
       </Dialog>
     </DashboardLayout>
+  );
+}
+
+export default function IssuanceLedgerPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout title="Certificates">
+          <TopBar title="Manage certificates · Ledger" showSearch={false} />
+          <div className="p-6">
+            <TableSkeleton rows={8} cols={6} />
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <IssuanceLedgerInner />
+    </Suspense>
   );
 }
