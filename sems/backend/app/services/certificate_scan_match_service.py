@@ -171,6 +171,9 @@ async def apply_match_to_issuance(
     issuance.status = CertificateIssuanceStatus.MATCHED_SCAN
     issuance.matched_by_user_id = user_id
     issuance.matched_at = datetime.utcnow()
+    if issuance.printed_at is None:
+        issuance.printed_at = datetime.utcnow()
+        issuance.printed_by_user_id = user_id
     issuance.updated_at = datetime.utcnow()
 
     scan.ocr_certificate_number = number
@@ -277,7 +280,7 @@ async def process_scan_batch(
 
     for scan in scans:
         await _auto_match_scan(session, scan, batch, user_id=user_id)
-        await session.flush()
+        await session.commit()
 
     batch.status = CertificateScanBatchStatus.COMPLETED
     batch.completed_at = datetime.utcnow()

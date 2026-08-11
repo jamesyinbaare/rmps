@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +37,6 @@ function statusVariant(
 
 export default function CertificateBatchJobPage() {
   const params = useParams();
-  const router = useRouter();
   const jobId = Number(params.jobId);
   const [job, setJob] = useState<CertificateBatchJob | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,17 +108,24 @@ export default function CertificateBatchJobPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="Certificate batch" showSearch={false} />
         <div className="flex-1 overflow-y-auto p-6">
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              { label: "Batches", href: "/results/batches" },
+              { label: job ? `Batch #${job.id}` : "Batch" },
+            ]}
+          />
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
               <Link
                 href={
                   job
                     ? `/results/certificates/${job.exam_id}/schools/${job.school_id}`
-                    : "/results/certificates"
+                    : "/results/batches"
                 }
               >
                 <ArrowLeft className="mr-1 h-4 w-4" />
-                Back
+                Back to school
               </Link>
             </Button>
             <Button variant="outline" size="sm" asChild>

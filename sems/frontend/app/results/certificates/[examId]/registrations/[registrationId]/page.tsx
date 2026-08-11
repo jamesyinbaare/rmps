@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
+import { IssuanceStatusBadge } from "@/components/certificates/issuance-status";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
@@ -24,20 +25,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { examLabel } from "@/components/results/exam-label";
 import {
   downloadIssuancePdf,
   generateCertificatePdf,
+  getExam,
   getExamRegistrationResultDetail,
   getRegistrationCertificateIssuance,
-  markCertificatePrinted,
   previewCertificatePdf,
   setIssuanceCertificateNumber,
 } from "@/lib/api";
 import type {
   CertificateIssuance,
+  Exam,
   ExamRegistrationResultDetail,
 } from "@/types/document";
-import { ArrowLeft, Download, Eye, Loader2, Printer } from "lucide-react";
+import { Download, Eye, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 function formatNum(value: number | null | undefined): string {
@@ -71,13 +74,16 @@ export default function ManageCertificateCandidatePage() {
   const registrationId = Number(params.registrationId);
 
   const [detail, setDetail] = useState<ExamRegistrationResultDetail | null>(null);
+  const [exam, setExam] = useState<Exam | null>(null);
   const [issuance, setIssuance] = useState<CertificateIssuance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [savingNumber, setSavingNumber] = useState(false);
   const [issuanceDate, setIssuanceDate] = useState(
     () => new Date().toISOString().slice(0, 10)
   );
@@ -105,9 +111,13 @@ export default function ManageCertificateCandidatePage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getExamRegistrationResultDetail(registrationId);
+        const [data, examData] = await Promise.all([
+          getExamRegistrationResultDetail(registrationId),
+          examId ? getExam(examId).catch(() => null) : Promise.resolve(null),
+          loadIssuance(),
+        ]);
         setDetail(data);
-        await loadIssuance();
+        setExam(examData);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load candidate");
       } finally {
@@ -115,7 +125,7 @@ export default function ManageCertificateCandidatePage() {
       }
     }
     load();
-  }, [registrationId, loadIssuance]);
+  }, [examId, registrationId, loadIssuance]);
 
   useEffect(() => {
     return () => {
@@ -142,11 +152,12 @@ export default function ManageCertificateCandidatePage() {
   };
 
   const handleGenerate = async () => {
-    setActionLoading(true);
+    setGenerating(true);
     try {
       const result = await generateCertificatePdf(registrationId, {
         issuanceDate,
         certificateNumber: certificateNumber.trim() || undefined,
+        reissue: Boolean(issuance),
       });
       downloadBlob(
         result.blob,
@@ -161,13 +172,13 @@ export default function ManageCertificateCandidatePage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Generate failed");
     } finally {
-      setActionLoading(false);
+      setGenerating(false);
     }
   };
 
   const handleDownloadIssued = async () => {
     if (!issuance) return;
-    setActionLoading(true);
+    setDownloading(true);
     try {
       const blob = await downloadIssuancePdf(issuance.id);
       downloadBlob(
@@ -177,7 +188,7 @@ export default function ManageCertificateCandidatePage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Download failed");
     } finally {
-      setActionLoading(false);
+      setDownloading(false);
     }
   };
 
@@ -188,7 +199,7 @@ export default function ManageCertificateCandidatePage() {
       toast.error("Enter a certificate number");
       return;
     }
-    setActionLoading(true);
+    setSavingNumber(true);
     try {
       const updated = await setIssuanceCertificateNumber(issuance.id, value);
       setIssuance(updated);
@@ -197,21 +208,7 @@ export default function ManageCertificateCandidatePage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save number");
     } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleMarkPrinted = async () => {
-    if (!issuance) return;
-    setActionLoading(true);
-    try {
-      const updated = await markCertificatePrinted(issuance.id, true);
-      setIssuance(updated);
-      toast.success("Marked as printed");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to mark printed");
-    } finally {
-      setActionLoading(false);
+      setSavingNumber(false);
     }
   };
 
@@ -226,47 +223,60 @@ export default function ManageCertificateCandidatePage() {
           }
         />
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                href={
-                  detail
-                    ? `/results/certificates/${examId}/schools/${detail.school_id}`
-                    : `/results/certificates/${examId}`
-                }
-              >
-                <ArrowLeft className="mr-1 h-4 w-4" />
-                Back to school
-              </Link>
-            </Button>
-            <div className="flex-1" />
-            {!loading && detail && (
-              <>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="cert-number" className="whitespace-nowrap text-xs text-muted-foreground">
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              {
+                label: exam ? examLabel(exam) : "Examination",
+                href: `/results/certificates/${examId}`,
+              },
+              {
+                label: detail ? `${detail.school_code} — ${detail.school_name}` : "School",
+                href: detail
+                  ? `/results/certificates/${examId}/schools/${detail.school_id}`
+                  : `/results/certificates/${examId}`,
+              },
+              {
+                label: detail
+                  ? `${detail.index_number} — ${detail.candidate_name}`
+                  : "Candidate",
+              },
+            ]}
+          />
+          {!loading && detail && (
+            <div className="mb-4 flex flex-col gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="cert-number" className="text-xs text-muted-foreground">
                     Certificate #
                   </Label>
-                  <Input
-                    id="cert-number"
-                    className="h-8 w-40 font-mono text-xs"
-                    placeholder="Optional"
-                    value={certificateNumber}
-                    onChange={(e) => setCertificateNumber(e.target.value)}
-                  />
-                  {issuance && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="h-8"
-                      onClick={handleSaveCertificateNumber}
-                      disabled={actionLoading}
-                    >
-                      Save #
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="cert-number"
+                      className="h-8 w-40 font-mono text-xs"
+                      placeholder="Optional"
+                      value={certificateNumber}
+                      onChange={(e) => setCertificateNumber(e.target.value)}
+                    />
+                    {issuance && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="h-8"
+                        onClick={handleSaveCertificateNumber}
+                        disabled={savingNumber}
+                      >
+                        {savingNumber ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Save #"
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="issuance-date" className="whitespace-nowrap text-xs text-muted-foreground">
+                <div className="space-y-1">
+                  <Label htmlFor="issuance-date" className="text-xs text-muted-foreground">
                     Completion / issuance date
                   </Label>
                   <Input
@@ -277,44 +287,53 @@ export default function ManageCertificateCandidatePage() {
                     onChange={(e) => setIssuanceDate(e.target.value)}
                   />
                 </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" onClick={handlePreview}>
                   <Eye className="mr-1 h-4 w-4" />
-                  Preview certificate
+                  Preview
                 </Button>
-                <Button size="sm" onClick={handleGenerate} disabled={actionLoading}>
-                  {actionLoading ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-1 h-4 w-4" />
-                  )}
-                  {issuance ? "Re-download / regenerate" : "Generate & download"}
-                </Button>
-                {issuance && (
+                {issuance ? (
                   <>
                     <Button
-                      variant="secondary"
                       size="sm"
                       onClick={handleDownloadIssued}
-                      disabled={actionLoading}
+                      disabled={downloading}
                     >
-                      Download issued
+                      {downloading ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-1 h-4 w-4" />
+                      )}
+                      Download PDF
                     </Button>
-                    {issuance.status !== "printed" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleMarkPrinted}
-                        disabled={actionLoading}
-                      >
-                        <Printer className="mr-1 h-4 w-4" />
-                        Mark printed
-                      </Button>
-                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleGenerate}
+                      disabled={generating}
+                    >
+                      {generating ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-1 h-4 w-4" />
+                      )}
+                      Regenerate
+                    </Button>
                   </>
+                ) : (
+                  <Button size="sm" onClick={handleGenerate} disabled={generating}>
+                    {generating ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-1 h-4 w-4" />
+                    )}
+                    Generate & download
+                  </Button>
                 )}
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
@@ -371,9 +390,12 @@ export default function ManageCertificateCandidatePage() {
                             <span className="text-muted-foreground">Not assigned</span>
                           )}
                         </div>
-                        <Badge variant="outline" className="mt-1">
-                          {issuance.status}
-                        </Badge>
+                        <div className="mt-1">
+                          <IssuanceStatusBadge
+                            status={issuance.status}
+                            certificateNumber={issuance.certificate_number}
+                          />
+                        </div>
                         {issuance.issuance_date && (
                           <div className="mt-1 text-xs text-muted-foreground">
                             Issued {issuance.issuance_date}

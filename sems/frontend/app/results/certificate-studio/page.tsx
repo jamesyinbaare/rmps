@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Fraunces } from "next/font/google";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { examLabel } from "@/components/results/exam-label";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import {
   createCertificateScanBatch,
   fetchCertificateScanImageBlob,
   getAllExams,
+  getCertificateScanBatch,
   listCertificateScans,
   manualMatchCertificateScan,
   processCertificateScanBatch,
@@ -45,12 +47,6 @@ import type {
 import { Check, ChevronLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-const studioDisplay = Fraunces({
-  subsets: ["latin"],
-  weight: ["600", "700"],
-  variable: "--font-studio-display",
-});
-
 type RoiKey = "certificate" | "index";
 type StudioStep = "setup" | "upload" | "review";
 
@@ -58,8 +54,30 @@ const CERT_COLOR = "#0f766e";
 const INDEX_COLOR = "#1d4ed8";
 const DRAFT_COLOR = "#b45309";
 
-function examLabel(exam: Exam): string {
-  return `${exam.exam_type} · ${exam.series} · ${exam.year}`;
+function ScanThumb({ scanId }: { scanId: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    fetchCertificateScanImageBlob(scanId)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [scanId]);
+  if (!url) {
+    return <div className="h-10 w-10 shrink-0 rounded bg-slate-200" />;
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={url} alt="" className="h-10 w-10 shrink-0 rounded object-cover" />
+  );
 }
 
 function RoiBox({
@@ -94,7 +112,10 @@ function RoiBox({
   );
 }
 
-export default function CertificateStudioPage() {
+function CertificateStudioInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const batchParam = searchParams.get("batch");
   const [step, setStep] = useState<StudioStep>("setup");
   const [exams, setExams] = useState<Exam[]>([]);
   const [examId, setExamId] = useState<number | "">("");
@@ -110,6 +131,7 @@ export default function CertificateStudioPage() {
 
   const [batch, setBatch] = useState<CertificateScanBatch | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("Working…");
   const [unmatched, setUnmatched] = useState<CertificateScan[]>([]);
   const [showMatched, setShowMatched] = useState(false);
   const [reviewScan, setReviewScan] = useState<CertificateScan | null>(null);
@@ -124,6 +146,21 @@ export default function CertificateStudioPage() {
   }, []);
 
   useEffect(() => {
+    if (!batchParam) return;
+    const id = Number(batchParam);
+    if (!Number.isFinite(id) || id <= 0) return;
+    getCertificateScanBatch(id)
+      .then((loaded) => {
+        setBatch(loaded);
+        setExamId(loaded.exam_id);
+        setRoiCert(loaded.roi_certificate_number);
+        setRoiIndex(loaded.roi_index_number);
+        setStep((loaded.scans?.length ?? 0) > 0 ? "review" : "upload");
+      })
+      .catch(() => toast.error("Could not resume that scan batch"));
+  }, [batchParam]);
+
+  useEffect(() => {
     return () => {
       if (sampleUrl) URL.revokeObjectURL(sampleUrl);
       if (reviewImageUrl) URL.revokeObjectURL(reviewImageUrl);
@@ -131,10 +168,14 @@ export default function CertificateStudioPage() {
   }, [sampleUrl, reviewImageUrl]);
 
   const loadUnmatched = useCallback(async () => {
+    if (examId === "") {
+      setUnmatched([]);
+      return;
+    }
     try {
       const data = await listCertificateScans({
         matchStatus: "unmatched",
-        examId: examId === "" ? undefined : examId,
+        examId,
         pageSize: 100,
       });
       setUnmatched(data.items);
@@ -144,18 +185,9 @@ export default function CertificateStudioPage() {
   }, [examId]);
 
   useEffect(() => {
+    if (examId === "") return;
     void loadUnmatched();
-  }, [loadUnmatched]);
-
-  const draftRect = useMemo(() => {
-    if (!dragStart || !dragCurrent) return null;
-    const x = Math.min(dragStart.x, dragCurrent.x);
-    const y = Math.min(dragStart.y, dragCurrent.y);
-    const w = Math.abs(dragCurrent.x - dragStart.x);
-    const h = Math.abs(dragCurrent.y - dragStart.y);
-    if (w < 0.01 || h < 0.01) return null;
-    return { x, y, w, h };
-  }, [dragStart, dragCurrent]);
+  }, [examId, loadUnmatched]);
 
   const toNorm = (clientX: number, clientY: number) => {
     const el = imgRef.current;
@@ -166,6 +198,43 @@ export default function CertificateStudioPage() {
       y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
     };
   };
+
+  useEffect(() => {
+    if (!dragStart) return;
+    const onMove = (e: MouseEvent) => {
+      setDragCurrent(toNorm(e.clientX, e.clientY));
+    };
+    const onUp = (e: MouseEvent) => {
+      const end = toNorm(e.clientX, e.clientY);
+      const x = Math.min(dragStart.x, end.x);
+      const y = Math.min(dragStart.y, end.y);
+      const w = Math.abs(end.x - dragStart.x);
+      const h = Math.abs(end.y - dragStart.y);
+      if (w >= 0.01 && h >= 0.01) {
+        const rect = { x, y, w, h };
+        if (activeRoi === "certificate") setRoiCert(rect);
+        else setRoiIndex(rect);
+      }
+      setDragStart(null);
+      setDragCurrent(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragStart, activeRoi]);
+
+  const draftRect = useMemo(() => {
+    if (!dragStart || !dragCurrent) return null;
+    const x = Math.min(dragStart.x, dragCurrent.x);
+    const y = Math.min(dragStart.y, dragCurrent.y);
+    const w = Math.abs(dragCurrent.x - dragStart.x);
+    const h = Math.abs(dragCurrent.y - dragStart.y);
+    if (w < 0.01 || h < 0.01) return null;
+    return { x, y, w, h };
+  }, [dragStart, dragCurrent]);
 
   const applySampleFile = (file: File | null) => {
     if (sampleUrl) URL.revokeObjectURL(sampleUrl);
@@ -178,11 +247,36 @@ export default function CertificateStudioPage() {
 
   const setupReady = Boolean(examId && sampleUrl && roiCert && roiIndex);
 
+  const persistBatchUrl = (batchId: number) => {
+    router.replace(`/results/certificate-studio?batch=${batchId}`, { scroll: false });
+  };
+
+  const patchScan = (updated: CertificateScan) => {
+    setBatch((prev) =>
+      prev
+        ? {
+            ...prev,
+            scans: prev.scans.some((s) => s.id === updated.id)
+              ? prev.scans.map((s) => (s.id === updated.id ? updated : s))
+              : [...prev.scans, updated],
+          }
+        : prev
+    );
+    setUnmatched((prev) =>
+      updated.match_status === "unmatched"
+        ? prev.some((s) => s.id === updated.id)
+          ? prev.map((s) => (s.id === updated.id ? updated : s))
+          : [updated, ...prev]
+        : prev.filter((s) => s.id !== updated.id)
+    );
+  };
+
   const handleContinueSetup = async () => {
     if (!examId || !roiCert || !roiIndex) {
       toast.error("Select an exam and mark both regions");
       return;
     }
+    setBusyLabel("Saving regions…");
     setBusy(true);
     try {
       const created = await createCertificateScanBatch({
@@ -191,6 +285,7 @@ export default function CertificateStudioPage() {
         roi_index_number: roiIndex,
       });
       setBatch(created);
+      persistBatchUrl(created.id);
       setStep("upload");
       toast.success("Regions saved");
     } catch (err) {
@@ -202,25 +297,37 @@ export default function CertificateStudioPage() {
 
   const handleUpload = async (fileList: FileList | null) => {
     if (!batch || !fileList?.length) return;
+    setBusyLabel("Uploading scans…");
     setBusy(true);
     try {
-      await uploadCertificateScans(batch.id, Array.from(fileList));
-      const refreshed = await processCertificateScanBatch(batch.id);
-      setBatch(refreshed);
-      await loadUnmatched();
+      const uploaded = await uploadCertificateScans(batch.id, Array.from(fileList));
+      setBatch((prev) =>
+        prev ? { ...prev, scans: [...uploaded, ...(prev.scans || [])] } : prev
+      );
       setStep("review");
+      setBusyLabel("Running OCR and matching…");
+      const processPromise = processCertificateScanBatch(batch.id);
+      const poll = window.setInterval(async () => {
+        try {
+          const latest = await getCertificateScanBatch(batch.id);
+          setBatch(latest);
+        } catch {
+          /* ignore transient poll errors */
+        }
+      }, 2000);
+      try {
+        const refreshed = await processPromise;
+        setBatch(refreshed);
+      } finally {
+        window.clearInterval(poll);
+      }
+      await loadUnmatched();
       toast.success("Scans processed");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setBusy(false);
     }
-  };
-
-  const refreshBatchScans = async () => {
-    if (!batch) return;
-    const refreshed = await listCertificateScans({ batchId: batch.id, pageSize: 200 });
-    setBatch({ ...batch, scans: refreshed.items });
   };
 
   const openReview = async (scan: CertificateScan) => {
@@ -238,6 +345,7 @@ export default function CertificateStudioPage() {
 
   const handleConfirm = async () => {
     if (!reviewScan) return;
+    setBusyLabel("Matching scan…");
     setBusy(true);
     try {
       const updated = await confirmCertificateScan(reviewScan.id, {
@@ -246,8 +354,7 @@ export default function CertificateStudioPage() {
       });
       toast.success("Matched");
       setReviewScan(updated);
-      await loadUnmatched();
-      await refreshBatchScans();
+      patchScan(updated);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Confirm failed");
     } finally {
@@ -260,6 +367,7 @@ export default function CertificateStudioPage() {
       toast.error("Enter index number");
       return;
     }
+    setBusyLabel("Matching scan…");
     setBusy(true);
     try {
       const updated = await manualMatchCertificateScan(reviewScan.id, {
@@ -268,8 +376,7 @@ export default function CertificateStudioPage() {
       });
       toast.success("Matched");
       setReviewScan(updated);
-      await loadUnmatched();
-      await refreshBatchScans();
+      patchScan(updated);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Match failed");
     } finally {
@@ -279,13 +386,13 @@ export default function CertificateStudioPage() {
 
   const handleReject = async () => {
     if (!reviewScan) return;
+    setBusyLabel("Rejecting scan…");
     setBusy(true);
     try {
-      await rejectCertificateScan(reviewScan.id);
+      const updated = await rejectCertificateScan(reviewScan.id);
       toast.success("Rejected");
       setReviewScan(null);
-      await loadUnmatched();
-      await refreshBatchScans();
+      patchScan(updated);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Reject failed");
     } finally {
@@ -313,34 +420,37 @@ export default function CertificateStudioPage() {
 
   const stepIndex = progressSteps.findIndex((s) => s.id === step);
 
+  const canVisitStep = (id: StudioStep) => {
+    if (id === "setup") return true;
+    if (id === "upload") return Boolean(batch);
+    return Boolean(batch && (batch.scans?.length ?? 0) > 0);
+  };
+
   return (
     <DashboardLayout title="Certificates">
-      <div className={cn("flex flex-1 flex-col overflow-hidden", studioDisplay.variable)}>
+      <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="Certificate Studio" showSearch={false} />
 
         <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
           <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
             <div className="flex items-center gap-4">
-              <h1
-                className="text-lg font-semibold tracking-tight text-slate-900"
-                style={{ fontFamily: "var(--font-studio-display), Georgia, serif" }}
-              >
-                Certificate Studio
-              </h1>
               <div className="hidden items-center gap-1 sm:flex">
                 {progressSteps.map((s, i) => {
                   const done = stepIndex > i;
                   const active = step === s.id;
+                  const allowed = canVisitStep(s.id);
                   return (
                     <button
                       key={s.id}
                       type="button"
-                      onClick={() => setStep(s.id)}
+                      disabled={!allowed}
+                      onClick={() => allowed && setStep(s.id)}
                       className={cn(
                         "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
                         active && "bg-slate-900 text-white",
                         done && !active && "text-teal-700",
-                        !done && !active && "text-slate-400"
+                        !done && !active && "text-slate-400",
+                        !allowed && "cursor-not-allowed opacity-50"
                       )}
                     >
                       <span
@@ -386,7 +496,7 @@ export default function CertificateStudioPage() {
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/40 backdrop-blur-[1px]">
                 <div className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm shadow-lg">
                   <Loader2 className="h-4 w-4 animate-spin text-teal-700" />
-                  Working…
+                  {busyLabel}
                 </div>
               </div>
             )}
@@ -502,25 +612,10 @@ export default function CertificateStudioPage() {
                           className="max-h-[min(68vh,720px)] max-w-full cursor-crosshair select-none rounded shadow-2xl"
                           draggable={false}
                           onMouseDown={(e) => {
+                            e.preventDefault();
                             const p = toNorm(e.clientX, e.clientY);
                             setDragStart(p);
                             setDragCurrent(p);
-                          }}
-                          onMouseMove={(e) => {
-                            if (!dragStart) return;
-                            setDragCurrent(toNorm(e.clientX, e.clientY));
-                          }}
-                          onMouseUp={() => {
-                            if (draftRect) {
-                              if (activeRoi === "certificate") setRoiCert(draftRect);
-                              else setRoiIndex(draftRect);
-                            }
-                            setDragStart(null);
-                            setDragCurrent(null);
-                          }}
-                          onMouseLeave={() => {
-                            setDragStart(null);
-                            setDragCurrent(null);
                           }}
                         />
                         <RoiBox roi={roiCert} color={CERT_COLOR} label="Certificate #" />
@@ -613,6 +708,7 @@ export default function CertificateStudioPage() {
                             onClick={() => void openReview(scan)}
                             className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50"
                           >
+                            <ScanThumb scanId={scan.id} />
                             <span
                               className={cn(
                                 "h-2 w-2 shrink-0 rounded-full",
@@ -784,5 +880,23 @@ export default function CertificateStudioPage() {
         </DialogContent>
       </Dialog>
     </DashboardLayout>
+  );
+}
+
+export default function CertificateStudioPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout title="Certificates">
+          <TopBar title="Certificate Studio" showSearch={false} />
+          <div className="flex flex-1 items-center justify-center text-sm text-slate-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Loading studio…
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <CertificateStudioInner />
+    </Suspense>
   );
 }

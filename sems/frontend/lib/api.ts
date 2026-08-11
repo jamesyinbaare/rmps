@@ -72,6 +72,8 @@ import type {
   BackfillTestTypeResponse,
   SheetIdComparisonResponse,
   ExamSchoolListResponse,
+  ExamResultsSummary,
+  SchoolResultsSummary,
   ExamProgrammeSummary,
   SchoolResultsListResponse,
   IssueFormCandidatesResponse,
@@ -3039,6 +3041,25 @@ export async function processExamSubjects(
 
 // Certificates / Results browser API
 
+export async function getExamResultsSummary(
+  examId: number
+): Promise<ExamResultsSummary> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/summary`
+  );
+  return handleResponse<ExamResultsSummary>(response);
+}
+
+export async function getSchoolResultsSummary(
+  examId: number,
+  schoolId: number
+): Promise<SchoolResultsSummary> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools/${schoolId}/summary`
+  );
+  return handleResponse<SchoolResultsSummary>(response);
+}
+
 export async function listExamResultSchools(
   examId: number,
   options: {
@@ -3046,6 +3067,7 @@ export async function listExamResultSchools(
     page_size?: number;
     search?: string;
     include_counts?: boolean;
+    include_fully_graded?: boolean;
   } = {}
 ): Promise<ExamSchoolListResponse> {
   const params = new URLSearchParams();
@@ -3053,6 +3075,7 @@ export async function listExamResultSchools(
   if (options.page_size) params.append("page_size", options.page_size.toString());
   if (options.search) params.append("search", options.search);
   if (options.include_counts === false) params.append("include_counts", "false");
+  if (options.include_fully_graded === false) params.append("include_fully_graded", "false");
   const qs = params.toString();
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools${qs ? `?${qs}` : ""}`
@@ -3076,6 +3099,7 @@ export async function listSchoolResults(
   options: {
     programme_id?: number;
     search?: string;
+    status?: string;
     page?: number;
     page_size?: number;
   } = {}
@@ -3083,6 +3107,7 @@ export async function listSchoolResults(
   const params = new URLSearchParams();
   if (options.programme_id) params.append("programme_id", options.programme_id.toString());
   if (options.search) params.append("search", options.search);
+  if (options.status) params.append("status", options.status);
   if (options.page) params.append("page", options.page.toString());
   if (options.page_size) params.append("page_size", options.page_size.toString());
   const qs = params.toString();
@@ -3561,7 +3586,14 @@ export async function rejectCertificateScan(scanId: number): Promise<Certificate
 export async function listIssueFormCandidates(
   examId: number,
   schoolId: number,
-  options: { includeUnnumbered?: boolean; programmeId?: number } = {}
+  options: {
+    includeUnnumbered?: boolean;
+    programmeId?: number;
+    search?: string;
+    numberStatus?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}
 ): Promise<IssueFormCandidatesResponse> {
   const q = new URLSearchParams();
   if (options.includeUnnumbered) {
@@ -3570,6 +3602,10 @@ export async function listIssueFormCandidates(
   if (options.programmeId != null) {
     q.set("programme_id", String(options.programmeId));
   }
+  if (options.search) q.set("search", options.search);
+  if (options.numberStatus) q.set("number_status", options.numberStatus);
+  if (options.page != null) q.set("page", String(options.page));
+  if (options.pageSize != null) q.set("page_size", String(options.pageSize));
   const qs = q.toString();
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools/${schoolId}/issue-form-candidates${
@@ -4035,14 +4071,34 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
   return tokenData;
 }
 
+const CURRENT_USER_CACHE_TTL_MS = 5 * 60 * 1000;
+let currentUserCache: { expiresAt: number; promise: Promise<User> } | null = null;
+
 /**
  * Get current authenticated user information.
  */
 export async function getCurrentUser(): Promise<User> {
-  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/auth/me`, {
+  const now = Date.now();
+  if (currentUserCache && currentUserCache.expiresAt > now) {
+    return currentUserCache.promise;
+  }
+  const promise = fetchWithAuth(`${API_BASE_URL}/api/v1/auth/me`, {
     method: "GET",
-  });
-  return handleResponse<User>(response);
+  }).then((response) => handleResponse<User>(response));
+  currentUserCache = {
+    expiresAt: now + CURRENT_USER_CACHE_TTL_MS,
+    promise,
+  };
+  try {
+    return await promise;
+  } catch (err) {
+    currentUserCache = null;
+    throw err;
+  }
+}
+
+export function clearCurrentUserCache() {
+  currentUserCache = null;
 }
 
 /**
@@ -4143,6 +4199,7 @@ export async function logout(): Promise<void> {
 
   // Clear tokens from localStorage
   clearTokens();
+  clearCurrentUserCache();
 }
 
 /**

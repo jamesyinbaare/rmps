@@ -76,6 +76,8 @@ const getNavMain = (
         icon: FileBadge,
         items: [
           { title: "Manage Certificates", url: "/results/certificates" },
+          { title: "Issuance Ledger", url: "/results/certificates/issuances" },
+          { title: "Batches", url: "/results/batches" },
           { title: "Certificate Studio", url: "/results/certificate-studio" },
           { title: "Issue Forms", url: "/results/certificate-issue-forms" },
         ],
@@ -144,12 +146,14 @@ const getNavMain = (
       title: "Certificates",
       url: "/results/certificates",
       icon: FileBadge,
-      items: [
-        { title: "Manage Certificates", url: "/results/certificates" },
-        { title: "Certificate Studio", url: "/results/certificate-studio" },
-        { title: "Issue Forms", url: "/results/certificate-issue-forms" },
-        { title: "Certificate Settings", url: "/results/certificate-settings" },
-      ],
+        items: [
+          { title: "Manage Certificates", url: "/results/certificates" },
+          { title: "Issuance Ledger", url: "/results/certificates/issuances" },
+          { title: "Batches", url: "/results/batches" },
+          { title: "Certificate Studio", url: "/results/certificate-studio" },
+          { title: "Issue Forms", url: "/results/certificate-issue-forms" },
+          { title: "Certificate Settings", url: "/results/certificate-settings" },
+        ],
     },
   ];
 

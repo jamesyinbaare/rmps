@@ -144,6 +144,8 @@ class LocalStorageBackend(StorageBackend):
     async def retrieve(self, file_path: str) -> bytes:
         """Retrieve file content from local filesystem."""
         full_path = self._resolve_path(file_path)
+        if not full_path.exists():
+            raise FileNotFoundError(f"Storage object not found: {file_path}")
 
         async with aiofiles.open(full_path, "rb") as f:
             return await f.read()

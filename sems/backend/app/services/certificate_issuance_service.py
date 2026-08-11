@@ -270,6 +270,55 @@ async def get_active_issuance(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def get_issuance_pdf_bytes(
+    session: AsyncSession,
+    issuance: CertificateIssuance,
+) -> bytes:
+    """Return stored PDF bytes, regenerating and re-saving if the file is missing."""
+    path = (issuance.pdf_storage_path or "").strip()
+    if path:
+        try:
+            if await certificate_storage_service.exists(path):
+                return await certificate_storage_service.retrieve(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning(
+                "Failed reading issuance %s PDF at %s; regenerating",
+                issuance.id,
+                path,
+                exc_info=True,
+            )
+
+    pdf_bytes = await preview_certificate_pdf(
+        session,
+        issuance.exam_registration_id,
+        certificate_number=issuance.certificate_number,
+        issuance_date=issuance.issuance_date,
+    )
+    try:
+        save_name = (
+            f"{issuance.certificate_number}.pdf"
+            if issuance.certificate_number
+            else f"issuance_{issuance.id}.pdf"
+        )
+        if path:
+            await certificate_storage_service.save_at_path(path, pdf_bytes)
+        else:
+            new_path, _ = await certificate_storage_service.save(pdf_bytes, save_name)
+            issuance.pdf_storage_path = new_path
+            issuance.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(issuance)
+    except Exception:
+        logger.warning(
+            "Regenerated issuance %s PDF but could not re-save to storage",
+            issuance.id,
+            exc_info=True,
+        )
+    return pdf_bytes
+
+
 async def preview_certificate_pdf(
     session: AsyncSession,
     registration_id: int,
@@ -343,6 +392,7 @@ async def generate_certificate(
                 session, provided, exclude_issuance_id=active.id
             )
             active.certificate_number = provided
+        _apply_numbered_as_printed(active, user_id=user_id)
         layout_dict = layout_to_use if isinstance(layout_to_use, dict) else layout
         context = build_context_for_registration(
             candidate=candidate,
@@ -410,7 +460,11 @@ async def generate_certificate(
     issuance = CertificateIssuance(
         exam_registration_id=exam_reg.id,
         certificate_number=provided,
-        status=CertificateIssuanceStatus.GENERATED,
+        status=(
+            CertificateIssuanceStatus.PRINTED
+            if provided
+            else CertificateIssuanceStatus.GENERATED
+        ),
         layout_snapshot_json=layout,
         grades_snapshot_json=subjects,
         pdf_storage_path=path,
@@ -418,6 +472,8 @@ async def generate_certificate(
         issuance_date=resolved_date,
         generated_by_user_id=user_id,
         generated_at=datetime.utcnow(),
+        printed_by_user_id=user_id if provided else None,
+        printed_at=datetime.utcnow() if provided else None,
     )
     session.add(issuance)
     await session.commit()
@@ -430,6 +486,7 @@ async def set_certificate_number(
     issuance_id: int,
     *,
     certificate_number: str,
+    user_id: UUID | None = None,
 ) -> CertificateIssuance:
     issuance = await session.get(CertificateIssuance, issuance_id)
     if not issuance:
@@ -449,10 +506,32 @@ async def set_certificate_number(
         session, number, exclude_issuance_id=issuance.id
     )
     issuance.certificate_number = number
+    _apply_numbered_as_printed(issuance, user_id=user_id)
     issuance.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(issuance)
     return issuance
+
+
+def _apply_numbered_as_printed(
+    issuance: CertificateIssuance,
+    *,
+    user_id: UUID | None = None,
+) -> None:
+    """Having a certificate number means the stock was printed/assigned."""
+    if not issuance.certificate_number:
+        return
+    if issuance.status == CertificateIssuanceStatus.VOID:
+        return
+    if issuance.status not in (
+        CertificateIssuanceStatus.MATCHED_SCAN,
+        CertificateIssuanceStatus.PRINTED,
+    ):
+        issuance.status = CertificateIssuanceStatus.PRINTED
+    if issuance.printed_at is None:
+        issuance.printed_at = datetime.utcnow()
+        if user_id is not None:
+            issuance.printed_by_user_id = user_id
 
 
 async def mark_issuance_printed(

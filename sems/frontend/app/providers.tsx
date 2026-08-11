@@ -7,6 +7,7 @@ import {
   useNextRouterAdapter,
   useTheme,
 } from "@rfdtech/components/next";
+import { CurrentUserProvider } from "@/components/CurrentUserProvider";
 import "../clet.theme";
 
 function DarkClassSync({ children }: { children: ReactNode }) {
@@ -35,7 +36,9 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <RouterProvider>
       <ThemeProvider defaultTheme="light" storageKey="sems-clet-theme">
-        <DarkClassSync>{children}</DarkClassSync>
+        <CurrentUserProvider>
+          <DarkClassSync>{children}</DarkClassSync>
+        </CurrentUserProvider>
       </ThemeProvider>
     </RouterProvider>
   );

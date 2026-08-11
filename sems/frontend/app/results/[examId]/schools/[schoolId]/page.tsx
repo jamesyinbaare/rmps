@@ -1,24 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CandidateResultModal } from "@/components/results/CandidateResultModal";
+import { ResultsCandidatesDataTable } from "@/components/results/ResultsCandidatesDataTable";
+import { ResultsKpiCard } from "@/components/results/ResultsKpiCard";
+import { examLabel } from "@/components/results/exam-label";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  getAllExams,
+  getExam,
+  getSchoolResultsSummary,
   listExamSchoolProgrammes,
   listSchoolResults,
 } from "@/lib/api";
@@ -26,255 +22,228 @@ import type {
   CandidateResultSummary,
   Exam,
   ExamProgrammeSummary,
+  SchoolResultsSummary,
 } from "@/types/document";
-import { ArrowLeft, ChevronRight, Loader2, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  GraduationCap,
+  MapPin,
+  Users,
+} from "lucide-react";
 
-function examLabel(exam: Exam): string {
-  const typeLabel =
-    exam.exam_type === "Certificate II Examinations" ||
-    exam.exam_type === "Certificate II Examination"
-      ? "Certificate II"
-      : exam.exam_type;
-  return `${typeLabel} — ${exam.series} ${exam.year}`;
+const PAGE_SIZE = 200;
+
+type StatusFilter = "all" | "ready" | "pending";
+
+async function loadAllCandidates(
+  examId: number,
+  schoolId: number
+): Promise<CandidateResultSummary[]> {
+  const first = await listSchoolResults(examId, schoolId, {
+    page: 1,
+    page_size: PAGE_SIZE,
+  });
+  const items = [...first.items];
+  const totalPages = Math.max(1, Math.ceil(first.total / PAGE_SIZE));
+  for (let page = 2; page <= totalPages; page++) {
+    const next = await listSchoolResults(examId, schoolId, {
+      page,
+      page_size: PAGE_SIZE,
+    });
+    items.push(...next.items);
+  }
+  return items;
 }
 
 export default function SchoolResultsPage() {
   const params = useParams();
-  const router = useRouter();
   const examId = Number(params.examId);
   const schoolId = Number(params.schoolId);
 
   const [exam, setExam] = useState<Exam | null>(null);
-  const [schoolCode, setSchoolCode] = useState("");
-  const [schoolName, setSchoolName] = useState("");
+  const [summary, setSummary] = useState<SchoolResultsSummary | null>(null);
   const [programmes, setProgrammes] = useState<ExamProgrammeSummary[]>([]);
-  const [programmeId, setProgrammeId] = useState<number | undefined>();
   const [candidates, setCandidates] = useState<CandidateResultSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(50);
-  const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
   const [loading, setLoading] = useState(true);
-  const [loadingFilters, setLoadingFilters] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const fullyGradedCount = useMemo(
-    () => candidates.filter((c) => c.is_fully_graded).length,
-    [candidates]
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [selectedRegistrationId, setSelectedRegistrationId] = useState<number | null>(
+    null
   );
+  const [browseList, setBrowseList] = useState<CandidateResultSummary[]>([]);
 
-  useEffect(() => {
-    async function loadMeta() {
-      setLoadingFilters(true);
-      try {
-        const [exams, progs] = await Promise.all([
-          getAllExams(),
-          listExamSchoolProgrammes(examId, schoolId),
-        ]);
-        setExam(exams.find((e) => e.id === examId) ?? null);
-        setProgrammes(progs);
-      } catch {
-        /* detail errors handled by results load */
-      } finally {
-        setLoadingFilters(false);
-      }
-    }
-    if (examId && schoolId) loadMeta();
-  }, [examId, schoolId]);
-
-  const loadResults = useCallback(async () => {
+  const load = useCallback(async () => {
     if (!examId || !schoolId) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await listSchoolResults(examId, schoolId, {
-        page,
-        page_size: pageSize,
-        programme_id: programmeId,
-        search: search || undefined,
-      });
-      setCandidates(data.items);
-      setTotal(data.total);
-      setSchoolCode(data.school_code);
-      setSchoolName(data.school_name);
+      const [examData, summaryData, progs, rows] = await Promise.all([
+        getExam(examId),
+        getSchoolResultsSummary(examId, schoolId),
+        listExamSchoolProgrammes(examId, schoolId),
+        loadAllCandidates(examId, schoolId),
+      ]);
+      setExam(examData);
+      setSummary(summaryData);
+      setProgrammes(progs);
+      setCandidates(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load results");
     } finally {
       setLoading(false);
     }
-  }, [examId, schoolId, page, pageSize, programmeId, search]);
+  }, [examId, schoolId]);
 
   useEffect(() => {
-    loadResults();
-  }, [loadResults]);
+    load();
+  }, [load]);
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const title = summary
+    ? `${summary.school_code} — ${summary.school_name}`
+    : "School results";
+
+  const toggleStatus = (next: StatusFilter) => {
+    setStatusFilter((current) => (current === next ? "all" : next));
+  };
 
   return (
     <DashboardLayout title="Results">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar
-          title={
-            schoolCode
-              ? `${schoolCode} — ${schoolName}`
-              : "School results"
-          }
-        />
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href={`/results/${examId}`}>
-                <ArrowLeft className="mr-1 h-4 w-4" />
-                {exam ? examLabel(exam) : "Schools"}
-              </Link>
-            </Button>
-          </div>
+        <TopBar title={title} showSearch={false} />
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-7xl space-y-6 px-6 py-6">
+            <div>
+              <Button variant="ghost" size="sm" asChild className="-ml-2 mb-3">
+                <Link href={`/results/${examId}`}>
+                  <ArrowLeft className="mr-1 h-4 w-4" />
+                  {exam ? examLabel(exam) : "Exam dashboard"}
+                </Link>
+              </Button>
 
-          <div className="mb-4 flex flex-wrap items-end gap-3">
-            <div className="w-64">
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                Programme
-              </label>
-              <SearchableSelect
-                options={programmes.map((p) => ({
-                  value: p.programme_id,
-                  label: `${p.programme_code} — ${p.programme_name} (${p.candidate_count})`,
-                }))}
-                value={programmeId ?? ""}
-                onValueChange={(value) => {
-                  setPage(1);
-                  if (value === "all" || value === "") setProgrammeId(undefined);
-                  else setProgrammeId(Number(value));
-                }}
-                allowAll
-                allLabel="All programmes"
-                disabled={loadingFilters}
-                placeholder="Filter by programme"
+              {loading && !summary ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-8 w-80" />
+                  <Skeleton className="h-4 w-56" />
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="font-mono">
+                        {summary?.school_code}
+                      </Badge>
+                      {summary?.region && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="h-3 w-3" />
+                          {summary.region}
+                        </span>
+                      )}
+                    </div>
+                    <h1 className="text-2xl font-semibold tracking-tight">
+                      {summary?.school_name ?? "School results"}
+                    </h1>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {exam ? examLabel(exam) : "Examination results"}
+                      {summary
+                        ? ` · ${summary.candidate_count.toLocaleString()} candidates`
+                        : ""}
+                    </p>
+                  </div>
+                  {summary && (
+                    <div className="rounded-xl border bg-muted/30 px-4 py-3 text-right">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Graded
+                      </p>
+                      <p className="text-2xl font-semibold tabular-nums">
+                        {summary.completion_percentage}%
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
+                {error}
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <ResultsKpiCard
+                title="Candidates"
+                value={(summary?.candidate_count ?? 0).toLocaleString()}
+                caption="Registered at this school"
+                icon={Users}
+                accent="border-l-indigo-500"
+                iconWell="bg-indigo-500/10 text-indigo-700"
+                loading={loading && !summary}
+              />
+              <ResultsKpiCard
+                title="Fully graded"
+                value={(summary?.fully_graded_count ?? 0).toLocaleString()}
+                caption="Click to show ready candidates"
+                icon={CheckCircle2}
+                accent="border-l-emerald-500"
+                iconWell="bg-emerald-500/10 text-emerald-700"
+                valueClass="text-emerald-700"
+                progress={summary?.completion_percentage}
+                showProgress
+                loading={loading && !summary}
+                active={statusFilter === "ready"}
+                onClick={() => toggleStatus("ready")}
+              />
+              <ResultsKpiCard
+                title="Pending"
+                value={(summary?.pending_count ?? 0).toLocaleString()}
+                caption="Click to show incomplete results"
+                icon={Clock}
+                accent="border-l-amber-500"
+                iconWell="bg-amber-500/10 text-amber-700"
+                valueClass="text-amber-700"
+                loading={loading && !summary}
+                active={statusFilter === "pending"}
+                onClick={() => toggleStatus("pending")}
+              />
+              <ResultsKpiCard
+                title="Programmes"
+                value={(summary?.programme_count ?? 0).toLocaleString()}
+                caption="Represented at this school"
+                icon={GraduationCap}
+                accent="border-l-sky-500"
+                iconWell="bg-sky-500/10 text-sky-700"
+                loading={loading && !summary}
               />
             </div>
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setPage(1);
-                setSearch(searchInput.trim());
-              }}
-            >
-              <div className="relative w-64">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="Name or index number..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                />
-              </div>
-              <Button type="submit" variant="secondary" size="sm">
-                Search
-              </Button>
-            </form>
+
+            <ResultsCandidatesDataTable
+              candidates={candidates}
+              programmes={programmes}
+              loading={loading}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              onBrowseListChange={setBrowseList}
+              onSelect={(candidate) =>
+                setSelectedRegistrationId(candidate.exam_registration_id)
+              }
+            />
           </div>
-
-          {error && (
-            <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
-              {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : candidates.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
-              No candidates found for this filter.
-            </div>
-          ) : (
-            <>
-              <div className="mb-2 text-sm text-muted-foreground">
-                {total} candidate{total === 1 ? "" : "s"}
-                {page === 1 && !search
-                  ? ` · ${fullyGradedCount} fully graded on this page`
-                  : ""}
-              </div>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index number</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Programme</TableHead>
-                      <TableHead>Subjects</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {candidates.map((c) => (
-                      <TableRow
-                        key={c.exam_registration_id}
-                        className="cursor-pointer"
-                        onClick={() =>
-                          router.push(
-                            `/results/${examId}/registrations/${c.exam_registration_id}`
-                          )
-                        }
-                      >
-                        <TableCell className="font-mono text-xs">{c.index_number}</TableCell>
-                        <TableCell className="font-medium">{c.candidate_name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {c.programme_code || "—"}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {c.subjects_graded}/{c.subjects_registered}
-                          {c.subjects_pending > 0 && (
-                            <span className="text-muted-foreground">
-                              {" "}
-                              ({c.subjects_pending} pending)
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {c.is_fully_graded ? (
-                            <Badge>Ready</Badge>
-                          ) : (
-                            <Badge variant="outline">Pending</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="mt-4 flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </>
-          )}
         </div>
       </div>
+
+      <CandidateResultModal
+        examId={examId}
+        registrationId={selectedRegistrationId}
+        candidates={browseList.length > 0 ? browseList : candidates}
+        open={selectedRegistrationId != null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRegistrationId(null);
+        }}
+        onRegistrationChange={setSelectedRegistrationId}
+      />
     </DashboardLayout>
   );
 }

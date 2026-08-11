@@ -36,11 +36,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
     }
   }, [pathname]);
 
-  // Show nothing while checking
   if (isChecking) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-muted-foreground">Loading...</div>
+      <div className="flex min-h-screen flex-col bg-background">
+        <div className="h-12 border-b bg-muted/40" />
+        <div className="flex flex-1">
+          <div className="hidden w-56 border-r bg-muted/20 md:block" />
+          <div className="flex flex-1 items-center justify-center">
+            <div className="h-8 w-8 animate-pulse rounded-full bg-muted" aria-label="Loading" />
+          </div>
+        </div>
       </div>
     );
   }

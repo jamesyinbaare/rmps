@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { CertificateBreadcrumbs } from "@/components/certificates/CertificateBreadcrumbs";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +31,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  API_BASE_URL,
   createCertificateTemplate,
   deleteCertificateTemplateAsset,
   getAllExams,
   getCertificateFieldCatalog,
+  getCertificateTemplateAssetUrl,
   getDefaultCertificateLayout,
   listCertificateTemplateAssets,
   listCertificateTemplates,
@@ -74,6 +75,16 @@ import {
   Type,
 } from "lucide-react";
 import { toast } from "sonner";
+
+const assetUrlCache = new Map<string, string>();
+let defaultLayoutCache: CertificateLayoutJson | null = null;
+
+async function cachedDefaultLayout(): Promise<CertificateLayoutJson> {
+  if (!defaultLayoutCache) {
+    defaultLayoutCache = await getDefaultCertificateLayout();
+  }
+  return defaultLayoutCache;
+}
 
 const PX_PER_MM = 3.2;
 const PAGE_MARGIN_MM = 15;
@@ -549,24 +560,27 @@ export default function CertificateSettingsPage() {
     try {
       const data = await listCertificateTemplateAssets(templateId);
       setAssets(data.items);
-      const urls: Record<string, string> = {};
       const token = authToken();
+      const urls: Record<string, string> = {};
       await Promise.all(
         data.items.map(async (asset) => {
-          const res = await fetch(
-            `${API_BASE_URL}/api/v1/certificates/templates/${templateId}/assets/${encodeURIComponent(asset.key)}/file`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} }
-          );
+          const cacheKey = `${templateId}:${asset.key}`;
+          const cached = assetUrlCache.get(cacheKey);
+          if (cached) {
+            urls[asset.key] = cached;
+            return;
+          }
+          const res = await fetch(getCertificateTemplateAssetUrl(templateId, asset.key), {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
           if (res.ok) {
-            const blob = await res.blob();
-            urls[asset.key] = URL.createObjectURL(blob);
+            const blobUrl = URL.createObjectURL(await res.blob());
+            assetUrlCache.set(cacheKey, blobUrl);
+            urls[asset.key] = blobUrl;
           }
         })
       );
-      setAssetUrls((prev) => {
-        Object.values(prev).forEach((u) => URL.revokeObjectURL(u));
-        return urls;
-      });
+      setAssetUrls(urls);
     } catch {
       setAssets([]);
     }
@@ -587,10 +601,7 @@ export default function CertificateSettingsPage() {
         setDateFormat(nextDate);
         setSelectedFieldKey(null);
         setAssets([]);
-        setAssetUrls((prev) => {
-          Object.values(prev).forEach((u) => URL.revokeObjectURL(u));
-          return {};
-        });
+        setAssetUrls({});
         markSaved({
           name: nextName,
           pageWidthMm: nextWidth,
@@ -627,7 +638,7 @@ export default function CertificateSettingsPage() {
       try {
         const [list, defaultLayout] = await Promise.all([
           listCertificateTemplates({ examId: selectedExamId, activeOnly: false }),
-          getDefaultCertificateLayout(),
+          cachedDefaultLayout(),
         ]);
         setTemplates(list.items);
         await applyTemplate(list.items[0] ?? null, defaultLayout);
@@ -667,7 +678,6 @@ export default function CertificateSettingsPage() {
     })();
     return () => {
       cancelled = true;
-      Object.values(assetUrls).forEach((u) => URL.revokeObjectURL(u));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -693,7 +703,7 @@ export default function CertificateSettingsPage() {
   }, []);
 
   const selectTemplate = async (template: CertificateTemplate) => {
-    const defaultLayout = await getDefaultCertificateLayout();
+    const defaultLayout = await cachedDefaultLayout();
     await applyTemplate(template, defaultLayout);
   };
 
@@ -780,25 +790,40 @@ export default function CertificateSettingsPage() {
 
   useEffect(() => {
     if (!dragging) return;
+    let frame = 0;
     const onMove = (e: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const x_mm = Math.max(0, Math.min(pageWidthMm, (e.clientX - rect.left) / pxPerMm));
-      const y_mm = Math.max(0, Math.min(pageHeightMm, (e.clientY - rect.top) / pxPerMm));
-      updateField(dragging, {
-        x_mm: roundMm(x_mm),
-        y_mm: roundMm(y_mm),
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const x_mm = Math.max(0, Math.min(pageWidthMm, (e.clientX - rect.left) / pxPerMm));
+        const y_mm = Math.max(0, Math.min(pageHeightMm, (e.clientY - rect.top) / pxPerMm));
+        updateField(dragging, {
+          x_mm: roundMm(x_mm),
+          y_mm: roundMm(y_mm),
+        });
       });
     };
     const onUp = () => setDragging(null);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
   }, [dragging, pageWidthMm, pageHeightMm, pxPerMm]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const onLeave = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => window.removeEventListener("beforeunload", onLeave);
+  }, [isDirty]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -883,7 +908,7 @@ export default function CertificateSettingsPage() {
       return;
     }
     try {
-      const defaultLayout = await getDefaultCertificateLayout();
+      const defaultLayout = await cachedDefaultLayout();
       const nextName = selectedExam
         ? `${selectedExam.exam_type} ${selectedExam.year} certificate`
         : "Certificate overlay";
@@ -898,10 +923,7 @@ export default function CertificateSettingsPage() {
       setDateFormat(nextDate);
       setSelectedFieldKey(null);
       setAssets([]);
-      setAssetUrls((prev) => {
-        Object.values(prev).forEach((u) => URL.revokeObjectURL(u));
-        return {};
-      });
+      setAssetUrls({});
       setFieldsTab("available");
       markSaved({
         name: nextName,
@@ -965,12 +987,18 @@ export default function CertificateSettingsPage() {
         <TopBar title="Certificate settings" showSearch={false} />
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
+          <CertificateBreadcrumbs
+            items={[
+              { label: "Certificates", href: "/results/certificates" },
+              { label: "Settings" },
+            ]}
+          />
           {/* Toolbar */}
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" className="h-9 gap-1.5 px-2" asChild>
-              <Link href="/results">
+              <Link href="/results/certificates">
                 <ArrowLeft className="h-4 w-4" />
-                Results
+                Certificates
               </Link>
             </Button>
 
