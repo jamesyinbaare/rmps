@@ -1175,6 +1175,37 @@ export interface SchoolResultsListResponse {
   exam_id: number;
 }
 
+export interface IssueFormCandidate {
+  issuance_id: number | null;
+  exam_registration_id: number;
+  candidate_id: number;
+  candidate_name: string;
+  index_number: string;
+  certificate_number: string | null;
+  status: CertificateIssuance["status"] | null;
+  programme_id: number | null;
+  programme_code: string | null;
+  programme_name: string | null;
+}
+
+export interface IssueFormProgrammeGroup {
+  programme_id: number | null;
+  programme_code: string | null;
+  programme_name: string | null;
+  candidate_count: number;
+}
+
+export interface IssueFormCandidatesResponse {
+  items: IssueFormCandidate[];
+  total: number;
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  exam_id: number;
+  exam_label: string;
+  programmes: IssueFormProgrammeGroup[];
+}
+
 export interface SubjectResultDetail {
   subject_registration_id: number;
   exam_subject_id: number;
@@ -1397,4 +1428,58 @@ export interface CertificateBatchJob {
 export interface CertificateBatchJobListResponse {
   items: CertificateBatchJob[];
   total: number;
+}
+
+export interface CertificateRoiRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type CertificateScanMatchStatus =
+  | "pending"
+  | "matched"
+  | "unmatched"
+  | "rejected";
+
+export interface CertificateScan {
+  id: number;
+  batch_id: number;
+  exam_id: number | null;
+  storage_path: string;
+  original_filename: string;
+  ocr_index_number: string | null;
+  ocr_certificate_number: string | null;
+  match_status: CertificateScanMatchStatus;
+  issuance_id: number | null;
+  suggested_exam_registration_id: number | null;
+  suggested_candidate_name: string | null;
+  suggested_index_number: string | null;
+  suggested_school_code: string | null;
+  suggested_school_name: string | null;
+  error_message: string | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CertificateScanBatch {
+  id: number;
+  exam_id: number;
+  roi_certificate_number: CertificateRoiRect;
+  roi_index_number: CertificateRoiRect;
+  status: "open" | "processing" | "completed";
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  scans: CertificateScan[];
+}
+
+export interface CertificateScanListResponse {
+  items: CertificateScan[];
+  total: number;
+  page: number;
+  page_size: number;
 }

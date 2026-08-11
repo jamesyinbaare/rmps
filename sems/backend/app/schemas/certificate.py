@@ -355,3 +355,74 @@ class CertificateTemplateAssetResponse(BaseModel):
 class CertificateTemplateAssetListResponse(BaseModel):
     items: list[CertificateTemplateAssetResponse]
     total: int
+
+
+# --- Phase 4 Certificate Studio ---
+
+
+class RoiRect(BaseModel):
+    x: float = Field(..., ge=0, le=1)
+    y: float = Field(..., ge=0, le=1)
+    w: float = Field(..., gt=0, le=1)
+    h: float = Field(..., gt=0, le=1)
+
+
+class CertificateScanBatchCreate(BaseModel):
+    exam_id: int
+    roi_certificate_number: RoiRect
+    roi_index_number: RoiRect
+
+
+class CertificateScanResponse(BaseModel):
+    id: int
+    batch_id: int
+    exam_id: int | None = None
+    storage_path: str
+    original_filename: str
+    ocr_index_number: str | None = None
+    ocr_certificate_number: str | None = None
+    match_status: str
+    issuance_id: int | None = None
+    suggested_exam_registration_id: int | None = None
+    suggested_candidate_name: str | None = None
+    suggested_index_number: str | None = None
+    suggested_school_code: str | None = None
+    suggested_school_name: str | None = None
+    error_message: str | None = None
+    processed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CertificateScanBatchResponse(BaseModel):
+    id: int
+    exam_id: int
+    roi_certificate_number: dict[str, Any]
+    roi_index_number: dict[str, Any]
+    status: str
+    created_by_user_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    scans: list[CertificateScanResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class CertificateScanListResponse(BaseModel):
+    items: list[CertificateScanResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class ConfirmScanRequest(BaseModel):
+    certificate_number: str | None = None
+    index_number: str | None = None
+
+
+class ManualMatchScanRequest(BaseModel):
+    exam_registration_id: int | None = None
+    index_number: str | None = None
+    certificate_number: str | None = None

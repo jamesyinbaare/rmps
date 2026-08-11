@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import {
   createCertificateBatch,
+  downloadCertificateIssueForm,
   getAllExams,
   listExamSchoolProgrammes,
   listSchoolResults,
@@ -77,6 +78,9 @@ export default function ManageCertificatesSchoolPage() {
   const [onlyFullyGraded, setOnlyFullyGraded] = useState(true);
   const [reissueExisting, setReissueExisting] = useState(false);
   const [batchStarting, setBatchStarting] = useState(false);
+  const [issueFormLoading, setIssueFormLoading] = useState(false);
+  const [issueFormOpen, setIssueFormOpen] = useState(false);
+  const [includeUnnumbered, setIncludeUnnumbered] = useState(false);
 
   const fullyGradedCount = useMemo(
     () => candidates.filter((c) => c.is_fully_graded).length,
@@ -149,6 +153,26 @@ export default function ManageCertificatesSchoolPage() {
     }
   };
 
+  const handleDownloadIssueForm = async () => {
+    setIssueFormLoading(true);
+    try {
+      const blob = await downloadCertificateIssueForm(examId, schoolId, {
+        includeUnnumbered,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `issue-form-${schoolCode || schoolId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setIssueFormOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download issue form");
+    } finally {
+      setIssueFormLoading(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const programmeLabel = programmeId
     ? programmes.find((p) => p.programme_id === programmeId)?.programme_name
@@ -175,6 +199,17 @@ export default function ManageCertificatesSchoolPage() {
             <div className="flex-1" />
             <Button variant="outline" size="sm" asChild>
               <Link href="/results/certificates/issuances">Issuance ledger</Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIncludeUnnumbered(false);
+                setIssueFormOpen(true);
+              }}
+              disabled={loading}
+            >
+              Download issue form
             </Button>
             <Button size="sm" onClick={() => setBatchOpen(true)} disabled={loading}>
               <FileStack className="mr-1 h-4 w-4" />
@@ -377,6 +412,39 @@ export default function ManageCertificatesSchoolPage() {
                 <FileStack className="mr-1 h-4 w-4" />
               )}
               Start batch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={issueFormOpen} onOpenChange={setIssueFormOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Download issue form</DialogTitle>
+          </DialogHeader>
+          <label className="flex items-start gap-2.5 text-sm leading-relaxed">
+            <Checkbox
+              checked={includeUnnumbered}
+              onCheckedChange={(checked) =>
+                setIncludeUnnumbered(Boolean(checked))
+              }
+              className="mt-0.5"
+            />
+            <span>Include candidates without certificate numbers</span>
+          </label>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIssueFormOpen(false)}
+              disabled={issueFormLoading}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleDownloadIssueForm} disabled={issueFormLoading}>
+              {issueFormLoading ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : null}
+              Download
             </Button>
           </DialogFooter>
         </DialogContent>
