@@ -9,6 +9,8 @@ services:
       - .env
     volumes:
       - sems_storage_data:/app/storage/documents
+      - sems_photos_data:/app/storage/photos
+      - sems_certificates_data:/app/storage/certificates
       - sems_score_sheets_data:/app/score_sheets
     develop:
       watch:
@@ -18,6 +20,7 @@ services:
           ignore:
             - ./backend/.venv/
             - .venv
+            - ./backend/storage/
         - action: rebuild
           path: ./backend/pyproject.toml
     restart: always
@@ -86,4 +89,6 @@ services:
 volumes:
   sems_db_data:
   sems_storage_data:
+  sems_photos_data:
+  sems_certificates_data:
   sems_score_sheets_data:
