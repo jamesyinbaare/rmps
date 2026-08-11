@@ -73,6 +73,7 @@ import {
   Settings2,
   Trash2,
   Type,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -161,6 +162,10 @@ function examLabel(exam: Exam): string {
   return `${exam.exam_type} · ${exam.series} · ${exam.year}`;
 }
 
+function isCandidatePhotoField(field: Pick<CertificateLayoutField, "key" | "asset_key">): boolean {
+  return field.key === "candidate_photo" || field.asset_key === "candidate_photo";
+}
+
 function uniqueFieldKey(base: string, existing: Set<string>): string {
   if (!existing.has(base)) return base;
   let i = 2;
@@ -176,6 +181,9 @@ function fieldFromCatalog(
   let key: string;
   if (item.unique) {
     key = item.key;
+    if (item.key === "candidate_photo") {
+      defaults.asset_key = "candidate_photo";
+    }
   } else if (item.type === "image") {
     key = uniqueFieldKey("image", existingKeys);
     defaults.asset_key = key;
@@ -305,6 +313,8 @@ function CatalogRow({
         >
           {item.type === "image" ? (
             <ImageIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : item.key === "subjects" || item.type === "subjects" ? (
+            <Type className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           ) : (
             <Type className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           )}
@@ -1287,9 +1297,10 @@ export default function CertificateSettingsPage() {
                     )}
                     {layout.fields.map((field) => {
                       const isImage = field.type === "image";
+                      const isPassport = isCandidatePhotoField(field);
                       const isSubjects = field.key === "subjects" || field.type === "subjects";
                       const assetKey = field.asset_key || field.key;
-                      const imgUrl = isImage ? assetUrls[assetKey] : undefined;
+                      const imgUrl = isImage && !isPassport ? assetUrls[assetKey] : undefined;
                       const selected = selectedFieldKey === field.key;
                       const fontPx = Math.max(9, (field.font_size || 11) * (pxPerMm / PX_PER_MM));
                       const align = field.align || "left";
@@ -1352,6 +1363,13 @@ export default function CertificateSettingsPage() {
                                 alt={field.label || field.key}
                                 className="h-full w-full object-contain"
                               />
+                            ) : isPassport ? (
+                              <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-muted/60 text-[0.65em] text-muted-foreground">
+                                <User className="h-[40%] w-[40%] max-h-8 max-w-8 opacity-50" />
+                                <span className="px-1 text-center leading-tight">
+                                  {previewMode ? "Passport" : "Passport photo"}
+                                </span>
+                              </div>
                             ) : previewMode ? (
                               <div className="flex h-full w-full items-center justify-center border border-dashed border-foreground/20 text-[0.7em] text-muted-foreground">
                                 Image
@@ -1673,40 +1691,52 @@ export default function CertificateSettingsPage() {
                                   />
                                 </div>
                               </div>
-                              <div className="space-y-1.5">
-                                <Label className="text-xs">Asset key</Label>
-                                <Input
-                                  className="h-9 font-mono text-xs"
-                                  value={selectedField.asset_key || selectedField.key}
-                                  onChange={(e) =>
-                                    updateField(selectedField.key, { asset_key: e.target.value })
-                                  }
-                                />
-                              </div>
-                              <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  if (f) handleUploadAsset(f);
-                                }}
-                              />
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                className="w-full"
-                                disabled={uploading || !selectedId}
-                                onClick={() => fileInputRef.current?.click()}
-                              >
-                                {uploading ? (
-                                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <ImagePlus className="mr-1 h-4 w-4" />
-                                )}
-                                {selectedId ? "Upload image" : "Save template to upload"}
-                              </Button>
+                              {isCandidatePhotoField(selectedField) ? (
+                                <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                                  Filled from the candidate&apos;s active passport photo in the Photo
+                                  Album when the certificate is generated. Leave blank if no photo
+                                  is on file.
+                                </p>
+                              ) : (
+                                <>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Asset key</Label>
+                                    <Input
+                                      className="h-9 font-mono text-xs"
+                                      value={selectedField.asset_key || selectedField.key}
+                                      onChange={(e) =>
+                                        updateField(selectedField.key, {
+                                          asset_key: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </div>
+                                  <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleUploadAsset(f);
+                                    }}
+                                  />
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="w-full"
+                                    disabled={uploading || !selectedId}
+                                    onClick={() => fileInputRef.current?.click()}
+                                  >
+                                    {uploading ? (
+                                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <ImagePlus className="mr-1 h-4 w-4" />
+                                    )}
+                                    {selectedId ? "Upload image" : "Save template to upload"}
+                                  </Button>
+                                </>
+                              )}
                             </>
                           )}
                           {selectedField.type === "text" &&

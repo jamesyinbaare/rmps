@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.models import (
     Candidate,
+    CandidatePhoto,
     CertificateIssuance,
     CertificateIssuanceStatus,
     CertificateTemplate,
@@ -40,9 +41,11 @@ from app.services.certificate_pdf_service import (
     coerce_layout,
     render_certificate_overlay_pdf,
 )
-from app.services.storage import StorageService, create_storage_backend
+from app.services.storage import StorageService, create_photo_storage_service, create_storage_backend
 
 logger = logging.getLogger(__name__)
+
+CANDIDATE_PHOTO_KEY = "candidate_photo"
 
 
 def create_certificate_storage_service() -> StorageService:
@@ -254,6 +257,71 @@ async def load_template_images(
     return images
 
 
+def layout_includes_candidate_photo(layout: dict[str, Any] | None) -> bool:
+    """True when the template places the candidate passport photo field."""
+    if not layout:
+        return False
+    for field in layout.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("key") or "").strip().lower()
+        asset_key = str(field.get("asset_key") or "").strip().lower()
+        if key == CANDIDATE_PHOTO_KEY or asset_key == CANDIDATE_PHOTO_KEY:
+            return True
+    return False
+
+
+async def load_candidate_photo_bytes(
+    session: AsyncSession,
+    candidate_id: int,
+) -> bytes | None:
+    """Load the candidate's active passport photo bytes, if any."""
+    stmt = select(CandidatePhoto).where(
+        CandidatePhoto.candidate_id == candidate_id,
+        CandidatePhoto.is_active.is_(True),
+    )
+    photo = (await session.execute(stmt)).scalar_one_or_none()
+    if not photo:
+        logger.info("No active passport photo for candidate %s", candidate_id)
+        return None
+    try:
+        photo_storage = create_photo_storage_service()
+        if not await photo_storage.exists(photo.file_path):
+            logger.warning(
+                "Passport photo record %s for candidate %s points to missing file %s",
+                photo.id,
+                candidate_id,
+                photo.file_path,
+            )
+            return None
+        content = await photo_storage.retrieve(photo.file_path)
+        return content or None
+    except Exception:
+        logger.warning(
+            "Failed to load passport photo for candidate %s",
+            candidate_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def load_certificate_images(
+    session: AsyncSession,
+    template: CertificateTemplate | None,
+    *,
+    candidate_id: int | None,
+    layout: dict[str, Any] | None,
+) -> dict[str, bytes]:
+    """Template assets plus optional candidate passport photo for generation."""
+    images = await load_template_images(template, session)
+    if candidate_id is None or not layout_includes_candidate_photo(layout):
+        return images
+    photo_bytes = await load_candidate_photo_bytes(session, candidate_id)
+    if photo_bytes:
+        images[CANDIDATE_PHOTO_KEY] = photo_bytes
+    return images
+
+
 async def get_active_issuance(
     session: AsyncSession,
     exam_registration_id: int,
@@ -274,28 +342,19 @@ async def get_issuance_pdf_bytes(
     session: AsyncSession,
     issuance: CertificateIssuance,
 ) -> bytes:
-    """Return stored PDF bytes, regenerating and re-saving if the file is missing."""
-    path = (issuance.pdf_storage_path or "").strip()
-    if path:
-        try:
-            if await certificate_storage_service.exists(path):
-                return await certificate_storage_service.retrieve(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            logger.warning(
-                "Failed reading issuance %s PDF at %s; regenerating",
-                issuance.id,
-                path,
-                exc_info=True,
-            )
+    """Return certificate PDF bytes for an issuance.
 
+    Always regenerates from the current exam template so signature assets and
+    passport photos that were missing (or updated) at original generate time
+    still appear on download. Overwrites the stored PDF when possible.
+    """
     pdf_bytes = await preview_certificate_pdf(
         session,
         issuance.exam_registration_id,
         certificate_number=issuance.certificate_number,
         issuance_date=issuance.issuance_date,
     )
+    path = (issuance.pdf_storage_path or "").strip()
     try:
         save_name = (
             f"{issuance.certificate_number}.pdf"
@@ -332,7 +391,9 @@ async def preview_certificate_pdf(
     )
     template = await resolve_template(session, exam=exam, template_id=template_id)
     width_mm, height_mm, layout = template_page_and_layout(template)
-    images = await load_template_images(template, session)
+    images = await load_certificate_images(
+        session, template, candidate_id=candidate.id, layout=layout
+    )
 
     active = await get_active_issuance(session, exam_reg.id)
     provided = normalize_certificate_number(certificate_number)
@@ -375,7 +436,9 @@ async def generate_certificate(
     )
     template = await resolve_template(session, exam=exam, template_id=template_id)
     width_mm, height_mm, layout = template_page_and_layout(template)
-    images = await load_template_images(template, session)
+    images = await load_certificate_images(
+        session, template, candidate_id=candidate.id, layout=layout
+    )
     provided = normalize_certificate_number(certificate_number)
 
     active = await get_active_issuance(session, exam_reg.id)

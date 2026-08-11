@@ -40,9 +40,11 @@ def _field_type(field: dict[str, Any]) -> str:
     raw = str(field.get("type") or "").strip().lower()
     if raw in {"image", "subjects", "text"}:
         return raw
-    if field.get("asset_key") or str(field.get("key") or "").startswith("image"):
+    key = str(field.get("key") or "").strip().lower()
+    asset_key = str(field.get("asset_key") or "").strip().lower()
+    if field.get("asset_key") or key.startswith("image") or key == "candidate_photo" or asset_key == "candidate_photo":
         return "image"
-    if str(field.get("key") or "") == "subjects" or field.get("columns"):
+    if key == "subjects" or field.get("columns"):
         return "subjects"
     return "text"
 
@@ -251,7 +253,8 @@ def render_certificate_overlay_pdf(
         if field_type == "image":
             image_bytes = _resolve_image_bytes(images, field)
             if not image_bytes:
-                logger.warning("Certificate image field %s has no matching asset", key)
+                if str(key).strip().lower() != "candidate_photo":
+                    logger.warning("Certificate image field %s has no matching asset", key)
                 continue
             width_mm = float(field.get("width_mm") or field.get("max_width_mm") or 40)
             height_mm = float(field.get("height_mm") or 15)
