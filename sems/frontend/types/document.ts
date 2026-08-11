@@ -1256,6 +1256,7 @@ export interface ExamRegistrationResultDetail {
 
 export type CertificateFieldSource = "exam_data" | "static";
 export type CertificateLayoutFieldType = "text" | "subjects" | "image";
+export type CertificateSubjectColumn = "subject_code" | "subject_name" | "grade";
 
 export type CertificateLayoutField = {
   key: string;
@@ -1264,10 +1265,13 @@ export type CertificateLayoutField = {
   x_mm: number;
   y_mm: number;
   font_size?: number;
-  align?: "left" | "center" | "right";
+  align?: "left" | "center" | "right" | "justify";
   max_width_mm?: number;
   line_height_mm?: number;
-  columns?: string[];
+  columns?: CertificateSubjectColumn[];
+  show_header?: boolean;
+  show_borders?: boolean;
+  header_labels?: Partial<Record<CertificateSubjectColumn, string>>;
   /** For image fields */
   asset_key?: string;
   width_mm?: number;
