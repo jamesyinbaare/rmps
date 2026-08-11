@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep
@@ -1391,14 +1391,21 @@ async def get_candidate_photo_file(candidate_id: int, photo_id: int, session: DB
 async def get_photo_album(
     session: DBSessionDep,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=10000),
+    page_size: int = Query(24, ge=1, le=100),
     school_id: int | None = Query(None, description="Filter by school ID"),
     exam_id: int | None = Query(None, description="Filter by exam ID"),
     programme_id: int | None = Query(None, description="Filter by programme ID"),
     has_photo: bool | None = Query(None, description="Filter by presence of photo"),
+    search_query: str | None = Query(
+        None, description="Search by candidate name or index number (scoped to other filters)"
+    ),
 ) -> PhotoAlbumResponse:
-    """Get photo album with pagination and filtering."""
+    """Get photo album with pagination and filtering.
+
+    Use search_query to look up a small set of candidates without browsing the full album.
+    """
     offset = (page - 1) * page_size
+    search_term = search_query.strip() if search_query else ""
 
     # Build base query for candidates
     base_stmt = select(Candidate, School)
@@ -1416,38 +1423,52 @@ async def get_photo_album(
     if programme_id is not None:
         base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
 
-    # Get total count
-    count_stmt = select(func.count(func.distinct(Candidate.id)))
-    if school_id is not None:
-        count_stmt = count_stmt.where(Candidate.school_id == school_id)
-    if exam_id is not None:
-        count_stmt = count_stmt.join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id).where(
-            ExamRegistration.exam_id == exam_id
+    if search_term:
+        pattern = f"%{search_term}%"
+        base_stmt = base_stmt.where(
+            or_(
+                Candidate.name.ilike(pattern),
+                Candidate.index_number.ilike(pattern),
+                School.name.ilike(pattern),
+                School.code.ilike(pattern),
+            )
         )
-    if programme_id is not None:
-        count_stmt = count_stmt.where(Candidate.programme_id == programme_id)
+
+    def apply_scope_filters(stmt, *, join_school: bool = False):
+        if join_school or search_term:
+            stmt = stmt.join(School, Candidate.school_id == School.id)
+        if school_id is not None:
+            stmt = stmt.where(Candidate.school_id == school_id)
+        if exam_id is not None:
+            stmt = stmt.join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id).where(
+                ExamRegistration.exam_id == exam_id
+            )
+        if programme_id is not None:
+            stmt = stmt.where(Candidate.programme_id == programme_id)
+        if search_term:
+            pattern = f"%{search_term}%"
+            stmt = stmt.where(
+                or_(
+                    Candidate.name.ilike(pattern),
+                    Candidate.index_number.ilike(pattern),
+                    School.name.ilike(pattern),
+                    School.code.ilike(pattern),
+                )
+            )
+        return stmt
+
+    # Get total count
+    count_stmt = apply_scope_filters(select(func.count(func.distinct(Candidate.id))))
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
-    # If has_photo filter is applied, we need to get all candidates first to filter
+    # If has_photo filter is applied, filter candidate IDs by photo presence
     if has_photo is not None:
-        # Get all candidates matching other filters
-        all_candidates_stmt = select(Candidate.id)
-        if school_id is not None:
-            all_candidates_stmt = all_candidates_stmt.where(Candidate.school_id == school_id)
-        if programme_id is not None:
-            all_candidates_stmt = all_candidates_stmt.where(Candidate.programme_id == programme_id)
-        if exam_id is not None:
-            all_candidates_stmt = all_candidates_stmt.join(
-                ExamRegistration, Candidate.id == ExamRegistration.candidate_id
-            ).where(ExamRegistration.exam_id == exam_id)
-
+        all_candidates_stmt = apply_scope_filters(select(Candidate.id))
         all_candidates_result = await session.execute(all_candidates_stmt)
         all_candidate_ids = [row[0] for row in all_candidates_result.all()]
 
-        # Filter by photo presence
         if has_photo:
-            # Get candidates with active photos
             photos_stmt = select(CandidatePhoto.candidate_id).where(CandidatePhoto.is_active.is_(True))
             if all_candidate_ids:
                 photos_stmt = photos_stmt.where(CandidatePhoto.candidate_id.in_(all_candidate_ids))
@@ -1455,7 +1476,6 @@ async def get_photo_album(
             candidate_ids_with_photos = {row[0] for row in photos_result.all()}
             filtered_candidate_ids = [cid for cid in all_candidate_ids if cid in candidate_ids_with_photos]
         else:
-            # Get candidates without active photos
             photos_stmt = select(CandidatePhoto.candidate_id).where(CandidatePhoto.is_active.is_(True))
             if all_candidate_ids:
                 photos_stmt = photos_stmt.where(CandidatePhoto.candidate_id.in_(all_candidate_ids))
@@ -1463,7 +1483,6 @@ async def get_photo_album(
             candidate_ids_with_photos = {row[0] for row in photos_result.all()}
             filtered_candidate_ids = [cid for cid in all_candidate_ids if cid not in candidate_ids_with_photos]
 
-        # Update total and base query
         total = len(filtered_candidate_ids)
         if not filtered_candidate_ids:
             return PhotoAlbumResponse(
@@ -1484,7 +1503,6 @@ async def get_photo_album(
     # Build response items
     items: list[PhotoAlbumItem] = []
     for candidate, school in candidate_school_pairs:
-        # Get active photo for this candidate
         photo_stmt = select(CandidatePhoto).where(
             CandidatePhoto.candidate_id == candidate.id, CandidatePhoto.is_active.is_(True)
         )

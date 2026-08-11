@@ -278,6 +278,7 @@ export interface PhotoAlbumFilters {
   exam_id?: number;
   programme_id?: number;
   has_photo?: boolean;
+  search_query?: string;
 }
 
 export interface PhotoBulkUploadError {
