@@ -74,6 +74,7 @@ import type {
   ExamSchoolListResponse,
   ExamProgrammeSummary,
   SchoolResultsListResponse,
+  IssueFormCandidatesResponse,
   ExamRegistrationResultDetail,
   CertificateTemplate,
   CertificateTemplateListResponse,
@@ -85,6 +86,9 @@ import type {
   CertificateLayoutJson,
   CertificateTemplateAsset,
   CertificateTemplateAssetListResponse,
+  CertificateScan,
+  CertificateScanBatch,
+  CertificateScanListResponse,
 } from "@/types/document";
 
 /**
@@ -3037,12 +3041,18 @@ export async function processExamSubjects(
 
 export async function listExamResultSchools(
   examId: number,
-  options: { page?: number; page_size?: number; search?: string } = {}
+  options: {
+    page?: number;
+    page_size?: number;
+    search?: string;
+    include_counts?: boolean;
+  } = {}
 ): Promise<ExamSchoolListResponse> {
   const params = new URLSearchParams();
   if (options.page) params.append("page", options.page.toString());
   if (options.page_size) params.append("page_size", options.page_size.toString());
   if (options.search) params.append("search", options.search);
+  if (options.include_counts === false) params.append("include_counts", "false");
   const qs = params.toString();
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools${qs ? `?${qs}` : ""}`
@@ -3435,6 +3445,165 @@ export async function setIssuanceCertificateNumber(
     }
   );
   return handleResponse<CertificateIssuance>(response);
+}
+
+export async function createCertificateScanBatch(body: {
+  exam_id: number;
+  roi_certificate_number: { x: number; y: number; w: number; h: number };
+  roi_index_number: { x: number; y: number; w: number; h: number };
+}): Promise<CertificateScanBatch> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/certificates/studio/batches`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return handleResponse<CertificateScanBatch>(response);
+}
+
+export async function getCertificateScanBatch(batchId: number): Promise<CertificateScanBatch> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/batches/${batchId}`
+  );
+  return handleResponse<CertificateScanBatch>(response);
+}
+
+export async function uploadCertificateScans(
+  batchId: number,
+  files: File[]
+): Promise<CertificateScan[]> {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file));
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+  const headers: HeadersInit = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/certificates/studio/batches/${batchId}/scans`,
+    { method: "POST", headers, body: form }
+  );
+  return handleResponse<CertificateScan[]>(response);
+}
+
+export async function processCertificateScanBatch(
+  batchId: number
+): Promise<CertificateScanBatch> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/batches/${batchId}/process`,
+    { method: "POST" }
+  );
+  return handleResponse<CertificateScanBatch>(response);
+}
+
+export async function listCertificateScans(params?: {
+  matchStatus?: string;
+  examId?: number;
+  batchId?: number;
+  page?: number;
+  pageSize?: number;
+}): Promise<CertificateScanListResponse> {
+  const q = new URLSearchParams();
+  if (params?.matchStatus) q.set("match_status", params.matchStatus);
+  if (params?.examId != null) q.set("exam_id", String(params.examId));
+  if (params?.batchId != null) q.set("batch_id", String(params.batchId));
+  if (params?.page != null) q.set("page", String(params.page));
+  if (params?.pageSize != null) q.set("page_size", String(params.pageSize));
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/scans?${q.toString()}`
+  );
+  return handleResponse<CertificateScanListResponse>(response);
+}
+
+export function certificateScanImageUrl(scanId: number): string {
+  return `${API_BASE_URL}/api/v1/certificates/studio/scans/${scanId}/image`;
+}
+
+export async function fetchCertificateScanImageBlob(scanId: number): Promise<Blob> {
+  const response = await fetchWithAuth(certificateScanImageUrl(scanId));
+  if (!response.ok) {
+    throw new Error("Failed to load scan image");
+  }
+  return response.blob();
+}
+
+export async function confirmCertificateScan(
+  scanId: number,
+  body?: { certificate_number?: string; index_number?: string }
+): Promise<CertificateScan> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/scans/${scanId}/confirm`,
+    { method: "POST", body: JSON.stringify(body || {}) }
+  );
+  return handleResponse<CertificateScan>(response);
+}
+
+export async function manualMatchCertificateScan(
+  scanId: number,
+  body: {
+    exam_registration_id?: number;
+    index_number?: string;
+    certificate_number?: string;
+  }
+): Promise<CertificateScan> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/scans/${scanId}/match`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
+  return handleResponse<CertificateScan>(response);
+}
+
+export async function rejectCertificateScan(scanId: number): Promise<CertificateScan> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/scans/${scanId}/reject`,
+    { method: "POST" }
+  );
+  return handleResponse<CertificateScan>(response);
+}
+
+export async function listIssueFormCandidates(
+  examId: number,
+  schoolId: number,
+  options: { includeUnnumbered?: boolean; programmeId?: number } = {}
+): Promise<IssueFormCandidatesResponse> {
+  const q = new URLSearchParams();
+  if (options.includeUnnumbered) {
+    q.set("include_unnumbered", "true");
+  }
+  if (options.programmeId != null) {
+    q.set("programme_id", String(options.programmeId));
+  }
+  const qs = q.toString();
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/exams/${examId}/schools/${schoolId}/issue-form-candidates${
+      qs ? `?${qs}` : ""
+    }`
+  );
+  return handleResponse<IssueFormCandidatesResponse>(response);
+}
+
+export async function downloadCertificateIssueForm(
+  examId: number,
+  schoolId: number,
+  options: { includeUnnumbered?: boolean; programmeId?: number } = {}
+): Promise<Blob> {
+  const q = new URLSearchParams({
+    exam_id: String(examId),
+    school_id: String(schoolId),
+  });
+  if (options.includeUnnumbered) {
+    q.set("include_unnumbered", "true");
+  }
+  if (options.programmeId != null) {
+    q.set("programme_id", String(options.programmeId));
+  }
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/certificates/studio/issue-form?${q.toString()}`
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail || "Failed to download issue form"
+    );
+  }
+  return response.blob();
 }
 
 // Insights API Functions

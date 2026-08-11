@@ -4,7 +4,7 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
-from app.models import Grade
+from app.models import CertificateIssuanceStatus, Grade
 
 
 class ExamSchoolSummary(BaseModel):
@@ -61,6 +61,37 @@ class SchoolResultsListResponse(BaseModel):
     school_code: str
     school_name: str
     exam_id: int
+
+
+class IssueFormCandidate(BaseModel):
+    issuance_id: int | None = None
+    exam_registration_id: int
+    candidate_id: int
+    candidate_name: str
+    index_number: str
+    certificate_number: str | None = None
+    status: CertificateIssuanceStatus | None = None
+    programme_id: int | None = None
+    programme_code: str | None = None
+    programme_name: str | None = None
+
+
+class IssueFormProgrammeGroup(BaseModel):
+    programme_id: int | None = None
+    programme_code: str | None = None
+    programme_name: str | None = None
+    candidate_count: int
+
+
+class IssueFormCandidatesResponse(BaseModel):
+    items: list[IssueFormCandidate]
+    total: int
+    school_id: int
+    school_code: str
+    school_name: str
+    exam_id: int
+    exam_label: str
+    programmes: list[IssueFormProgrammeGroup]
 
 
 class SubjectResultDetail(BaseModel):

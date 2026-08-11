@@ -1,4 +1,4 @@
-"""Results browser and certificate issuance APIs (Phases 1–3)."""
+"""Results browser and certificate issuance APIs (Phases 1–4)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.background_tasks import start_certificate_batch_job
 from app.dependencies.auth import CurrentUserDep, OfficerDep, RegistrarDep
@@ -17,6 +17,7 @@ from app.models import (
     CertificateBatchJob,
     CertificateIssuance,
     CertificateIssuanceStatus,
+    CertificateScanBatch,
     CertificateTemplate,
     CertificateTemplateAsset,
     Exam,
@@ -25,6 +26,7 @@ from app.models import (
     Grade,
     Programme,
     School,
+    SchoolRegion,
     Subject,
     SubjectRegistration,
     SubjectScore,
@@ -40,12 +42,18 @@ from app.schemas.certificate import (
     CertificateIssuanceLedgerItem,
     CertificateIssuanceLedgerResponse,
     CertificateIssuanceResponse,
+    CertificateScanBatchCreate,
+    CertificateScanBatchResponse,
+    CertificateScanListResponse,
+    CertificateScanResponse,
     CertificateTemplateAssetListResponse,
     CertificateTemplateAssetResponse,
     CertificateTemplateCreate,
     CertificateTemplateListResponse,
     CertificateTemplateResponse,
     CertificateTemplateUpdate,
+    ConfirmScanRequest,
+    ManualMatchScanRequest,
     MarkPrintedRequest,
     SetCertificateNumberRequest,
     VoidIssuanceRequest,
@@ -56,11 +64,16 @@ from app.schemas.certificate_results import (
     ExamRegistrationResultDetail,
     ExamSchoolListResponse,
     ExamSchoolSummary,
+    IssueFormCandidate,
+    IssueFormCandidatesResponse,
+    IssueFormProgrammeGroup,
     SchoolResultsListResponse,
     SubjectResultDetail,
 )
 from app.services import certificate_batch_service as batch_service
+from app.services import certificate_issue_form_service as issue_form_service
 from app.services import certificate_issuance_service as issuance_service
+from app.services import certificate_scan_match_service as scan_service
 
 router = APIRouter(prefix="/api/v1/certificates", tags=["certificates"])
 
@@ -125,6 +138,31 @@ def _summarize_subjects(
     return registered, graded, pending, is_fully
 
 
+def _school_search_filters(search: str | None) -> list:
+    if not search or not search.strip():
+        return []
+    raw = search.strip()
+    term = f"%{raw}%"
+    school_match = [
+        School.name.ilike(term),
+        School.code.ilike(term),
+        School.s_code.ilike(term),
+    ]
+    needle = raw.lower()
+    matching_regions = [r for r in SchoolRegion if needle in r.value.lower()]
+    if matching_regions:
+        school_match.append(School.region.in_(matching_regions))
+    return [or_(*school_match)]
+
+
+def _school_region_label(region: object) -> str | None:
+    if region is None:
+        return None
+    if hasattr(region, "value"):
+        return region.value
+    return str(region)
+
+
 @router.get("/exams/{exam_id}/schools", response_model=ExamSchoolListResponse)
 async def list_exam_schools(
     exam_id: int,
@@ -132,7 +170,11 @@ async def list_exam_schools(
     current_user: CurrentUserDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None, description="Filter by school name or code"),
+    search: str | None = Query(None, description="Filter by school name, code, or region"),
+    include_counts: bool = Query(
+        True,
+        description="When false, skip candidate and fully-graded aggregates for faster search",
+    ),
 ) -> ExamSchoolListResponse:
     """List schools with candidate registrations for an exam."""
     _ = current_user
@@ -141,10 +183,43 @@ async def list_exam_schools(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    base_filters = [ExamRegistration.exam_id == exam_id]
-    if search and search.strip():
-        term = f"%{search.strip()}%"
-        base_filters.append((School.name.ilike(term)) | (School.code.ilike(term)))
+    search_filters = _school_search_filters(search)
+
+    if not include_counts:
+        registered = (
+            select(ExamRegistration.id)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(
+                ExamRegistration.exam_id == exam_id,
+                Candidate.school_id == School.id,
+            )
+            .exists()
+        )
+        school_filters = [registered, *search_filters]
+        count_stmt = select(func.count(School.id)).where(*school_filters)
+        total = (await session.execute(count_stmt)).scalar() or 0
+        stmt = (
+            select(School.id, School.code, School.name, School.region)
+            .where(*school_filters)
+            .order_by(School.code)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = (await session.execute(stmt)).all()
+        items = [
+            ExamSchoolSummary(
+                school_id=r.id,
+                school_code=r.code,
+                school_name=r.name,
+                region=_school_region_label(r.region),
+                candidate_count=0,
+                fully_graded_count=0,
+            )
+            for r in rows
+        ]
+        return ExamSchoolListResponse(items=items, total=total, page=page, page_size=page_size)
+
+    base_filters = [ExamRegistration.exam_id == exam_id, *search_filters]
 
     count_stmt = (
         select(func.count(func.distinct(School.id)))
@@ -204,9 +279,7 @@ async def list_exam_schools(
             school_id=r.id,
             school_code=r.code,
             school_name=r.name,
-            region=r.region.value if r.region is not None and hasattr(r.region, "value") else (
-                str(r.region) if r.region is not None else None
-            ),
+            region=_school_region_label(r.region),
             candidate_count=r.candidate_count,
             fully_graded_count=fully_graded_by_school.get(r.id, 0),
         )
@@ -352,6 +425,96 @@ async def list_school_results(
         school_code=school.code,
         school_name=school.name,
         exam_id=exam_id,
+    )
+
+
+async def _issue_form_candidates_response(
+    session,
+    *,
+    exam_id: int,
+    school_id: int,
+    include_unnumbered: bool,
+    programme_id: int | None,
+) -> IssueFormCandidatesResponse:
+    exam = await session.get(Exam, exam_id)
+    school = await session.get(School, school_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    rows = await issue_form_service.load_issue_form_rows(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+    )
+    items: list[IssueFormCandidate] = []
+    programme_counts: dict[tuple[int | None, str | None, str | None], int] = {}
+    for issuance, exam_reg, candidate, programme in rows:
+        prog_id = programme.id if programme else None
+        prog_code = programme.code if programme else None
+        prog_name = programme.name if programme else None
+        key = (prog_id, prog_code, prog_name)
+        programme_counts[key] = programme_counts.get(key, 0) + 1
+        items.append(
+            IssueFormCandidate(
+                issuance_id=issuance.id if issuance else None,
+                exam_registration_id=exam_reg.id,
+                candidate_id=candidate.id,
+                candidate_name=candidate.name or "",
+                index_number=exam_reg.index_number or candidate.index_number or "",
+                certificate_number=issuance.certificate_number if issuance else None,
+                status=issuance.status if issuance else None,
+                programme_id=prog_id,
+                programme_code=prog_code,
+                programme_name=prog_name,
+            )
+        )
+    programmes = [
+        IssueFormProgrammeGroup(
+            programme_id=prog_id,
+            programme_code=prog_code,
+            programme_name=prog_name,
+            candidate_count=count,
+        )
+        for (prog_id, prog_code, prog_name), count in programme_counts.items()
+    ]
+    return IssueFormCandidatesResponse(
+        items=items,
+        total=len(items),
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        exam_id=exam.id,
+        exam_label=_exam_label(exam),
+        programmes=programmes,
+    )
+
+
+@router.get(
+    "/exams/{exam_id}/schools/{school_id}/issue-form-candidates",
+    response_model=IssueFormCandidatesResponse,
+)
+async def list_exam_school_issue_form_candidates(
+    exam_id: int,
+    school_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    include_unnumbered: bool = Query(
+        False,
+        description="Include registered candidates that do not yet have a certificate number",
+    ),
+    programme_id: int | None = Query(None),
+) -> IssueFormCandidatesResponse:
+    _ = current_user
+    return await _issue_form_candidates_response(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
     )
 
 
@@ -1041,3 +1204,242 @@ async def void_certificate_issuance(
         reason=body.reason,
     )
     return CertificateIssuanceResponse.model_validate(issuance)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Certificate Studio
+# ---------------------------------------------------------------------------
+
+
+def _scan_status_value(value: object) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
+
+async def _batch_response(session: DBSessionDep, batch: CertificateScanBatch) -> CertificateScanBatchResponse:
+    scans_out: list[CertificateScanResponse] = []
+    for scan in sorted(batch.scans, key=lambda s: s.id):
+        data = await scan_service.enrich_scan_for_response(session, scan)
+        data["match_status"] = _scan_status_value(data["match_status"])
+        scans_out.append(CertificateScanResponse.model_validate(data))
+    return CertificateScanBatchResponse(
+        id=batch.id,
+        exam_id=batch.exam_id,
+        roi_certificate_number=batch.roi_certificate_number,
+        roi_index_number=batch.roi_index_number,
+        status=_scan_status_value(batch.status),
+        created_by_user_id=batch.created_by_user_id,
+        created_at=batch.created_at,
+        updated_at=batch.updated_at,
+        completed_at=batch.completed_at,
+        scans=scans_out,
+    )
+
+
+@router.post("/studio/batches", response_model=CertificateScanBatchResponse)
+async def create_studio_batch(
+    body: CertificateScanBatchCreate,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateScanBatchResponse:
+    batch = await scan_service.create_scan_batch(
+        session,
+        exam_id=body.exam_id,
+        roi_certificate_number=body.roi_certificate_number.model_dump(),
+        roi_index_number=body.roi_index_number.model_dump(),
+        user_id=current_user.id,
+    )
+    batch = await scan_service.get_scan_batch(session, batch.id)
+    return await _batch_response(session, batch)
+
+
+@router.get("/studio/batches/{batch_id}", response_model=CertificateScanBatchResponse)
+async def get_studio_batch(
+    batch_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> CertificateScanBatchResponse:
+    batch = await scan_service.get_scan_batch(session, batch_id)
+    return await _batch_response(session, batch)
+
+
+@router.post("/studio/batches/{batch_id}/scans", response_model=list[CertificateScanResponse])
+async def upload_studio_scans(
+    batch_id: int,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+    files: list[UploadFile] = File(...),
+) -> list[CertificateScanResponse]:
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded")
+    created: list[CertificateScanResponse] = []
+    for upload in files:
+        content = await upload.read()
+        if not content:
+            continue
+        scan = await scan_service.add_scan_to_batch(
+            session,
+            batch_id,
+            content=content,
+            filename=upload.filename or "scan.jpg",
+            content_type=upload.content_type,
+        )
+        data = await scan_service.enrich_scan_for_response(session, scan)
+        data["match_status"] = _scan_status_value(data["match_status"])
+        created.append(CertificateScanResponse.model_validate(data))
+    if not created:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid files uploaded")
+    return created
+
+
+@router.post("/studio/batches/{batch_id}/process", response_model=CertificateScanBatchResponse)
+async def process_studio_batch(
+    batch_id: int,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateScanBatchResponse:
+    batch = await scan_service.process_scan_batch(session, batch_id, user_id=current_user.id)
+    return await _batch_response(session, batch)
+
+
+@router.get("/studio/scans", response_model=CertificateScanListResponse)
+async def list_studio_scans(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    match_status: str | None = Query(None),
+    exam_id: int | None = Query(None),
+    batch_id: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> CertificateScanListResponse:
+    items, total = await scan_service.list_scans(
+        session,
+        match_status=match_status,
+        exam_id=exam_id,
+        batch_id=batch_id,
+        page=page,
+        page_size=page_size,
+    )
+    out: list[CertificateScanResponse] = []
+    for scan in items:
+        data = await scan_service.enrich_scan_for_response(session, scan)
+        data["match_status"] = _scan_status_value(data["match_status"])
+        out.append(CertificateScanResponse.model_validate(data))
+    return CertificateScanListResponse(items=out, total=total, page=page, page_size=page_size)
+
+
+@router.get("/studio/scans/{scan_id}/image")
+async def get_studio_scan_image(
+    scan_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    scan = await scan_service.get_scan(session, scan_id)
+    content = await issuance_service.certificate_storage_service.retrieve(scan.storage_path)
+    media = "image/jpeg"
+    lower = scan.original_filename.lower()
+    if lower.endswith(".png"):
+        media = "image/png"
+    elif lower.endswith(".tif") or lower.endswith(".tiff"):
+        media = "image/tiff"
+    elif lower.endswith(".webp"):
+        media = "image/webp"
+    return Response(content=content, media_type=media)
+
+
+@router.post("/studio/scans/{scan_id}/confirm", response_model=CertificateScanResponse)
+async def confirm_studio_scan(
+    scan_id: int,
+    body: ConfirmScanRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateScanResponse:
+    scan = await scan_service.confirm_scan(
+        session,
+        scan_id,
+        user_id=current_user.id,
+        certificate_number=body.certificate_number,
+        index_number=body.index_number,
+    )
+    data = await scan_service.enrich_scan_for_response(session, scan)
+    data["match_status"] = _scan_status_value(data["match_status"])
+    return CertificateScanResponse.model_validate(data)
+
+
+@router.post("/studio/scans/{scan_id}/match", response_model=CertificateScanResponse)
+async def manual_match_studio_scan(
+    scan_id: int,
+    body: ManualMatchScanRequest,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateScanResponse:
+    scan = await scan_service.manual_match_scan(
+        session,
+        scan_id,
+        user_id=current_user.id,
+        exam_registration_id=body.exam_registration_id,
+        index_number=body.index_number,
+        certificate_number=body.certificate_number,
+    )
+    data = await scan_service.enrich_scan_for_response(session, scan)
+    data["match_status"] = _scan_status_value(data["match_status"])
+    return CertificateScanResponse.model_validate(data)
+
+
+@router.post("/studio/scans/{scan_id}/reject", response_model=CertificateScanResponse)
+async def reject_studio_scan(
+    scan_id: int,
+    session: DBSessionDep,
+    current_user: OfficerDep,
+) -> CertificateScanResponse:
+    scan = await scan_service.reject_scan(session, scan_id)
+    data = await scan_service.enrich_scan_for_response(session, scan)
+    data["match_status"] = _scan_status_value(data["match_status"])
+    return CertificateScanResponse.model_validate(data)
+
+
+@router.get("/studio/issue-form/candidates", response_model=IssueFormCandidatesResponse)
+async def list_issue_form_candidates(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int = Query(...),
+    school_id: int = Query(...),
+    include_unnumbered: bool = Query(
+        False,
+        description="Include registered candidates that do not yet have a certificate number",
+    ),
+    programme_id: int | None = Query(None),
+) -> IssueFormCandidatesResponse:
+    _ = current_user
+    return await _issue_form_candidates_response(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+    )
+
+
+@router.get("/studio/issue-form")
+async def download_issue_form(
+    session: DBSessionDep,
+    current_user: OfficerDep,
+    exam_id: int = Query(...),
+    school_id: int = Query(...),
+    include_unnumbered: bool = Query(
+        False,
+        description="Include generated certificates that do not yet have a certificate number",
+    ),
+    programme_id: int | None = Query(None),
+) -> Response:
+    pdf_bytes, filename = await issue_form_service.build_issue_form_pdf(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        include_unnumbered=include_unnumbered,
+        programme_id=programme_id,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

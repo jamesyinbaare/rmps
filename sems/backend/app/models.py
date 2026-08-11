@@ -677,6 +677,19 @@ class CertificateBatchJobStatus(enum.Enum):
     CANCELLED = "cancelled"
 
 
+class CertificateScanBatchStatus(enum.Enum):
+    OPEN = "open"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+
+
+class CertificateScanMatchStatus(enum.Enum):
+    PENDING = "pending"
+    MATCHED = "matched"
+    UNMATCHED = "unmatched"
+    REJECTED = "rejected"
+
+
 class CertificateTemplate(Base):
     """Overlay layout for printing certificates onto pre-printed security stock.
 
@@ -829,3 +842,76 @@ class CertificateBatchJob(Base):
     programme = relationship("Programme")
     template = relationship("CertificateTemplate")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+
+class CertificateScanBatch(Base):
+    """OCR scan batch: exam-scoped ROIs for certificate number and index number."""
+
+    __tablename__ = "certificate_scan_batches"
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Normalized page fractions: {x, y, w, h} each in [0, 1]
+    roi_certificate_number = Column(JSON, nullable=False)
+    roi_index_number = Column(JSON, nullable=False)
+    status = Column(
+        Enum(
+            CertificateScanBatchStatus,
+            name="certificatescanbatchstatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=CertificateScanBatchStatus.OPEN,
+        index=True,
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    exam = relationship("Exam")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    scans = relationship(
+        "CertificateScan",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+
+class CertificateScan(Base):
+    """One uploaded certificate scan within a batch."""
+
+    __tablename__ = "certificate_scans"
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(
+        Integer, ForeignKey("certificate_scan_batches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    storage_path = Column(String(512), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    ocr_index_number = Column(String(64), nullable=True)
+    ocr_certificate_number = Column(String(64), nullable=True)
+    match_status = Column(
+        Enum(
+            CertificateScanMatchStatus,
+            name="certificatescanmatchstatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=CertificateScanMatchStatus.PENDING,
+        index=True,
+    )
+    issuance_id = Column(
+        Integer, ForeignKey("certificate_issuances.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    suggested_exam_registration_id = Column(
+        Integer, ForeignKey("exam_registrations.id", ondelete="SET NULL"), nullable=True
+    )
+    error_message = Column(Text, nullable=True)
+    processed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    batch = relationship("CertificateScanBatch", back_populates="scans")
+    issuance = relationship("CertificateIssuance")
+    suggested_exam_registration = relationship("ExamRegistration")
