@@ -64,7 +64,7 @@ CERTIFICATE_FIELD_CATALOG: list[dict[str, Any]] = [
     _data_field(
         "school_name",
         "School name",
-        description="School name (and code) from the candidate's school",
+        description="School name from the candidate's school",
         y_mm=104,
     ),
     _data_field(
@@ -95,8 +95,12 @@ CERTIFICATE_FIELD_CATALOG: list[dict[str, Any]] = [
         description="List of registered subjects with stored grades",
         y_mm=125,
         font_size=10,
-        line_height_mm=6,
+        line_height_mm=7,
+        max_width_mm=130,
         columns=["subject_name", "grade"],
+        show_header=True,
+        show_borders=True,
+        header_labels={"subject_name": "Subject", "grade": "Grade"},
     ),
     _data_field(
         "issuance_date",

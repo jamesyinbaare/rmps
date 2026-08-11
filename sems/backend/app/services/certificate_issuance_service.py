@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
@@ -36,9 +37,12 @@ from app.services.certificate_number_service import (
 from app.services.certificate_pdf_service import (
     DEFAULT_DATE_FORMAT,
     build_certificate_context,
+    coerce_layout,
     render_certificate_overlay_pdf,
 )
 from app.services.storage import StorageService, create_storage_backend
+
+logger = logging.getLogger(__name__)
 
 
 def create_certificate_storage_service() -> StorageService:
@@ -154,7 +158,7 @@ def template_page_and_layout(
     return (
         template.page_width_mm,
         template.page_height_mm,
-        template.layout_json or dict(DEFAULT_CERTIFICATE_LAYOUT),
+        coerce_layout(template.layout_json) or dict(DEFAULT_CERTIFICATE_LAYOUT),
     )
 
 
@@ -179,11 +183,11 @@ def build_context_for_registration(
     return build_certificate_context(
         candidate_name=candidate.name,
         index_number=exam_reg.index_number or candidate.index_number,
-        school_name=f"{school.code} — {school.name}",
+        school_name=school.name or "",
         school_code=school.code or "",
         programme_name=programme.name if programme else "",
         certificate_number=certificate_number or "",
-        subjects=[{"subject_name": s["subject_name"], "grade": s["grade"]} for s in subjects],
+        subjects=_subject_context_rows(subjects),
         issuance_date=issuance_date,
         date_format=_layout_date_format(layout),
         exam_year=str(exam.year),
@@ -203,15 +207,50 @@ def _pdf_filename(issuance: CertificateIssuance | None = None, *, registration_i
     return "certificate.pdf"
 
 
-async def load_template_images(template: CertificateTemplate | None) -> dict[str, bytes]:
-    images: dict[str, bytes] = {}
-    if not template or not template.assets:
-        return images
-    for asset in template.assets:
-        try:
-            images[asset.key] = await certificate_storage_service.retrieve(asset.file_path)
-        except Exception:
+def _subject_context_rows(subjects: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in subjects or []:
+        if not isinstance(item, dict):
             continue
+        grade = item.get("grade")
+        if hasattr(grade, "value"):
+            grade = grade.value
+        name = item.get("subject_name") or item.get("name") or item.get("subject") or ""
+        if not name and not item.get("subject_code") and grade is None:
+            continue
+        rows.append(
+            {
+                "subject_code": str(item.get("subject_code") or item.get("code") or ""),
+                "subject_name": str(name),
+                "grade": "" if grade is None else str(grade),
+            }
+        )
+    return rows
+
+
+async def load_template_images(
+    template: CertificateTemplate | None,
+    session: AsyncSession | None = None,
+) -> dict[str, bytes]:
+    images: dict[str, bytes] = {}
+    assets: list[CertificateTemplateAsset] = []
+    if session is not None and template is not None:
+        stmt = select(CertificateTemplateAsset).where(
+            CertificateTemplateAsset.template_id == template.id
+        )
+        assets = list((await session.execute(stmt)).scalars().all())
+    elif template is not None:
+        assets = list(template.assets or [])
+    for asset in assets:
+        try:
+            content = await certificate_storage_service.retrieve(asset.file_path)
+        except Exception:
+            logger.exception("Failed to load certificate template asset %s", asset.key)
+            continue
+        if not content:
+            continue
+        images[asset.key] = content
+        images[asset.key.strip().lower()] = content
     return images
 
 
@@ -244,7 +283,7 @@ async def preview_certificate_pdf(
     )
     template = await resolve_template(session, exam=exam, template_id=template_id)
     width_mm, height_mm, layout = template_page_and_layout(template)
-    images = await load_template_images(template)
+    images = await load_template_images(template, session)
 
     active = await get_active_issuance(session, exam_reg.id)
     provided = normalize_certificate_number(certificate_number)
@@ -287,13 +326,13 @@ async def generate_certificate(
     )
     template = await resolve_template(session, exam=exam, template_id=template_id)
     width_mm, height_mm, layout = template_page_and_layout(template)
-    images = await load_template_images(template)
+    images = await load_template_images(template, session)
     provided = normalize_certificate_number(certificate_number)
 
     active = await get_active_issuance(session, exam_reg.id)
     if active and not reissue:
-        layout_to_use = active.layout_snapshot_json or layout
-        grades = active.grades_snapshot_json or subjects
+        layout_to_use = layout
+        grades = subjects or active.grades_snapshot_json or []
         if issuance_date is not None:
             active.issuance_date = issuance_date
         resolved_date = active.issuance_date or issuance_date or date.today()
@@ -326,6 +365,8 @@ async def generate_certificate(
         path, _ = await certificate_storage_service.save(
             pdf_bytes, _pdf_filename(active, registration_id=exam_reg.id)
         )
+        active.layout_snapshot_json = layout_to_use
+        active.grades_snapshot_json = grades
         active.pdf_storage_path = path
         active.updated_at = datetime.utcnow()
         await session.commit()
