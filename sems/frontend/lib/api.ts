@@ -375,6 +375,10 @@ export async function listDocuments(
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.id_extraction_status) params.append("id_extraction_status", filters.id_extraction_status);
+  if (filters.id_extraction_error_code) {
+    params.append("id_extraction_error_code", filters.id_extraction_error_code);
+  }
+  if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 

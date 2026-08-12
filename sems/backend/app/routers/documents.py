@@ -16,6 +16,7 @@ from app.schemas.document import (
     BackfillTestTypeResponse,
     BulkUploadResponse,
     ContentExtractionResponse,
+    DocumentListItem,
     DocumentListResponse,
     DocumentQueueStatus,
     DocumentResponse,
@@ -34,7 +35,14 @@ from app.schemas.document import (
 )
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.content_extraction import content_extraction_service
-from app.services.id_extraction import id_extraction_service, IDValidator
+from app.services.id_extraction import (
+    IDExtractionErrorCode,
+    IDValidator,
+    apply_id_extraction_result,
+    clear_id_extraction_error,
+    id_extraction_service,
+    mark_id_extraction_failure,
+)
 from app.services.reducto_queue import reducto_queue_service
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
@@ -43,6 +51,11 @@ from app.utils.score_utils import add_extraction_method_to_document
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+
+
+def _document_to_list_item(doc: Document) -> DocumentListItem:
+    """Build a slim list item without scores_extraction_data."""
+    return DocumentListItem.model_validate(doc)
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
@@ -120,29 +133,16 @@ async def upload_document(
         extraction_result = await id_extraction_service.extract_id(
             content, session, db_document.id, db_document.exam_id
         )
-
-        # Update document with extraction results
-        if extraction_result["is_valid"]:
-            db_document.extracted_id = extraction_result["extracted_id"]
-            db_document.id_extraction_method = extraction_result["method"]
-            db_document.id_extraction_confidence = extraction_result["confidence"]
-            db_document.school_id = extraction_result.get("school_id")
-            db_document.subject_id = extraction_result.get("subject_id")
-            db_document.test_type = extraction_result.get("test_type")
-            db_document.subject_series = extraction_result.get("subject_series")
-            db_document.sheet_number = extraction_result.get("sheet_number")
-            db_document.id_extraction_status = "success"
-            db_document.id_extracted_at = datetime.utcnow()
-        else:
-            db_document.id_extraction_method = extraction_result.get("method")
-            db_document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-            db_document.id_extraction_status = "error"
-
+        apply_id_extraction_result(db_document, extraction_result)
         await session.commit()
         await session.refresh(db_document)
-    except Exception:
+    except Exception as exc:
         # If extraction fails, document is still saved but marked as error
-        db_document.id_extraction_status = "error"
+        mark_id_extraction_failure(
+            db_document,
+            error_code=IDExtractionErrorCode.EXCEPTION.value,
+            error_message=f"Unexpected error during ID extraction: {exc}",
+        )
         await session.commit()
         await session.refresh(db_document)
 
@@ -168,7 +168,11 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                         continue
                     file_content = await storage_service.retrieve(document.file_path)
                 except FileNotFoundError:
-                    document.id_extraction_status = "error"
+                    mark_id_extraction_failure(
+                        document,
+                        error_code=IDExtractionErrorCode.FILE_MISSING.value,
+                        error_message="File not found in storage",
+                    )
                     await session.commit()
                     continue
 
@@ -176,33 +180,20 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                 extraction_result = await id_extraction_service.extract_id(
                     file_content, session, document_id, document.exam_id
                 )
-
-                # Update document with extraction results
-                if extraction_result["is_valid"]:
-                    document.extracted_id = extraction_result["extracted_id"]
-                    document.id_extraction_method = extraction_result["method"]
-                    document.id_extraction_confidence = extraction_result["confidence"]
-                    document.school_id = extraction_result.get("school_id")
-                    document.subject_id = extraction_result.get("subject_id")
-                    document.test_type = extraction_result.get("test_type")
-                    document.subject_series = extraction_result.get("subject_series")
-                    document.sheet_number = extraction_result.get("sheet_number")
-                    document.id_extraction_status = "success"
-                    document.id_extracted_at = datetime.utcnow()
-                else:
-                    document.id_extraction_method = extraction_result.get("method")
-                    document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-                    document.id_extraction_status = "error"
-
+                apply_id_extraction_result(document, extraction_result)
                 await session.commit()
-            except Exception:
+            except Exception as exc:
                 # If extraction fails, mark document as error but continue with others
                 try:
                     stmt = select(Document).where(Document.id == document_id)
                     result = await session.execute(stmt)
                     document = result.scalar_one_or_none()
                     if document:
-                        document.id_extraction_status = "error"
+                        mark_id_extraction_failure(
+                            document,
+                            error_code=IDExtractionErrorCode.EXCEPTION.value,
+                            error_message=f"Unexpected error during ID extraction: {exc}",
+                        )
                         await session.commit()
                 except Exception:
                     pass  # Continue even if marking as error fails
@@ -726,7 +717,14 @@ async def list_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
-    id_extraction_status: str | None = Query(None, description="Filter by ID extraction status: pending, success, error"),
+    id_extraction_status: str | None = Query(
+        None, description="Filter by ID extraction status: pending, success, error"
+    ),
+    id_extraction_error_code: str | None = Query(
+        None,
+        description="Filter by ID extraction error code (comma-separated): no_id, duplicate, invalid_format, validation, low_confidence, file_missing, exception",
+    ),
+    q: str | None = Query(None, description="Search file_name or extracted_id (case-insensitive)"),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
@@ -757,6 +755,21 @@ async def list_documents(
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
 
+    error_codes: list[str] = []
+    if id_extraction_error_code:
+        error_codes = [c.strip() for c in id_extraction_error_code.split(",") if c.strip()]
+        if error_codes:
+            base_stmt = base_stmt.where(Document.id_extraction_error_code.in_(error_codes))
+            # Filtering by error code implies failed extractions
+            if id_extraction_status is None:
+                base_stmt = base_stmt.where(Document.id_extraction_status == "error")
+
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        base_stmt = base_stmt.where(
+            (Document.file_name.ilike(search)) | (Document.extracted_id.ilike(search))
+        )
+
     # Incomplete direct uploads are not listed until confirm succeeds
     base_stmt = base_stmt.where(Document.upload_status == "uploaded")
 
@@ -784,6 +797,15 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
+    if error_codes:
+        count_stmt = count_stmt.where(Document.id_extraction_error_code.in_(error_codes))
+        if id_extraction_status is None:
+            count_stmt = count_stmt.where(Document.id_extraction_status == "error")
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        count_stmt = count_stmt.where(
+            (Document.file_name.ilike(search)) | (Document.extracted_id.ilike(search))
+        )
 
     count_stmt = count_stmt.where(Document.upload_status == "uploaded")
     count_result = await session.execute(count_stmt)
@@ -797,7 +819,7 @@ async def list_documents(
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return DocumentListResponse(
-        items=[DocumentResponse.model_validate(doc) for doc in documents],
+        items=[_document_to_list_item(doc) for doc in documents],
         total=total,
         page=page,
         page_size=page_size,
@@ -864,28 +886,26 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
 
     # Extract ID
     extraction_result = await id_extraction_service.extract_id(file_content, session, document_id, document.exam_id)
-
-    # Update document with extraction results
-    if extraction_result["is_valid"]:
-        document.extracted_id = extraction_result["extracted_id"]
-        document.id_extraction_method = extraction_result["method"]
-        document.id_extraction_confidence = extraction_result["confidence"]
-        document.school_id = extraction_result.get("school_id")
-        document.subject_id = extraction_result.get("subject_id")
-        document.test_type = extraction_result.get("test_type")
-        document.subject_series = extraction_result.get("subject_series")
-        document.sheet_number = extraction_result.get("sheet_number")
-        document.id_extraction_status = "success"
-        document.id_extracted_at = datetime.utcnow()
-    else:
-        document.id_extraction_method = extraction_result.get("method")
-        document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-        document.id_extraction_status = "error"
+    apply_id_extraction_result(document, extraction_result)
 
     await session.commit()
     await session.refresh(document)
 
-    return IDExtractionResponse(**extraction_result)
+    return IDExtractionResponse(
+        extracted_id=extraction_result.get("extracted_id"),
+        method=extraction_result.get("method"),
+        confidence=extraction_result.get("confidence", 0.0),
+        is_valid=extraction_result.get("is_valid", False),
+        school_id=extraction_result.get("school_id"),
+        subject_id=extraction_result.get("subject_id"),
+        school_code=extraction_result.get("school_code"),
+        subject_code=extraction_result.get("subject_code"),
+        subject_series=extraction_result.get("subject_series"),
+        test_type=extraction_result.get("test_type"),
+        sheet_number=extraction_result.get("sheet_number"),
+        error_code=extraction_result.get("error_code"),
+        error_message=extraction_result.get("error_message"),
+    )
 
 
 @router.post("/{document_id}/parse-content", response_model=ContentExtractionResponse)
@@ -1019,9 +1039,13 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             )
         add_extraction_method_to_document(document, update.scores_extraction_method)
 
-    # If extracted_id is set manually, mark as manual
+    # If extracted_id is set manually, mark as manual and clear extraction errors
     if update.extracted_id is not None and document.id_extraction_method != "manual":
         document.id_extraction_method = "manual"
+    if update.extracted_id is not None or update.id_extraction_status == "success":
+        if update.id_extraction_status is None:
+            document.id_extraction_status = "success"
+        clear_id_extraction_error(document)
 
     await session.commit()
     await session.refresh(document)

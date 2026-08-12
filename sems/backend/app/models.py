@@ -252,6 +252,8 @@ class Document(Base):
     id_extraction_method = Column(String(20), nullable=True)  # barcode, ocr, manual
     id_extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
     id_extraction_status = Column(String(20), default="pending", nullable=False)  # pending, success, error
+    id_extraction_error = Column(Text, nullable=True)  # Human-readable failure reason
+    id_extraction_error_code = Column(String(32), nullable=True)  # no_id, duplicate, invalid_format, etc.
     id_extracted_at = Column(DateTime, nullable=True)
     # Scores extraction fields
     scores_extraction_data = Column(JSON, nullable=True)  # Stores extracted scores/content as JSON

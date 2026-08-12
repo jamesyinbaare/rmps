@@ -5,10 +5,17 @@ import { File, Image as ImageIcon, FileText, Download, Trash2, AlertCircle, Chec
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/api";
+import { getIdExtractionErrorBadgeLabel } from "@/lib/id-extraction-errors";
 
 interface FileGridProps {
   documents: Document[];
@@ -126,12 +133,28 @@ function DocumentCard({
 
   const getStatusBadge = () => {
     if (isFailed) {
-      return (
+      const label = getIdExtractionErrorBadgeLabel(doc.id_extraction_error_code);
+      const badge = (
         <Badge variant="destructive" className="text-xs px-1.5 py-0">
           <AlertCircle className="h-3 w-3 mr-1" />
-          Failed
+          {label}
         </Badge>
       );
+      if (doc.id_extraction_error) {
+        return (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">{badge}</span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                <p>{doc.id_extraction_error}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
+      return badge;
     }
     if (isPending) {
       return (
@@ -254,6 +277,17 @@ function DocumentCard({
           )}>
             {fileType} • {formatFileSize(doc.file_size)}
           </p>
+          {isFailed && doc.id_extraction_error && (
+            <p
+              className={cn(
+                "text-destructive truncate leading-tight",
+                size === "large-grid" ? "text-sm" : "text-[10px]"
+              )}
+              title={doc.id_extraction_error}
+            >
+              {doc.id_extraction_error}
+            </p>
+          )}
           {doc.school_name && (
             <p className={cn(
               "text-muted-foreground truncate leading-tight",

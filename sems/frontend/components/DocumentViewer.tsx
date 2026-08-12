@@ -23,6 +23,10 @@ import type { Document, Exam, School, Subject, ReductoDataResponse } from "@/typ
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import {
+  getIdExtractionErrorBadgeLabel,
+  getIdExtractionErrorTitle,
+} from "@/lib/id-extraction-errors";
+import {
   API_BASE_URL,
   downloadDocument,
   getDocumentDownloadFilename,
@@ -147,8 +151,9 @@ export function DocumentViewer({
 
   const previewUrl = `${API_BASE_URL}/api/v1/documents/${document.id}/download`;
   const displayText = document.extracted_id || document.file_name;
-  // Show manual ID input only if there's no extracted_id (extraction failed or not yet extracted)
-  const needsManualId = !document.extracted_id;
+  // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
+  const needsManualId =
+    document.id_extraction_status === "error" || !document.extracted_id;
   const canPreviewExtraction =
     enableReductoPreview &&
     (document.scores_extraction_status === "success" ||
@@ -559,12 +564,27 @@ export function DocumentViewer({
               <h2 className="text-lg font-semibold truncate">
                 {document.extracted_id || "-"}
               </h2>
-              {needsManualId && (
+              {needsManualId && document.id_extraction_status === "error" && (
+                <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
+                  {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
+                </span>
+              )}
+              {needsManualId && document.id_extraction_status !== "error" && (
                 <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
                   ID Extraction Failed
                 </span>
               )}
             </div>
+            {document.id_extraction_status === "error" && (
+              <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <p className="font-medium">
+                  {getIdExtractionErrorTitle(document.id_extraction_error_code)}
+                </p>
+                {document.id_extraction_error && (
+                  <p className="mt-0.5 text-muted-foreground">{document.id_extraction_error}</p>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-4 mt-1 flex-wrap">
               {schoolName && (
                 <span className="text-xs text-muted-foreground">School: {schoolName}</span>

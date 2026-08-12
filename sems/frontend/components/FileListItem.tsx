@@ -2,10 +2,12 @@
 
 import { File, Image, FileText, Download, Trash2, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize, formatDate } from "@/lib/utils";
+import { getIdExtractionErrorBadgeLabel } from "@/lib/id-extraction-errors";
 
 interface FileListItemProps {
   document: Document;
@@ -17,6 +19,7 @@ interface FileListItemProps {
   isSelected?: boolean;
   onSelectionChange?: (id: number, selected: boolean) => void;
   bulkMode?: boolean;
+  size?: "list" | "large-list";
 }
 
 export function FileListItem({
@@ -101,12 +104,20 @@ export function FileListItem({
             {document.extracted_id || document.file_name}
           </p>
           {isFailed && (
-            <AlertCircle className={cn("text-destructive shrink-0", isLarge ? "h-4 w-4" : "h-3.5 w-3.5")} />
+            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 shrink-0">
+              <AlertCircle className={cn("mr-1", isLarge ? "h-3 w-3" : "h-2.5 w-2.5")} />
+              {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
+            </Badge>
           )}
         </div>
         <p className={cn("text-muted-foreground", metadataSize)}>
           {formatFileSize(document.file_size)} • {formatDate(document.uploaded_at)}
         </p>
+        {isFailed && document.id_extraction_error && (
+          <p className={cn("text-destructive truncate", metadataSize)} title={document.id_extraction_error}>
+            {document.id_extraction_error}
+          </p>
+        )}
       </div>
 
       {/* Metadata */}

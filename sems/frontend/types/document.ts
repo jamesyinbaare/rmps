@@ -18,8 +18,10 @@ export interface Document {
   id_extraction_method: string | null; // How the ID was extracted (barcode, ocr, manual)
   id_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
   id_extraction_status: string; // Status: pending, success, error
+  id_extraction_error?: string | null; // Human-readable failure reason
+  id_extraction_error_code?: string | null; // no_id, duplicate, invalid_format, etc.
   id_extracted_at: string | null; // When the ID was extracted
-  scores_extraction_data: Record<string, any> | null; // Extracted scores/content as JSON
+  scores_extraction_data?: Record<string, any> | null; // Omitted from list responses for scale
   scores_extraction_status: string | null; // Status: pending, success, error
   scores_extraction_methods: string[] | null; // Set of extraction methods used: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   scores_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
@@ -196,6 +198,8 @@ export interface DocumentFilters {
   school_id?: number;
   subject_id?: number;
   id_extraction_status?: string;
+  id_extraction_error_code?: string;
+  q?: string;
   page?: number;
   page_size?: number;
 }

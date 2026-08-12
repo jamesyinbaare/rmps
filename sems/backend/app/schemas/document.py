@@ -57,8 +57,44 @@ class DocumentResponse(DocumentBase):
     id_extraction_method: str | None
     id_extraction_confidence: float | None
     id_extraction_status: str
+    id_extraction_error: str | None = None
+    id_extraction_error_code: str | None = None
     id_extracted_at: datetime | None = None
     scores_extraction_data: dict[str, Any] | None = None
+    scores_extraction_status: str | None = None
+    scores_extraction_methods: list[str] | None = None
+    scores_extraction_confidence: float | None = None
+    scores_extracted_at: datetime | None = None
+    scores_applied_at: datetime | None = None
+    scores_applied_count: int | None = None
+    scores_unmatched_count: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentListItem(DocumentBase):
+    """Slim document schema for list endpoints (omits scores_extraction_data)."""
+
+    id: int
+    file_path: str
+    checksum: str
+    upload_status: str = "uploaded"
+    uploaded_at: datetime
+    school_id: int | None
+    school_name: str | None = None
+    subject_id: int | None
+    exam_id: int
+    test_type: str | None
+    subject_series: str | None
+    sheet_number: str | None
+    extracted_id: str | None
+    id_extraction_method: str | None
+    id_extraction_confidence: float | None
+    id_extraction_status: str
+    id_extraction_error: str | None = None
+    id_extraction_error_code: str | None = None
+    id_extracted_at: datetime | None = None
     scores_extraction_status: str | None = None
     scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
@@ -74,7 +110,7 @@ class DocumentResponse(DocumentBase):
 class DocumentListResponse(BaseModel):
     """Schema for paginated document list."""
 
-    items: list[DocumentResponse]
+    items: list[DocumentListItem]
     total: int
     page: int = Field(ge=1)
     page_size: int = Field(ge=1, le=1000)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
@@ -15,17 +16,29 @@ import {
   updateDocumentId,
 } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
+import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
 import { toast } from "sonner";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export default function FailedExtractionsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const errorParam = searchParams.get("error") || "";
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<DocumentFiltersType>({
-    page: 1,
-    page_size: 20,
-    id_extraction_status: "error",
+  const [filters, setFilters] = useState<DocumentFiltersType>(() => {
+    const initial: DocumentFiltersType = {
+      page: 1,
+      page_size: 20,
+      id_extraction_status: "error",
+    };
+    if (errorParam) {
+      initial.id_extraction_error_code = errorParam;
+    }
+    return initial;
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -36,6 +49,35 @@ export default function FailedExtractionsPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+
+  // Sync error filter from URL
+  useEffect(() => {
+    setFilters((prev) => {
+      const nextCode = errorParam || undefined;
+      if ((prev.id_extraction_error_code ?? undefined) === nextCode) return prev;
+      return {
+        ...prev,
+        id_extraction_error_code: nextCode,
+        page: 1,
+      };
+    });
+  }, [errorParam]);
+
+  // Keep error type in URL
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (filters.id_extraction_error_code) {
+      params.set("error", filters.id_extraction_error_code);
+    } else {
+      params.delete("error");
+    }
+    const next = params.toString();
+    if (next !== searchParams.toString()) {
+      router.replace(`/icm-studio/documents/failed-extractions${next ? `?${next}` : ""}`, {
+        scroll: false,
+      });
+    }
+  }, [filters.id_extraction_error_code, router, searchParams]);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -57,6 +99,14 @@ export default function FailedExtractionsPage() {
   useEffect(() => {
     loadDocuments();
   }, [loadDocuments]);
+
+  const handleErrorFilterChange = (code: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      id_extraction_error_code: code || undefined,
+      page: 1,
+    }));
+  };
 
   const handlePageChange = (page: number) => {
     setFilters((prev) => ({ ...prev, page }));
@@ -151,6 +201,8 @@ export default function FailedExtractionsPage() {
     }
   };
 
+  const activeErrorCode = filters.id_extraction_error_code || "";
+
   return (
     <DashboardLayout title="Failed ID Extractions">
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -186,16 +238,32 @@ export default function FailedExtractionsPage() {
                       Documents requiring manual ID entry
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      These documents failed automatic ID extraction. Click on any document to manually enter the ID.
+                      These documents failed automatic ID extraction. Filter by error type, then click a document to correct the ID.
                     </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex items-center justify-end px-6 py-4 border-b border-border">
-              <div className="flex items-center rounded-md border">
+            {/* Error type filters + view toggle */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-6 py-4 border-b border-border">
+              <div className="flex flex-wrap items-center gap-2">
+                {ID_EXTRACTION_ERROR_FILTERS.map((opt) => (
+                  <Button
+                    key={opt.value || "all"}
+                    variant={activeErrorCode === opt.value ? "secondary" : "outline"}
+                    size="sm"
+                    className={cn(
+                      "h-8",
+                      activeErrorCode === opt.value && "border-destructive/40"
+                    )}
+                    onClick={() => handleErrorFilterChange(opt.value)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex items-center rounded-md border shrink-0">
                 <Button
                   variant={viewMode === "grid" ? "secondary" : "ghost"}
                   size="icon-sm"
@@ -243,13 +311,23 @@ export default function FailedExtractionsPage() {
             {!loading && total === 0 && (
               <div className="flex flex-col items-center justify-center py-24 text-center px-6">
                 <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-lg font-medium mb-2">No failed extractions</p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  All documents have successfully extracted IDs.
+                <p className="text-lg font-medium mb-2">
+                  {activeErrorCode ? "No documents for this error type" : "No failed extractions"}
                 </p>
-                <Link href="/icm-studio/documents">
-                  <Button variant="outline">Back to All Documents</Button>
-                </Link>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {activeErrorCode
+                    ? "Try another error filter, or clear the filter to see all failures."
+                    : "All documents have successfully extracted IDs."}
+                </p>
+                {activeErrorCode ? (
+                  <Button variant="outline" onClick={() => handleErrorFilterChange("")}>
+                    Show all errors
+                  </Button>
+                ) : (
+                  <Link href="/icm-studio/documents">
+                    <Button variant="outline">Back to All Documents</Button>
+                  </Link>
+                )}
               </div>
             )}
           </main>
