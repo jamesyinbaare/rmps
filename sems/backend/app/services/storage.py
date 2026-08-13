@@ -340,8 +340,13 @@ class GcsStorageBackend(StorageBackend):
             credentials = getattr(self._get_client(), "_credentials", None)
             if credentials is None:
                 credentials, _ = google.auth.default()
-            if not getattr(credentials, "token", None):
-                credentials.refresh(google_auth_requests.Request())
+
+            # ADC tokens expire (~1h). Refresh whenever missing or expired before IAM signBlob.
+            request = google_auth_requests.Request()
+            token = getattr(credentials, "token", None)
+            expired = bool(getattr(credentials, "expired", False))
+            if not token or expired:
+                credentials.refresh(request)
 
             service_account_email = getattr(credentials, "service_account_email", None)
             if not service_account_email:
@@ -351,7 +356,7 @@ class GcsStorageBackend(StorageBackend):
                     "SA with iam.serviceAccounts.signBlob."
                 ) from key_sign_error
 
-            try:
+            def _iam_sign() -> str:
                 return blob.generate_signed_url(
                     version="v4",
                     expiration=expiration,
@@ -360,7 +365,18 @@ class GcsStorageBackend(StorageBackend):
                     service_account_email=service_account_email,
                     access_token=credentials.token,
                 )
+
+            try:
+                return _iam_sign()
             except Exception as iam_sign_error:
+                # One retry after forced refresh for ACCESS_TOKEN_EXPIRED / UNAUTHENTICATED.
+                err_text = str(iam_sign_error)
+                if "ACCESS_TOKEN_EXPIRED" in err_text or "UNAUTHENTICATED" in err_text:
+                    try:
+                        credentials.refresh(request)
+                        return _iam_sign()
+                    except Exception as retry_error:
+                        iam_sign_error = retry_error
                 raise RuntimeError(
                     "Failed to generate GCS signed PUT URL via IAM signBlob. "
                     "Grant the runtime SA roles/iam.serviceAccountTokenCreator on itself "

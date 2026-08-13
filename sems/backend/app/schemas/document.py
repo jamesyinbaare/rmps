@@ -118,6 +118,17 @@ class DocumentListResponse(BaseModel):
     total_pages: int
 
 
+class ScoresExtractionStatusCounts(BaseModel):
+    """Aggregate counts of documents by scores_extraction_status for current filters."""
+
+    total: int = 0
+    pending: int = 0
+    queued: int = 0
+    processing: int = 0
+    success: int = 0
+    error: int = 0
+
+
 class BulkDocumentIdsRequest(BaseModel):
     """Request body for bulk document operations."""
 

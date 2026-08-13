@@ -198,8 +198,8 @@ export default function ProcessedICMsPage() {
     });
 
   const handlePreview = async (document: Document) => {
-    // Check if document has extraction data before attempting to preview
-    if (!document.scores_extraction_data) {
+    // List responses omit scores_extraction_data; status + getReductoData is the source of truth
+    if (document.scores_extraction_status !== "success") {
       toast.error("No extraction data available for this document");
       return;
     }
@@ -669,7 +669,7 @@ export default function ProcessedICMsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              {document.scores_extraction_data && (
+                              {document.scores_extraction_status === "success" && (
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -680,7 +680,7 @@ export default function ProcessedICMsPage() {
                                   Preview
                                 </Button>
                               )}
-                              {document.scores_extraction_data && (
+                              {document.scores_extraction_status === "success" && (
                                 <Button
                                   variant="outline"
                                   size="sm"

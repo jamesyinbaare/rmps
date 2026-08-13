@@ -34,6 +34,7 @@ import type {
   ExamRegistration,
   SubjectRegistration,
   ScoreDocumentFilters,
+  ScoresExtractionStatusCounts,
   DocumentScoresResponse,
   ScoreResponse,
   ScoreUpdate,
@@ -2098,6 +2099,28 @@ export async function getFilteredDocuments(
     `${API_BASE_URL}/api/v1/scores/documents?${params.toString()}`
   );
   return handleResponse<DocumentListResponse>(response);
+}
+
+export async function getScoresExtractionStatusCounts(
+  filters: Omit<ScoreDocumentFilters, "extraction_status" | "page" | "page_size"> = {}
+): Promise<ScoresExtractionStatusCounts> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.test_type) params.append("test_type", filters.test_type);
+  if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.scores_applied !== undefined) {
+    params.append("scores_applied", filters.scores_applied ? "true" : "false");
+  }
+
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/documents/status-counts?${params.toString()}`
+  );
+  return handleResponse<ScoresExtractionStatusCounts>(response);
 }
 
 export async function getDocumentScores(

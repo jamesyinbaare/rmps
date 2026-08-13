@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -12,26 +13,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ReductoDocumentsDataTable } from "@/components/ReductoDocumentsDataTable";
+import {
+  ReductoDocumentsDataTable,
+  type BatchProgress,
+  type ExtractionStatusFilter,
+} from "@/components/ReductoDocumentsDataTable";
+import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
 import {
   getFilteredDocuments,
+  getScoresExtractionStatusCounts,
   getAllExams,
   listSchools,
   listSubjects,
   queueReductoExtraction,
   updateScoresFromReducto,
-  getUnmatchedRecords,
   downloadDocument,
   getDocumentDownloadFilename,
 } from "@/lib/api";
@@ -43,7 +40,7 @@ import type {
   ScoreDocumentFilters,
   ExamType,
   ExamSeries,
-  UnmatchedExtractionRecord,
+  ScoresExtractionStatusCounts,
 } from "@/types/document";
 import {
   Loader2,
@@ -52,48 +49,85 @@ import {
   Clock,
   FileText,
   X,
-  Search,
   AlertCircle,
+  ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+const EMPTY_COUNTS: ScoresExtractionStatusCounts = {
+  total: 0,
+  pending: 0,
+  queued: 0,
+  processing: 0,
+  success: 0,
+  error: 0,
+};
 
 export default function ReductoExtractionPage() {
+  const searchParams = useSearchParams();
+  const statusFromUrl = searchParams.get("status");
+  const initialStatus =
+    statusFromUrl === "pending" ||
+    statusFromUrl === "queued" ||
+    statusFromUrl === "processing" ||
+    statusFromUrl === "success" ||
+    statusFromUrl === "error"
+      ? statusFromUrl
+      : "pending";
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<ScoreDocumentFilters>({
     page: 1,
     page_size: 50,
+    extraction_status: initialStatus,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [statusCounts, setStatusCounts] = useState<ScoresExtractionStatusCounts>(EMPTY_COUNTS);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<number>>(new Set());
   const [queuing, setQueuing] = useState(false);
+  const [requeueingDocumentId, setRequeueingDocumentId] = useState<number | null>(null);
+  const [updatingScores, setUpdatingScores] = useState<number | null>(null);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [focusedRowIndex, setFocusedRowIndex] = useState(0);
+  const [batchTrackedIds, setBatchTrackedIds] = useState<Set<number>>(new Set());
 
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
-
   const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-
-  const [updatingScores, setUpdatingScores] = useState<number | null>(null);
-
-  const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
-  const [loadingUnmatched, setLoadingUnmatched] = useState(false);
-  const [showUnmatched, setShowUnmatched] = useState(false);
-
-  const [verifyEnabled, setVerifyEnabled] = useState(true);
   const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
 
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [openPreviewPanel, setOpenPreviewPanel] = useState(false);
+
+  useEffect(() => {
+    if (
+      statusFromUrl === "pending" ||
+      statusFromUrl === "queued" ||
+      statusFromUrl === "processing" ||
+      statusFromUrl === "success" ||
+      statusFromUrl === "error"
+    ) {
+      setFilters((prev) =>
+        prev.extraction_status === statusFromUrl
+          ? prev
+          : { ...prev, extraction_status: statusFromUrl, page: 1 }
+      );
+    }
+  }, [statusFromUrl]);
 
   useEffect(() => {
     async function loadFilterOptions() {
@@ -116,65 +150,85 @@ export default function ReductoExtractionPage() {
     loadFilterOptions();
   }, []);
 
-  const loadDocuments = useCallback(async (isPollingUpdate = false) => {
-    if (!isPollingUpdate) {
-      setLoading(true);
-      setError(null);
-    }
+  const loadStatusCounts = useCallback(async () => {
     try {
-      const response = await getFilteredDocuments(filters);
-      const allDocs = response.items;
-
-      setDocuments((prevDocs) => {
-        if (prevDocs.length !== allDocs.length) {
-          return allDocs;
-        }
-        const prevDocsMap = new Map(prevDocs.map((d) => [d.id, d]));
-        const hasChanges = allDocs.some((newDoc) => {
-          const prevDoc = prevDocsMap.get(newDoc.id);
-          return (
-            !prevDoc ||
-            prevDoc.scores_extraction_status !== newDoc.scores_extraction_status ||
-            prevDoc.scores_extracted_at !== newDoc.scores_extracted_at
-          );
-        });
-        return hasChanges ? allDocs : prevDocs;
-      });
-
-      if (!isPollingUpdate) {
-        setTotal(response.total);
-        setTotalPages(response.total_pages);
-        setCurrentPage(response.page);
-      }
+      const { extraction_status: _s, page: _p, page_size: _ps, ...rest } = filters;
+      const counts = await getScoresExtractionStatusCounts(rest);
+      setStatusCounts(counts);
     } catch (err) {
-      if (!isPollingUpdate) {
-        setError(err instanceof Error ? err.message : "Failed to load documents");
-      }
-      console.error("Error loading documents:", err);
-    } finally {
-      if (!isPollingUpdate) {
-        setLoading(false);
-      }
+      // Don't fail the page if counts endpoint is unavailable (e.g. API not restarted yet)
+      console.warn("Status counts unavailable:", err instanceof Error ? err.message : err);
     }
   }, [filters]);
+
+  const loadDocuments = useCallback(
+    async (isPollingUpdate = false) => {
+      if (!isPollingUpdate) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const response = await getFilteredDocuments(filters);
+        const allDocs = response.items;
+
+        setDocuments((prevDocs) => {
+          if (prevDocs.length !== allDocs.length) {
+            return allDocs;
+          }
+          const prevDocsMap = new Map(prevDocs.map((d) => [d.id, d]));
+          const hasChanges = allDocs.some((newDoc) => {
+            const prevDoc = prevDocsMap.get(newDoc.id);
+            return (
+              !prevDoc ||
+              prevDoc.scores_extraction_status !== newDoc.scores_extraction_status ||
+              prevDoc.scores_extracted_at !== newDoc.scores_extracted_at ||
+              prevDoc.scores_applied_at !== newDoc.scores_applied_at
+            );
+          });
+          return hasChanges ? allDocs : prevDocs;
+        });
+
+        if (!isPollingUpdate) {
+          setTotal(response.total);
+          setTotalPages(response.total_pages);
+          setCurrentPage(response.page);
+        }
+      } catch (err) {
+        if (!isPollingUpdate) {
+          setError(err instanceof Error ? err.message : "Failed to load documents");
+        }
+        console.error("Error loading documents:", err);
+      } finally {
+        if (!isPollingUpdate) {
+          setLoading(false);
+        }
+        // Load counts independently so a counts failure never blocks the table
+        void loadStatusCounts();
+      }
+    },
+    [filters, loadStatusCounts]
+  );
 
   useEffect(() => {
     loadDocuments(false);
   }, [loadDocuments]);
 
   useEffect(() => {
-    const hasProcessingDocs = documents.some(
-      (doc) =>
-        doc.scores_extraction_status === "processing" ||
-        doc.scores_extraction_status === "queued"
-    );
+    const hasProcessingDocs =
+      statusCounts.queued > 0 ||
+      statusCounts.processing > 0 ||
+      documents.some(
+        (doc) =>
+          doc.scores_extraction_status === "processing" ||
+          doc.scores_extraction_status === "queued"
+      );
 
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
 
-    if (!hasProcessingDocs || documents.length === 0) {
+    if (!hasProcessingDocs) {
       setIsPolling(false);
       return;
     }
@@ -193,7 +247,7 @@ export default function ReductoExtractionPage() {
         setIsPolling(false);
       }
     };
-  }, [documents, loadDocuments]);
+  }, [documents, loadDocuments, statusCounts.processing, statusCounts.queued]);
 
   useEffect(() => {
     const newFilters: ScoreDocumentFilters = { ...filters };
@@ -269,13 +323,10 @@ export default function ReductoExtractionPage() {
 
   const handleSelectDocument = (documentId: number) => {
     setSelectedDocuments((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(documentId)) {
-        newSet.delete(documentId);
-      } else {
-        newSet.add(documentId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
     });
   };
 
@@ -287,64 +338,107 @@ export default function ReductoExtractionPage() {
     }
   };
 
-  const handleQueueForReducto = async () => {
-    if (selectedDocuments.size === 0) {
-      setError("Please select at least one document");
+  const queueDocuments = async (documentIds: number[], trackBatch = true) => {
+    if (documentIds.length === 0) {
+      toast.message("No documents to queue");
       return;
     }
-
     setQueuing(true);
     setError(null);
     try {
-      const documentIds = Array.from(selectedDocuments);
       const response = await queueReductoExtraction(documentIds, skipWithoutExtractedId);
+      if (trackBatch) {
+        const queuedIds = response.documents
+          .filter((d) => d.status === "queued" || d.status === "processing")
+          .map((d) => d.document_id);
+        setBatchTrackedIds(new Set(queuedIds.length > 0 ? queuedIds : documentIds));
+      }
       await loadDocuments(false);
       setSelectedDocuments(new Set());
       const parts: string[] = [];
       if (response.queued_count > 0) {
-        parts.push(`${response.queued_count} document(s) queued for extraction`);
+        parts.push(`${response.queued_count} queued`);
       }
       if ((response.skipped_count ?? 0) > 0) {
-        parts.push(`${response.skipped_count} skipped (no extracted ID)`);
+        parts.push(`${response.skipped_count} skipped (no ID)`);
       }
-      if (parts.length > 0) {
-        toast.success(parts.join(" · "));
-      } else {
-        toast.message("No documents were queued");
-      }
+      if (parts.length > 0) toast.success(parts.join(" · "));
+      else toast.message("No documents were queued");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue documents for Reducto extraction");
-      console.error("Error queueing documents:", err);
+      setError(err instanceof Error ? err.message : "Failed to queue documents");
       toast.error("Failed to queue documents for extraction");
     } finally {
       setQueuing(false);
     }
   };
 
+  const handleQueueSelected = async () => {
+    if (selectedDocuments.size === 0) {
+      setError("Please select at least one document");
+      return;
+    }
+    await queueDocuments(Array.from(selectedDocuments));
+  };
+
+  const handleQueueAllPending = async () => {
+    try {
+      const pendingFilters: ScoreDocumentFilters = {
+        ...filters,
+        extraction_status: "pending",
+        page: 1,
+        page_size: 1000,
+      };
+      const response = await getFilteredDocuments(pendingFilters);
+      let ids = response.items.map((d) => d.id);
+      if (skipWithoutExtractedId) {
+        ids = response.items.filter((d) => !!d.extracted_id).map((d) => d.id);
+      }
+      if (ids.length === 0) {
+        toast.message(
+          skipWithoutExtractedId
+            ? "No pending documents with extracted IDs"
+            : "No pending documents to queue"
+        );
+        return;
+      }
+      await queueDocuments(ids);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to queue pending documents");
+    }
+  };
+
+  const handleRequeue = async (document: Document) => {
+    setRequeueingDocumentId(document.id);
+    try {
+      await queueDocuments([document.id]);
+    } finally {
+      setRequeueingDocumentId(null);
+    }
+  };
+
   const handleUpdateScores = async (document: Document) => {
     setUpdatingScores(document.id);
     try {
-      const response = await updateScoresFromReducto(document.id, verifyEnabled);
+      const response = await updateScoresFromReducto(document.id, true);
       toast.success(
-        `Updated ${response.updated_count} score(s). ${response.unmatched_count} unmatched record(s) saved.`
+        `Updated ${response.updated_count} score(s). ${response.unmatched_count} unmatched.`
       );
       if (response.unmatched_count > 0) {
-        setShowUnmatched(true);
-        loadUnmatchedRecords();
+        toast.message("Review unmatched records on Apply Scores");
       }
       await loadDocuments(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update scores");
-      console.error("Error updating scores:", err);
     } finally {
       setUpdatingScores(null);
     }
   };
 
-  const handleViewDocument = (document: Document) => {
+  const handleViewDocument = (document: Document, withPreview = false) => {
     const index = documents.findIndex((d) => d.id === document.id);
     setSelectedIndex(index >= 0 ? index : -1);
     setSelectedDocument(document);
+    setOpenPreviewPanel(withPreview && document.scores_extraction_status === "success");
     setViewerOpen(true);
   };
 
@@ -352,6 +446,7 @@ export default function ReductoExtractionPage() {
     setViewerOpen(false);
     setSelectedDocument(null);
     setSelectedIndex(-1);
+    setOpenPreviewPanel(false);
   };
 
   const handleNavigate = (index: number) => {
@@ -364,38 +459,141 @@ export default function ReductoExtractionPage() {
   const handleDownload = async (doc: Document) => {
     try {
       await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
-    } catch (downloadError) {
-      console.error("Failed to download document:", downloadError);
+    } catch {
       toast.error("Failed to download document. Please try again.");
     }
   };
 
-  const loadUnmatchedRecords = async () => {
-    setLoadingUnmatched(true);
-    try {
-      const response = await getUnmatchedRecords({ status: "pending", page: 1, page_size: 50 });
-      setUnmatchedRecords(response.items);
-    } catch (err) {
-      console.error("Error loading unmatched records:", err);
-    } finally {
-      setLoadingUnmatched(false);
+  const handleStatusFilter = (status: string | undefined) => {
+    const next = { ...filters, page: 1 };
+    if (status) {
+      next.extraction_status = status as ExtractionStatusFilter;
+    } else {
+      delete next.extraction_status;
     }
+    setFilters(next);
+    setSelectedDocuments(new Set());
   };
 
-  const stats = {
-    total,
-    queued: documents.filter((d) => d.scores_extraction_status === "queued").length,
-    processing: documents.filter((d) => d.scores_extraction_status === "processing").length,
-    success: documents.filter((d) => d.scores_extraction_status === "success").length,
-    error: documents.filter((d) => d.scores_extraction_status === "error").length,
-    pending: documents.filter(
-      (d) => !d.scores_extraction_status || d.scores_extraction_status === "pending"
-    ).length,
+  const handleClearFilters = () => {
+    setSelectedExamId(undefined);
+    setFilters({ page: 1, page_size: filters.page_size || 50, extraction_status: "pending" });
+    setSelectedDocuments(new Set());
   };
+
+  const hasActiveFilters =
+    !!selectedExamId || !!filters.school_id || !!filters.subject_id || !!filters.test_type;
+
+  const skipPreview = useMemo(() => {
+    if (selectedDocuments.size === 0) return null;
+    const selected = documents.filter((d) => selectedDocuments.has(d.id));
+    const willSkip = skipWithoutExtractedId
+      ? selected.filter((d) => !d.extracted_id).length
+      : 0;
+    return {
+      willQueue: selected.length - willSkip,
+      willSkip,
+    };
+  }, [documents, selectedDocuments, skipWithoutExtractedId]);
+
+  const batchProgress: BatchProgress | null = useMemo(() => {
+    if (batchTrackedIds.size === 0) return null;
+    let done = 0;
+    let failed = 0;
+    let processing = 0;
+    let queued = 0;
+    for (const id of batchTrackedIds) {
+      const doc = documents.find((d) => d.id === id);
+      const status = doc?.scores_extraction_status;
+      if (status === "success") done += 1;
+      else if (status === "error") failed += 1;
+      else if (status === "processing") processing += 1;
+      else if (status === "queued") queued += 1;
+    }
+    // When filtered away from tracked docs, fall back to global processing counts
+    const known = done + failed + processing + queued;
+    if (known === 0 && (statusCounts.queued > 0 || statusCounts.processing > 0)) {
+      return {
+        total: batchTrackedIds.size,
+        done: 0,
+        failed: 0,
+        processing: statusCounts.processing,
+        queued: statusCounts.queued,
+      };
+    }
+    return {
+      total: batchTrackedIds.size,
+      done,
+      failed,
+      processing,
+      queued,
+    };
+  }, [batchTrackedIds, documents, statusCounts.processing, statusCounts.queued]);
+
+  useEffect(() => {
+    if (!batchProgress) return;
+    if (batchProgress.done + batchProgress.failed >= batchProgress.total && batchProgress.total > 0) {
+      if (batchProgress.processing === 0 && batchProgress.queued === 0) {
+        toast.success(
+          `Batch complete · ${batchProgress.done} succeeded` +
+            (batchProgress.failed > 0 ? ` · ${batchProgress.failed} failed` : "")
+        );
+        setBatchTrackedIds(new Set());
+      }
+    }
+  }, [batchProgress]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+        return;
+      }
+      if (viewerOpen) return;
+
+      if (e.key === "Escape") {
+        setSelectedDocuments(new Set());
+        return;
+      }
+      if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSelectAll();
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.min(documents.length - 1, Math.max(0, i + 1)));
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === " " && documents[focusedRowIndex]) {
+        e.preventDefault();
+        handleSelectDocument(documents[focusedRowIndex].id);
+        return;
+      }
+      if (e.key === "Enter" && documents[focusedRowIndex]) {
+        e.preventDefault();
+        handleViewDocument(documents[focusedRowIndex], true);
+        return;
+      }
+      if ((e.key === "q" || e.key === "Q") && selectedDocuments.size > 0) {
+        e.preventDefault();
+        void handleQueueSelected();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen]);
 
   const getActiveFilterChips = () => {
     const chips: Array<{ label: string; onRemove: () => void }> = [];
-
     if (selectedExamId) {
       const exam = exams.find((e) => e.id === selectedExamId);
       if (exam) {
@@ -410,14 +608,14 @@ export default function ReductoExtractionPage() {
     if (filters.school_id) {
       const school = schools.find((s) => s.id === filters.school_id);
       chips.push({
-        label: `School: ${school ? `${school.code} - ${school.name}` : `ID: ${filters.school_id}`}`,
+        label: `School: ${school ? `${school.code} - ${school.name}` : filters.school_id}`,
         onRemove: () => handleFilterChange("school_id", undefined),
       });
     }
     if (filters.subject_id) {
       const subject = subjects.find((s) => s.id === filters.subject_id);
       chips.push({
-        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : `ID: ${filters.subject_id}`}`,
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : filters.subject_id}`,
         onRemove: () => handleFilterChange("subject_id", undefined),
       });
     }
@@ -433,43 +631,67 @@ export default function ReductoExtractionPage() {
         onRemove: () => handleStatusFilter(undefined),
       });
     }
-
     return chips;
   };
 
-  const handleStatusFilter = (status: string | undefined) => {
-    const newFilters = { ...filters };
-    if (status) {
-      newFilters.extraction_status = status as
-        | "queued"
-        | "processing"
-        | "success"
-        | "error"
-        | "pending";
-    } else {
-      delete newFilters.extraction_status;
-    }
-    newFilters.page = 1;
-    setFilters(newFilters);
-    setSelectedDocuments(new Set());
-  };
-
-  const handleFetchDocuments = () => {
-    loadDocuments(false);
-  };
-
-  const handleClearFilters = () => {
-    setSelectedExamId(undefined);
-    setFilters({ page: 1, page_size: 50 });
-    setSelectedDocuments(new Set());
-  };
-
-  const hasActiveFilters =
-    selectedExamId ||
-    filters.school_id ||
-    filters.subject_id ||
-    filters.test_type ||
-    filters.extraction_status;
+  const statusButtons: Array<{
+    key: keyof ScoresExtractionStatusCounts | "all";
+    label: string;
+    count: number;
+    filter?: string;
+    className: string;
+    icon: ReactNode;
+  }> = [
+    {
+      key: "all",
+      label: "Total",
+      count: statusCounts.total,
+      className: "hover:text-foreground",
+      icon: <FileText className="h-4 w-4" />,
+    },
+    {
+      key: "pending",
+      label: "Pending",
+      count: statusCounts.pending,
+      filter: "pending",
+      className: "hover:text-yellow-600",
+      icon: <AlertCircle className="h-4 w-4" />,
+    },
+    {
+      key: "queued",
+      label: "Queued",
+      count: statusCounts.queued,
+      filter: "queued",
+      className: "hover:text-blue-600",
+      icon: <Clock className="h-4 w-4" />,
+    },
+    {
+      key: "processing",
+      label: "Processing",
+      count: statusCounts.processing,
+      filter: "processing",
+      className: "hover:text-blue-600",
+      icon: (
+        <Loader2 className={cn("h-4 w-4", statusCounts.processing > 0 && "animate-spin")} />
+      ),
+    },
+    {
+      key: "success",
+      label: "Success",
+      count: statusCounts.success,
+      filter: "success",
+      className: "hover:text-green-600",
+      icon: <CheckCircle2 className="h-4 w-4" />,
+    },
+    {
+      key: "error",
+      label: "Errors",
+      count: statusCounts.error,
+      filter: "error",
+      className: "hover:text-red-600",
+      icon: <XCircle className="h-4 w-4" />,
+    },
+  ];
 
   return (
     <DashboardLayout>
@@ -477,80 +699,49 @@ export default function ReductoExtractionPage() {
         <TopBar title="Reducto Extraction" />
 
         <div className="border-b border-border bg-background px-4 py-2">
-          <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-muted-foreground">
-              Queue and monitor Reducto extraction. When documents succeed, apply scores on the Apply
-              Scores page.
-            </p>
-            <Button variant="outline" size="sm" className="h-8" asChild>
-              <Link href="/scores/data-entry/apply-scores">Apply Scores</Link>
-            </Button>
+          <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
+            <DataEntryPipelineNav
+              current={filters.extraction_status === "success" ? "review" : "extract"}
+            />
+            <div className="flex items-center gap-2">
+              <p className="hidden text-sm text-muted-foreground lg:block">
+                Queue sheets for extraction, then apply on the next step.
+              </p>
+              <Button variant="outline" size="sm" className="h-8" asChild>
+                <Link href="/scores/data-entry/apply-scores">Go to Apply</Link>
+              </Button>
+            </div>
           </div>
         </div>
 
-        {!loading && documents.length > 0 && (
-          <div className="border-b border-border bg-background px-4 py-2">
-            <div className="mx-auto flex max-w-[2000px] flex-wrap items-center gap-4">
-              <button
-                type="button"
-                className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => handleStatusFilter(undefined)}
-              >
-                <FileText className="h-4 w-4" />
-                <span className="font-medium">Total:</span>
-                <span className="font-bold text-foreground">{stats.total}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-blue-600"
-                onClick={() => handleStatusFilter("queued")}
-              >
-                <Clock className="h-4 w-4" />
-                <span className="font-medium">Queued:</span>
-                <span className="font-bold text-blue-600">{stats.queued}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-blue-600"
-                onClick={() => handleStatusFilter("processing")}
-              >
-                <Loader2 className={`h-4 w-4 ${stats.processing > 0 ? "animate-spin" : ""}`} />
-                <span className="font-medium">Processing:</span>
-                <span className="font-bold text-blue-600">{stats.processing}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-green-600"
-                onClick={() => handleStatusFilter("success")}
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                <span className="font-medium">Success:</span>
-                <span className="font-bold text-green-600">{stats.success}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-red-600"
-                onClick={() => handleStatusFilter("error")}
-              >
-                <XCircle className="h-4 w-4" />
-                <span className="font-medium">Errors:</span>
-                <span className="font-bold text-red-600">{stats.error}</span>
-              </button>
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-sm transition-colors hover:text-yellow-600"
-                onClick={() => handleStatusFilter("pending")}
-              >
-                <AlertCircle className="h-4 w-4" />
-                <span className="font-medium">Pending:</span>
-                <span className="font-bold text-yellow-600">{stats.pending}</span>
-              </button>
-            </div>
+        <div className="border-b border-border bg-background px-4 py-2">
+          <div className="mx-auto flex max-w-[2000px] flex-wrap items-center gap-4">
+            {statusButtons.map((item) => {
+              const active =
+                (item.filter && filters.extraction_status === item.filter) ||
+                (!item.filter && !filters.extraction_status);
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={cn(
+                    "flex items-center gap-1 text-sm text-muted-foreground transition-colors",
+                    item.className,
+                    active && "text-foreground"
+                  )}
+                  onClick={() => handleStatusFilter(item.filter)}
+                >
+                  {item.icon}
+                  <span className="font-medium">{item.label}:</span>
+                  <span className="font-bold text-foreground">{item.count}</span>
+                </button>
+              );
+            })}
           </div>
-        )}
+        </div>
 
         <div className="border-b border-border bg-background px-4 py-3">
-          <div className="mx-auto max-w-[2000px]">
+          <div className="mx-auto max-w-[2000px] space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <div className="w-[280px]">
                 <SearchableSelect
@@ -559,7 +750,7 @@ export default function ReductoExtractionPage() {
                   onValueChange={handleExamChange}
                   placeholder="Examination"
                   disabled={loadingFilters}
-                  allowAll={true}
+                  allowAll
                   allLabel="All examinations"
                   searchPlaceholder="Search examinations..."
                   emptyMessage="No examinations found"
@@ -585,75 +776,94 @@ export default function ReductoExtractionPage() {
                   }}
                   placeholder="School"
                   disabled={loadingFilters}
-                  allowAll={true}
+                  allowAll
                   allLabel="All schools"
                   searchPlaceholder="Search schools..."
                   emptyMessage="No schools found"
                 />
               </div>
 
-              <div className="w-[240px]">
-                <SearchableSelect
-                  options={subjects.map((subject) => ({
-                    value: subject.id,
-                    label: `${subject.code} - ${subject.name}`,
-                  }))}
-                  value={filters.subject_id || ""}
-                  onValueChange={(value) => {
-                    if (value === "all" || value === "") {
-                      handleFilterChange("subject_id", undefined);
-                    } else {
-                      handleFilterChange(
-                        "subject_id",
-                        typeof value === "number" ? value : parseInt(String(value), 10)
-                      );
-                    }
-                  }}
-                  placeholder="Subject"
-                  disabled={loadingFilters}
-                  allowAll={true}
-                  allLabel="All subjects"
-                  searchPlaceholder="Search subjects..."
-                  emptyMessage="No subjects found"
-                />
-              </div>
-
-              <Select
-                value={filters.test_type || undefined}
-                onValueChange={(value) =>
-                  handleFilterChange("test_type", value === "all" ? undefined : value)
-                }
-                disabled={loadingFilters}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1"
+                onClick={() => setShowMoreFilters((v) => !v)}
               >
-                <SelectTrigger className="h-8 w-[120px]">
-                  <SelectValue placeholder="Paper" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All papers</SelectItem>
-                  <SelectItem value="1">1</SelectItem>
-                  <SelectItem value="2">2</SelectItem>
-                </SelectContent>
-              </Select>
+                More filters
+                <ChevronDown
+                  className={cn("h-3.5 w-3.5 transition-transform", showMoreFilters && "rotate-180")}
+                />
+              </Button>
 
               <Button
-                onClick={handleFetchDocuments}
-                disabled={loading}
+                variant="ghost"
                 size="sm"
-                className="h-8 gap-2"
+                className="h-8 gap-1"
+                onClick={() => loadDocuments(false)}
+                disabled={loading}
+                title="Refresh list"
               >
-                <Search className="h-4 w-4" />
-                {loading ? "Fetching..." : "Fetch"}
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                Refresh
               </Button>
 
               {hasActiveFilters && (
                 <Button variant="outline" size="sm" onClick={handleClearFilters} className="h-8">
-                  Clear All
+                  Clear filters
                 </Button>
               )}
             </div>
 
+            {showMoreFilters && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="w-[240px]">
+                  <SearchableSelect
+                    options={subjects.map((subject) => ({
+                      value: subject.id,
+                      label: `${subject.code} - ${subject.name}`,
+                    }))}
+                    value={filters.subject_id || ""}
+                    onValueChange={(value) => {
+                      if (value === "all" || value === "") {
+                        handleFilterChange("subject_id", undefined);
+                      } else {
+                        handleFilterChange(
+                          "subject_id",
+                          typeof value === "number" ? value : parseInt(String(value), 10)
+                        );
+                      }
+                    }}
+                    placeholder="Subject"
+                    disabled={loadingFilters}
+                    allowAll
+                    allLabel="All subjects"
+                    searchPlaceholder="Search subjects..."
+                    emptyMessage="No subjects found"
+                  />
+                </div>
+
+                <Select
+                  value={filters.test_type || undefined}
+                  onValueChange={(value) =>
+                    handleFilterChange("test_type", value === "all" ? undefined : value)
+                  }
+                  disabled={loadingFilters}
+                >
+                  <SelectTrigger className="h-8 w-[120px]">
+                    <SelectValue placeholder="Paper" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All papers</SelectItem>
+                    <SelectItem value="1">1</SelectItem>
+                    <SelectItem value="2">2</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {getActiveFilterChips().length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">Active:</span>
                 {getActiveFilterChips().map((chip, index) => (
                   <Badge
@@ -679,75 +889,46 @@ export default function ReductoExtractionPage() {
             selectedDocuments={selectedDocuments}
             onSelectDocument={handleSelectDocument}
             onSelectAll={handleSelectAll}
-            onRowClick={handleViewDocument}
+            onClearSelection={() => setSelectedDocuments(new Set())}
+            onRowClick={(doc) => handleViewDocument(doc, false)}
+            onPreview={(doc) => handleViewDocument(doc, true)}
+            onRequeue={handleRequeue}
+            onApply={handleUpdateScores}
+            applyingDocumentId={updatingScores}
+            requeueingDocumentId={requeueingDocumentId}
             statusFilter={filters.extraction_status}
             onStatusFilterChange={handleStatusFilter}
             pageSize={filters.page_size || 50}
             onPageSizeChange={(size) =>
               setFilters((prev) => ({ ...prev, page_size: size, page: 1 }))
             }
-            verifyEnabled={verifyEnabled}
-            onVerifyEnabledChange={setVerifyEnabled}
             skipWithoutExtractedId={skipWithoutExtractedId}
             onSkipWithoutExtractedIdChange={setSkipWithoutExtractedId}
             queuing={queuing}
             isPolling={isPolling}
-            onQueue={handleQueueForReducto}
+            batchProgress={batchProgress}
+            skipPreview={skipPreview}
+            onQueueSelected={handleQueueSelected}
+            onQueueAllPending={handleQueueAllPending}
+            queueAllPendingDisabled={statusCounts.pending === 0}
+            focusedRowIndex={focusedRowIndex}
+            onFocusedRowIndexChange={setFocusedRowIndex}
             currentPage={currentPage}
             totalPages={totalPages}
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
+            emptyActionHref={
+              filters.extraction_status === "pending"
+                ? "/icm-studio/documents/failed-extractions"
+                : "/scores/data-entry/apply-scores"
+            }
+            emptyActionLabel={
+              filters.extraction_status === "pending"
+                ? "Fix failed IDs"
+                : "Go to Apply Scores"
+            }
           />
         </div>
-
-        {showUnmatched && (
-          <Card className="mx-4 mb-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Unmatched Records</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => setShowUnmatched(false)}>
-                  Hide
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loadingUnmatched ? (
-                <div className="flex h-32 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin" />
-                </div>
-              ) : unmatchedRecords.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No unmatched records found</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index Number</TableHead>
-                      <TableHead>Candidate Name</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {unmatchedRecords.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell>{record.index_number || "-"}</TableCell>
-                        <TableCell>{record.candidate_name || "-"}</TableCell>
-                        <TableCell>{record.score || "-"}</TableCell>
-                        <TableCell>
-                          {record.document_extracted_id || `Doc #${record.document_id}`}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{record.status}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       {selectedDocument && (
@@ -760,6 +941,7 @@ export default function ReductoExtractionPage() {
           onNavigate={handleNavigate}
           onDownload={handleDownload}
           enableReductoPreview
+          initialShowExtractionPanel={openPreviewPanel}
           onUpdateScores={handleUpdateScores}
           updatingScores={updatingScores === selectedDocument.id}
         />
