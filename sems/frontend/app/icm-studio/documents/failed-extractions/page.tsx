@@ -5,15 +5,17 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
+import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
-import { Grid3x3, List, ArrowLeft, AlertCircle } from "lucide-react";
+import { Grid3x3, List, ArrowLeft, AlertCircle, RefreshCw } from "lucide-react";
 import {
   listDocuments,
   downloadDocument,
   getDocumentDownloadFilename,
   updateDocumentId,
+  bulkExtractDocumentIds,
 } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
@@ -25,6 +27,7 @@ export default function FailedExtractionsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const errorParam = searchParams.get("error") || "";
+  const examIdParam = searchParams.get("exam_id");
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,8 +38,10 @@ export default function FailedExtractionsPage() {
       page_size: 20,
       id_extraction_status: "error",
     };
-    if (errorParam) {
-      initial.id_extraction_error_code = errorParam;
+    if (errorParam) initial.id_extraction_error_code = errorParam;
+    if (examIdParam) {
+      const examId = parseInt(examIdParam, 10);
+      if (!Number.isNaN(examId)) initial.exam_id = examId;
     }
     return initial;
   });
@@ -49,21 +54,41 @@ export default function FailedExtractionsPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
 
-  // Sync error filter from URL
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const nextQ = searchQuery.trim() || undefined;
+      setFilters((prev) => {
+        if ((prev.q ?? undefined) === nextQ) return prev;
+        return { ...prev, q: nextQ, page: 1 };
+      });
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [searchQuery]);
+
   useEffect(() => {
     setFilters((prev) => {
       const nextCode = errorParam || undefined;
-      if ((prev.id_extraction_error_code ?? undefined) === nextCode) return prev;
+      const nextExam = examIdParam ? parseInt(examIdParam, 10) : undefined;
+      const validExam = nextExam != null && !Number.isNaN(nextExam) ? nextExam : undefined;
+      if (
+        (prev.id_extraction_error_code ?? undefined) === nextCode &&
+        (prev.exam_id ?? undefined) === validExam
+      ) {
+        return prev;
+      }
       return {
         ...prev,
         id_extraction_error_code: nextCode,
+        exam_id: validExam,
         page: 1,
       };
     });
-  }, [errorParam]);
+  }, [errorParam, examIdParam]);
 
-  // Keep error type in URL
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
     if (filters.id_extraction_error_code) {
@@ -71,13 +96,18 @@ export default function FailedExtractionsPage() {
     } else {
       params.delete("error");
     }
+    if (filters.exam_id) {
+      params.set("exam_id", String(filters.exam_id));
+    } else {
+      params.delete("exam_id");
+    }
     const next = params.toString();
     if (next !== searchParams.toString()) {
       router.replace(`/icm-studio/documents/failed-extractions${next ? `?${next}` : ""}`, {
         scroll: false,
       });
     }
-  }, [filters.id_extraction_error_code, router, searchParams]);
+  }, [filters.id_extraction_error_code, filters.exam_id, router, searchParams]);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -108,6 +138,16 @@ export default function FailedExtractionsPage() {
     }));
   };
 
+  const handleFiltersChange = (newFilters: DocumentFiltersType) => {
+    setFilters({
+      ...newFilters,
+      id_extraction_status: "error",
+      id_extraction_error_code: filters.id_extraction_error_code,
+      q: filters.q,
+      page: 1,
+    });
+  };
+
   const handlePageChange = (page: number) => {
     setFilters((prev) => ({ ...prev, page }));
   };
@@ -118,15 +158,9 @@ export default function FailedExtractionsPage() {
 
   const handleDocumentSelect = (doc: Document) => {
     const index = documents.findIndex((d) => d.id === doc.id);
-    if (index >= 0) {
-      setSelectedIndex(index);
-      setSelectedDocument(doc);
-      setViewerOpen(true);
-    } else {
-      setSelectedIndex(-1);
-      setSelectedDocument(doc);
-      setViewerOpen(true);
-    }
+    setSelectedIndex(index);
+    setSelectedDocument(doc);
+    setViewerOpen(true);
   };
 
   const handleCloseViewer = useCallback(() => {
@@ -135,39 +169,49 @@ export default function FailedExtractionsPage() {
     setSelectedIndex(-1);
   }, []);
 
-  const handleNavigate = useCallback((index: number) => {
-    if (index >= 0 && index < documents.length) {
-      setSelectedIndex(index);
-      setSelectedDocument(documents[index]);
-    }
-  }, [documents]);
-
-  const handleUpdateId = async (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => {
-    try {
-      await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-      toast.success("Document ID updated successfully");
-      // Reload documents to get updated data
-      const response = await listDocuments(filters);
-      setDocuments(response.items);
-      setTotalPages(response.total_pages);
-      setCurrentPage(response.page);
-      setTotal(response.total);
-      // Update the selected document if it's the one being updated
-      if (selectedDocument && selectedDocument.id === documentId) {
-        const updatedDoc = response.items.find((d) => d.id === documentId);
-        if (updatedDoc) {
-          setSelectedDocument(updatedDoc);
-          const newIndex = response.items.findIndex((d) => d.id === documentId);
-          if (newIndex >= 0) {
-            setSelectedIndex(newIndex);
-          }
-        } else {
-          // Document was successfully updated and removed from failed list
-          handleCloseViewer();
-        }
+  const handleNavigate = useCallback(
+    (index: number) => {
+      if (index >= 0 && index < documents.length) {
+        setSelectedIndex(index);
+        setSelectedDocument(documents[index]);
       }
-    } catch (error) {
-      throw error;
+    },
+    [documents]
+  );
+
+  const handleUpdateId = async (
+    documentId: number,
+    extractedId: string,
+    schoolId?: number,
+    subjectId?: number
+  ) => {
+    await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+    toast.success("Document ID updated successfully");
+    const response = await listDocuments(filters);
+    setDocuments(response.items);
+    setTotalPages(response.total_pages);
+    setCurrentPage(response.page);
+    setTotal(response.total);
+    if (selectedDocument && selectedDocument.id === documentId) {
+      const updatedDoc = response.items.find((d) => d.id === documentId);
+      if (updatedDoc) {
+        setSelectedDocument(updatedDoc);
+      } else {
+        handleCloseViewer();
+      }
+    }
+  };
+
+  const handleBulkRetry = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      const result = await bulkExtractDocumentIds(Array.from(selectedIds));
+      toast.success(`Queued ${result.queued} document(s) for re-extraction`);
+      setSelectedIds(new Set());
+      setBulkMode(false);
+      await loadDocuments();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Retry failed");
     }
   };
 
@@ -178,9 +222,7 @@ export default function FailedExtractionsPage() {
 
   const handleDeleteFromViewer = async (documentId: number) => {
     const doc = documents.find((d) => d.id === documentId);
-    if (doc) {
-      handleDeleteClick(doc);
-    }
+    if (doc) handleDeleteClick(doc);
   };
 
   const handleDeleteConfirm = () => {
@@ -197,7 +239,7 @@ export default function FailedExtractionsPage() {
       await downloadDocument(doc.id, getDocumentDownloadFilename(doc));
     } catch (error) {
       console.error("Failed to download document:", error);
-      alert("Failed to download document. Please try again.");
+      toast.error("Failed to download document. Please try again.");
     }
   };
 
@@ -225,10 +267,12 @@ export default function FailedExtractionsPage() {
               </div>
             </div>
           }
+          showSearch={true}
+          searchValue={searchQuery}
+          onSearch={setSearchQuery}
         />
         <div className="flex flex-1 overflow-hidden relative">
           <main className="flex-1 overflow-y-auto w-full">
-            {/* Info Banner */}
             <div className="px-6 pt-4 pb-2">
               <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
                 <div className="flex items-start gap-3">
@@ -238,14 +282,17 @@ export default function FailedExtractionsPage() {
                       Documents requiring manual ID entry
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      These documents failed automatic ID extraction. Filter by error type, then click a document to correct the ID.
+                      Filter by exam or error type, then correct IDs or bulk-retry extraction.
                     </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Error type filters + view toggle */}
+            <div className="px-6 pt-2 pb-2 border-b border-border">
+              <CompactFilters filters={filters} onFiltersChange={handleFiltersChange} />
+            </div>
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-6 py-4 border-b border-border">
               <div className="flex flex-wrap items-center gap-2">
                 {ID_EXTRACTION_ERROR_FILTERS.map((opt) => (
@@ -253,33 +300,48 @@ export default function FailedExtractionsPage() {
                     key={opt.value || "all"}
                     variant={activeErrorCode === opt.value ? "secondary" : "outline"}
                     size="sm"
-                    className={cn(
-                      "h-8",
-                      activeErrorCode === opt.value && "border-destructive/40"
-                    )}
+                    className={cn("h-8", activeErrorCode === opt.value && "border-destructive/40")}
                     onClick={() => handleErrorFilterChange(opt.value)}
                   >
                     {opt.label}
                   </Button>
                 ))}
               </div>
-              <div className="flex items-center rounded-md border shrink-0">
+              <div className="flex items-center gap-2">
                 <Button
-                  variant={viewMode === "grid" ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  onClick={() => setViewMode("grid")}
-                  className="rounded-r-none"
+                  variant={bulkMode ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setBulkMode(!bulkMode);
+                    if (bulkMode) setSelectedIds(new Set());
+                  }}
                 >
-                  <Grid3x3 className="h-4 w-4" />
+                  {bulkMode ? "Exit selection" : "Select"}
                 </Button>
-                <Button
-                  variant={viewMode === "list" ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  onClick={() => setViewMode("list")}
-                  className="rounded-l-none"
-                >
-                  <List className="h-4 w-4" />
-                </Button>
+                {bulkMode && selectedIds.size > 0 && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={handleBulkRetry}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Retry ({selectedIds.size})
+                  </Button>
+                )}
+                <div className="flex items-center rounded-md border shrink-0">
+                  <Button
+                    variant={viewMode === "grid" ? "secondary" : "ghost"}
+                    size="icon-sm"
+                    onClick={() => setViewMode("grid")}
+                    className="rounded-r-none"
+                  >
+                    <Grid3x3 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={viewMode === "list" ? "secondary" : "ghost"}
+                    size="icon-sm"
+                    onClick={() => setViewMode("list")}
+                    className="rounded-l-none"
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -300,6 +362,17 @@ export default function FailedExtractionsPage() {
               viewMode={viewMode}
               onSelect={handleDocumentSelect}
               onDelete={handleDeleteClick}
+              selectedIds={selectedIds}
+              onSelectionChange={(id, selected) => {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  if (selected) next.add(id);
+                  else next.delete(id);
+                  return next;
+                });
+              }}
+              bulkMode={bulkMode}
+              hideEmptyState
             />
 
             {!loading && total > 0 && (
@@ -312,16 +385,30 @@ export default function FailedExtractionsPage() {
               <div className="flex flex-col items-center justify-center py-24 text-center px-6">
                 <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
                 <p className="text-lg font-medium mb-2">
-                  {activeErrorCode ? "No documents for this error type" : "No failed extractions"}
+                  {activeErrorCode || filters.exam_id || searchQuery.trim()
+                    ? "No documents for this filter"
+                    : "No failed extractions"}
                 </p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  {activeErrorCode
-                    ? "Try another error filter, or clear the filter to see all failures."
+                  {activeErrorCode || filters.exam_id || searchQuery.trim()
+                    ? "Try another error type, exam, or clear search."
                     : "All documents have successfully extracted IDs."}
                 </p>
-                {activeErrorCode ? (
-                  <Button variant="outline" onClick={() => handleErrorFilterChange("")}>
-                    Show all errors
+                {activeErrorCode || filters.exam_id || searchQuery.trim() ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setFilters((prev) => ({
+                        ...prev,
+                        id_extraction_error_code: undefined,
+                        exam_id: undefined,
+                        q: undefined,
+                        page: 1,
+                      }));
+                    }}
+                  >
+                    Clear filters
                   </Button>
                 ) : (
                   <Link href="/icm-studio/documents">
@@ -332,7 +419,6 @@ export default function FailedExtractionsPage() {
             )}
           </main>
 
-          {/* Document Viewer Modal */}
           {selectedDocument && (
             <DocumentViewer
               document={selectedDocument}
@@ -347,7 +433,6 @@ export default function FailedExtractionsPage() {
             />
           )}
 
-          {/* Delete Confirmation Dialog */}
           <DeleteDocumentDialog
             document={documentToDelete}
             open={deleteDialogOpen}

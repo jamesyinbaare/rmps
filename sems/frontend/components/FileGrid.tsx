@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
-import { API_BASE_URL } from "@/lib/api";
+import { getDocumentThumbnailUrl } from "@/lib/api";
 import { getIdExtractionErrorBadgeLabel } from "@/lib/id-extraction-errors";
 
 interface FileGridProps {
@@ -72,7 +72,7 @@ export function FileGrid({
       {documents.map((doc) => {
         const Icon = getFileIcon(doc.mime_type);
         const fileType = getFileType(doc.mime_type, doc.file_name);
-        const previewUrl = `${API_BASE_URL}/api/v1/documents/${doc.id}/download`;
+        const previewUrl = getDocumentThumbnailUrl(doc.id, size === "large-grid" ? 480 : 320);
         const displayText = doc.extracted_id || doc.file_name;
 
         return (

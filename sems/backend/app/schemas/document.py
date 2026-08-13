@@ -84,6 +84,7 @@ class DocumentListItem(DocumentBase):
     school_id: int | None
     school_name: str | None = None
     subject_id: int | None
+    subject_name: str | None = None
     exam_id: int
     test_type: str | None
     subject_series: str | None
@@ -115,6 +116,56 @@ class DocumentListResponse(BaseModel):
     page: int = Field(ge=1)
     page_size: int = Field(ge=1, le=1000)
     total_pages: int
+
+
+class BulkDocumentIdsRequest(BaseModel):
+    """Request body for bulk document operations."""
+
+    document_ids: list[int] = Field(..., min_length=1)
+
+
+class BulkDeleteResponse(BaseModel):
+    """Response for bulk document delete."""
+
+    deleted: int
+    failed: int
+    errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class BulkExtractIdResponse(BaseModel):
+    """Response for bulk ID re-extraction."""
+
+    queued: int
+    document_ids: list[int]
+
+
+class DocumentExamFacet(BaseModel):
+    """Exam that has uploaded documents, with count."""
+
+    id: int
+    exam_type: str
+    series: str
+    year: int
+    description: str | None = None
+    document_count: int
+
+
+class DocumentSchoolFacet(BaseModel):
+    """School that has uploaded documents for an exam."""
+
+    id: int
+    name: str
+    code: str
+    document_count: int
+
+
+class DocumentSubjectFacet(BaseModel):
+    """Subject that has uploaded documents for an exam(+school)."""
+
+    id: int
+    name: str
+    code: str
+    document_count: int
 
 
 class BulkUploadResponse(BaseModel):

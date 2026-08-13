@@ -25,12 +25,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Upload, Grid3x3, List, AlertCircle, Trash2, Database, MoreHorizontal } from "lucide-react";
+import { Upload, Grid3x3, List, AlertCircle, Trash2, Database, MoreHorizontal, RefreshCw } from "lucide-react";
 import {
   listDocuments,
   downloadDocument,
   getDocumentDownloadFilename,
   updateDocumentId,
+  bulkDeleteDocuments,
+  bulkExtractDocumentIds,
 } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
@@ -160,20 +162,24 @@ export default function DocumentsPage() {
       if (append) {
         setDocuments((prev) => {
           const merged = [...prev, ...sortedDocuments];
-          // Cap accumulated items for scale; keep the most recent window
-          if (merged.length > MAX_INFINITE_SCROLL_ITEMS) {
-            return merged.slice(merged.length - MAX_INFINITE_SCROLL_ITEMS);
-          }
-          return merged;
+          const capped =
+            merged.length > MAX_INFINITE_SCROLL_ITEMS
+              ? merged.slice(merged.length - MAX_INFINITE_SCROLL_ITEMS)
+              : merged;
+          setHasMore(response.page < response.total_pages && capped.length < MAX_INFINITE_SCROLL_ITEMS);
+          return capped;
         });
       } else {
         setDocuments(sortedDocuments);
+        setHasMore(
+          response.page < response.total_pages &&
+            sortedDocuments.length < MAX_INFINITE_SCROLL_ITEMS
+        );
       }
 
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
       setTotal(response.total);
-      setHasMore(response.page < response.total_pages);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
       console.error("Error loading documents:", err);
@@ -413,15 +419,101 @@ export default function DocumentsPage() {
     setBulkMode(false);
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (confirm(`Are you sure you want to delete ${selectedIds.size} document(s)?`)) {
-      // Delete logic would go here - for now just clear selection
+    const count = selectedIds.size;
+    if (!confirm(`Are you sure you want to delete ${count} document(s)? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      const result = await bulkDeleteDocuments(Array.from(selectedIds));
+      toast.success(`Deleted ${result.deleted} document(s)`);
+      if (result.failed > 0) {
+        toast.error(`Failed to delete ${result.failed} document(s)`);
+      }
       setSelectedIds(new Set());
       setBulkMode(false);
-      toast.success(`${selectedIds.size} document(s) deleted`);
+      setFilters((prev) => ({ ...prev, page: 1 }));
+      await loadDocuments(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bulk delete failed");
     }
   };
+
+  const handleBulkRetryExtraction = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      const result = await bulkExtractDocumentIds(Array.from(selectedIds));
+      toast.success(`Queued ${result.queued} document(s) for ID extraction`);
+      setSelectedIds(new Set());
+      setBulkMode(false);
+      // Mark selected as pending locally and start polling
+      setDocuments((prev) =>
+        prev.map((d) =>
+          result.document_ids.includes(d.id)
+            ? {
+                ...d,
+                id_extraction_status: "pending",
+                id_extraction_error: null,
+                id_extraction_error_code: null,
+              }
+            : d
+        )
+      );
+      startPendingPoll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to queue extraction");
+    }
+  };
+
+  const pendingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startPendingPoll = useCallback(() => {
+    if (pendingPollRef.current) {
+      clearInterval(pendingPollRef.current);
+    }
+    let ticks = 0;
+    pendingPollRef.current = setInterval(async () => {
+      ticks += 1;
+      try {
+        const response = await listDocuments({
+          ...filters,
+          page: filters.page ?? 1,
+          page_size: filters.page_size || 30,
+        });
+        const byId = new Map(response.items.map((d) => [d.id, d]));
+        setDocuments((prev) => {
+          const merged = prev.map((d) => byId.get(d.id) || d);
+          const stillPending = merged.some((d) => d.id_extraction_status === "pending");
+          if (!stillPending || ticks >= 40) {
+            if (pendingPollRef.current) {
+              clearInterval(pendingPollRef.current);
+              pendingPollRef.current = null;
+            }
+          }
+          return merged;
+        });
+        setTotal(response.total);
+        if (ticks >= 40 && pendingPollRef.current) {
+          clearInterval(pendingPollRef.current);
+          pendingPollRef.current = null;
+        }
+      } catch {
+        if (ticks >= 40 && pendingPollRef.current) {
+          clearInterval(pendingPollRef.current);
+          pendingPollRef.current = null;
+        }
+      }
+    }, 3000);
+  }, [filters]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingPollRef.current) {
+        clearInterval(pendingPollRef.current);
+      }
+    };
+  }, []);
 
   const handlePageChange = (page: number) => {
     setFilters((prev) => ({ ...prev, page }));
@@ -432,7 +524,29 @@ export default function DocumentsPage() {
   };
 
   const handleUploadSuccess = () => {
-    loadDocuments();
+    loadDocuments(false);
+    startPendingPoll();
+  };
+
+  const handleUpdateId = async (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => {
+    try {
+      const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+      toast.success("Document ID updated successfully");
+      // Patch in place so infinite-scroll window is preserved
+      setDocuments((prev) => prev.map((d) => (d.id === documentId ? { ...d, ...updated } : d)));
+      if (selectedDocument && selectedDocument.id === documentId) {
+        setSelectedDocument({ ...selectedDocument, ...updated });
+      }
+      // Refresh failed count
+      try {
+        const failed = await listDocuments({ id_extraction_status: "error", page: 1, page_size: 1 });
+        setFailedCount(failed.total);
+      } catch {
+        /* ignore */
+      }
+    } catch (error) {
+      throw error; // Re-throw to let DocumentViewer handle the error display
+    }
   };
 
   const handleDocumentSelect = (doc: Document) => {
@@ -461,33 +575,6 @@ export default function DocumentsPage() {
       setSelectedDocument(documents[index]);
     }
   }, [documents]);
-
-  const handleUpdateId = async (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => {
-    try {
-      await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-      toast.success("Document ID updated successfully");
-      // Reload documents to get updated data
-      const response = await listDocuments(filters);
-      setDocuments(response.items);
-      setTotalPages(response.total_pages);
-      setCurrentPage(response.page);
-      setTotal(response.total);
-      // Update the selected document if it's the one being updated
-      if (selectedDocument && selectedDocument.id === documentId) {
-        const updatedDoc = response.items.find((d) => d.id === documentId);
-        if (updatedDoc) {
-          setSelectedDocument(updatedDoc);
-          // Update the index if needed
-          const newIndex = response.items.findIndex((d) => d.id === documentId);
-          if (newIndex >= 0) {
-            setSelectedIndex(newIndex);
-          }
-        }
-      }
-    } catch (error) {
-      throw error; // Re-throw to let DocumentViewer handle the error display
-    }
-  };
 
   const handleDeleteClick = (doc: Document) => {
     setDocumentToDelete(doc);
@@ -599,6 +686,15 @@ export default function DocumentsPage() {
                   >
                     <Upload className="h-4 w-4 rotate-180" />
                     Download ({selectedIds.size})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkRetryExtraction}
+                    className="gap-2"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Retry ID extract ({selectedIds.size})
                   </Button>
                   <Button
                     variant="destructive"
@@ -726,9 +822,53 @@ export default function DocumentsPage() {
               selectedIds={selectedIds}
               onSelectionChange={handleSelectionChange}
               bulkMode={bulkMode}
+              onSelectAll={handleSelectAll}
               infiniteScroll={viewMode === "grid"}
               hasMore={hasMore}
+              hideEmptyState={!loading && total === 0}
+              emptyTitle={
+                searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
+                  ? "No matching documents"
+                  : "No documents yet"
+              }
+              emptyDescription={
+                searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
+                  ? "Try clearing search or filters."
+                  : "Upload scanned ICMs to get started."
+              }
             />
+
+            {!loading && total === 0 && (
+              <div className="flex flex-col items-center justify-center py-16 text-center px-6">
+                <p className="text-lg font-medium mb-2">
+                  {searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
+                    ? "No matching documents"
+                    : "No documents yet"}
+                </p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
+                    ? "Try clearing search or filters to see more results."
+                    : "Upload scanned ICMs to populate this exam."}
+                </p>
+                {(searchQuery.trim() || filters.id_extraction_status || filters.id_extraction_error_code) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setFilters((prev) => ({
+                        ...prev,
+                        q: undefined,
+                        id_extraction_status: undefined,
+                        id_extraction_error_code: undefined,
+                        page: 1,
+                      }));
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
+              </div>
+            )}
 
             {!loading && total > 0 && viewMode === "list" && (
               <div className="border-t border-border px-6 py-4 text-center text-sm text-muted-foreground">
@@ -738,6 +878,9 @@ export default function DocumentsPage() {
             {!loading && total > 0 && viewMode === "grid" && (
               <div className="border-t border-border px-6 py-4 text-center text-sm text-muted-foreground">
                 Loaded {documents.length} of {total} document{total !== 1 ? "s" : ""}
+                {!hasMore && documents.length < total
+                  ? ` · showing a window of up to ${MAX_INFINITE_SCROLL_ITEMS} (use filters or search to narrow)`
+                  : ""}
               </div>
             )}
           </main>
@@ -769,7 +912,7 @@ export default function DocumentsPage() {
           <BackfillDialog
             open={backfillDialogOpen}
             onOpenChange={setBackfillDialogOpen}
-            onSuccess={loadDocuments}
+            onSuccess={() => loadDocuments(false)}
           />
 
           <AlertDialog

@@ -48,6 +48,9 @@ export function FolderBrowser({
   const [examCache, setExamCache] = useState<Map<number, Exam>>(new Map());
   const [schoolCache, setSchoolCache] = useState<Map<number, School>>(new Map());
   const [subjectCache, setSubjectCache] = useState<Map<number, Subject>>(new Map());
+  const [docPage, setDocPage] = useState(1);
+  const [docTotalPages, setDocTotalPages] = useState(1);
+  const [docPageSize, setDocPageSize] = useState(50);
 
   // Reset state when navigating back
   useEffect(() => {
@@ -98,11 +101,19 @@ export function FolderBrowser({
   // Load documents (level 4)
   useEffect(() => {
     if (examId && schoolId && subjectId) {
-      loadDocuments(examId, schoolId, subjectId);
+      setDocPage(1);
+      loadDocuments(examId, schoolId, subjectId, 1, docPageSize);
       loadSubjectDetails(subjectId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examId, schoolId, subjectId]);
+
+  useEffect(() => {
+    if (examId && schoolId && subjectId && docPage > 1) {
+      loadDocuments(examId, schoolId, subjectId, docPage, docPageSize);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docPage, docPageSize]);
 
   const loadExams = async () => {
     setLoading(true);
@@ -227,37 +238,31 @@ export function FolderBrowser({
     }
   };
 
-  const loadDocuments = async (examId: number, schoolId: number, subjectId: number) => {
+  const loadDocuments = async (
+    examId: number,
+    schoolId: number,
+    subjectId: number,
+    page = 1,
+    pageSize = 50
+  ) => {
     setLoading(true);
     setError(null);
     try {
-      // Fetch all documents by paginating through results (max page_size is 100)
-      let allDocuments: Document[] = [];
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const response = await listDocuments({
-          exam_id: examId,
-          school_id: schoolId,
-          subject_id: subjectId,
-          page: page,
-          page_size: 100, // Backend max is 100
-        });
-
-        allDocuments = [...allDocuments, ...(response.items || [])];
-
-        // Check if there are more pages
-        hasMore = page < response.total_pages;
-        page++;
-      }
-
-      setDocuments(allDocuments);
+      const response = await listDocuments({
+        exam_id: examId,
+        school_id: schoolId,
+        subject_id: subjectId,
+        page,
+        page_size: pageSize,
+      });
+      setDocuments(response.items || []);
+      setDocPage(response.page);
+      setDocTotalPages(response.total_pages);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load documents";
       setError(errorMessage);
       console.error("Error loading documents:", err);
-      setDocuments([]); // Ensure documents is always an array
+      setDocuments([]);
     } finally {
       setLoading(false);
     }
@@ -386,9 +391,17 @@ export function FolderBrowser({
               <DocumentList
                 documents={documents || []}
                 loading={false}
-                currentPage={1}
-                totalPages={1}
-                onPageChange={() => {}}
+                currentPage={docPage}
+                totalPages={docTotalPages}
+                pageSize={docPageSize}
+                onPageChange={setDocPage}
+                onPageSizeChange={(size) => {
+                  setDocPageSize(size);
+                  setDocPage(1);
+                  if (examId && schoolId && subjectId) {
+                    loadDocuments(examId, schoolId, subjectId, 1, size);
+                  }
+                }}
                 viewMode={viewMode}
                 onSelect={onSelect}
               />

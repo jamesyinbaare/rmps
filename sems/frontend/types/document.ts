@@ -10,6 +10,7 @@ export interface Document {
   school_id: number | null;
   school_name: string | null; // School name from relationship
   subject_id: number | null;
+  subject_name?: string | null;
   exam_id: number;
   test_type: string | null;
   subject_series: string | null;
