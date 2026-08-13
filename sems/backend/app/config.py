@@ -76,11 +76,13 @@ class Settings(BaseSettings):
         "Focus on the main score table containing candidate information. "
         "For each candidate row, extract: serial number (sn), index number, candidate name, "
         "attendance (check mark for present, 'A' or 'AA' for absent), "
-        "score (0 or any positive number, or 'A'/'AA' for absent), "
-        "and verification score (0 or any positive number, or 'A'/'AA' for absent). "
+        "score (0 or any positive number, 'A'/'AA' only when those letters are written, or null if blank), "
+        "and verification score (0 or any positive number, 'A'/'AA' only when those letters are written, or null if blank). "
+        "Blank/empty score or verify cells must be null (not entered) — blank is not absence. "
+        "Use 'A' or 'AA' for score/verify only when those letters are explicitly written in the cell. "
         "Note: 0 is a valid score (present candidate who scored zero), not absence. "
         "When the sheet shows 0 for score and/or verify, extract the digit 0 for both fields — "
-        "never use '-', blank, or omit a written zero. "
+        "never use '-', blank, null, or omit a written zero. "
         "Scores are non-negative and are not limited to 100. "
         "Also extract sheet metadata: sheet_id, series, paper/test type, centre, and subject. "
         "Preserve exact values as they appear in the document, including check marks and absence indicators."
@@ -120,10 +122,14 @@ class Settings(BaseSettings):
                                 {
                                     "type": "string",
                                     "enum": ["A", "AA"],
-                                    "description": "Absence indicator. Use 'A' or 'AA' if the candidate was absent (no score available).",
+                                    "description": "Absence indicator. Use 'A' or 'AA' only when those letters are explicitly written in the cell.",
+                                },
+                                {
+                                    "type": "null",
+                                    "description": "Empty/blank cell — not entered (distinct from absent).",
                                 },
                             ],
-                            "description": "Candidate examination score. Non-negative number (0 or greater), or 'A'/'AA' for absent candidates. 0 is a valid score, not absence.",
+                            "description": "Candidate examination score. Non-negative number (0 or greater), 'A'/'AA' only when written, or null if the cell is blank/empty. Blank is not absence. 0 is a valid score, not absence.",
                         },
                         "verify": {
                             "oneOf": [
@@ -135,10 +141,14 @@ class Settings(BaseSettings):
                                 {
                                     "type": "string",
                                     "enum": ["A", "AA"],
-                                    "description": "Absence indicator. Use 'A' or 'AA' if the candidate was absent (no verification score available).",
+                                    "description": "Absence indicator. Use 'A' or 'AA' only when those letters are explicitly written in the cell.",
+                                },
+                                {
+                                    "type": "null",
+                                    "description": "Empty/blank cell — not entered (distinct from absent).",
                                 },
                             ],
-                            "description": "Verification score (repeated score for verification). Non-negative number (0 or greater), or 'A'/'AA' for absent candidates. 0 is a valid score, not absence.",
+                            "description": "Verification score (repeated score for verification). Non-negative number (0 or greater), 'A'/'AA' only when written, or null if the cell is blank/empty. Blank is not absence. 0 is a valid score, not absence.",
                         },
                     },
                     "required": ["sn", "index_number", "attend", "score"],
