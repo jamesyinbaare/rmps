@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.dependencies.auth import RegistrarDep
+from app.dependencies.auth import DataClerkDep, RegistrarDep
 from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod, School, Subject
 from app.schemas.document import (
     AbandonedUploadCleanupResponse,
@@ -28,6 +28,8 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentQueueStatus,
     DocumentResponse,
+    ReductoQueueStatusResponse,
+    ReductoWorkersUpdateRequest,
     DocumentSchoolFacet,
     DocumentSubjectFacet,
     DocumentUpdate,
@@ -1287,6 +1289,29 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
     await session.refresh(document)
 
     return DocumentResponse.model_validate(document)
+
+
+@router.get("/reducto-queue/status", response_model=ReductoQueueStatusResponse)
+async def get_reducto_queue_status(
+    _current_user: DataClerkDep,
+) -> ReductoQueueStatusResponse:
+    """Get Reducto extraction queue length and worker pool status."""
+    return ReductoQueueStatusResponse.model_validate(reducto_queue_service.get_queue_status())
+
+
+@router.patch("/reducto-queue/workers", response_model=ReductoQueueStatusResponse)
+async def update_reducto_queue_workers(
+    request: ReductoWorkersUpdateRequest,
+    _current_user: RegistrarDep,
+) -> ReductoQueueStatusResponse:
+    """
+    Resize how many documents process concurrently.
+
+    Does not change the Reducto API rate limit — the shared token bucket still
+    caps requests/sec. Extra workers mostly wait when submit rate is saturated.
+    """
+    status_dict = await reducto_queue_service.set_worker_count(request.workers)
+    return ReductoQueueStatusResponse.model_validate(status_dict)
 
 
 @router.post("/queue-reducto-extraction", response_model=ReductoQueueResponse)

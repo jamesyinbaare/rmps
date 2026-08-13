@@ -307,6 +307,28 @@ class ReductoStatusResponse(BaseModel):
     queue_position: int | None = None
 
 
+class ReductoQueueStatusResponse(BaseModel):
+    """Schema for Reducto worker pool / queue status."""
+
+    queue_length: int
+    active_workers: int
+    target_workers: int
+    processing_documents: list[int]
+    total_workers: int
+    rate_limit_per_second: float
+    workers_max: int
+
+
+class ReductoWorkersUpdateRequest(BaseModel):
+    """Schema for resizing Reducto concurrent document workers."""
+
+    workers: int = Field(
+        ...,
+        ge=1,
+        description="Number of documents to process concurrently (capped by workers_max)",
+    )
+
+
 class BackfillTestTypeResponse(BaseModel):
     """Response schema for backfill operation."""
 

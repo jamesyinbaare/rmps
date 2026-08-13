@@ -66,11 +66,16 @@ class Settings(BaseSettings):
     upload_initiate_batch_max: int = 200
     upload_pending_ttl_hours: int = 2
     # Reducto API settings
+    # Rate limit must stay at or below your Reducto plan RPS (Standard ~1, Growth ~10, Enterprise 100+).
+    # Queue workers = concurrent documents in flight; the shared token bucket still caps submit RPS.
+    # Safe starting point at Growth: REDUCTO_RATE_LIMIT_PER_SECOND=10, REDUCTO_QUEUE_WORKERS=4
+    # (try 6–8 when extracts are slow; extra workers mostly wait on the rate limiter).
     reducto_enabled: bool = True
     reducto_api_key: str | None = None
     reducto_api_url: str = "https://api.reducto.ai"
-    reducto_rate_limit_per_second: float = 10.0  # Rate limit for Reducto API requests (requests per second)
-    reducto_queue_workers: int | None = None  # Number of worker threads. If None, auto-calculated from rate limit
+    reducto_rate_limit_per_second: float = 10.0  # Cap API requests/sec (match plan RPS or slightly under)
+    reducto_queue_workers: int | None = 4  # Concurrent docs; None = auto from rate limit (rate/2.5, capped)
+    reducto_queue_workers_max: int = 50  # Hard ceiling for env config and runtime resize
     reducto_extraction_prompt: str = (
         "This is an examination score sheet with a candidate table. "
         "Extract only values that are explicitly written or marked on the sheet. "

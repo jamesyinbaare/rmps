@@ -530,6 +530,16 @@ export interface ReductoQueueResponse {
   queue_length: number;
 }
 
+export interface ReductoQueueStatusResponse {
+  queue_length: number;
+  active_workers: number;
+  target_workers: number;
+  processing_documents: number[];
+  total_workers: number;
+  rate_limit_per_second: number;
+  workers_max: number;
+}
+
 export interface ReductoStatusResponse {
   document_id: number;
   scores_extraction_status: string | null;

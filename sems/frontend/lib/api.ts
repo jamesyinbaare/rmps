@@ -41,6 +41,7 @@ import type {
   BatchScoreUpdate,
   BatchScoreUpdateResponse,
   ReductoQueueResponse,
+  ReductoQueueStatusResponse,
   ReductoStatusResponse,
   ManualEntryFilters,
   CandidateScoreListResponse,
@@ -2181,6 +2182,24 @@ export async function queueReductoExtraction(
     }),
   });
   return handleResponse<ReductoQueueResponse>(response);
+}
+
+export async function getReductoQueueStatus(): Promise<ReductoQueueStatusResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/documents/reducto-queue/status`);
+  return handleResponse<ReductoQueueStatusResponse>(response);
+}
+
+export async function updateReductoQueueWorkers(
+  workers: number
+): Promise<ReductoQueueStatusResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/documents/reducto-queue/workers`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ workers }),
+  });
+  return handleResponse<ReductoQueueStatusResponse>(response);
 }
 
 export async function getReductoStatus(documentId: number): Promise<ReductoStatusResponse> {
