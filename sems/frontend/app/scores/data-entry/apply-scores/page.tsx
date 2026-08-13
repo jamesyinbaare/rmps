@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ApplyScoresDataTable, type AppliedView } from "@/components/ApplyScoresDataTable";
 import { DocumentViewer } from "@/components/DocumentViewer";
+import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -26,11 +27,21 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
   bulkUpdateScoresFromReducto,
   downloadDocument,
   getDocumentDownloadFilename,
   getAllExams,
   getFilteredDocuments,
+  getUnmatchedRecords,
   listSchools,
   listSubjects,
   updateScoresFromReducto,
@@ -43,8 +54,9 @@ import type {
   School,
   ScoreDocumentFilters,
   Subject,
+  UnmatchedExtractionRecord,
 } from "@/types/document";
-import { Search, X } from "lucide-react";
+import { Loader2, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -79,7 +91,30 @@ export default function ApplyScoresPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [updatingScores, setUpdatingScores] = useState<number | null>(null);
 
+  const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
+  const [loadingUnmatched, setLoadingUnmatched] = useState(false);
+  const [showUnmatched, setShowUnmatched] = useState(false);
+
   const view: AppliedView = filters.scores_applied === true ? "applied" : "ready";
+
+  const loadUnmatchedRecords = useCallback(async () => {
+    setLoadingUnmatched(true);
+    try {
+      const response = await getUnmatchedRecords({ status: "pending", page: 1, page_size: 50 });
+      setUnmatchedRecords(response.items);
+      if (response.items.length > 0) {
+        setShowUnmatched(true);
+      }
+    } catch (err) {
+      console.error("Error loading unmatched records:", err);
+    } finally {
+      setLoadingUnmatched(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUnmatchedRecords();
+  }, [loadUnmatchedRecords]);
 
   useEffect(() => {
     async function loadFilterOptions() {
@@ -266,6 +301,9 @@ export default function ApplyScoresPage() {
       } else {
         await loadDocuments();
       }
+      if (result.unmatched_count > 0) {
+        await loadUnmatchedRecords();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to apply scores";
       setError(message);
@@ -318,6 +356,9 @@ export default function ApplyScoresPage() {
           scores_applied_count: response.scores_applied_count ?? response.updated_count,
           scores_unmatched_count: response.scores_unmatched_count ?? response.unmatched_count,
         });
+      }
+      if (response.unmatched_count > 0) {
+        await loadUnmatchedRecords();
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update scores");
@@ -410,13 +451,26 @@ export default function ApplyScoresPage() {
         <TopBar title="Apply Scores" />
 
         <div className="border-b border-border bg-background px-4 py-2">
-          <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-muted-foreground">
-              Select extracted documents and apply scores into candidate records.
-            </p>
-            <Button variant="outline" size="sm" className="h-8" asChild>
-              <Link href="/scores/data-entry/reducto-extraction">Reducto Extraction</Link>
-            </Button>
+          <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
+            <DataEntryPipelineNav current="apply" />
+            <div className="flex items-center gap-2">
+              <p className="hidden text-sm text-muted-foreground lg:block">
+                Apply extracted scores into candidate records.
+              </p>
+              <Button variant="outline" size="sm" className="h-8" asChild>
+                <Link href="/scores/data-entry/reducto-extraction">Back to Extract</Link>
+              </Button>
+              {unmatchedRecords.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setShowUnmatched((v) => !v)}
+                >
+                  Unmatched ({unmatchedRecords.length})
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -601,6 +655,55 @@ export default function ApplyScoresPage() {
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
           />
         </div>
+
+        {showUnmatched && (
+          <Card className="mx-4 mb-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Unmatched Records</CardTitle>
+                <Button variant="outline" size="sm" onClick={() => setShowUnmatched(false)}>
+                  Hide
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loadingUnmatched ? (
+                <div className="flex h-32 items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              ) : unmatchedRecords.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No unmatched records found</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Index Number</TableHead>
+                      <TableHead>Candidate Name</TableHead>
+                      <TableHead>Score</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {unmatchedRecords.map((record) => (
+                      <TableRow key={record.id}>
+                        <TableCell>{record.index_number || "-"}</TableCell>
+                        <TableCell>{record.candidate_name || "-"}</TableCell>
+                        <TableCell>{record.score || "-"}</TableCell>
+                        <TableCell>
+                          {record.document_extracted_id || `Doc #${record.document_id}`}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{record.status}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>

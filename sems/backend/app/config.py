@@ -72,20 +72,22 @@ class Settings(BaseSettings):
     reducto_rate_limit_per_second: float = 10.0  # Rate limit for Reducto API requests (requests per second)
     reducto_queue_workers: int | None = None  # Number of worker threads. If None, auto-calculated from rate limit
     reducto_extraction_prompt: str = (
-        "Extract examination score data from this document. "
-        "Focus on the main score table containing candidate information. "
-        "For each candidate row, extract: serial number (sn), index number, candidate name, "
-        "attendance (check mark for present, 'A' or 'AA' for absent), "
-        "score (0 or any positive number, 'A'/'AA' only when those letters are written, or null if blank), "
-        "and verification score (0 or any positive number, 'A'/'AA' only when those letters are written, or null if blank). "
-        "Blank/empty score or verify cells must be null (not entered) — blank is not absence. "
-        "Use 'A' or 'AA' for score/verify only when those letters are explicitly written in the cell. "
-        "Note: 0 is a valid score (present candidate who scored zero), not absence. "
-        "When the sheet shows 0 for score and/or verify, extract the digit 0 for both fields — "
-        "never use '-', blank, null, or omit a written zero. "
+        "This is an examination score sheet with a candidate table. "
+        "Extract only values that are explicitly written or marked on the sheet. "
+        "Do not infer or guess values for blank, empty, or unmarked cells. "
+        "For each candidate row extract: sn, index_number, candidate_name, attend, score, and verify. "
+        "Attendance (attend): check mark or symbol if present; 'A'/'AA' only when written. "
+        "Score and verify are three distinct cases: "
+        "(1) blank/empty cell → null (not entered); "
+        "(2) letters 'A' or 'AA' written in that cell → 'A'/'AA' (absent); "
+        "(3) a written number including 0 → that number. "
+        "Blank is never absence and never zero. "
+        "Never invent 'A', 'AA', or 0 for a blank score/verify cell. "
+        "Never copy attendance absence into score/verify unless those letters are written in the score/verify cell itself. "
+        "When the digit 0 is visibly written for score and/or verify, extract 0 — do not replace a written zero with null. "
         "Scores are non-negative and are not limited to 100. "
         "Also extract sheet metadata: sheet_id, series, paper/test type, centre, and subject. "
-        "Preserve exact values as they appear in the document, including check marks and absence indicators."
+        "Preserve exact marks and text as they appear."
     )
     reducto_extraction_schema: dict | None = {
         "type": "object",
@@ -113,45 +115,55 @@ class Settings(BaseSettings):
                             "description": "Attendance indicator. Extract the exact value as it appears: a check mark (✓, ✔, √, X, or any mark/symbol) indicates the candidate attended and should be extracted as-is, 'A' or 'AA' indicates absence. Preserve the exact symbol or text found in the document without conversion.",
                         },
                         "score": {
-                            "oneOf": [
+                            "anyOf": [
+                                {
+                                    "type": "null",
+                                    "description": "REQUIRED when the score cell is blank/empty. Not entered — distinct from absent and from zero.",
+                                },
                                 {
                                     "type": "number",
                                     "minimum": 0,
-                                    "description": "Candidate examination score as a non-negative number (0 or greater). 0 is valid. No upper limit.",
+                                    "description": "Numeric score only when a number is written in the cell. 0 only if the digit 0 is written. No upper limit.",
                                 },
                                 {
                                     "type": "string",
                                     "enum": ["A", "AA"],
-                                    "description": "Absence indicator. Use 'A' or 'AA' only when those letters are explicitly written in the cell.",
-                                },
-                                {
-                                    "type": "null",
-                                    "description": "Empty/blank cell — not entered (distinct from absent).",
+                                    "description": "Only when 'A' or 'AA' is explicitly written in the score cell. Do not use for blank cells.",
                                 },
                             ],
-                            "description": "Candidate examination score. Non-negative number (0 or greater), 'A'/'AA' only when written, or null if the cell is blank/empty. Blank is not absence. 0 is a valid score, not absence.",
+                            "description": (
+                                "Examination score from the score column only. "
+                                "null if blank/empty; number if a number (including 0) is written; "
+                                "'A'/'AA' only if those letters are written in this cell. "
+                                "Do not invent values. Blank ≠ absent ≠ 0."
+                            ),
                         },
                         "verify": {
-                            "oneOf": [
+                            "anyOf": [
+                                {
+                                    "type": "null",
+                                    "description": "REQUIRED when the verify cell is blank/empty. Not entered — distinct from absent and from zero.",
+                                },
                                 {
                                     "type": "number",
                                     "minimum": 0,
-                                    "description": "Verification score (duplicate of score field for verification purposes). Non-negative number (0 or greater). 0 is valid. No upper limit.",
+                                    "description": "Numeric verify score only when a number is written in the cell. 0 only if the digit 0 is written. No upper limit.",
                                 },
                                 {
                                     "type": "string",
                                     "enum": ["A", "AA"],
-                                    "description": "Absence indicator. Use 'A' or 'AA' only when those letters are explicitly written in the cell.",
-                                },
-                                {
-                                    "type": "null",
-                                    "description": "Empty/blank cell — not entered (distinct from absent).",
+                                    "description": "Only when 'A' or 'AA' is explicitly written in the verify cell. Do not use for blank cells.",
                                 },
                             ],
-                            "description": "Verification score (repeated score for verification). Non-negative number (0 or greater), 'A'/'AA' only when written, or null if the cell is blank/empty. Blank is not absence. 0 is a valid score, not absence.",
+                            "description": (
+                                "Verification score from the verify column only. "
+                                "null if blank/empty; number if a number (including 0) is written; "
+                                "'A'/'AA' only if those letters are written in this cell. "
+                                "Do not invent values. Blank ≠ absent ≠ 0."
+                            ),
                         },
                     },
-                    "required": ["sn", "index_number", "attend", "score"],
+                    "required": ["sn", "index_number", "attend", "score", "verify"],
                 },
             },
             "sheet_id": {

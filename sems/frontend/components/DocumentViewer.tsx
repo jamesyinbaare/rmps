@@ -51,6 +51,8 @@ interface DocumentViewerProps {
   onDelete?: (documentId: number) => Promise<void>;
   /** Show Preview Data toggle that opens extraction panel inside this viewer */
   enableReductoPreview?: boolean;
+  /** Open the extraction preview panel immediately when the viewer opens */
+  initialShowExtractionPanel?: boolean;
   onUpdateScores?: (document: Document) => void;
   updatingScores?: boolean;
 }
@@ -127,6 +129,7 @@ export function DocumentViewer({
   onUpdateId,
   onDelete,
   enableReductoPreview,
+  initialShowExtractionPanel = false,
   onUpdateScores,
   updatingScores,
 }: DocumentViewerProps) {
@@ -141,10 +144,16 @@ export function DocumentViewer({
   const [idError, setIdError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [showExtractionPanel, setShowExtractionPanel] = useState(false);
+  const [showExtractionPanel, setShowExtractionPanel] = useState(initialShowExtractionPanel);
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [extractionData, setExtractionData] = useState<ReductoDataResponse | null>(null);
   const [extractionViewMode, setExtractionViewMode] = useState<"table" | "json">("table");
+
+  useEffect(() => {
+    if (open !== false && initialShowExtractionPanel) {
+      setShowExtractionPanel(true);
+    }
+  }, [open, initialShowExtractionPanel, document?.id]);
 
   // Guard against undefined/null document
   if (!document) {
@@ -158,11 +167,9 @@ export function DocumentViewer({
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
+  // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
   const canPreviewExtraction =
-    enableReductoPreview &&
-    (document.scores_extraction_status === "success" ||
-      document.scores_extraction_status === "processing") &&
-    !!document.scores_extraction_data;
+    !!enableReductoPreview && document.scores_extraction_status === "success";
 
   const getExtractionMethodLabel = (method: string | null): string => {
     if (!method) return "Unknown";
@@ -252,8 +259,7 @@ export function DocumentViewer({
       return;
     }
 
-    const hasExtractionData = !!document.scores_extraction_data;
-    if (!hasExtractionData) {
+    if (document.scores_extraction_status !== "success") {
       setExtractionData(null);
       setLoadingExtraction(false);
       return;
@@ -286,7 +292,7 @@ export function DocumentViewer({
     return () => {
       cancelled = true;
     };
-  }, [document.id, document.scores_extraction_data, showExtractionPanel, open]);
+  }, [document.id, document.scores_extraction_status, showExtractionPanel, open]);
 
   // Fetch exam, school, and subject names
   useEffect(() => {
@@ -554,7 +560,7 @@ export function DocumentViewer({
       return;
     }
 
-    if (!document.scores_extraction_data) {
+    if (document.scores_extraction_status !== "success") {
       toast.error("No extraction data available for this document");
       return;
     }

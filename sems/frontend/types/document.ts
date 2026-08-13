@@ -503,6 +503,15 @@ export interface ScoreDocumentFilters {
   page_size?: number;
 }
 
+export interface ScoresExtractionStatusCounts {
+  total: number;
+  pending: number;
+  queued: number;
+  processing: number;
+  success: number;
+  error: number;
+}
+
 export interface ReductoQueueRequest {
   document_ids: number[];
   require_extracted_id?: boolean;

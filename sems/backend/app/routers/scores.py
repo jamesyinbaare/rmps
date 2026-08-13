@@ -28,7 +28,7 @@ from app.models import (
     User,
     UserRole,
 )
-from app.schemas.document import DocumentListResponse, DocumentResponse
+from app.schemas.document import DocumentListResponse, DocumentResponse, ScoresExtractionStatusCounts
 from app.schemas.score import (
     BatchScoreUpdate,
     BatchScoreUpdateResponse,
@@ -270,6 +270,93 @@ async def get_filtered_documents(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+@router.get("/documents/status-counts", response_model=ScoresExtractionStatusCounts)
+async def get_scores_extraction_status_counts(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int | None = Query(None),
+    exam_type: ExamType | None = Query(None, description="Filter by examination type"),
+    series: ExamSeries | None = Query(None, description="Filter by examination series"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
+    school_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
+    test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
+    extraction_method: DataExtractionMethod | None = Query(
+        None, description="Filter by extraction method in scores_extraction_methods array"
+    ),
+    scores_applied: bool | None = Query(
+        None,
+        description="Filter by whether extracted scores have been applied (true=applied, false=not applied)",
+    ),
+) -> ScoresExtractionStatusCounts:
+    """Return global scores_extraction_status counts for the current document filters.
+
+    Intentionally ignores extraction_status so the status chips stay accurate while filtering.
+    """
+    await _require_clerk_digital_entry_enabled(session, current_user)
+
+    clerk_assigned_ids: set[str] | None = None
+    if current_user.role == UserRole.DATACLERK:
+        clerk_assigned_ids = await assigned_document_extracted_ids(session, current_user.id)
+        if not clerk_assigned_ids:
+            return ScoresExtractionStatusCounts()
+
+    stmt = select(Document.scores_extraction_status, func.count(Document.id)).select_from(Document)
+
+    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
+        stmt = stmt.join(Exam, Document.exam_id == Exam.id)
+
+    if exam_id is not None:
+        stmt = stmt.where(Document.exam_id == exam_id)
+    else:
+        if exam_type is not None:
+            stmt = stmt.where(Exam.exam_type == exam_type)
+        if series is not None:
+            stmt = stmt.where(Exam.series == series)
+        if year is not None:
+            stmt = stmt.where(Exam.year == year)
+
+    if school_id is not None:
+        stmt = stmt.where(Document.school_id == school_id)
+    if subject_id is not None:
+        stmt = stmt.where(Document.subject_id == subject_id)
+    if test_type is not None:
+        stmt = stmt.where(Document.test_type == test_type)
+    if extraction_method is not None:
+        stmt = stmt.where(
+            Document.scores_extraction_methods.isnot(None)
+            & Document.scores_extraction_methods.op("@>")([extraction_method])
+        )
+    if scores_applied is True:
+        stmt = stmt.where(Document.scores_applied_at.isnot(None))
+    elif scores_applied is False:
+        stmt = stmt.where(Document.scores_applied_at.is_(None))
+    if clerk_assigned_ids is not None:
+        stmt = stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
+
+    stmt = stmt.group_by(Document.scores_extraction_status)
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    counts = ScoresExtractionStatusCounts()
+    for status_value, count in rows:
+        key = (status_value or "pending").strip().lower()
+        n = int(count or 0)
+        counts.total += n
+        if key == "queued":
+            counts.queued += n
+        elif key == "processing":
+            counts.processing += n
+        elif key == "success":
+            counts.success += n
+        elif key == "error":
+            counts.error += n
+        else:
+            counts.pending += n
+
+    return counts
 
 
 @router.get("/documents/{document_id}/scores", response_model=DocumentScoresResponse)

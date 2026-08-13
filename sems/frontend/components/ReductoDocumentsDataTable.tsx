@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ColumnDef,
   flexRender,
@@ -11,19 +11,21 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CheckCircle2,
   Clock,
+  Eye,
   FileText,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Users,
   X,
   XCircle,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
 } from "lucide-react";
 import type { Document } from "@/types/document";
 import {
@@ -45,6 +47,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 export type ExtractionStatusFilter =
   | "pending"
@@ -53,6 +62,14 @@ export type ExtractionStatusFilter =
   | "success"
   | "error";
 
+export type BatchProgress = {
+  total: number;
+  done: number;
+  failed: number;
+  processing: number;
+  queued: number;
+};
+
 interface ReductoDocumentsDataTableProps {
   documents: Document[];
   loading?: boolean;
@@ -60,22 +77,34 @@ interface ReductoDocumentsDataTableProps {
   selectedDocuments: Set<number>;
   onSelectDocument: (documentId: number) => void;
   onSelectAll: () => void;
+  onClearSelection: () => void;
   onRowClick: (document: Document) => void;
+  onPreview: (document: Document) => void;
+  onRequeue: (document: Document) => void;
+  onApply?: (document: Document) => void;
+  applyingDocumentId?: number | null;
+  requeueingDocumentId?: number | null;
   statusFilter?: string;
   onStatusFilterChange: (status: ExtractionStatusFilter | undefined) => void;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
-  verifyEnabled: boolean;
-  onVerifyEnabledChange: (enabled: boolean) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
   queuing?: boolean;
   isPolling?: boolean;
-  onQueue: () => void;
+  batchProgress?: BatchProgress | null;
+  skipPreview?: { willQueue: number; willSkip: number } | null;
+  onQueueSelected: () => void;
+  onQueueAllPending: () => void;
+  queueAllPendingDisabled?: boolean;
+  focusedRowIndex: number;
+  onFocusedRowIndexChange: (index: number) => void;
   currentPage: number;
   totalPages: number;
   total: number;
   onPageChange: (page: number) => void;
+  emptyActionHref?: string;
+  emptyActionLabel?: string;
 }
 
 function getStatusBadge(document: Document) {
@@ -85,48 +114,59 @@ function getStatusBadge(document: Document) {
 
   if (status === "queued") {
     return (
-      <Badge variant="outline" className="flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-300">
-        <Clock className="h-3 w-3" />
+      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
+        <Clock className="mr-1 h-3 w-3" />
         Queued
       </Badge>
     );
   }
   if (status === "processing") {
     return (
-      <Badge variant="default" className="flex items-center gap-1 bg-blue-600">
-        <Loader2 className="h-3 w-3 animate-spin" />
+      <Badge className="bg-blue-600 text-white">
+        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
         Processing
       </Badge>
     );
   }
   if (status === "success") {
     return (
-      <Badge variant="default" className="flex items-center gap-1 bg-green-600">
-        <CheckCircle2 className="h-3 w-3" />
-        Success {methodDisplay && `(${methodDisplay})`}
-      </Badge>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge className="bg-green-600 text-white">
+              <CheckCircle2 className="mr-1 h-3 w-3" />
+              Success
+            </Badge>
+          </TooltipTrigger>
+          {methodDisplay && (
+            <TooltipContent>
+              <p>{methodDisplay}</p>
+            </TooltipContent>
+          )}
+        </Tooltip>
+      </TooltipProvider>
     );
   }
   if (status === "error") {
     return (
-      <Badge variant="destructive" className="flex items-center gap-1">
-        <XCircle className="h-3 w-3" />
-        Error
+      <Badge variant="destructive">
+        <XCircle className="mr-1 h-3 w-3" />
+        Failed
       </Badge>
     );
   }
   return (
-    <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 border-yellow-300">
-      <Clock className="h-3 w-3 mr-1" />
-      {status || "Pending"}
+    <Badge variant="secondary" className="border-yellow-300 bg-yellow-100 text-yellow-800">
+      <Clock className="mr-1 h-3 w-3" />
+      Pending
     </Badge>
   );
 }
 
 function SortIcon({ sorted }: { sorted: false | "asc" | "desc" }) {
-  if (sorted === "asc") return <ArrowUp className="ml-1 h-3.5 w-3.5 inline" />;
-  if (sorted === "desc") return <ArrowDown className="ml-1 h-3.5 w-3.5 inline" />;
-  return <ArrowUpDown className="ml-1 h-3.5 w-3.5 inline opacity-40" />;
+  if (sorted === "asc") return <ArrowUp className="ml-1 inline h-3.5 w-3.5" />;
+  if (sorted === "desc") return <ArrowDown className="ml-1 inline h-3.5 w-3.5" />;
+  return <ArrowUpDown className="ml-1 inline h-3.5 w-3.5 opacity-40" />;
 }
 
 export function ReductoDocumentsDataTable({
@@ -136,27 +176,52 @@ export function ReductoDocumentsDataTable({
   selectedDocuments,
   onSelectDocument,
   onSelectAll,
+  onClearSelection,
   onRowClick,
+  onPreview,
+  onRequeue,
+  onApply,
+  applyingDocumentId,
+  requeueingDocumentId,
   statusFilter,
   onStatusFilterChange,
   pageSize,
   onPageSizeChange,
-  verifyEnabled,
-  onVerifyEnabledChange,
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
   queuing,
   isPolling,
-  onQueue,
+  batchProgress,
+  skipPreview,
+  onQueueSelected,
+  onQueueAllPending,
+  queueAllPendingDisabled,
+  focusedRowIndex,
+  onFocusedRowIndexChange,
   currentPage,
   totalPages,
   total,
   onPageChange,
+  emptyActionHref,
+  emptyActionLabel,
 }: ReductoDocumentsDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
   const allSelected = documents.length > 0 && selectedDocuments.size === documents.length;
+  const pendingOnPage = documents.filter(
+    (d) => !d.scores_extraction_status || d.scores_extraction_status === "pending"
+  ).length;
+
+  useEffect(() => {
+    if (documents.length === 0) {
+      onFocusedRowIndexChange(-1);
+      return;
+    }
+    if (focusedRowIndex < 0 || focusedRowIndex >= documents.length) {
+      onFocusedRowIndexChange(0);
+    }
+  }, [documents, focusedRowIndex, onFocusedRowIndexChange]);
 
   const columns = useMemo<ColumnDef<Document>[]>(
     () => [
@@ -184,20 +249,29 @@ export function ReductoDocumentsDataTable({
         accessorKey: "extracted_id",
         header: "Extracted ID",
         cell: ({ row }) => (
-          <div className="font-medium font-mono text-sm">
-            {row.original.extracted_id || "-"}
+          <div className="font-mono text-sm font-medium">
+            {row.original.extracted_id || (
+              <span className="text-muted-foreground">No ID</span>
+            )}
           </div>
         ),
       },
       {
         accessorKey: "school_name",
-        header: "School Name",
+        header: "School",
         cell: ({ row }) => row.original.school_name || "-",
       },
       {
         accessorKey: "scores_extraction_status",
-        header: "Extraction Status",
-        cell: ({ row }) => getStatusBadge(row.original),
+        header: "Status",
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            {getStatusBadge(row.original)}
+            {row.original.scores_extraction_status === "error" && (
+              <p className="text-xs text-destructive">Extraction failed · retry</p>
+            )}
+          </div>
+        ),
         sortingFn: (a, b) => {
           const sa = a.original.scores_extraction_status || "pending";
           const sb = b.original.scores_extraction_status || "pending";
@@ -206,12 +280,12 @@ export function ReductoDocumentsDataTable({
       },
       {
         accessorKey: "scores_extracted_at",
-        header: "Extracted At",
+        header: "Extracted",
         cell: ({ row }) => (
           <div className="text-sm text-muted-foreground">
             {row.original.scores_extracted_at
               ? new Date(row.original.scores_extracted_at).toLocaleString()
-              : "-"}
+              : "—"}
           </div>
         ),
       },
@@ -234,8 +308,79 @@ export function ReductoDocumentsDataTable({
             <span className="text-sm text-muted-foreground">—</span>
           ),
       },
+      {
+        id: "actions",
+        enableSorting: false,
+        header: "Actions",
+        cell: ({ row }) => {
+          const doc = row.original;
+          const status = doc.scores_extraction_status;
+          const canPreview = status === "success";
+          const canRequeue =
+            status === "pending" || status === "error" || status === "success";
+          const canApply = status === "success" && !!onApply;
+
+          return (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                disabled={!canPreview}
+                onClick={() => onPreview(doc)}
+                title="Preview"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                disabled={!canRequeue || requeueingDocumentId === doc.id || queuing}
+                onClick={() => onRequeue(doc)}
+                title={status === "error" ? "Retry" : "Queue"}
+              >
+                {requeueingDocumentId === doc.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : status === "error" ? (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+              </Button>
+              {canApply && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2"
+                  disabled={applyingDocumentId === doc.id}
+                  onClick={() => onApply?.(doc)}
+                  title="Apply scores"
+                >
+                  {applyingDocumentId === doc.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
     ],
-    [allSelected, onSelectAll, onSelectDocument, selectedDocuments]
+    [
+      allSelected,
+      applyingDocumentId,
+      onApply,
+      onPreview,
+      onRequeue,
+      onSelectAll,
+      onSelectDocument,
+      queuing,
+      requeueingDocumentId,
+      selectedDocuments,
+    ]
   );
 
   const table = useReactTable({
@@ -329,20 +474,8 @@ export function ReductoDocumentsDataTable({
                 <SelectItem value="100">100</SelectItem>
                 <SelectItem value="200">200</SelectItem>
                 <SelectItem value="500">500</SelectItem>
-                <SelectItem value="1000">1000</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="verify-checkbox"
-              checked={verifyEnabled}
-              onCheckedChange={(checked) => onVerifyEnabledChange(checked === true)}
-            />
-            <label htmlFor="verify-checkbox" className="cursor-pointer text-sm font-medium">
-              Require score = verify
-            </label>
           </div>
 
           <div className="flex items-center gap-2">
@@ -355,26 +488,44 @@ export function ReductoDocumentsDataTable({
               htmlFor="skip-without-extracted-id"
               className="cursor-pointer text-sm font-medium"
             >
-              Skip without extracted ID
+              Skip without ID
             </label>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {selectedDocuments.size > 0 && (
-            <Badge variant="secondary" className="border-blue-300 bg-blue-100 text-blue-800">
-              <Users className="mr-1 h-3 w-3" />
-              {selectedDocuments.size} selected
+          {batchProgress && batchProgress.total > 0 && (
+            <Badge variant="outline" className="gap-1 text-xs">
+              {isPolling && <RefreshCw className="h-3 w-3 animate-spin" />}
+              {batchProgress.done}/{batchProgress.total} done
+              {batchProgress.processing > 0 && ` · ${batchProgress.processing} processing`}
+              {batchProgress.queued > 0 && ` · ${batchProgress.queued} queued`}
+              {batchProgress.failed > 0 && ` · ${batchProgress.failed} failed`}
             </Badge>
           )}
-          {isPolling && (
+          {!batchProgress && isPolling && (
             <Badge variant="outline" className="text-xs">
               <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
               Auto-refreshing
             </Badge>
           )}
           <Button
-            onClick={onQueue}
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={onQueueAllPending}
+            disabled={queueAllPendingDisabled || queuing}
+          >
+            {queuing ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="mr-2 h-4 w-4" />
+            )}
+            Queue all pending
+            {pendingOnPage > 0 ? ` (${pendingOnPage}+)` : ""}
+          </Button>
+          <Button
+            onClick={onQueueSelected}
             disabled={selectedDocuments.size === 0 || queuing}
             size="sm"
             className="h-8"
@@ -387,12 +538,45 @@ export function ReductoDocumentsDataTable({
             ) : (
               <>
                 <Send className="mr-2 h-4 w-4" />
-                Queue{selectedDocuments.size > 0 ? ` ${selectedDocuments.size}` : ""} for Reducto
+                Queue{selectedDocuments.size > 0 ? ` ${selectedDocuments.size}` : ""}
               </>
             )}
           </Button>
         </div>
       </div>
+
+      {skipPreview && selectedDocuments.size > 0 && (
+        <div className="border-b border-border bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
+          Will queue{" "}
+          <span className="font-medium text-foreground">{skipPreview.willQueue}</span>
+          {skipWithoutExtractedId && skipPreview.willSkip > 0 && (
+            <>
+              {" "}
+              · skip{" "}
+              <span className="font-medium text-amber-700">{skipPreview.willSkip}</span> (no
+              extracted ID)
+            </>
+          )}
+        </div>
+      )}
+
+      {selectedDocuments.size > 0 && (
+        <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2">
+          <div className="flex items-center gap-2 text-sm text-blue-900">
+            <Users className="h-4 w-4" />
+            <span className="font-medium">{selectedDocuments.size} selected</span>
+            <span className="text-blue-700/80">· Space toggles · Enter opens · Q queues</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-7" onClick={onClearSelection}>
+              Clear
+            </Button>
+            <Button size="sm" className="h-7" onClick={onQueueSelected} disabled={queuing}>
+              Queue selection
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-sm text-muted-foreground">
         <span>
@@ -400,9 +584,7 @@ export function ReductoDocumentsDataTable({
           {Math.min(currentPage * pageSize, total)} of {total} documents
         </span>
         {globalFilter && (
-          <span>
-            {table.getFilteredRowModel().rows.length} match on this page
-          </span>
+          <span>{table.getFilteredRowModel().rows.length} match on this page</span>
         )}
       </div>
 
@@ -426,11 +608,7 @@ export function ReductoDocumentsDataTable({
                   {headerGroup.headers.map((header) => (
                     <TableHead
                       key={header.id}
-                      className={
-                        header.id === "select"
-                          ? "w-12 bg-transparent"
-                          : "bg-transparent"
-                      }
+                      className={header.id === "select" ? "w-12 bg-transparent" : "bg-transparent"}
                     >
                       {header.isPlaceholder ? null : header.column.getCanSort() ? (
                         <button
@@ -453,21 +631,41 @@ export function ReductoDocumentsDataTable({
               {table.getRowModel().rows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={columns.length} className="py-12 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-2">
+                    <div className="flex flex-col items-center gap-3">
                       <FileText className="h-12 w-12 text-muted-foreground/50" />
-                      <p className="font-medium">No documents found</p>
-                      <p className="text-sm">Try adjusting your filters or search</p>
+                      <div>
+                        <p className="font-medium text-foreground">No documents found</p>
+                        <p className="mt-1 text-sm">
+                          {statusFilter === "pending"
+                            ? "No pending sheets for these filters."
+                            : "Try adjusting filters or status."}
+                        </p>
+                      </div>
+                      {emptyActionHref && emptyActionLabel && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={emptyActionHref}>{emptyActionLabel}</a>
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
-                table.getRowModel().rows.map((row) => {
+                table.getRowModel().rows.map((row, index) => {
                   const status = row.original.scores_extraction_status;
+                  const focused = index === focusedRowIndex;
                   return (
                     <TableRow
                       key={row.id}
-                      className={`cursor-pointer ${rowClassForStatus(status)}`}
-                      onClick={() => onRowClick(row.original)}
+                      className={cn(
+                        "cursor-pointer",
+                        rowClassForStatus(status),
+                        focused && "ring-2 ring-inset ring-primary/40"
+                      )}
+                      onClick={() => {
+                        onFocusedRowIndexChange(index);
+                        onRowClick(row.original);
+                      }}
+                      onMouseEnter={() => onFocusedRowIndexChange(index)}
                       data-state={selectedDocuments.has(row.original.id) ? "selected" : undefined}
                     >
                       {row.getVisibleCells().map((cell) => (
