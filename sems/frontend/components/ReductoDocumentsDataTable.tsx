@@ -128,6 +128,11 @@ interface ReductoDocumentsDataTableProps {
   onPageSizeChange: (size: number) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
+  concurrentWorkers: number;
+  workersMax: number;
+  rateLimitPerSecond: number;
+  onConcurrentWorkersChange: (workers: number) => void;
+  updatingWorkers?: boolean;
   queuing?: boolean;
   isPolling?: boolean;
   batchProgress?: BatchProgress | null;
@@ -227,6 +232,11 @@ export function ReductoDocumentsDataTable({
   onPageSizeChange,
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
+  concurrentWorkers,
+  workersMax,
+  rateLimitPerSecond,
+  onConcurrentWorkersChange,
+  updatingWorkers,
   queuing,
   isPolling,
   batchProgress,
@@ -569,6 +579,35 @@ export function ReductoDocumentsDataTable({
             >
               Skip without ID
             </label>
+          </div>
+
+          <div className="flex items-center gap-2" title={`API rate limited to ${rateLimitPerSecond}/s`}>
+            <span className="text-sm text-muted-foreground whitespace-nowrap">At a time</span>
+            <Select
+              value={String(concurrentWorkers)}
+              onValueChange={(value) => onConcurrentWorkersChange(parseInt(value, 10))}
+              disabled={updatingWorkers || queuing}
+            >
+              <SelectTrigger className="h-8 w-[90px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(
+                  new Set([
+                    ...Array.from({ length: Math.min(workersMax, 20) }, (_, i) => i + 1),
+                    concurrentWorkers,
+                  ])
+                )
+                  .filter((n) => n >= 1 && n <= workersMax)
+                  .sort((a, b) => a - b)
+                  .map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {updatingWorkers && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           </div>
         </div>
 

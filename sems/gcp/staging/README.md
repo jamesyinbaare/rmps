@@ -60,6 +60,7 @@ Root files:
      - On GCE/Cloud Run ADC: grant the VM/runtime SA `roles/iam.serviceAccountTokenCreator` on itself (or `iam.serviceAccounts.signBlob`) so V4 signed URLs work without a private key file.
    - Object create/delete still needs `roles/storage.objectAdmin` (or equivalent) on the bucket.
 8. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `CLOUD_SQL_CONNECTION_NAME`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`.
+9. **Reducto concurrency** — Set `REDUCTO_RATE_LIMIT_PER_SECOND` to your plan RPS (Growth ≈ 10) and `REDUCTO_QUEUE_WORKERS` for parallel documents (start at 4; 6–8 if extracts are slow). The in-process token bucket prevents exceeding RPS; workers only control docs in flight. Operators can also resize workers at runtime via `PATCH /api/v1/documents/reducto-queue/workers` (Registrar+) or the Reducto Extraction UI control.
 
 ## Deploy
 
@@ -69,7 +70,8 @@ On `sems-vm`:
 cd sems
 cp .env.staging.gcp.example .env.staging.gcp
 # Edit CLOUD_SQL_CONNECTION_NAME, DATABASE_URL (host = sems-cloud-sql-proxy-staging),
-# SECRET_KEY, GCS_*, CORS_ORIGINS, SUPER_ADMIN_*, REDUCTO_API_KEY
+# SECRET_KEY, GCS_*, CORS_ORIGINS, SUPER_ADMIN_*, REDUCTO_API_KEY,
+# REDUCTO_RATE_LIMIT_PER_SECOND, REDUCTO_QUEUE_WORKERS
 
 chmod +x gcp/staging/scripts/deploy.sh
 ./gcp/staging/scripts/deploy.sh

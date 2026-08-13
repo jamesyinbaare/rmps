@@ -30,6 +30,8 @@ import {
   listSchools,
   listSubjects,
   queueReductoExtraction,
+  getReductoQueueStatus,
+  updateReductoQueueWorkers,
   updateScoresFromReducto,
   downloadDocument,
   getDocumentDownloadFilename,
@@ -104,6 +106,10 @@ export default function ReductoExtractionPage() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
+  const [concurrentWorkers, setConcurrentWorkers] = useState(4);
+  const [workersMax, setWorkersMax] = useState(50);
+  const [rateLimitPerSecond, setRateLimitPerSecond] = useState(10);
+  const [updatingWorkers, setUpdatingWorkers] = useState(false);
 
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -141,6 +147,38 @@ export default function ReductoExtractionPage() {
     }
     loadFilterOptions();
   }, []);
+
+  useEffect(() => {
+    async function loadQueueStatus() {
+      try {
+        const status = await getReductoQueueStatus();
+        setConcurrentWorkers(status.target_workers || status.active_workers || 4);
+        setWorkersMax(status.workers_max || 50);
+        setRateLimitPerSecond(status.rate_limit_per_second || 10);
+      } catch (err) {
+        console.warn("Reducto queue status unavailable:", err instanceof Error ? err.message : err);
+      }
+    }
+    loadQueueStatus();
+  }, []);
+
+  const handleConcurrentWorkersChange = async (workers: number) => {
+    if (workers === concurrentWorkers) return;
+    setUpdatingWorkers(true);
+    try {
+      const status = await updateReductoQueueWorkers(workers);
+      setConcurrentWorkers(status.target_workers);
+      setWorkersMax(status.workers_max);
+      setRateLimitPerSecond(status.rate_limit_per_second);
+      toast.success(`Processing ${status.target_workers} document(s) at a time`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to update concurrency (Registrar role required)"
+      );
+    } finally {
+      setUpdatingWorkers(false);
+    }
+  };
 
   const loadStatusCounts = useCallback(async () => {
     try {
@@ -921,6 +959,11 @@ export default function ReductoExtractionPage() {
             }
             skipWithoutExtractedId={skipWithoutExtractedId}
             onSkipWithoutExtractedIdChange={setSkipWithoutExtractedId}
+            concurrentWorkers={concurrentWorkers}
+            workersMax={workersMax}
+            rateLimitPerSecond={rateLimitPerSecond}
+            onConcurrentWorkersChange={handleConcurrentWorkersChange}
+            updatingWorkers={updatingWorkers}
             queuing={queuing}
             isPolling={isPolling}
             batchProgress={batchProgress}
