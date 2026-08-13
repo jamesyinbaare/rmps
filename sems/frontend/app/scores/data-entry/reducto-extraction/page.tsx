@@ -19,6 +19,8 @@ import {
   ReductoDocumentsDataTable,
   type BatchProgress,
   type ExtractionStatusFilter,
+  formatExtractionStatuses,
+  parseExtractionStatuses,
 } from "@/components/ReductoDocumentsDataTable";
 import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
 import {
@@ -69,14 +71,9 @@ const EMPTY_COUNTS: ScoresExtractionStatusCounts = {
 export default function ReductoExtractionPage() {
   const searchParams = useSearchParams();
   const statusFromUrl = searchParams.get("status");
+  const initialStatuses = parseExtractionStatuses(statusFromUrl);
   const initialStatus =
-    statusFromUrl === "pending" ||
-    statusFromUrl === "queued" ||
-    statusFromUrl === "processing" ||
-    statusFromUrl === "success" ||
-    statusFromUrl === "error"
-      ? statusFromUrl
-      : "pending";
+    initialStatuses.length > 0 ? formatExtractionStatuses(initialStatuses) : "pending";
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,19 +111,14 @@ export default function ReductoExtractionPage() {
   const [openPreviewPanel, setOpenPreviewPanel] = useState(false);
 
   useEffect(() => {
-    if (
-      statusFromUrl === "pending" ||
-      statusFromUrl === "queued" ||
-      statusFromUrl === "processing" ||
-      statusFromUrl === "success" ||
-      statusFromUrl === "error"
-    ) {
-      setFilters((prev) =>
-        prev.extraction_status === statusFromUrl
-          ? prev
-          : { ...prev, extraction_status: statusFromUrl, page: 1 }
-      );
-    }
+    const fromUrl = parseExtractionStatuses(statusFromUrl);
+    if (fromUrl.length === 0) return;
+    const serialized = formatExtractionStatuses(fromUrl);
+    setFilters((prev) =>
+      prev.extraction_status === serialized
+        ? prev
+        : { ...prev, extraction_status: serialized, page: 1 }
+    );
   }, [statusFromUrl]);
 
   useEffect(() => {
@@ -464,15 +456,34 @@ export default function ReductoExtractionPage() {
     }
   };
 
-  const handleStatusFilter = (status: string | undefined) => {
+  const selectedStatuses = useMemo(
+    () => parseExtractionStatuses(filters.extraction_status),
+    [filters.extraction_status]
+  );
+
+  const handleStatusFilterChange = (statuses: ExtractionStatusFilter[]) => {
     const next = { ...filters, page: 1 };
-    if (status) {
-      next.extraction_status = status as ExtractionStatusFilter;
+    const serialized = formatExtractionStatuses(statuses);
+    if (serialized) {
+      next.extraction_status = serialized;
     } else {
       delete next.extraction_status;
     }
     setFilters(next);
     setSelectedDocuments(new Set());
+  };
+
+  /** Toggle a status from the summary chips (multi-select). Empty = all. */
+  const handleStatusChipToggle = (status: string | undefined) => {
+    if (!status) {
+      handleStatusFilterChange([]);
+      return;
+    }
+    const value = status as ExtractionStatusFilter;
+    const next = selectedStatuses.includes(value)
+      ? selectedStatuses.filter((s) => s !== value)
+      : [...selectedStatuses, value];
+    handleStatusFilterChange(next);
   };
 
   const handleClearFilters = () => {
@@ -627,8 +638,10 @@ export default function ReductoExtractionPage() {
     }
     if (filters.extraction_status) {
       chips.push({
-        label: `Status: ${filters.extraction_status}`,
-        onRemove: () => handleStatusFilter(undefined),
+        label: `Status: ${parseExtractionStatuses(filters.extraction_status)
+          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(", ")}`,
+        onRemove: () => handleStatusFilterChange([]),
       });
     }
     return chips;
@@ -701,7 +714,11 @@ export default function ReductoExtractionPage() {
         <div className="border-b border-border bg-background px-4 py-2">
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
             <DataEntryPipelineNav
-              current={filters.extraction_status === "success" ? "review" : "extract"}
+              current={
+                selectedStatuses.length === 1 && selectedStatuses[0] === "success"
+                  ? "review"
+                  : "extract"
+              }
             />
             <div className="flex items-center gap-2">
               <p className="hidden text-sm text-muted-foreground lg:block">
@@ -718,8 +735,8 @@ export default function ReductoExtractionPage() {
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center gap-4">
             {statusButtons.map((item) => {
               const active =
-                (item.filter && filters.extraction_status === item.filter) ||
-                (!item.filter && !filters.extraction_status);
+                (item.filter && selectedStatuses.includes(item.filter as ExtractionStatusFilter)) ||
+                (!item.filter && selectedStatuses.length === 0);
               return (
                 <button
                   key={item.key}
@@ -729,7 +746,7 @@ export default function ReductoExtractionPage() {
                     item.className,
                     active && "text-foreground"
                   )}
-                  onClick={() => handleStatusFilter(item.filter)}
+                  onClick={() => handleStatusChipToggle(item.filter)}
                 >
                   {item.icon}
                   <span className="font-medium">{item.label}:</span>
@@ -897,7 +914,7 @@ export default function ReductoExtractionPage() {
             applyingDocumentId={updatingScores}
             requeueingDocumentId={requeueingDocumentId}
             statusFilter={filters.extraction_status}
-            onStatusFilterChange={handleStatusFilter}
+            onStatusFilterChange={handleStatusFilterChange}
             pageSize={filters.page_size || 50}
             onPageSizeChange={(size) =>
               setFilters((prev) => ({ ...prev, page_size: size, page: 1 }))
@@ -918,12 +935,12 @@ export default function ReductoExtractionPage() {
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
             emptyActionHref={
-              filters.extraction_status === "pending"
+              selectedStatuses.length === 1 && selectedStatuses[0] === "pending"
                 ? "/icm-studio/documents/failed-extractions"
                 : "/scores/data-entry/apply-scores"
             }
             emptyActionLabel={
-              filters.extraction_status === "pending"
+              selectedStatuses.length === 1 && selectedStatuses[0] === "pending"
                 ? "Fix failed IDs"
                 : "Go to Apply Scores"
             }

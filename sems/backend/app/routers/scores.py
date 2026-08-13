@@ -138,7 +138,13 @@ async def get_filtered_documents(
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
-    extraction_status: str | None = Query(None, description="Filter by extraction status: pending, queued, processing, success, error"),
+    extraction_status: str | None = Query(
+        None,
+        description=(
+            "Filter by extraction status: pending, queued, processing, success, error. "
+            "Comma-separated for multiple (e.g. pending,error)."
+        ),
+    ),
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
     scores_applied: bool | None = Query(
         None,
@@ -192,7 +198,11 @@ async def get_filtered_documents(
     if test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == test_type)
     if extraction_status is not None:
-        base_stmt = base_stmt.where(Document.scores_extraction_status == extraction_status)
+        statuses = [s.strip() for s in extraction_status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            base_stmt = base_stmt.where(Document.scores_extraction_status == statuses[0])
+        elif len(statuses) > 1:
+            base_stmt = base_stmt.where(Document.scores_extraction_status.in_(statuses))
     if extraction_method is not None:
         # Filter by array contains operation - check if extraction_method is in the array
         # For PostgreSQL arrays, use the @> (contains) operator
@@ -233,7 +243,11 @@ async def get_filtered_documents(
     if test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == test_type)
     if extraction_status is not None:
-        count_stmt = count_stmt.where(Document.scores_extraction_status == extraction_status)
+        statuses = [s.strip() for s in extraction_status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            count_stmt = count_stmt.where(Document.scores_extraction_status == statuses[0])
+        elif len(statuses) > 1:
+            count_stmt = count_stmt.where(Document.scores_extraction_status.in_(statuses))
     if extraction_method is not None:
         count_stmt = count_stmt.where(
             Document.scores_extraction_methods.isnot(None)

@@ -496,7 +496,7 @@ export interface ScoreDocumentFilters {
   school_id?: number;
   subject_id?: number;
   test_type?: string;
-  extraction_status?: string; // Filter by extraction status: pending, queued, processing, success, error
+  extraction_status?: string; // Single or comma-separated: pending,queued,processing,success,error
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   scores_applied?: boolean; // true=applied, false=not applied
   page?: number;
