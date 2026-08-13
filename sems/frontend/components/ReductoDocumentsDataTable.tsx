@@ -15,6 +15,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Eye,
   FileText,
@@ -48,6 +49,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -61,6 +70,35 @@ export type ExtractionStatusFilter =
   | "processing"
   | "success"
   | "error";
+
+export const EXTRACTION_STATUS_OPTIONS: Array<{
+  value: ExtractionStatusFilter;
+  label: string;
+}> = [
+  { value: "pending", label: "Pending" },
+  { value: "queued", label: "Queued" },
+  { value: "processing", label: "Processing" },
+  { value: "success", label: "Success" },
+  { value: "error", label: "Error" },
+];
+
+export function parseExtractionStatuses(
+  value?: string | null
+): ExtractionStatusFilter[] {
+  if (!value) return [];
+  const allowed = new Set(EXTRACTION_STATUS_OPTIONS.map((o) => o.value));
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is ExtractionStatusFilter => allowed.has(s as ExtractionStatusFilter));
+}
+
+export function formatExtractionStatuses(
+  statuses: ExtractionStatusFilter[]
+): string | undefined {
+  if (statuses.length === 0) return undefined;
+  return statuses.join(",");
+}
 
 export type BatchProgress = {
   total: number;
@@ -85,7 +123,7 @@ interface ReductoDocumentsDataTableProps {
   applyingDocumentId?: number | null;
   requeueingDocumentId?: number | null;
   statusFilter?: string;
-  onStatusFilterChange: (status: ExtractionStatusFilter | undefined) => void;
+  onStatusFilterChange: (statuses: ExtractionStatusFilter[]) => void;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   skipWithoutExtractedId: boolean;
@@ -212,6 +250,22 @@ export function ReductoDocumentsDataTable({
   const pendingOnPage = documents.filter(
     (d) => !d.scores_extraction_status || d.scores_extraction_status === "pending"
   ).length;
+  const selectedStatuses = parseExtractionStatuses(statusFilter);
+
+  const toggleStatus = (status: ExtractionStatusFilter) => {
+    const next = selectedStatuses.includes(status)
+      ? selectedStatuses.filter((s) => s !== status)
+      : [...selectedStatuses, status];
+    onStatusFilterChange(next);
+  };
+
+  const statusTriggerLabel =
+    selectedStatuses.length === 0
+      ? "All statuses"
+      : selectedStatuses.length === 1
+        ? EXTRACTION_STATUS_OPTIONS.find((o) => o.value === selectedStatuses[0])?.label ||
+          selectedStatuses[0]
+        : `${selectedStatuses.length} statuses`;
 
   useEffect(() => {
     if (documents.length === 0) {
@@ -438,26 +492,51 @@ export function ReductoDocumentsDataTable({
             )}
           </div>
 
-          <Select
-            value={statusFilter || "all"}
-            onValueChange={(value) =>
-              onStatusFilterChange(
-                value === "all" ? undefined : (value as ExtractionStatusFilter)
-              )
-            }
-          >
-            <SelectTrigger className="h-8 w-[150px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="queued">Queued</SelectItem>
-              <SelectItem value="processing">Processing</SelectItem>
-              <SelectItem value="success">Success</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-            </SelectContent>
-          </Select>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 min-w-[150px] justify-between gap-2">
+                <span className="truncate">{statusTriggerLabel}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-52">
+              <DropdownMenuLabel>Filter by status</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {EXTRACTION_STATUS_OPTIONS.map((option) => {
+                const checked = selectedStatuses.includes(option.value);
+                const id = `status-filter-${option.value}`;
+                return (
+                  <DropdownMenuItem
+                    key={option.value}
+                    className="gap-2"
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      toggleStatus(option.value);
+                    }}
+                  >
+                    <Checkbox
+                      id={id}
+                      checked={checked}
+                      onCheckedChange={() => toggleStatus(option.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={option.label}
+                    />
+                    <label htmlFor={id} className="flex-1 cursor-pointer">
+                      {option.label}
+                    </label>
+                  </DropdownMenuItem>
+                );
+              })}
+              {selectedStatuses.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => onStatusFilterChange([])}>
+                    Clear status filter
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Show</span>
@@ -636,10 +715,10 @@ export function ReductoDocumentsDataTable({
                       <div>
                         <p className="font-medium text-foreground">No documents found</p>
                         <p className="mt-1 text-sm">
-                          {statusFilter === "pending"
-                            ? "No pending sheets for these filters."
-                            : "Try adjusting filters or status."}
-                        </p>
+                        {selectedStatuses.includes("pending") && selectedStatuses.length === 1
+                          ? "No pending sheets for these filters."
+                          : "Try adjusting filters or status."}
+                      </p>
                       </div>
                       {emptyActionHref && emptyActionLabel && (
                         <Button variant="outline" size="sm" asChild>
