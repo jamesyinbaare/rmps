@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -13,10 +13,8 @@ import {
 import {
   downloadDocument,
   getDocumentDownloadFilename,
-  listSchools,
-  listSubjects,
 } from "@/lib/api";
-import type { Document, School, Subject } from "@/types/document";
+import type { Document } from "@/types/document";
 import { File } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FileGrid } from "./FileGrid";
@@ -40,6 +38,10 @@ interface DocumentListProps {
   onSelectAll?: () => void;
   infiniteScroll?: boolean;
   hasMore?: boolean;
+  /** When true, hide the built-in empty state (parent renders its own). */
+  hideEmptyState?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }
 
 export function DocumentList({
@@ -60,61 +62,29 @@ export function DocumentList({
   onSelectAll,
   infiniteScroll = false,
   hasMore = false,
+  hideEmptyState = false,
+  emptyTitle = "No documents found",
+  emptyDescription = "No documents match the current filters.",
 }: DocumentListProps) {
-  const [schoolMap, setSchoolMap] = useState<Map<number, string>>(new Map());
-  const [subjectMap, setSubjectMap] = useState<Map<number, string>>(new Map());
-  const [lookupLoading, setLookupLoading] = useState(true);
-
-  // Fetch lookup data for schools and subjects
-  useEffect(() => {
-    const fetchLookupData = async () => {
-      if (viewMode !== "list" && viewMode !== "large-list") {
-        setLookupLoading(false);
-        return;
+  const schoolMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const doc of documents) {
+      if (doc.school_id && doc.school_name) {
+        map.set(doc.school_id, doc.school_name);
       }
+    }
+    return map;
+  }, [documents]);
 
-      try {
-        setLookupLoading(true);
-        const schoolMap = new Map<number, string>();
-        const subjectMap = new Map<number, string>();
-
-        // Fetch all schools
-        let schoolPage = 1;
-        let schoolHasMore = true;
-        while (schoolHasMore) {
-          const schools = await listSchools(schoolPage, 100);
-          schools.forEach((school: School) => {
-            schoolMap.set(school.id, school.name);
-          });
-          // If we got fewer than 100, we're done. Also add a safety limit.
-          schoolHasMore = schools.length === 100 && schoolPage < 100;
-          schoolPage++;
-        }
-
-        // Fetch all subjects
-        let subjectPage = 1;
-        let subjectHasMore = true;
-        while (subjectHasMore) {
-          const subjects = await listSubjects(subjectPage, 100);
-          subjects.forEach((subject: Subject) => {
-            subjectMap.set(subject.id, subject.name);
-          });
-          // If we got fewer than 100, we're done. Also add a safety limit.
-          subjectHasMore = subjects.length === 100 && subjectPage < 100;
-          subjectPage++;
-        }
-
-        setSchoolMap(schoolMap);
-        setSubjectMap(subjectMap);
-      } catch (error) {
-        console.error("Failed to fetch lookup data:", error);
-      } finally {
-        setLookupLoading(false);
+  const subjectMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const doc of documents) {
+      if (doc.subject_id && doc.subject_name) {
+        map.set(doc.subject_id, doc.subject_name);
       }
-    };
-
-    fetchLookupData();
-  }, [viewMode]);
+    }
+    return map;
+  }, [documents]);
 
   const handleDownload = async (doc: Document) => {
     try {
@@ -155,11 +125,12 @@ export function DocumentList({
   }
 
   if (documents.length === 0) {
+    if (hideEmptyState) return null;
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <File className="h-16 w-16 text-muted-foreground mb-4" />
-        <p className="text-lg font-medium mb-2">No documents found</p>
-        <p className="text-sm text-muted-foreground">No documents match the current filters.</p>
+        <p className="text-lg font-medium mb-2">{emptyTitle}</p>
+        <p className="text-sm text-muted-foreground">{emptyDescription}</p>
       </div>
     );
   }
@@ -178,140 +149,101 @@ export function DocumentList({
           size={viewMode === "large-grid" ? "large-grid" : "grid"}
         />
       ) : (
-        <div>
-          {/* Table Header */}
-          <div className="hidden md:flex items-center gap-4 border-b border-border sticky top-0 bg-background z-10 px-6 pt-6 pb-3">
-            {bulkMode && onSelectionChange ? (
-              <div className="w-10 shrink-0 flex items-center justify-center">
-                <Checkbox
-                  checked={documents.length > 0 && selectedIds.size === documents.length}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      // Select all on current page
-                      documents.forEach((doc) => {
-                        onSelectionChange?.(doc.id, true);
-                      });
-                    } else {
-                      // Deselect all on current page
-                      documents.forEach((doc) => {
-                        onSelectionChange?.(doc.id, false);
-                      });
-                    }
-                  }}
-                  className="bg-background border-2"
-                />
-              </div>
-            ) : (
-              <div className="w-10 shrink-0" />
-            )}
-            <div className="flex-1 min-w-0 text-left">
-              <div className="text-sm font-medium">File Name</div>
-            </div>
-            <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block max-w-[200px]">
-              <div className="text-xs truncate min-w-[200px]">School</div>
-            </div>
-            <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block max-w-[200px] ml-8">
-              <div className="text-xs truncate min-w-[200px]">Subject</div>
-            </div>
-            <div className="w-10 shrink-0" /> {/* Actions spacer */}
-          </div>
-          {/* Table Rows */}
-          <div className="divide-y divide-border px-6">
-            {documents.map((doc) => (
-              <FileListItem
-                key={doc.id}
-                document={doc}
-                onDownload={handleDownload}
-                onSelect={onSelect}
-                onDelete={onDelete}
-                schoolName={doc.school_id ? schoolMap.get(doc.school_id) : undefined}
-                subjectName={doc.subject_id ? subjectMap.get(doc.subject_id) : undefined}
-                isSelected={selectedIds.has(doc.id)}
-                onSelectionChange={onSelectionChange}
-                bulkMode={bulkMode}
-                size={viewMode === "large-list" ? "large-list" : "list"}
+        <div className="divide-y divide-border px-6">
+          {bulkMode && onSelectAll && (
+            <div className="flex items-center gap-3 py-2 border-b">
+              <Checkbox
+                checked={documents.length > 0 && selectedIds.size === documents.length}
+                onCheckedChange={() => onSelectAll()}
               />
-            ))}
-          </div>
+              <span className="text-sm text-muted-foreground">Select all loaded</span>
+            </div>
+          )}
+          {documents.map((doc) => (
+            <FileListItem
+              key={doc.id}
+              document={doc}
+              onDownload={handleDownload}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              schoolName={
+                doc.school_name ||
+                (doc.school_id ? schoolMap.get(doc.school_id) : undefined) ||
+                undefined
+              }
+              subjectName={
+                doc.subject_name ||
+                (doc.subject_id ? subjectMap.get(doc.subject_id) : undefined) ||
+                undefined
+              }
+              isSelected={selectedIds.has(doc.id)}
+              onSelectionChange={onSelectionChange}
+              bulkMode={bulkMode}
+              size={viewMode === "large-list" ? "large-list" : "list"}
+            />
+          ))}
         </div>
       )}
 
-      {/* Infinite Scroll Sentinel - Intersection Observer target */}
-      {infiniteScroll && hasMore && !loadingMore && (
-        <div
-          id="infinite-scroll-sentinel"
-          className="h-20 w-full"
-        />
-      )}
-
-      {/* Infinite Scroll Loading Indicator */}
-      {infiniteScroll && loadingMore && (
-        <div className="flex items-center justify-center py-8">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            <span>Loading more documents...</span>
-          </div>
+      {infiniteScroll ? (
+        <div className="px-6 py-4">
+          <div id="infinite-scroll-sentinel" className="h-4" />
+          {loadingMore && (
+            <div className="flex justify-center py-4">
+              <Skeleton className="h-8 w-32" />
+            </div>
+          )}
+          {!hasMore && documents.length > 0 && (
+            <p className="text-center text-sm text-muted-foreground py-2">
+              End of loaded window
+            </p>
+          )}
         </div>
-      )}
-
-      {/* End of Results Message */}
-      {infiniteScroll && !hasMore && documents.length > 0 && (
-        <div className="flex items-center justify-center py-8">
-          <p className="text-sm text-muted-foreground">
-            No more documents to load
-          </p>
-        </div>
-      )}
-
-      {/* Pagination Controls (only show when not using infinite scroll) */}
-      {!infiniteScroll && (totalPages > 1 || onPageSizeChange) && (
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
-          <div className="flex items-center gap-4">
-            {totalPages > 1 && (
-              <p className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </p>
-            )}
-            {onPageSizeChange && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Show:</span>
+      ) : (
+        totalPages > 1 && (
+          <div className="flex items-center justify-between gap-4 border-t border-border px-6 py-4">
+            <div className="flex items-center gap-2">
+              {onPageSizeChange && (
                 <Select
-                  value={pageSize.toString()}
-                  onValueChange={(value) => onPageSizeChange(parseInt(value, 10))}
+                  value={String(pageSize)}
+                  onValueChange={(v) => onPageSizeChange(parseInt(v, 10))}
                 >
-                  <SelectTrigger className="h-8 w-[80px]">
+                  <SelectTrigger className="w-[100px] h-8">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="20">20</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                    <SelectItem value="100">100</SelectItem>
+                    {[20, 30, 50, 100].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n} / page
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              </div>
-            )}
-          </div>
-          {totalPages > 1 && (
+              )}
+              <span className="text-sm text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+            </div>
             <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
+                disabled={currentPage <= 1}
                 onClick={() => onPageChange(currentPage - 1)}
-                disabled={currentPage === 1}
               >
                 Previous
               </Button>
               <Button
                 variant="outline"
                 size="sm"
+                disabled={currentPage >= totalPages}
                 onClick={() => onPageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
               >
                 Next
               </Button>
             </div>
-          )}
-        </div>
+          </div>
+        )
       )}
     </div>
   );

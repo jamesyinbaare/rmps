@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
+from app.models import Document, School, Subject, programme_subjects, school_programmes
 
 
 class ExtractionMethod(str, Enum):
@@ -18,6 +19,64 @@ class ExtractionMethod(str, Enum):
     BARCODE = "barcode"
     OCR = "ocr"
     MANUAL = "manual"
+
+
+class IDExtractionErrorCode(str, Enum):
+    """Structured failure reason for ID extraction."""
+
+    NO_ID = "no_id"
+    INVALID_FORMAT = "invalid_format"
+    VALIDATION = "validation"
+    DUPLICATE = "duplicate"
+    LOW_CONFIDENCE = "low_confidence"
+    FILE_MISSING = "file_missing"
+    EXCEPTION = "exception"
+
+
+def apply_id_extraction_result(document: Document, extraction_result: dict[str, Any]) -> None:
+    """Persist extraction outcome onto a Document (success or structured error)."""
+    document.id_extraction_method = extraction_result.get("method")
+    document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
+
+    if extraction_result.get("is_valid"):
+        document.extracted_id = extraction_result.get("extracted_id")
+        document.school_id = extraction_result.get("school_id")
+        document.subject_id = extraction_result.get("subject_id")
+        document.test_type = extraction_result.get("test_type")
+        document.subject_series = extraction_result.get("subject_series")
+        document.sheet_number = extraction_result.get("sheet_number")
+        document.id_extraction_status = "success"
+        document.id_extracted_at = datetime.utcnow()
+        document.id_extraction_error = None
+        document.id_extraction_error_code = None
+        return
+
+    # Persist candidate ID when barcode/OCR returned something that failed checks
+    candidate_id = extraction_result.get("extracted_id")
+    if candidate_id:
+        document.extracted_id = candidate_id
+
+    document.id_extraction_status = "error"
+    document.id_extraction_error = extraction_result.get("error_message")
+    document.id_extraction_error_code = extraction_result.get("error_code") or IDExtractionErrorCode.EXCEPTION.value
+
+
+def mark_id_extraction_failure(
+    document: Document,
+    *,
+    error_code: str,
+    error_message: str,
+) -> None:
+    """Mark a document as ID-extraction failed with a specific reason."""
+    document.id_extraction_status = "error"
+    document.id_extraction_error_code = error_code
+    document.id_extraction_error = error_message
+
+
+def clear_id_extraction_error(document: Document) -> None:
+    """Clear structured extraction error fields (e.g. after manual fix)."""
+    document.id_extraction_error = None
+    document.id_extraction_error_code = None
 
 
 class IDValidationResult:
@@ -256,9 +315,10 @@ class IDValidator:
         result = await session.execute(stmt)
         existing = result.scalar_one_or_none()
         if existing:
+            identity = existing.extracted_id or existing.file_name or "unknown"
             return (
                 True,
-                f"Sheet number {sheet_number} already exists for school+subject+subject_series+test_type+exam combination",
+                f"Duplicate sheet {sheet_number}: already on document #{existing.id} ({identity})",
             )
         return False, None
 
@@ -300,6 +360,7 @@ class IDExtractionService:
                 "method": None,
                 "confidence": 0.0,
                 "is_valid": False,
+                "error_code": IDExtractionErrorCode.NO_ID.value,
                 "error_message": "Failed to extract ID using barcode or OCR",
             }
 
@@ -311,6 +372,7 @@ class IDExtractionService:
                 "method": method,
                 "confidence": confidence,
                 "is_valid": False,
+                "error_code": IDExtractionErrorCode.INVALID_FORMAT.value,
                 "error_message": validation_result.error_message,
             }
 
@@ -322,6 +384,7 @@ class IDExtractionService:
                 "method": method,
                 "confidence": confidence,
                 "is_valid": False,
+                "error_code": IDExtractionErrorCode.VALIDATION.value,
                 "error_message": error_message,
             }
 
@@ -365,6 +428,7 @@ class IDExtractionService:
                     "method": method,
                     "confidence": confidence,
                     "is_valid": False,
+                    "error_code": IDExtractionErrorCode.DUPLICATE.value,
                     "error_message": dup_error,
                 }
 
@@ -375,7 +439,11 @@ class IDExtractionService:
                 "method": method,
                 "confidence": confidence,
                 "is_valid": False,
-                "error_message": f"Extraction confidence {confidence} below threshold {settings.min_confidence_threshold}",
+                "error_code": IDExtractionErrorCode.LOW_CONFIDENCE.value,
+                "error_message": (
+                    f"Extraction confidence {confidence} below threshold "
+                    f"{settings.min_confidence_threshold}"
+                ),
             }
 
         return {
@@ -390,6 +458,7 @@ class IDExtractionService:
             "subject_series": validation_result.subject_series,
             "test_type": validation_result.test_type,
             "sheet_number": validation_result.sheet_number,
+            "error_code": None,
             "error_message": None,
         }
 

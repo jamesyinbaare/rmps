@@ -375,6 +375,10 @@ export async function listDocuments(
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.id_extraction_status) params.append("id_extraction_status", filters.id_extraction_status);
+  if (filters.id_extraction_error_code) {
+    params.append("id_extraction_error_code", filters.id_extraction_error_code);
+  }
+  if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -510,8 +514,46 @@ export async function deleteDocument(documentId: number): Promise<void> {
   });
   if (!response.ok) {
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
-    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    throw new Error(typeof error.detail === "string" ? error.detail : `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function bulkDeleteDocuments(
+  documentIds: number[]
+): Promise<{ deleted: number; failed: number; errors: Array<{ document_id: string; error: string }> }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  return handleResponse(response);
+}
+
+export async function extractDocumentId(documentId: number): Promise<{
+  extracted_id: string | null;
+  is_valid: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/extract-id`, {
+    method: "POST",
+  });
+  return handleResponse(response);
+}
+
+export async function bulkExtractDocumentIds(
+  documentIds: number[]
+): Promise<{ queued: number; document_ids: number[] }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/bulk-extract-id`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  return handleResponse(response);
+}
+
+export function getDocumentThumbnailUrl(documentId: number, size = 320): string {
+  return `${API_BASE_URL}/api/v1/documents/${documentId}/thumbnail?size=${size}`;
 }
 
 export async function updateDocumentId(
@@ -672,152 +714,83 @@ export function findExamId(
 }
 
 /**
- * Get exams that have at least one document
- * Fetches exam details by ID from documents since listExams now requires filters
+ * Get exams that have at least one document (via facet API).
  */
 export async function getExamsWithDocuments(): Promise<Exam[]> {
-  // Get all documents to find which exams have documents
-  const documentsResponse = await listDocuments({ page: 1, page_size: 100 });
-  const examIdsWithDocs = new Set<number>();
-  documentsResponse.items.forEach((doc) => {
-    examIdsWithDocs.add(doc.exam_id);
-  });
-
-  // Paginate through all documents to get complete list
-  if (documentsResponse.total_pages > 1) {
-    let docPage = 2;
-    while (docPage <= documentsResponse.total_pages) {
-      const moreDocs = await listDocuments({ page: docPage, page_size: 100 });
-      moreDocs.items.forEach((doc) => {
-        examIdsWithDocs.add(doc.exam_id);
-      });
-      docPage++;
-    }
-  }
-
-  // Fetch exam details for each exam ID
-  const exams: Exam[] = [];
-  for (const examId of examIdsWithDocs) {
-    try {
-      const exam = await getExam(examId);
-      exams.push(exam);
-    } catch (error) {
-      // Skip if exam not found
-      continue;
-    }
-  }
-
-  // Return exams sorted by exam_type
-  return exams.sort((a, b) => a.exam_type.localeCompare(b.exam_type));
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/facets/exams`);
+  const facets = await handleResponse<
+    Array<{
+      id: number;
+      exam_type: string;
+      series: string;
+      year: number;
+      description: string | null;
+      document_count: number;
+    }>
+  >(response);
+  return facets.map((f) => ({
+    id: f.id,
+    exam_type: f.exam_type,
+    series: f.series,
+    year: f.year,
+    description: f.description,
+    number_of_series: 1,
+    subjects_to_serialize: null,
+    created_at: "",
+    updated_at: "",
+  })) as Exam[];
 }
 
 /**
- * Get schools for an exam that have documents
+ * Get schools for an exam that have documents (via facet API).
  */
 export async function getSchoolsForExam(examId: number): Promise<School[]> {
-  const schoolsMap = new Map<number, School>();
-  let page = 1;
-  let hasMore = true;
-
-  // Fetch all schools
-  while (hasMore) {
-    const schools = await listSchools(page, 100);
-    schools.forEach((school) => {
-      schoolsMap.set(school.id, school);
-    });
-    hasMore = schools.length === 100;
-    page++;
-  }
-
-  // Get documents for this exam
-  const documentsResponse = await listDocuments({ exam_id: examId, page: 1, page_size: 100 });
-  const schoolIdsWithDocs = new Set<number>();
-  documentsResponse.items.forEach((doc) => {
-    if (doc.school_id) {
-      schoolIdsWithDocs.add(doc.school_id);
-    }
-  });
-
-  // Paginate through all documents for this exam
-  if (documentsResponse.total_pages > 1) {
-    let docPage = 2;
-    while (docPage <= documentsResponse.total_pages) {
-      const moreDocs = await listDocuments({ exam_id: examId, page: docPage, page_size: 100 });
-      moreDocs.items.forEach((doc) => {
-        if (doc.school_id) {
-          schoolIdsWithDocs.add(doc.school_id);
-        }
-      });
-      docPage++;
-    }
-  }
-
-  // Return only schools that have documents for this exam
-  return Array.from(schoolIdsWithDocs)
-    .map((schoolId) => schoolsMap.get(schoolId))
-    .filter((school): school is School => school !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/facets/schools?exam_id=${examId}`
+  );
+  const facets = await handleResponse<
+    Array<{ id: number; name: string; code: string; document_count: number }>
+  >(response);
+  return facets.map((f) => ({
+    id: f.id,
+    name: f.name,
+    code: f.code,
+    s_code: f.code,
+    region: "Greater Accra Region",
+    zone: "A",
+    school_type: null,
+    created_at: "",
+    updated_at: "",
+  })) as School[];
 }
 
 /**
- * Get subjects for an exam and school combination that have documents
+ * Get subjects for an exam and school combination that have documents (via facet API).
  */
 export async function getSubjectsForExamAndSchool(
   examId: number,
   schoolId: number
 ): Promise<Subject[]> {
-  const subjectsMap = new Map<number, Subject>();
-  let page = 1;
-  let hasMore = true;
-
-  // Fetch all subjects
-  while (hasMore) {
-    const subjects = await listSubjects(page, 100);
-    subjects.forEach((subject) => {
-      subjectsMap.set(subject.id, subject);
-    });
-    hasMore = subjects.length === 100;
-    page++;
-  }
-
-  // Get documents for this exam and school
-  const documentsResponse = await listDocuments({
-    exam_id: examId,
-    school_id: schoolId,
-    page: 1,
-    page_size: 100,
+  const params = new URLSearchParams({
+    exam_id: String(examId),
+    school_id: String(schoolId),
   });
-  const subjectIdsWithDocs = new Set<number>();
-  documentsResponse.items.forEach((doc) => {
-    if (doc.subject_id) {
-      subjectIdsWithDocs.add(doc.subject_id);
-    }
-  });
-
-  // Paginate through all documents for this exam and school
-  if (documentsResponse.total_pages > 1) {
-    let docPage = 2;
-    while (docPage <= documentsResponse.total_pages) {
-      const moreDocs = await listDocuments({
-        exam_id: examId,
-        school_id: schoolId,
-        page: docPage,
-        page_size: 100,
-      });
-      moreDocs.items.forEach((doc) => {
-        if (doc.subject_id) {
-          subjectIdsWithDocs.add(doc.subject_id);
-        }
-      });
-      docPage++;
-    }
-  }
-
-  // Return only subjects that have documents for this exam and school
-  return Array.from(subjectIdsWithDocs)
-    .map((subjectId) => subjectsMap.get(subjectId))
-    .filter((subject): subject is Subject => subject !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/facets/subjects?${params.toString()}`
+  );
+  const facets = await handleResponse<
+    Array<{ id: number; name: string; code: string; document_count: number }>
+  >(response);
+  return facets.map((f) => ({
+    id: f.id,
+    name: f.name,
+    code: f.code,
+    original_code: f.code,
+    subject_type: "CORE",
+    exam_type: "Certificate II Examinations",
+    created_at: "",
+    updated_at: "",
+  })) as Subject[];
 }
 
 /**

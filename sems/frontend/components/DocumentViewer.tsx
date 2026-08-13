@@ -23,8 +23,13 @@ import type { Document, Exam, School, Subject, ReductoDataResponse } from "@/typ
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import {
+  getIdExtractionErrorBadgeLabel,
+  getIdExtractionErrorTitle,
+} from "@/lib/id-extraction-errors";
+import {
   API_BASE_URL,
   downloadDocument,
+  extractDocumentId,
   getDocumentDownloadFilename,
   getExam,
   getReductoData,
@@ -132,6 +137,7 @@ export function DocumentViewer({
   const [subjectName, setSubjectName] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
   const [savingId, setSavingId] = useState(false);
+  const [retryingExtract, setRetryingExtract] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -147,8 +153,11 @@ export function DocumentViewer({
 
   const previewUrl = `${API_BASE_URL}/api/v1/documents/${document.id}/download`;
   const displayText = document.extracted_id || document.file_name;
-  // Show manual ID input only if there's no extracted_id (extraction failed or not yet extracted)
-  const needsManualId = !document.extracted_id;
+  // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
+  const isPendingExtraction = document.id_extraction_status === "pending";
+  const needsManualId =
+    !isPendingExtraction &&
+    (document.id_extraction_status === "error" || !document.extracted_id);
   const canPreviewExtraction =
     enableReductoPreview &&
     (document.scores_extraction_status === "success" ||
@@ -513,6 +522,26 @@ export function DocumentViewer({
     }
   };
 
+  const handleRetryExtract = async () => {
+    setRetryingExtract(true);
+    try {
+      const result = await extractDocumentId(document.id);
+      if (result.is_valid) {
+        toast.success(`Extracted ID: ${result.extracted_id}`);
+        if (onUpdateId && result.extracted_id) {
+          // Parent refresh path — pass extracted values so list updates
+          await onUpdateId(document.id, result.extracted_id);
+        }
+      } else {
+        toast.error(result.error_message || "Extraction failed again");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Retry extraction failed");
+    } finally {
+      setRetryingExtract(false);
+    }
+  };
+
   const handleDelete = () => {
     if (onDelete) {
       onDelete(document.id);
@@ -559,12 +588,50 @@ export function DocumentViewer({
               <h2 className="text-lg font-semibold truncate">
                 {document.extracted_id || "-"}
               </h2>
-              {needsManualId && (
+              {needsManualId && document.id_extraction_status === "error" && (
+                <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
+                  {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
+                </span>
+              )}
+              {needsManualId && document.id_extraction_status !== "error" && (
                 <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
                   ID Extraction Failed
                 </span>
               )}
             </div>
+            {document.id_extraction_status === "error" && (
+              <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">
+                      {getIdExtractionErrorTitle(document.id_extraction_error_code)}
+                    </p>
+                    {document.id_extraction_error && (
+                      <p className="mt-0.5 text-muted-foreground">{document.id_extraction_error}</p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5"
+                    onClick={handleRetryExtract}
+                    disabled={retryingExtract}
+                  >
+                    {retryingExtract ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
+            {isPendingExtraction && (
+              <div className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                ID extraction is still processing. Manual entry is available after it finishes or fails.
+              </div>
+            )}
             <div className="flex items-center gap-4 mt-1 flex-wrap">
               {schoolName && (
                 <span className="text-xs text-muted-foreground">School: {schoolName}</span>

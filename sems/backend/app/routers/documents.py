@@ -1,11 +1,15 @@
 from datetime import datetime, timedelta
+import asyncio
+import io
 import logging
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from PIL import Image
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
@@ -14,11 +18,18 @@ from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMetho
 from app.schemas.document import (
     AbandonedUploadCleanupResponse,
     BackfillTestTypeResponse,
+    BulkDeleteResponse,
+    BulkDocumentIdsRequest,
+    BulkExtractIdResponse,
     BulkUploadResponse,
     ContentExtractionResponse,
+    DocumentExamFacet,
+    DocumentListItem,
     DocumentListResponse,
     DocumentQueueStatus,
     DocumentResponse,
+    DocumentSchoolFacet,
+    DocumentSubjectFacet,
     DocumentUpdate,
     ReductoQueueRequest,
     ReductoQueueResponse,
@@ -34,7 +45,14 @@ from app.schemas.document import (
 )
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.content_extraction import content_extraction_service
-from app.services.id_extraction import id_extraction_service, IDValidator
+from app.services.id_extraction import (
+    IDExtractionErrorCode,
+    IDValidator,
+    apply_id_extraction_result,
+    clear_id_extraction_error,
+    id_extraction_service,
+    mark_id_extraction_failure,
+)
 from app.services.reducto_queue import reducto_queue_service
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
@@ -43,6 +61,87 @@ from app.utils.score_utils import add_extraction_method_to_document
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+
+# Bounded concurrency for background ID extraction (CPU-heavy barcode/OCR)
+ID_EXTRACTION_CONCURRENCY = 4
+THUMBNAIL_MAX_SIZE = 320
+
+
+def _document_to_list_item(doc: Document) -> DocumentListItem:
+    """Build a slim list item without scores_extraction_data."""
+    item = DocumentListItem.model_validate(doc)
+    return item.model_copy(
+        update={
+            "school_name": doc.school.name if getattr(doc, "school", None) else None,
+            "subject_name": doc.subject.name if getattr(doc, "subject", None) else None,
+        }
+    )
+
+
+def _make_thumbnail_jpeg(image_data: bytes, max_size: int = THUMBNAIL_MAX_SIZE) -> bytes:
+    """Resize image to a JPEG thumbnail (longest edge <= max_size)."""
+    with Image.open(io.BytesIO(image_data)) as image:
+        image = image.convert("RGB")
+        resample = getattr(Image, "Resampling", None)
+        resample_filter = getattr(resample, "LANCZOS", Image.LANCZOS) if resample else Image.LANCZOS
+        image.thumbnail((max_size, max_size), resample_filter)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=72, optimize=True)
+        return buffer.getvalue()
+
+
+async def _extract_one_document_id(document_id: int, semaphore: asyncio.Semaphore) -> None:
+    """Extract ID for a single document using its own DB session."""
+    async with semaphore:
+        sessionmanager = get_sessionmanager()
+        async with sessionmanager.session() as session:
+            try:
+                stmt = select(Document).where(Document.id == document_id)
+                result = await session.execute(stmt)
+                document = result.scalar_one_or_none()
+                if not document:
+                    return
+
+                try:
+                    if document.upload_status != "uploaded":
+                        return
+                    file_content = await storage_service.retrieve(document.file_path)
+                except FileNotFoundError:
+                    mark_id_extraction_failure(
+                        document,
+                        error_code=IDExtractionErrorCode.FILE_MISSING.value,
+                        error_message="File not found in storage",
+                    )
+                    await session.commit()
+                    return
+
+                extraction_result = await id_extraction_service.extract_id(
+                    file_content, session, document_id, document.exam_id
+                )
+                apply_id_extraction_result(document, extraction_result)
+                await session.commit()
+            except Exception as exc:
+                try:
+                    stmt = select(Document).where(Document.id == document_id)
+                    result = await session.execute(stmt)
+                    document = result.scalar_one_or_none()
+                    if document:
+                        mark_id_extraction_failure(
+                            document,
+                            error_code=IDExtractionErrorCode.EXCEPTION.value,
+                            error_message=f"Unexpected error during ID extraction: {exc}",
+                        )
+                        await session.commit()
+                except Exception:
+                    pass
+
+
+async def _extract_ids_for_documents(document_ids: list[int]) -> None:
+    """Background helper to extract IDs for multiple documents with bounded concurrency."""
+    if not document_ids:
+        return
+    semaphore = asyncio.Semaphore(ID_EXTRACTION_CONCURRENCY)
+    await asyncio.gather(*[_extract_one_document_id(doc_id, semaphore) for doc_id in document_ids])
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
@@ -120,92 +219,20 @@ async def upload_document(
         extraction_result = await id_extraction_service.extract_id(
             content, session, db_document.id, db_document.exam_id
         )
-
-        # Update document with extraction results
-        if extraction_result["is_valid"]:
-            db_document.extracted_id = extraction_result["extracted_id"]
-            db_document.id_extraction_method = extraction_result["method"]
-            db_document.id_extraction_confidence = extraction_result["confidence"]
-            db_document.school_id = extraction_result.get("school_id")
-            db_document.subject_id = extraction_result.get("subject_id")
-            db_document.test_type = extraction_result.get("test_type")
-            db_document.subject_series = extraction_result.get("subject_series")
-            db_document.sheet_number = extraction_result.get("sheet_number")
-            db_document.id_extraction_status = "success"
-            db_document.id_extracted_at = datetime.utcnow()
-        else:
-            db_document.id_extraction_method = extraction_result.get("method")
-            db_document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-            db_document.id_extraction_status = "error"
-
+        apply_id_extraction_result(db_document, extraction_result)
         await session.commit()
         await session.refresh(db_document)
-    except Exception:
+    except Exception as exc:
         # If extraction fails, document is still saved but marked as error
-        db_document.id_extraction_status = "error"
+        mark_id_extraction_failure(
+            db_document,
+            error_code=IDExtractionErrorCode.EXCEPTION.value,
+            error_message=f"Unexpected error during ID extraction: {exc}",
+        )
         await session.commit()
         await session.refresh(db_document)
 
     return DocumentResponse.model_validate(db_document)
-
-
-async def _extract_ids_for_documents(document_ids: list[int]) -> None:
-    """Background helper to extract IDs for multiple documents."""
-    sessionmanager = get_sessionmanager()
-    async with sessionmanager.session() as session:
-        for document_id in document_ids:
-            try:
-                # Get document
-                stmt = select(Document).where(Document.id == document_id)
-                result = await session.execute(stmt)
-                document = result.scalar_one_or_none()
-                if not document:
-                    continue
-
-                # Retrieve file content
-                try:
-                    if document.upload_status != "uploaded":
-                        continue
-                    file_content = await storage_service.retrieve(document.file_path)
-                except FileNotFoundError:
-                    document.id_extraction_status = "error"
-                    await session.commit()
-                    continue
-
-                # Extract ID
-                extraction_result = await id_extraction_service.extract_id(
-                    file_content, session, document_id, document.exam_id
-                )
-
-                # Update document with extraction results
-                if extraction_result["is_valid"]:
-                    document.extracted_id = extraction_result["extracted_id"]
-                    document.id_extraction_method = extraction_result["method"]
-                    document.id_extraction_confidence = extraction_result["confidence"]
-                    document.school_id = extraction_result.get("school_id")
-                    document.subject_id = extraction_result.get("subject_id")
-                    document.test_type = extraction_result.get("test_type")
-                    document.subject_series = extraction_result.get("subject_series")
-                    document.sheet_number = extraction_result.get("sheet_number")
-                    document.id_extraction_status = "success"
-                    document.id_extracted_at = datetime.utcnow()
-                else:
-                    document.id_extraction_method = extraction_result.get("method")
-                    document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-                    document.id_extraction_status = "error"
-
-                await session.commit()
-            except Exception:
-                # If extraction fails, mark document as error but continue with others
-                try:
-                    stmt = select(Document).where(Document.id == document_id)
-                    result = await session.execute(stmt)
-                    document = result.scalar_one_or_none()
-                    if document:
-                        document.id_extraction_status = "error"
-                        await session.commit()
-                except Exception:
-                    pass  # Continue even if marking as error fails
 
 
 @router.post("/bulk-upload", response_model=BulkUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -644,15 +671,176 @@ async def cleanup_abandoned_uploads_endpoint(
     return await cleanup_abandoned_pending_uploads()
 
 
+@router.get("/facets/exams", response_model=list[DocumentExamFacet])
+async def list_document_exam_facets(session: DBSessionDep) -> list[DocumentExamFacet]:
+    """Exams that have uploaded documents, with counts."""
+    stmt = (
+        select(
+            Exam.id,
+            Exam.exam_type,
+            Exam.series,
+            Exam.year,
+            Exam.description,
+            func.count(Document.id).label("document_count"),
+        )
+        .join(Document, Document.exam_id == Exam.id)
+        .where(Document.upload_status == "uploaded")
+        .group_by(Exam.id)
+        .order_by(Exam.year.desc(), Exam.exam_type)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return [
+        DocumentExamFacet(
+            id=row.id,
+            exam_type=row.exam_type.value if hasattr(row.exam_type, "value") else str(row.exam_type),
+            series=row.series.value if hasattr(row.series, "value") else str(row.series),
+            year=row.year,
+            description=row.description,
+            document_count=row.document_count,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/facets/schools", response_model=list[DocumentSchoolFacet])
+async def list_document_school_facets(
+    session: DBSessionDep,
+    exam_id: int = Query(...),
+) -> list[DocumentSchoolFacet]:
+    """Schools that have uploaded documents for an exam."""
+    stmt = (
+        select(
+            School.id,
+            School.name,
+            School.code,
+            func.count(Document.id).label("document_count"),
+        )
+        .join(Document, Document.school_id == School.id)
+        .where(Document.exam_id == exam_id, Document.upload_status == "uploaded")
+        .group_by(School.id)
+        .order_by(School.name)
+    )
+    result = await session.execute(stmt)
+    return [
+        DocumentSchoolFacet(
+            id=row.id,
+            name=row.name,
+            code=row.code,
+            document_count=row.document_count,
+        )
+        for row in result.all()
+    ]
+
+
+@router.get("/facets/subjects", response_model=list[DocumentSubjectFacet])
+async def list_document_subject_facets(
+    session: DBSessionDep,
+    exam_id: int = Query(...),
+    school_id: int | None = Query(None),
+) -> list[DocumentSubjectFacet]:
+    """Subjects that have uploaded documents for an exam (optionally school)."""
+    stmt = (
+        select(
+            Subject.id,
+            Subject.name,
+            Subject.code,
+            func.count(Document.id).label("document_count"),
+        )
+        .join(Document, Document.subject_id == Subject.id)
+        .where(Document.exam_id == exam_id, Document.upload_status == "uploaded")
+        .group_by(Subject.id)
+        .order_by(Subject.name)
+    )
+    if school_id is not None:
+        stmt = stmt.where(Document.school_id == school_id)
+    result = await session.execute(stmt)
+    return [
+        DocumentSubjectFacet(
+            id=row.id,
+            name=row.name,
+            code=row.code,
+            document_count=row.document_count,
+        )
+        for row in result.all()
+    ]
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResponse)
+async def bulk_delete_documents(
+    body: BulkDocumentIdsRequest,
+    session: DBSessionDep,
+) -> BulkDeleteResponse:
+    """Delete multiple documents and their files."""
+    deleted = 0
+    failed = 0
+    errors: list[dict[str, str]] = []
+    for document_id in body.document_ids:
+        try:
+            stmt = select(Document).where(Document.id == document_id)
+            result = await session.execute(stmt)
+            document = result.scalar_one_or_none()
+            if not document:
+                failed += 1
+                errors.append({"document_id": str(document_id), "error": "Not found"})
+                continue
+            try:
+                await storage_service.delete(document.file_path)
+            except Exception:
+                pass
+            await session.delete(document)
+            deleted += 1
+        except Exception as exc:
+            failed += 1
+            errors.append({"document_id": str(document_id), "error": str(exc)})
+    await session.commit()
+    return BulkDeleteResponse(deleted=deleted, failed=failed, errors=errors)
+
+
+@router.post("/bulk-extract-id", response_model=BulkExtractIdResponse)
+async def bulk_extract_id(
+    body: BulkDocumentIdsRequest,
+    background_tasks: BackgroundTasks,
+    session: DBSessionDep,
+) -> BulkExtractIdResponse:
+    """Queue ID re-extraction for multiple documents."""
+    stmt = select(Document.id).where(
+        Document.id.in_(body.document_ids),
+        Document.upload_status == "uploaded",
+    )
+    result = await session.execute(stmt)
+    ids = [row[0] for row in result.all()]
+    # Mark pending so UI can poll
+    if ids:
+        pending_stmt = select(Document).where(Document.id.in_(ids))
+        pending_result = await session.execute(pending_stmt)
+        for doc in pending_result.scalars().all():
+            doc.id_extraction_status = "pending"
+            doc.id_extraction_error = None
+            doc.id_extraction_error_code = None
+        await session.commit()
+        background_tasks.add_task(_extract_ids_for_documents, ids)
+    return BulkExtractIdResponse(queued=len(ids), document_ids=ids)
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(document_id: int, session: DBSessionDep) -> DocumentResponse:
     """Retrieve document metadata."""
-    stmt = select(Document).where(Document.id == document_id)
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.school), selectinload(Document.subject))
+        .where(Document.id == document_id)
+    )
     result = await session.execute(stmt)
     document = result.scalar_one_or_none()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return DocumentResponse.model_validate(document)
+    response = DocumentResponse.model_validate(document)
+    return response.model_copy(
+        update={
+            "school_name": document.school.name if document.school else None,
+        }
+    )
 
 
 @router.get("/by-extracted-id/{extracted_id}/download")
@@ -715,6 +903,40 @@ async def download_document(document_id: int, session: DBSessionDep) -> Streamin
         )
 
 
+@router.get("/{document_id}/thumbnail")
+async def get_document_thumbnail(
+    document_id: int,
+    session: DBSessionDep,
+    size: int = Query(THUMBNAIL_MAX_SIZE, ge=64, le=640),
+) -> Response:
+    """Return a resized JPEG thumbnail for grid/list previews."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    try:
+        file_content = await storage_service.retrieve(document.file_path)
+        thumb = await asyncio.to_thread(_make_thumbnail_jpeg, file_content, size)
+        return Response(
+            content=thumb,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "private, max-age=86400, immutable",
+                "Content-Disposition": f'inline; filename="thumb-{document.id}.jpg"',
+            },
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
+    except Exception as exc:
+        logger.warning("Thumbnail generation failed for document %s: %s", document_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Could not generate thumbnail for this document",
+        )
+
+
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     session: DBSessionDep,
@@ -726,7 +948,14 @@ async def list_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
-    id_extraction_status: str | None = Query(None, description="Filter by ID extraction status: pending, success, error"),
+    id_extraction_status: str | None = Query(
+        None, description="Filter by ID extraction status: pending, success, error"
+    ),
+    id_extraction_error_code: str | None = Query(
+        None,
+        description="Filter by ID extraction error code (comma-separated): no_id, duplicate, invalid_format, validation, low_confidence, file_missing, exception",
+    ),
+    q: str | None = Query(None, description="Search file_name or extracted_id (case-insensitive)"),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
@@ -757,6 +986,21 @@ async def list_documents(
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
 
+    error_codes: list[str] = []
+    if id_extraction_error_code:
+        error_codes = [c.strip() for c in id_extraction_error_code.split(",") if c.strip()]
+        if error_codes:
+            base_stmt = base_stmt.where(Document.id_extraction_error_code.in_(error_codes))
+            # Filtering by error code implies failed extractions
+            if id_extraction_status is None:
+                base_stmt = base_stmt.where(Document.id_extraction_status == "error")
+
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        base_stmt = base_stmt.where(
+            (Document.file_name.ilike(search)) | (Document.extracted_id.ilike(search))
+        )
+
     # Incomplete direct uploads are not listed until confirm succeeds
     base_stmt = base_stmt.where(Document.upload_status == "uploaded")
 
@@ -784,20 +1028,34 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
+    if error_codes:
+        count_stmt = count_stmt.where(Document.id_extraction_error_code.in_(error_codes))
+        if id_extraction_status is None:
+            count_stmt = count_stmt.where(Document.id_extraction_status == "error")
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        count_stmt = count_stmt.where(
+            (Document.file_name.ilike(search)) | (Document.extracted_id.ilike(search))
+        )
 
     count_stmt = count_stmt.where(Document.upload_status == "uploaded")
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
-    # Get documents with filters
-    stmt = base_stmt.offset(offset).limit(page_size).order_by(Document.uploaded_at.desc())
+    # Get documents with filters (eager-load school/subject for list names)
+    stmt = (
+        base_stmt.options(selectinload(Document.school), selectinload(Document.subject))
+        .offset(offset)
+        .limit(page_size)
+        .order_by(Document.uploaded_at.desc())
+    )
     result = await session.execute(stmt)
-    documents = result.scalars().all()
+    documents = result.scalars().unique().all()
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return DocumentListResponse(
-        items=[DocumentResponse.model_validate(doc) for doc in documents],
+        items=[_document_to_list_item(doc) for doc in documents],
         total=total,
         page=page,
         page_size=page_size,
@@ -864,28 +1122,26 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
 
     # Extract ID
     extraction_result = await id_extraction_service.extract_id(file_content, session, document_id, document.exam_id)
-
-    # Update document with extraction results
-    if extraction_result["is_valid"]:
-        document.extracted_id = extraction_result["extracted_id"]
-        document.id_extraction_method = extraction_result["method"]
-        document.id_extraction_confidence = extraction_result["confidence"]
-        document.school_id = extraction_result.get("school_id")
-        document.subject_id = extraction_result.get("subject_id")
-        document.test_type = extraction_result.get("test_type")
-        document.subject_series = extraction_result.get("subject_series")
-        document.sheet_number = extraction_result.get("sheet_number")
-        document.id_extraction_status = "success"
-        document.id_extracted_at = datetime.utcnow()
-    else:
-        document.id_extraction_method = extraction_result.get("method")
-        document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
-        document.id_extraction_status = "error"
+    apply_id_extraction_result(document, extraction_result)
 
     await session.commit()
     await session.refresh(document)
 
-    return IDExtractionResponse(**extraction_result)
+    return IDExtractionResponse(
+        extracted_id=extraction_result.get("extracted_id"),
+        method=extraction_result.get("method"),
+        confidence=extraction_result.get("confidence", 0.0),
+        is_valid=extraction_result.get("is_valid", False),
+        school_id=extraction_result.get("school_id"),
+        subject_id=extraction_result.get("subject_id"),
+        school_code=extraction_result.get("school_code"),
+        subject_code=extraction_result.get("subject_code"),
+        subject_series=extraction_result.get("subject_series"),
+        test_type=extraction_result.get("test_type"),
+        sheet_number=extraction_result.get("sheet_number"),
+        error_code=extraction_result.get("error_code"),
+        error_message=extraction_result.get("error_message"),
+    )
 
 
 @router.post("/{document_id}/parse-content", response_model=ContentExtractionResponse)
@@ -1019,9 +1275,13 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             )
         add_extraction_method_to_document(document, update.scores_extraction_method)
 
-    # If extracted_id is set manually, mark as manual
+    # If extracted_id is set manually, mark as manual and clear extraction errors
     if update.extracted_id is not None and document.id_extraction_method != "manual":
         document.id_extraction_method = "manual"
+    if update.extracted_id is not None or update.id_extraction_status == "success":
+        if update.id_extraction_status is None:
+            document.id_extraction_status = "success"
+        clear_id_extraction_error(document)
 
     await session.commit()
     await session.refresh(document)

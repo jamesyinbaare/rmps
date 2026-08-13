@@ -14,14 +14,15 @@ class IDExtractionResponse(BaseModel):
     method: str | None  # barcode, ocr, manual
     confidence: float
     is_valid: bool
-    school_id: int | None
-    subject_id: int | None
-    school_code: str | None
-    subject_code: str | None
-    subject_series: str | None
-    test_type: str | None
-    sheet_number: str | None
-    error_message: str | None
+    school_id: int | None = None
+    subject_id: int | None = None
+    school_code: str | None = None
+    subject_code: str | None = None
+    subject_series: str | None = None
+    test_type: str | None = None
+    sheet_number: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class IDValidationResult(BaseModel):
