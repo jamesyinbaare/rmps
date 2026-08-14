@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, Send } from "lucide-react";
+import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, Send, Pencil } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -160,6 +160,7 @@ export function DocumentViewer({
   const [schoolName, setSchoolName] = useState<string | null>(null);
   const [subjectName, setSubjectName] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
+  const [editingId, setEditingId] = useState(false);
   const [savingId, setSavingId] = useState(false);
   const [retryingExtract, setRetryingExtract] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
@@ -189,6 +190,10 @@ export function DocumentViewer({
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
+  const canEditExtractedId = !isPendingExtraction && !needsManualId && !!document.extracted_id;
+  const showIdForm = needsManualId || editingId;
+  const idUnchanged =
+    canEditExtractedId && manualId.trim() === (document.extracted_id || "");
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
   const providerOptions = successfulExtractionProviders(document);
   const canPreviewExtraction = !!enableReductoPreview && providerOptions.length > 0;
@@ -272,6 +277,7 @@ export function DocumentViewer({
   // Reset per-document UI when the document changes (keep Preview Data open across next/prev)
   useEffect(() => {
     setManualId(document.extracted_id || "");
+    setEditingId(false);
     setImageError(false);
     setImageLoading(true);
     setIdError(null);
@@ -539,6 +545,10 @@ export function DocumentViewer({
       return;
     }
 
+    if (canEditExtractedId && trimmedId === (document.extracted_id || "")) {
+      return;
+    }
+
     // Validate before saving
     const validation = validateId(trimmedId);
     if (validation.error) {
@@ -551,11 +561,18 @@ export function DocumentViewer({
     setIdError(null);
     try {
       if (onUpdateId) {
-        await onUpdateId(document.id, trimmedId, validation.schoolId, validation.subjectId);
+        await onUpdateId(
+          document.id,
+          trimmedId,
+          validation.schoolId,
+          validation.subjectId,
+          editingId && !needsManualId ? { advance: false } : undefined
+        );
       } else {
         await updateDocumentId(document.id, trimmedId, validation.schoolId, validation.subjectId);
         toast.success("Document ID updated successfully");
       }
+      setEditingId(false);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to update document ID";
       setIdError(errorMessage);
@@ -634,6 +651,22 @@ export function DocumentViewer({
               <h2 className="text-lg font-semibold truncate">
                 {document.extracted_id || "-"}
               </h2>
+              {canEditExtractedId && !editingId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2"
+                  onClick={() => {
+                    setManualId(document.extracted_id || "");
+                    setIdError(null);
+                    setEditingId(true);
+                  }}
+                  aria-label="Edit ID"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit ID
+                </Button>
+              )}
               {needsManualId && document.id_extraction_status === "error" && (
                 <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
                   {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
@@ -789,11 +822,11 @@ export function DocumentViewer({
         </div>
 
         {/* Manual ID Entry Section */}
-        {needsManualId && (
+        {showIdForm && (
           <div className="border-b border-border px-6 py-4 bg-muted/30 shrink-0">
             <div className="space-y-2">
               <label htmlFor="manual-id" className="text-sm font-medium">
-                Enter Document ID Manually
+                {needsManualId ? "Enter Document ID Manually" : "Edit Document ID"}
               </label>
               <div className="flex items-center gap-3">
                 <div className="flex-1">
@@ -816,7 +849,7 @@ export function DocumentViewer({
                 </div>
                 <Button
                   onClick={handleSaveId}
-                  disabled={savingId || !manualId.trim() || !!idError}
+                  disabled={savingId || !manualId.trim() || !!idError || idUnchanged}
                   className="gap-2"
                 >
                   {savingId ? (
@@ -831,6 +864,19 @@ export function DocumentViewer({
                     </>
                   )}
                 </Button>
+                {editingId && !needsManualId && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setManualId(document.extracted_id || "");
+                      setIdError(null);
+                      setEditingId(false);
+                    }}
+                    disabled={savingId}
+                  >
+                    Cancel
+                  </Button>
+                )}
               </div>
               {idError && (
                 <p className="text-sm text-destructive">{idError}</p>
