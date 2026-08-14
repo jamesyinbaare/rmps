@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, FileSearch, Send } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export type DataEntryPipelineStep = "extract" | "review" | "apply";
 
@@ -11,28 +16,24 @@ const STEPS: Array<{
   label: string;
   href: string;
   description: string;
-  icon: typeof Send;
 }> = [
   {
     id: "extract",
     label: "Extract",
-    href: "/scores/data-entry/reducto-extraction",
+    href: "/scores/data-entry/extraction",
     description: "Queue extraction",
-    icon: Send,
   },
   {
     id: "review",
     label: "Review",
-    href: "/scores/data-entry/reducto-extraction?status=success",
+    href: "/scores/data-entry/extraction?status=success",
     description: "Preview results",
-    icon: FileSearch,
   },
   {
     id: "apply",
     label: "Apply",
     href: "/scores/data-entry/apply-scores",
     description: "Write scores",
-    icon: CheckCircle2,
   },
 ];
 
@@ -48,46 +49,48 @@ export function DataEntryPipelineNav({ current, className }: DataEntryPipelineNa
     <nav
       aria-label="Score data entry pipeline"
       className={cn(
-        "flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/30 p-1",
+        "inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5",
         className
       )}
     >
       {STEPS.map((step, index) => {
-        const Icon = step.icon;
         const isCurrent = step.id === current;
         const isPast = index < currentIndex;
 
         const content = (
-          <span
-            className={cn(
-              "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
-              isCurrent
-                ? "bg-background font-medium text-foreground shadow-sm"
-                : isPast
-                  ? "text-foreground/80 hover:bg-background/60"
-                  : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
-            )}
-          >
-            <span
-              className={cn(
-                "flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold",
-                isCurrent
-                  ? "bg-primary text-primary-foreground"
-                  : isPast
-                    ? "bg-green-600 text-white"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {isPast && !isCurrent ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
-            </span>
-            <Icon className="hidden h-3.5 w-3.5 sm:inline" />
-            <span>
-              <span className="block leading-none">{step.label}</span>
-              <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
-                {step.description}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors",
+                  isCurrent
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : isPast
+                      ? "text-foreground/80 hover:bg-background/60"
+                      : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold",
+                    isCurrent
+                      ? "bg-primary text-primary-foreground"
+                      : isPast
+                        ? "bg-primary/80 text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                  )}
+                >
+                  {isPast && !isCurrent ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                {step.label}
               </span>
-            </span>
-          </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{step.description}</TooltipContent>
+          </Tooltip>
         );
 
         if (isCurrent) {

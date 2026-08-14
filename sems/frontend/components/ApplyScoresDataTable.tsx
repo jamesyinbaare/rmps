@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ColumnDef,
@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  Keyboard,
   Loader2,
   Search,
   Send,
@@ -35,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -47,6 +49,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
+import { paperLabel, formatRelativeDate, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
 import { cn } from "@/lib/utils";
 
 export type AppliedView = "ready" | "applied";
@@ -60,6 +69,8 @@ interface ApplyScoresDataTableProps {
   onSelectAll: () => void;
   onClearSelection: () => void;
   onRowClick: (document: Document) => void;
+  onApplyRow?: (document: Document) => void;
+  applyingDocumentId?: number | null;
   view: AppliedView;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
@@ -68,6 +79,8 @@ interface ApplyScoresDataTableProps {
   applying?: boolean;
   applyProgress?: { done: number; total: number } | null;
   onApplySelected: () => void;
+  focusedRowIndex: number;
+  onFocusedRowIndexChange: (index: number) => void;
   currentPage: number;
   totalPages: number;
   total: number;
@@ -80,29 +93,16 @@ function SortIcon({ sorted }: { sorted: false | "asc" | "desc" }) {
   return <ArrowUpDown className="ml-1 inline h-3.5 w-3.5 opacity-40" />;
 }
 
-function formatRelativeDate(iso: string): string {
-  const date = new Date(iso);
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString();
-}
-
 function AppliedBadge({ document }: { document: Document }) {
   if (document.scores_applied_at) {
+    const appliedAt = new Date(document.scores_applied_at);
     return (
       <div className="space-y-0.5">
-        <Badge className="border-transparent bg-green-600 text-white">
-          <CheckCircle2 className="mr-1 h-3 w-3" />
+        <Badge className="bg-primary text-primary-foreground">
+          <CheckCircle2 className="h-3 w-3" />
           Applied
         </Badge>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground" title={appliedAt.toLocaleString()}>
           {formatRelativeDate(document.scores_applied_at)}
           {document.scores_applied_count != null && ` · ${document.scores_applied_count} scores`}
         </div>
@@ -110,8 +110,8 @@ function AppliedBadge({ document }: { document: Document }) {
     );
   }
   return (
-    <Badge variant="secondary" className="border-amber-300 bg-amber-50 text-amber-800">
-      <Clock className="mr-1 h-3 w-3" />
+    <Badge variant="secondary">
+      <Clock className="h-3 w-3" />
       Ready
     </Badge>
   );
@@ -126,6 +126,8 @@ export function ApplyScoresDataTable({
   onSelectAll,
   onClearSelection,
   onRowClick,
+  onApplyRow,
+  applyingDocumentId,
   view,
   pageSize,
   onPageSizeChange,
@@ -134,6 +136,8 @@ export function ApplyScoresDataTable({
   applying,
   applyProgress,
   onApplySelected,
+  focusedRowIndex,
+  onFocusedRowIndexChange,
   currentPage,
   totalPages,
   total,
@@ -145,6 +149,17 @@ export function ApplyScoresDataTable({
   const allSelected = documents.length > 0 && selectedDocuments.size === documents.length;
   const selectedCount = selectedDocuments.size;
   const showActionBar = selectedCount > 0 || !!applying;
+  const showInitialSkeleton = loading && documents.length === 0;
+
+  useEffect(() => {
+    if (documents.length === 0) {
+      onFocusedRowIndexChange(-1);
+      return;
+    }
+    if (focusedRowIndex < 0 || focusedRowIndex >= documents.length) {
+      onFocusedRowIndexChange(0);
+    }
+  }, [documents, focusedRowIndex, onFocusedRowIndexChange]);
 
   const columns = useMemo<ColumnDef<Document>[]>(
     () => [
@@ -173,14 +188,28 @@ export function ApplyScoresDataTable({
         header: "Extracted ID",
         cell: ({ row }) => (
           <div className="font-mono text-sm font-medium">
-            {row.original.extracted_id || "-"}
+            {row.original.extracted_id || "—"}
           </div>
         ),
       },
       {
         accessorKey: "school_name",
         header: "School",
-        cell: ({ row }) => row.original.school_name || "-",
+        cell: ({ row }) => row.original.school_name || "—",
+      },
+      {
+        accessorKey: "subject_name",
+        header: "Subject",
+        cell: ({ row }) => row.original.subject_name || "—",
+      },
+      {
+        accessorKey: "test_type",
+        header: "Paper",
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {paperLabel(row.original.test_type)}
+          </span>
+        ),
       },
       {
         id: "provider",
@@ -194,23 +223,63 @@ export function ApplyScoresDataTable({
       },
       {
         accessorKey: "scores_extracted_at",
-        header: "Extracted At",
-        cell: ({ row }) => (
-          <div className="text-sm text-muted-foreground">
-            {row.original.scores_extracted_at
-              ? new Date(row.original.scores_extracted_at).toLocaleString()
-              : "-"}
-          </div>
-        ),
+        header: "Extracted",
+        cell: ({ row }) => <RelativeTimestamp iso={row.original.scores_extracted_at} />,
       },
       {
         id: "applied",
         accessorFn: (row) => row.scores_applied_at || "",
         header: "Scores",
-        cell: ({ row }) => <AppliedBadge document={row.original} />,
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <AppliedBadge document={row.original} />
+            {(row.original.scores_unmatched_count ?? 0) > 0 && (
+              <p className="text-xs text-destructive">
+                {row.original.scores_unmatched_count} unmatched
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        enableSorting: false,
+        header: "",
+        cell: ({ row }) => {
+          if (view !== "ready" || !onApplyRow) return null;
+          const doc = row.original;
+          const isApplying = applyingDocumentId === doc.id;
+          return (
+            <div onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                disabled={isApplying || applying}
+                onClick={() => onApplyRow(doc)}
+              >
+                {isApplying ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="mr-1 h-3.5 w-3.5" />
+                )}
+                Apply
+              </Button>
+            </div>
+          );
+        },
       },
     ],
-    [allSelected, onSelectAll, onSelectDocument, selectedDocuments]
+    [
+      allSelected,
+      applying,
+      applyingDocumentId,
+      onApplyRow,
+      onSelectAll,
+      onSelectDocument,
+      selectedDocuments,
+      view,
+    ]
   );
 
   const table = useReactTable({
@@ -227,6 +296,7 @@ export function ApplyScoresDataTable({
       return (
         (doc.extracted_id?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.school_name?.toLowerCase().includes(searchValue) ?? false) ||
+        (doc.subject_name?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.file_name?.toLowerCase().includes(searchValue) ?? false)
       );
     },
@@ -264,7 +334,7 @@ export function ApplyScoresDataTable({
               value={pageSize.toString()}
               onValueChange={(value) => onPageSizeChange(parseInt(value, 10))}
             >
-              <SelectTrigger className="h-8 w-[90px]">
+              <SelectTrigger size="sm" className="h-8 w-[90px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -275,115 +345,143 @@ export function ApplyScoresDataTable({
               </SelectContent>
             </Select>
           </div>
+
+          <div className="flex items-center gap-2 rounded-md border border-border px-3 py-1">
+            {verifyEnabled ? (
+              <ShieldCheck className="h-4 w-4 text-primary" />
+            ) : (
+              <ShieldAlert className="h-4 w-4 text-destructive" />
+            )}
+            <label
+              htmlFor="verify-apply-switch"
+              className="cursor-pointer text-sm font-medium"
+            >
+              Require score = verify
+            </label>
+            <Switch
+              id="verify-apply-switch"
+              checked={verifyEnabled}
+              onCheckedChange={onVerifyEnabledChange}
+              disabled={applying}
+            />
+          </div>
         </div>
 
         <div className="text-sm text-muted-foreground">
           Showing {documents.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
-          {Math.min(currentPage * pageSize, total)} of {total}
+          {Math.min(currentPage * pageSize, total)} of {total.toLocaleString()}
         </div>
       </div>
 
       {error && (
-        <div className="mx-4 mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mx-4 mt-3">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
-      <div className={cn("min-h-0 flex-1 overflow-hidden", showActionBar && "pb-2")}>
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-            <div className="text-sm text-muted-foreground">Loading documents...</div>
-          </div>
+      <div className={cn("relative min-h-0 flex-1 overflow-hidden", showActionBar && "pb-2")}>
+        {showInitialSkeleton ? (
+          <TableSkeleton rows={10} cols={7} className="h-full rounded-none border-0" />
         ) : (
-          <Table containerClassName="sems-table-scroll h-full overflow-auto">
-            <TableHeader className="sticky top-0 z-10 bg-background/95 shadow-[inset_0_-1px_0_0_var(--border)] backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 [&_tr]:border-b-0">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="hover:bg-transparent">
-                  {headerGroup.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      className={
-                        header.id === "select"
-                          ? "w-12 bg-transparent"
-                          : "bg-transparent"
-                      }
-                    >
-                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center hover:text-foreground"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          <SortIcon sorted={header.column.getIsSorted()} />
-                        </button>
-                      ) : (
-                        flexRender(header.column.columnDef.header, header.getContext())
-                      )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length} className="py-14 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-2">
-                      <FileText className="h-12 w-12 text-muted-foreground/50" />
-                      {view === "ready" ? (
-                        <>
-                          <p className="font-medium text-foreground">No documents waiting to apply</p>
-                          <p className="max-w-sm text-sm">
-                            Successful extractions that have not been applied yet will show
-                            up here.
-                          </p>
-                          <Button variant="outline" size="sm" className="mt-2" asChild>
-                            <Link href="/scores/data-entry/reducto-extraction">
-                              Go to Score Extraction
-                            </Link>
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <p className="font-medium text-foreground">
-                            No applied documents for these filters
-                          </p>
-                          <p className="text-sm">
-                            Try a different examination, school, or subject.
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                table.getRowModel().rows.map((row) => {
-                  const isSelected = selectedDocuments.has(row.original.id);
-                  return (
-                    <TableRow
-                      key={row.id}
-                      className={cn(
-                        "cursor-pointer",
-                        isSelected
-                          ? "bg-primary/5 hover:bg-primary/10"
-                          : "hover:bg-muted/50"
-                      )}
-                      onClick={() => onRowClick(row.original)}
-                      data-state={isSelected ? "selected" : undefined}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+          <>
+            {loading && documents.length > 0 && (
+              <div className="pointer-events-none absolute inset-0 z-10 bg-background/40" />
+            )}
+            <Table containerClassName="sems-table-scroll h-full overflow-auto">
+              <TableHeader className="sticky top-0 z-10 bg-background/95 shadow-[inset_0_-1px_0_0_var(--border)] backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 [&_tr]:border-b-0">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id} className="hover:bg-transparent">
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={
+                          header.id === "select"
+                            ? "w-12 bg-transparent"
+                            : "bg-transparent"
+                        }
+                      >
+                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center hover:text-foreground"
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            <SortIcon sorted={header.column.getIsSorted()} />
+                          </button>
+                        ) : (
+                          flexRender(header.column.columnDef.header, header.getContext())
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="py-14 text-center text-muted-foreground">
+                      <div className="flex flex-col items-center gap-2">
+                        <FileText className="h-12 w-12 text-muted-foreground/50" />
+                        {view === "ready" ? (
+                          <>
+                            <p className="font-medium text-foreground">No documents waiting to apply</p>
+                            <p className="max-w-sm text-sm">
+                              Successful extractions that have not been applied yet will show
+                              up here.
+                            </p>
+                            <Button variant="outline" size="sm" className="mt-2" asChild>
+                              <Link href="/scores/data-entry/extraction">
+                                Go to Score Extraction
+                              </Link>
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-medium text-foreground">
+                              No applied documents for these filters
+                            </p>
+                            <p className="text-sm">
+                              Try a different examination, school, or subject.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  table.getRowModel().rows.map((row, index) => {
+                    const isSelected = selectedDocuments.has(row.original.id);
+                    const focused = index === focusedRowIndex;
+                    return (
+                      <TableRow
+                        key={row.id}
+                        className={cn(
+                          "cursor-pointer",
+                          isSelected
+                            ? "bg-primary/5 hover:bg-primary/10"
+                            : "hover:bg-muted/50",
+                          focused && "ring-2 ring-inset ring-primary/40"
+                        )}
+                        onClick={() => {
+                          onFocusedRowIndexChange(index);
+                          onRowClick(row.original);
+                        }}
+                        onMouseEnter={() => onFocusedRowIndexChange(index)}
+                        data-state={isSelected ? "selected" : undefined}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </>
         )}
       </div>
 
@@ -429,32 +527,21 @@ export function ApplyScoresDataTable({
               >
                 Clear
               </Button>
-
-              <div className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5">
-                {verifyEnabled ? (
-                  <ShieldCheck className="h-4 w-4 text-green-600" />
-                ) : (
-                  <ShieldAlert className="h-4 w-4 text-amber-600" />
-                )}
-                <label
-                  htmlFor="verify-apply-switch"
-                  className="cursor-pointer text-sm font-medium"
-                >
-                  Require score = verify
-                </label>
-                <Switch
-                  id="verify-apply-switch"
-                  checked={verifyEnabled}
-                  onCheckedChange={onVerifyEnabledChange}
-                  disabled={applying}
-                />
-              </div>
-
               {!verifyEnabled && (
-                <p className="text-sm text-amber-700">
+                <p className="text-sm text-destructive">
                   Scores will be written without matching verify
                 </p>
               )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Keyboard shortcuts">
+                    <Keyboard className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Space toggles · Enter opens · A applies
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

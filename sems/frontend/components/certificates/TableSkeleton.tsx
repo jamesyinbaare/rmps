@@ -1,12 +1,16 @@
+import { cn } from "@/lib/utils";
+
 export function TableSkeleton({
   rows = 8,
   cols = 5,
+  className,
 }: {
   rows?: number;
   cols?: number;
+  className?: string;
 }) {
   return (
-    <div className="rounded-md border" aria-busy="true" aria-label="Loading">
+    <div className={cn("rounded-md border", className)} aria-busy="true" aria-label="Loading">
       <div className="border-b bg-muted/40 px-4 py-3">
         <div className="flex gap-4">
           {Array.from({ length: cols }).map((_, i) => (

@@ -5,18 +5,10 @@ import Link from "next/link";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ApplyScoresDataTable, type AppliedView } from "@/components/ApplyScoresDataTable";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
+import { ScoreDocumentFiltersBar } from "@/components/data-entry/ScoreDocumentFiltersBar";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -26,15 +18,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   bulkUpdateScoresFromReducto,
   downloadDocument,
@@ -51,16 +36,12 @@ import type {
   Exam,
   ExamSeries,
   ExamType,
-  ExtractionProvider,
   School,
   ScoreDocumentFilters,
   Subject,
-  UnmatchedExtractionRecord,
 } from "@/types/document";
-import { extractionProviderLabel } from "@/types/document";
-import { Loader2, Search, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 
 export default function ApplyScoresPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -93,24 +74,21 @@ export default function ApplyScoresPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [updatingScores, setUpdatingScores] = useState<number | null>(null);
 
-  const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
-  const [loadingUnmatched, setLoadingUnmatched] = useState(false);
-  const [showUnmatched, setShowUnmatched] = useState(false);
+  const [unmatchedCount, setUnmatchedCount] = useState(0);
+  const [showUnmatchedAlert, setShowUnmatchedAlert] = useState(false);
+  const [focusedRowIndex, setFocusedRowIndex] = useState(0);
 
   const view: AppliedView = filters.scores_applied === true ? "applied" : "ready";
 
   const loadUnmatchedRecords = useCallback(async () => {
-    setLoadingUnmatched(true);
     try {
-      const response = await getUnmatchedRecords({ status: "pending", page: 1, page_size: 50 });
-      setUnmatchedRecords(response.items);
-      if (response.items.length > 0) {
-        setShowUnmatched(true);
+      const response = await getUnmatchedRecords({ status: "pending", page: 1, page_size: 1 });
+      setUnmatchedCount(response.total);
+      if (response.total > 0) {
+        setShowUnmatchedAlert(true);
       }
     } catch (err) {
       console.error("Error loading unmatched records:", err);
-    } finally {
-      setLoadingUnmatched(false);
     }
   }, []);
 
@@ -397,46 +375,57 @@ export default function ApplyScoresPage() {
     }
   };
 
-  const getActiveFilterChips = () => {
-    const chips: Array<{ label: string; onRemove: () => void }> = [];
-    if (selectedExamId) {
-      const exam = exams.find((e) => e.id === selectedExamId);
-      if (exam) {
-        const typeLabel =
-          exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
-        chips.push({
-          label: `Exam: ${exam.year} ${exam.series} ${typeLabel}`,
-          onRemove: () => setSelectedExamId(undefined),
-        });
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+        return;
       }
-    }
-    if (filters.school_id) {
-      const school = schools.find((s) => s.id === filters.school_id);
-      chips.push({
-        label: `School: ${school ? `${school.code} - ${school.name}` : filters.school_id}`,
-        onRemove: () => handleFilterChange("school_id", undefined),
-      });
-    }
-    if (filters.subject_id) {
-      const subject = subjects.find((s) => s.id === filters.subject_id);
-      chips.push({
-        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : filters.subject_id}`,
-        onRemove: () => handleFilterChange("subject_id", undefined),
-      });
-    }
-    if (filters.test_type) {
-      chips.push({
-        label: `Paper: ${filters.test_type}`,
-        onRemove: () => handleFilterChange("test_type", undefined),
-      });
-    }
-    if (filters.extraction_provider) {
-      chips.push({
-        label: `Provider: ${extractionProviderLabel(filters.extraction_provider)}`,
-        onRemove: () => handleFilterChange("extraction_provider", undefined),
-      });
-    }
-    return chips;
+      if (viewerOpen || confirmOpen) return;
+
+      if (e.key === "Escape") {
+        setSelectedDocuments(new Set());
+        return;
+      }
+      if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSelectAll();
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.min(documents.length - 1, Math.max(0, i + 1)));
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === " " && documents[focusedRowIndex]) {
+        e.preventDefault();
+        handleSelectDocument(documents[focusedRowIndex].id);
+        return;
+      }
+      if (e.key === "Enter" && documents[focusedRowIndex]) {
+        e.preventDefault();
+        handleViewDocument(documents[focusedRowIndex]);
+        return;
+      }
+      if ((e.key === "a" || e.key === "A") && selectedDocuments.size > 0) {
+        e.preventDefault();
+        setConfirmOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen, confirmOpen]);
+
+  const parseNumericFilter = (value: string | number | "all" | "") => {
+    if (value === "all" || value === "") return undefined;
+    return typeof value === "number" ? value : parseInt(String(value), 10);
   };
 
   const handleClearFilters = () => {
@@ -450,227 +439,110 @@ export default function ApplyScoresPage() {
     setSelectedDocuments(new Set());
   };
 
-  const hasActiveFilters =
-    !!selectedExamId ||
-    !!filters.school_id ||
-    !!filters.subject_id ||
-    !!filters.test_type ||
-    !!filters.extraction_provider;
-
   return (
     <DashboardLayout>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TopBar title="Apply Scores" />
+        <TopBar
+          title={
+            <div className="flex min-w-0 items-baseline gap-3">
+              <span>Apply Scores</span>
+              <span className="hidden truncate text-sm font-normal text-muted-foreground lg:inline">
+                Apply extracted scores into candidate records.
+              </span>
+            </div>
+          }
+        />
 
         <div className="border-b border-border bg-background px-4 py-2">
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
             <DataEntryPipelineNav current="apply" />
-            <div className="flex items-center gap-2">
-              <p className="hidden text-sm text-muted-foreground lg:block">
-                Apply extracted scores into candidate records.
-              </p>
-              <Button variant="outline" size="sm" className="h-8" asChild>
-                <Link href="/scores/data-entry/reducto-extraction">Back to Extract</Link>
-              </Button>
-              {unmatchedRecords.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setShowUnmatched((v) => !v)}
-                >
-                  Unmatched ({unmatchedRecords.length})
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="border-b border-border bg-background px-4 py-3">
-          <div className="mx-auto max-w-[2000px] space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="w-[280px]">
-                <SearchableSelect
-                  options={examOptions}
-                  value={selectedExamId || ""}
-                  onValueChange={handleExamChange}
-                  placeholder="Examination"
-                  disabled={loadingFilters}
-                  allowAll
-                  allLabel="All examinations"
-                  searchPlaceholder="Search examinations..."
-                  emptyMessage="No examinations found"
-                />
-              </div>
-
-              <div className="w-[240px]">
-                <SearchableSelect
-                  options={schools.map((school) => ({
-                    value: school.id,
-                    label: `${school.code} - ${school.name}`,
-                  }))}
-                  value={filters.school_id || ""}
-                  onValueChange={(value) => {
-                    if (value === "all" || value === "") {
-                      handleFilterChange("school_id", undefined);
-                    } else {
-                      handleFilterChange(
-                        "school_id",
-                        typeof value === "number" ? value : parseInt(String(value), 10)
-                      );
-                    }
-                  }}
-                  placeholder="School"
-                  disabled={loadingFilters}
-                  allowAll
-                  allLabel="All schools"
-                  searchPlaceholder="Search schools..."
-                  emptyMessage="No schools found"
-                />
-              </div>
-
-              <div className="w-[240px]">
-                <SearchableSelect
-                  options={subjects.map((subject) => ({
-                    value: subject.id,
-                    label: `${subject.code} - ${subject.name}`,
-                  }))}
-                  value={filters.subject_id || ""}
-                  onValueChange={(value) => {
-                    if (value === "all" || value === "") {
-                      handleFilterChange("subject_id", undefined);
-                    } else {
-                      handleFilterChange(
-                        "subject_id",
-                        typeof value === "number" ? value : parseInt(String(value), 10)
-                      );
-                    }
-                  }}
-                  placeholder="Subject"
-                  disabled={loadingFilters}
-                  allowAll
-                  allLabel="All subjects"
-                  searchPlaceholder="Search subjects..."
-                  emptyMessage="No subjects found"
-                />
-              </div>
-
-              <Select
-                value={filters.test_type || undefined}
-                onValueChange={(value) =>
-                  handleFilterChange("test_type", value === "all" ? undefined : value)
-                }
-                disabled={loadingFilters}
-              >
-                <SelectTrigger className="h-8 w-[120px]">
-                  <SelectValue placeholder="Paper" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All papers</SelectItem>
-                  <SelectItem value="1">1</SelectItem>
-                  <SelectItem value="2">2</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select
-                value={filters.extraction_provider || "all"}
-                onValueChange={(value) =>
-                  handleFilterChange(
-                    "extraction_provider",
-                    value === "all" ? undefined : (value as ExtractionProvider)
-                  )
-                }
-                disabled={loadingFilters}
-              >
-                <SelectTrigger className="h-8 w-[160px]">
-                  <SelectValue placeholder="Provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All providers</SelectItem>
-                  <SelectItem value="reducto">Reducto</SelectItem>
-                  <SelectItem value="llama">Llama Extract</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Button
-                onClick={loadDocuments}
-                disabled={loading}
-                size="sm"
-                className="h-8 gap-2"
-              >
-                <Search className="h-4 w-4" />
-                {loading ? "Fetching..." : "Fetch"}
-              </Button>
-
-              {hasActiveFilters && (
-                <Button variant="outline" size="sm" onClick={handleClearFilters} className="h-8">
-                  Reset filters
-                </Button>
-              )}
-            </div>
-
-            {getActiveFilterChips().length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">Active:</span>
-                {getActiveFilterChips().map((chip, index) => (
-                  <Badge
-                    key={index}
-                    variant="secondary"
-                    className="h-5 cursor-pointer gap-1 pr-1 text-xs hover:bg-secondary/80"
-                    onClick={chip.onRemove}
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+              {showUnmatchedAlert && unmatchedCount > 0 && (
+                <Alert className="flex max-w-xl flex-row items-center gap-2 py-1.5 [&>svg]:static [&>svg]:translate-y-0">
+                  <AlertTriangle />
+                  <AlertTitle className="m-0 min-h-0">
+                    {unmatchedCount.toLocaleString()} unmatched
+                  </AlertTitle>
+                  <AlertDescription className="mt-0">
+                    <Button variant="outline" size="sm" className="h-7" asChild>
+                      <Link href="/scores/unmatched-records">Review unmatched</Link>
+                    </Button>
+                  </AlertDescription>
+                  <button
+                    type="button"
+                    className="ml-auto rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setShowUnmatchedAlert(false)}
+                    aria-label="Dismiss unmatched alert"
                   >
-                    {chip.label}
-                    <X className="h-3 w-3" />
-                  </Badge>
-                ))}
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => handleViewChange("ready")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    view === "ready"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  Ready to apply
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleViewChange("applied")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    view === "applied"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  Applied
-                </button>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{total.toLocaleString()}</span>{" "}
-                {view === "ready" ? "ready" : "applied"}
-              </div>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </Alert>
+              )}
+              <Button variant="outline" size="sm" className="h-8" asChild>
+                <Link href="/scores/data-entry/extraction">Back to Extract</Link>
+              </Button>
             </div>
           </div>
         </div>
 
-        <div className="mx-4 mb-4 mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
+        <div className="border-b border-border bg-background px-4 py-2">
+          <div className="mx-auto max-w-[2000px]">
+            <ScoreDocumentFiltersBar
+              examOptions={examOptions}
+              selectedExamId={selectedExamId}
+              onExamChange={handleExamChange}
+              schools={schools}
+              subjects={subjects}
+              schoolId={filters.school_id}
+              subjectId={filters.subject_id}
+              testType={filters.test_type}
+              extractionProvider={filters.extraction_provider}
+              onSchoolChange={(value) => handleFilterChange("school_id", parseNumericFilter(value))}
+              onSubjectChange={(value) =>
+                handleFilterChange("subject_id", parseNumericFilter(value))
+              }
+              onTestTypeChange={(value) => handleFilterChange("test_type", value)}
+              onExtractionProviderChange={(value) =>
+                handleFilterChange("extraction_provider", value)
+              }
+              showProviderFilter
+              loading={loadingFilters}
+              onRefresh={loadDocuments}
+              refreshing={loading}
+              onClear={handleClearFilters}
+              trailing={
+                <>
+                  <Tabs
+                    value={view}
+                    onValueChange={(value) => handleViewChange(value as AppliedView)}
+                  >
+                    <TabsList className="h-8">
+                      <TabsTrigger value="ready" className="h-7 px-3 text-xs">
+                        Ready{view === "ready" ? ` (${total.toLocaleString()})` : ""}
+                      </TabsTrigger>
+                      <TabsTrigger value="applied" className="h-7 px-3 text-xs">
+                        Applied{view === "applied" ? ` (${total.toLocaleString()})` : ""}
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </>
+              }
+            />
+          </div>
+        </div>
+
+        <div className="mx-4 mb-4 mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
           <ApplyScoresDataTable
             documents={documents}
-            loading={loading && loadingFilters}
+            loading={loading}
             error={error}
             selectedDocuments={selectedDocuments}
             onSelectDocument={handleSelectDocument}
             onSelectAll={handleSelectAll}
             onClearSelection={() => setSelectedDocuments(new Set())}
             onRowClick={handleViewDocument}
+            onApplyRow={handleUpdateScores}
+            applyingDocumentId={updatingScores}
             view={view}
             pageSize={filters.page_size || 50}
             onPageSizeChange={(size) =>
@@ -681,61 +553,14 @@ export default function ApplyScoresPage() {
             applying={applying}
             applyProgress={applyProgress}
             onApplySelected={() => setConfirmOpen(true)}
+            focusedRowIndex={focusedRowIndex}
+            onFocusedRowIndexChange={setFocusedRowIndex}
             currentPage={currentPage}
             totalPages={totalPages}
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
           />
         </div>
-
-        {showUnmatched && (
-          <Card className="mx-4 mb-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Unmatched Records</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => setShowUnmatched(false)}>
-                  Hide
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loadingUnmatched ? (
-                <div className="flex h-32 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin" />
-                </div>
-              ) : unmatchedRecords.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No unmatched records found</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Index Number</TableHead>
-                      <TableHead>Candidate Name</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {unmatchedRecords.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell>{record.index_number || "-"}</TableCell>
-                        <TableCell>{record.candidate_name || "-"}</TableCell>
-                        <TableCell>{record.score || "-"}</TableCell>
-                        <TableCell>
-                          {record.document_extracted_id || `Doc #${record.document_id}`}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{record.status}</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -754,7 +579,7 @@ export default function ApplyScoresPage() {
                       : "Verify is off — scores will be written without comparing to the verify field."}
                   </li>
                   {alreadyAppliedInSelection > 0 && (
-                    <li className="text-amber-700">
+                    <li className="text-destructive">
                       {alreadyAppliedInSelection} selected document
                       {alreadyAppliedInSelection === 1 ? " was" : "s were"} already applied and will
                       be re-applied.
