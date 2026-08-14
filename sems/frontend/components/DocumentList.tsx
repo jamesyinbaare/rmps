@@ -35,6 +35,10 @@ interface DocumentListProps {
   selectedIds?: Set<number>;
   onSelectionChange?: (id: number, selected: boolean) => void;
   bulkMode?: boolean;
+  /** Show checkboxes even when not in bulkMode. Row click still opens the document. */
+  enableSelection?: boolean;
+  focusedRowIndex?: number;
+  onRangeSelect?: (id: number) => void;
   onSelectAll?: () => void;
   infiniteScroll?: boolean;
   hasMore?: boolean;
@@ -59,6 +63,9 @@ export function DocumentList({
   selectedIds = new Set(),
   onSelectionChange,
   bulkMode = false,
+  enableSelection,
+  focusedRowIndex = -1,
+  onRangeSelect,
   onSelectAll,
   infiniteScroll = false,
   hasMore = false,
@@ -66,6 +73,7 @@ export function DocumentList({
   emptyTitle = "No documents found",
   emptyDescription = "No documents match the current filters.",
 }: DocumentListProps) {
+  const selectionOn = enableSelection ?? bulkMode;
   const schoolMap = useMemo(() => {
     const map = new Map<number, string>();
     for (const doc of documents) {
@@ -146,20 +154,23 @@ export function DocumentList({
           selectedIds={selectedIds}
           onSelectionChange={onSelectionChange}
           bulkMode={bulkMode}
+          enableSelection={selectionOn}
+          onRangeSelect={onRangeSelect}
+          focusedRowIndex={focusedRowIndex}
           size={viewMode === "large-grid" ? "large-grid" : "grid"}
         />
       ) : (
         <div className="divide-y divide-border px-6">
-          {bulkMode && onSelectAll && (
+          {selectionOn && onSelectAll && (
             <div className="flex items-center gap-3 py-2 border-b">
               <Checkbox
                 checked={documents.length > 0 && selectedIds.size === documents.length}
                 onCheckedChange={() => onSelectAll()}
               />
-              <span className="text-sm text-muted-foreground">Select all loaded</span>
+              <span className="text-sm text-muted-foreground">Select all on this page</span>
             </div>
           )}
-          {documents.map((doc) => (
+          {documents.map((doc, index) => (
             <FileListItem
               key={doc.id}
               document={doc}
@@ -178,7 +189,9 @@ export function DocumentList({
               }
               isSelected={selectedIds.has(doc.id)}
               onSelectionChange={onSelectionChange}
-              bulkMode={bulkMode}
+              onRangeSelect={onRangeSelect}
+              enableSelection={selectionOn}
+              focused={index === focusedRowIndex}
               size={viewMode === "large-list" ? "large-list" : "list"}
             />
           ))}
@@ -200,7 +213,7 @@ export function DocumentList({
           )}
         </div>
       ) : (
-        totalPages > 1 && (
+        (totalPages > 1 || !!onPageSizeChange) && (
           <div className="flex items-center justify-between gap-4 border-t border-border px-6 py-4">
             <div className="flex items-center gap-2">
               {onPageSizeChange && (

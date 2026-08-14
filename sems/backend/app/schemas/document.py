@@ -150,6 +150,21 @@ class ScoresExtractionStatusCounts(BaseModel):
     error: int = 0
 
 
+class IdExtractionErrorCodeCount(BaseModel):
+    code: str
+    count: int
+
+
+class IdExtractionStatusCounts(BaseModel):
+    """Aggregate counts of documents by ID extraction status for current filters."""
+
+    total: int = 0
+    pending: int = 0
+    success: int = 0
+    error: int = 0
+    error_codes: list[IdExtractionErrorCodeCount] = Field(default_factory=list)
+
+
 class BulkDocumentIdsRequest(BaseModel):
     """Request body for bulk document operations."""
 

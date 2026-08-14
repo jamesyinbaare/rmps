@@ -2,6 +2,7 @@ import type {
   Document,
   DocumentFilters,
   DocumentListResponse,
+  IdExtractionStatusCounts,
   BulkUploadResponse,
   UploadInitiateFile,
   UploadInitiateResponse,
@@ -386,6 +387,24 @@ export async function listDocuments(
 
   const response = await fetch(`${API_BASE_URL}/api/v1/documents?${params.toString()}`);
   return handleResponse<DocumentListResponse>(response);
+}
+
+export async function getIdExtractionStatusCounts(
+  filters: DocumentFilters = {}
+): Promise<IdExtractionStatusCounts> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.q) params.append("q", filters.q);
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/id-extraction-status-counts?${params.toString()}`
+  );
+  return handleResponse<IdExtractionStatusCounts>(response);
 }
 
 export async function uploadDocument(file: File, examId: number): Promise<Document> {

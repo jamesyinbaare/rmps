@@ -25,20 +25,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Upload, Grid3x3, List, AlertCircle, Trash2, Database, MoreHorizontal, RefreshCw } from "lucide-react";
+import { Upload, Grid3x3, List, Trash2, Database, MoreHorizontal, RefreshCw, Keyboard } from "lucide-react";
 import {
   listDocuments,
+  getIdExtractionStatusCounts,
   downloadDocument,
   getDocumentDownloadFilename,
   updateDocumentId,
   bulkDeleteDocuments,
   bulkExtractDocumentIds,
 } from "@/lib/api";
-import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
+import type {
+  Document,
+  DocumentFilters as DocumentFiltersType,
+  IdExtractionStatusCounts,
+} from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
 import { toast } from "sonner";
-import Link from "next/link";
 import { BackfillDialog } from "@/components/BackfillDialog";
+import { IdExtractionStatusPills } from "@/components/IdExtractionStatusPills";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** Cap accumulated infinite-scroll cards to avoid unbounded DOM growth at 50k+ scale. */
@@ -58,7 +68,7 @@ export default function DocumentsPage() {
   const [filters, setFilters] = useState<DocumentFiltersType>(() => {
     const initial: DocumentFiltersType = {
       page: 1,
-      page_size: 30,
+      page_size: extractionStatusParam === "error" ? 50 : 30,
     };
     if (examIdParam) {
       const examId = parseInt(examIdParam, 10);
@@ -82,22 +92,37 @@ export default function DocumentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">(
+    extractionStatusParam === "error" ? "list" : "grid"
+  );
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
-  const [failedCount, setFailedCount] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkMode, setBulkMode] = useState(false);
+  const [focusedRowIndex, setFocusedRowIndex] = useState(0);
+  const lastSelectedIndexRef = useRef<number | null>(null);
+  const [statusCounts, setStatusCounts] = useState<IdExtractionStatusCounts>({
+    total: 0,
+    pending: 0,
+    success: 0,
+    error: 0,
+    error_codes: [],
+  });
+  const [countsLoading, setCountsLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
+
+  const isErrorsView = filters.id_extraction_status === "error";
+  const selectionEnabled = isErrorsView || bulkMode;
+  const useInfiniteScroll = viewMode === "grid" && !isErrorsView;
 
   // Debounce search into server-side `q` filter
   useEffect(() => {
@@ -124,20 +149,34 @@ export default function DocumentsPage() {
         : undefined;
     const nextError = errorParam || undefined;
 
+    const resolvedStatus = nextError ? nextStatus || "error" : nextStatus;
+
     setFilters((prev) => {
       const examChanged = (prev.exam_id ?? undefined) !== validExamId;
-      const statusChanged = (prev.id_extraction_status ?? undefined) !== nextStatus;
+      const statusChanged = (prev.id_extraction_status ?? undefined) !== resolvedStatus;
       const errorChanged = (prev.id_extraction_error_code ?? undefined) !== nextError;
       if (!examChanged && !statusChanged && !errorChanged) return prev;
       return {
         ...prev,
         exam_id: validExamId,
-        id_extraction_status: nextError ? nextStatus || "error" : nextStatus,
+        id_extraction_status: resolvedStatus,
         id_extraction_error_code: nextError,
         page: 1,
+        page_size: resolvedStatus === "error" ? 50 : statusChanged ? 30 : prev.page_size,
       };
     });
   }, [examIdParam, extractionStatusParam, errorParam]);
+
+  const prevExtractionStatusParamRef = useRef(extractionStatusParam);
+  useEffect(() => {
+    const prev = prevExtractionStatusParamRef.current;
+    prevExtractionStatusParamRef.current = extractionStatusParam;
+    if (extractionStatusParam === "error" && prev !== "error") {
+      setViewMode("list");
+    } else if (extractionStatusParam !== "error" && prev === "error") {
+      setViewMode("grid");
+    }
+  }, [extractionStatusParam]);
 
   const loadDocuments = useCallback(async (append = false) => {
     if (append) {
@@ -223,15 +262,14 @@ export default function DocumentsPage() {
       prevFiltersRef.current = filters;
       prevFilterParamRef.current = filterParam;
       loadDocuments(false);
-    } else if (pageChanged && (filters.page ?? 1) > 1 && viewMode === "grid") {
-      // Page changed for infinite scroll
+    } else if (pageChanged && useInfiniteScroll && (filters.page ?? 1) > 1) {
       prevFiltersRef.current = filters;
       loadDocuments(true);
-    } else if (pageChanged && viewMode === "list") {
+    } else if (pageChanged) {
       prevFiltersRef.current = filters;
       loadDocuments(false);
     }
-  }, [filters, filterParam, viewMode, loadDocuments]);
+  }, [filters, filterParam, viewMode, useInfiniteScroll, loadDocuments]);
 
   // Keep exam_id, extraction status, and error type in the URL
   useEffect(() => {
@@ -266,7 +304,7 @@ export default function DocumentsPage() {
 
   // Check if we need to load more content to fill the viewport (after documents load)
   useEffect(() => {
-    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
+    if (!useInfiniteScroll || !hasMore || loadingMore || loading) return;
     if (documents.length === 0) return;
 
     const checkIfNeedsMoreContent = () => {
@@ -294,11 +332,11 @@ export default function DocumentsPage() {
         window.removeEventListener("resize", checkIfNeedsMoreContent);
       }
     };
-  }, [documents.length, viewMode, hasMore, loadingMore, loading, currentPage, totalPages]);
+  }, [documents.length, useInfiniteScroll, hasMore, loadingMore, loading, currentPage, totalPages]);
 
   // Intersection Observer for infinite scroll (more efficient than scroll events)
   useEffect(() => {
-    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
+    if (!useInfiniteScroll || !hasMore || loadingMore || loading) return;
     if (typeof window === "undefined" || !("IntersectionObserver" in window)) return;
 
     const sentinel = document.getElementById("infinite-scroll-sentinel");
@@ -315,11 +353,11 @@ export default function DocumentsPage() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [viewMode, hasMore, loadingMore, loading, currentPage, totalPages, documents.length]);
+  }, [useInfiniteScroll, hasMore, loadingMore, loading, currentPage, totalPages, documents.length]);
 
   // Fallback scroll handler (for browsers without Intersection Observer support)
   useEffect(() => {
-    if (viewMode !== "grid" || !hasMore || loadingMore || loading) return;
+    if (!useInfiniteScroll || !hasMore || loadingMore || loading) return;
     if (typeof window === "undefined") return;
     if ("IntersectionObserver" in window) return; // Use Intersection Observer if available
 
@@ -348,7 +386,7 @@ export default function DocumentsPage() {
     return () => {
       win.removeEventListener("scroll", handleScroll);
     };
-  }, [viewMode, hasMore, loadingMore, loading, currentPage, totalPages]);
+  }, [useInfiniteScroll, hasMore, loadingMore, loading, currentPage, totalPages]);
 
   // Initial load on mount
   useEffect(() => {
@@ -356,20 +394,67 @@ export default function DocumentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load failed extraction count
+  const loadStatusCounts = useCallback(async () => {
+    setCountsLoading(true);
+    try {
+      const counts = await getIdExtractionStatusCounts({
+        exam_id: filters.exam_id,
+        exam_type: filters.exam_type,
+        series: filters.series,
+        year: filters.year,
+        school_id: filters.school_id,
+        subject_id: filters.subject_id,
+        q: filters.q,
+      });
+      setStatusCounts(counts);
+    } catch (err) {
+      console.error("Error loading ID extraction counts:", err);
+    } finally {
+      setCountsLoading(false);
+    }
+  }, [
+    filters.exam_id,
+    filters.exam_type,
+    filters.series,
+    filters.year,
+    filters.school_id,
+    filters.subject_id,
+    filters.q,
+  ]);
+
   useEffect(() => {
-    const loadFailedCount = async () => {
-      try {
-        const response = await listDocuments({ id_extraction_status: "error", page: 1, page_size: 1 });
-        setFailedCount(response.total);
-      } catch (err) {
-        console.error("Error loading failed count:", err);
+    void loadStatusCounts();
+  }, [loadStatusCounts]);
+
+  const handleStatusSelect = (status: "pending" | "success" | "error" | undefined) => {
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    lastSelectedIndexRef.current = null;
+    if (status === "error") {
+      setViewMode("list");
+      setFilters((prev) => ({
+        ...prev,
+        id_extraction_status: "error",
+        page: 1,
+        page_size: 50,
+      }));
+      return;
+    }
+    setViewMode("grid");
+    setFilters((prev) => {
+      const next = { ...prev, page: 1, page_size: 30 };
+      if (status) {
+        next.id_extraction_status = status;
+      } else {
+        delete next.id_extraction_status;
       }
-    };
-    loadFailedCount();
-  }, []);
+      delete next.id_extraction_error_code;
+      return next;
+    });
+  };
 
   const handleFiltersChange = (newFilters: DocumentFiltersType) => {
+    setSelectedIds(new Set());
     setFilters(newFilters);
   };
 
@@ -388,6 +473,8 @@ export default function DocumentsPage() {
   };
 
   const handleSelectionChange = (id: number, selected: boolean) => {
+    const index = documents.findIndex((d) => d.id === id);
+    lastSelectedIndexRef.current = index >= 0 ? index : lastSelectedIndexRef.current;
     setSelectedIds((prev) => {
       const newSet = new Set(prev);
       if (selected) {
@@ -397,6 +484,22 @@ export default function DocumentsPage() {
       }
       return newSet;
     });
+  };
+
+  const handleRangeSelect = (id: number) => {
+    const toIndex = documents.findIndex((d) => d.id === id);
+    if (toIndex < 0) return;
+    const fromIndex = lastSelectedIndexRef.current ?? toIndex;
+    const [start, end] = fromIndex < toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex];
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (let i = start; i <= end; i++) {
+        next.add(documents[i].id);
+      }
+      return next;
+    });
+    lastSelectedIndexRef.current = toIndex;
+    setFocusedRowIndex(toIndex);
   };
 
   const handleSelectAll = () => {
@@ -435,6 +538,7 @@ export default function DocumentsPage() {
       setBulkMode(false);
       setFilters((prev) => ({ ...prev, page: 1 }));
       await loadDocuments(false);
+      void loadStatusCounts();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk delete failed");
     }
@@ -447,19 +551,8 @@ export default function DocumentsPage() {
       toast.success(`Queued ${result.queued} document(s) for ID extraction`);
       setSelectedIds(new Set());
       setBulkMode(false);
-      // Mark selected as pending locally and start polling
-      setDocuments((prev) =>
-        prev.map((d) =>
-          result.document_ids.includes(d.id)
-            ? {
-                ...d,
-                id_extraction_status: "pending",
-                id_extraction_error: null,
-                id_extraction_error_code: null,
-              }
-            : d
-        )
-      );
+      await loadDocuments(false);
+      void loadStatusCounts();
       startPendingPoll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to queue extraction");
@@ -516,10 +609,16 @@ export default function DocumentsPage() {
   }, []);
 
   const handlePageChange = (page: number) => {
+    if (!useInfiniteScroll) {
+      setSelectedIds(new Set());
+      lastSelectedIndexRef.current = null;
+    }
     setFilters((prev) => ({ ...prev, page }));
   };
 
   const handlePageSizeChange = (pageSize: number) => {
+    setSelectedIds(new Set());
+    lastSelectedIndexRef.current = null;
     setFilters((prev) => ({ ...prev, page: 1, page_size: pageSize }));
   };
 
@@ -528,24 +627,70 @@ export default function DocumentsPage() {
     startPendingPoll();
   };
 
-  const handleUpdateId = async (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => {
+  const handleCloseViewer = useCallback(() => {
+    setViewerOpen(false);
+    setSelectedDocument(null);
+    setSelectedIndex(-1);
+  }, []);
+
+  const handleUpdateId = async (
+    documentId: number,
+    extractedId: string,
+    schoolId?: number,
+    subjectId?: number,
+    options?: { advance?: boolean }
+  ) => {
     try {
       const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId);
       toast.success("Document ID updated successfully");
-      // Patch in place so infinite-scroll window is preserved
+      void loadStatusCounts();
+
+      if (isErrorsView && options?.advance !== false) {
+        const idx = documents.findIndex((d) => d.id === documentId);
+        const remaining = documents.filter((d) => d.id !== documentId);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(documentId);
+          return next;
+        });
+        if (remaining.length > 0) {
+          setDocuments(remaining);
+          setTotal((t) => Math.max(0, t - 1));
+          const nextIdx = Math.min(Math.max(idx, 0), remaining.length - 1);
+          if (viewerOpen) {
+            setSelectedIndex(nextIdx);
+            setSelectedDocument(remaining[nextIdx]);
+            setFocusedRowIndex(nextIdx);
+          }
+          return;
+        }
+        let page = filters.page ?? 1;
+        let response = await listDocuments({ ...filters, page });
+        if (response.items.length === 0 && page > 1) {
+          page -= 1;
+          response = await listDocuments({ ...filters, page });
+          setFilters((prev) => ({ ...prev, page }));
+        }
+        setDocuments(response.items);
+        setTotal(response.total);
+        setTotalPages(response.total_pages);
+        setCurrentPage(response.page);
+        if (viewerOpen && response.items.length > 0) {
+          setSelectedIndex(0);
+          setSelectedDocument(response.items[0]);
+          setFocusedRowIndex(0);
+        } else if (viewerOpen) {
+          handleCloseViewer();
+        }
+        return;
+      }
+
       setDocuments((prev) => prev.map((d) => (d.id === documentId ? { ...d, ...updated } : d)));
       if (selectedDocument && selectedDocument.id === documentId) {
         setSelectedDocument({ ...selectedDocument, ...updated });
       }
-      // Refresh failed count
-      try {
-        const failed = await listDocuments({ id_extraction_status: "error", page: 1, page_size: 1 });
-        setFailedCount(failed.total);
-      } catch {
-        /* ignore */
-      }
     } catch (error) {
-      throw error; // Re-throw to let DocumentViewer handle the error display
+      throw error;
     }
   };
 
@@ -553,21 +698,15 @@ export default function DocumentsPage() {
     const index = documents.findIndex((d) => d.id === doc.id);
     if (index >= 0) {
       setSelectedIndex(index);
+      setFocusedRowIndex(index);
       setSelectedDocument(doc);
       setViewerOpen(true);
     } else {
-      // If document not found in current list, still open it but with index -1
       setSelectedIndex(-1);
       setSelectedDocument(doc);
       setViewerOpen(true);
     }
   };
-
-  const handleCloseViewer = useCallback(() => {
-    setViewerOpen(false);
-    setSelectedDocument(null);
-    setSelectedIndex(-1);
-  }, []);
 
   const handleNavigate = useCallback((index: number) => {
     if (index >= 0 && index < documents.length) {
@@ -596,6 +735,7 @@ export default function DocumentsPage() {
       }
       // Reload documents
       loadDocuments();
+      void loadStatusCounts();
     }
   };
 
@@ -613,6 +753,92 @@ export default function DocumentsPage() {
     }
   };
 
+  useEffect(() => {
+    if (documents.length === 0) {
+      setFocusedRowIndex(-1);
+      return;
+    }
+    if (focusedRowIndex < 0 || focusedRowIndex >= documents.length) {
+      setFocusedRowIndex(0);
+    }
+  }, [documents, focusedRowIndex]);
+
+  useEffect(() => {
+    if (focusedRowIndex < 0 || !documents[focusedRowIndex]) return;
+    document
+      .getElementById(`document-row-${documents[focusedRowIndex].id}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [focusedRowIndex, documents]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+        return;
+      }
+      if (target?.closest('[role="checkbox"]')) {
+        return;
+      }
+      if (viewerOpen || deleteDialogOpen) return;
+
+      if ((e.key === " " || e.key === "Enter") && target?.closest("button, a")) {
+        return;
+      }
+
+      if (e.key === "Escape") {
+        setSelectedIds(new Set());
+        return;
+      }
+      if ((e.key === "a" || e.key === "A") && (e.metaKey || e.ctrlKey) && selectionEnabled) {
+        e.preventDefault();
+        handleSelectAll();
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.min(documents.length - 1, Math.max(0, i + 1)));
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedRowIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === " " && documents[focusedRowIndex] && selectionEnabled) {
+        e.preventDefault();
+        const id = documents[focusedRowIndex].id;
+        handleSelectionChange(id, !selectedIds.has(id));
+        return;
+      }
+      if (e.key === "Enter" && documents[focusedRowIndex]) {
+        e.preventDefault();
+        handleDocumentSelect(documents[focusedRowIndex]);
+        return;
+      }
+      if (
+        (e.key === "a" || e.key === "A") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        isErrorsView &&
+        selectedIds.size > 0
+      ) {
+        e.preventDefault();
+        void handleBulkRetryExtraction();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    documents,
+    focusedRowIndex,
+    selectedIds,
+    viewerOpen,
+    deleteDialogOpen,
+    selectionEnabled,
+    isErrorsView,
+  ]);
+
   return (
     <DashboardLayout title="All files">
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -624,46 +850,63 @@ export default function DocumentsPage() {
           searchValue={searchQuery}
           showSearch={true}
         />
-        <div className="flex flex-1 overflow-hidden relative">
-          {/* Main Content Area */}
-          <main className="flex-1 overflow-y-auto w-full">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <main className="min-h-0 flex-1 overflow-y-auto w-full">
             {/* Filters */}
             <div className="px-6 pt-4 pb-2 border-b border-border space-y-3">
               <CompactFilters filters={filters} onFiltersChange={handleFiltersChange} />
-              {filters.id_extraction_status === "error" && (
+              <IdExtractionStatusPills
+                counts={statusCounts}
+                selected={filters.id_extraction_status}
+                onSelect={handleStatusSelect}
+                loading={countsLoading}
+              />
+              {isErrorsView && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground mr-1">Error type:</span>
-                  {ID_EXTRACTION_ERROR_FILTERS.map((opt) => (
-                    <Button
-                      key={opt.value || "all"}
-                      variant={
-                        (filters.id_extraction_error_code || "") === opt.value
-                          ? "secondary"
-                          : "outline"
-                      }
-                      size="sm"
-                      className={cn(
-                        "h-7 text-xs",
-                        (filters.id_extraction_error_code || "") === opt.value &&
-                          "border-destructive/40"
-                      )}
-                      onClick={() =>
-                        setFilters((prev) => ({
-                          ...prev,
-                          id_extraction_error_code: opt.value || undefined,
-                          page: 1,
-                        }))
-                      }
-                    >
-                      {opt.label}
-                    </Button>
-                  ))}
+                  {ID_EXTRACTION_ERROR_FILTERS.map((opt) => {
+                    const count =
+                      opt.value === ""
+                        ? statusCounts.error
+                        : statusCounts.error_codes.find((c) => c.code === opt.value)?.count ?? 0;
+                    if (opt.value && count === 0) return null;
+                    return (
+                      <Button
+                        key={opt.value || "all"}
+                        variant={
+                          (filters.id_extraction_error_code || "") === opt.value
+                            ? "secondary"
+                            : "outline"
+                        }
+                        size="sm"
+                        className={cn(
+                          "h-7 text-xs",
+                          (filters.id_extraction_error_code || "") === opt.value &&
+                            "border-destructive/40"
+                        )}
+                        onClick={() => {
+                          setSelectedIds(new Set());
+                          lastSelectedIndexRef.current = null;
+                          setFilters((prev) => ({
+                            ...prev,
+                            id_extraction_error_code: opt.value || undefined,
+                            page: 1,
+                          }));
+                        }}
+                      >
+                        {opt.label}
+                        <span className="ml-1 tabular-nums text-muted-foreground">
+                          {count.toLocaleString()}
+                        </span>
+                      </Button>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Bulk Actions Bar */}
-            {bulkMode && selectedIds.size > 0 && (
+            {/* Bulk Actions Bar (All / Success / Pending selection mode) */}
+            {!isErrorsView && bulkMode && selectedIds.size > 0 && (
               <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-muted/50">
                 <div className="flex items-center gap-4">
                   <span className="text-sm font-medium">
@@ -730,29 +973,20 @@ export default function DocumentsPage() {
                   <Upload className="h-4 w-4" />
                   Upload Scanned ICMs
                 </Button>
-                <Button
-                  variant={bulkMode ? "secondary" : "outline"}
-                  onClick={() => {
-                    setBulkMode(!bulkMode);
-                    if (bulkMode) {
-                      setSelectedIds(new Set());
-                    }
-                  }}
-                  className="gap-2"
-                >
-                  <Grid3x3 className="h-4 w-4" />
-                  {bulkMode ? "Exit Selection" : "Select"}
-                </Button>
-                {failedCount !== null && failedCount > 0 && (
-                  <Link href="/icm-studio/documents/failed-extractions">
-                    <Button variant="outline" className="gap-2">
-                      <AlertCircle className="h-4 w-4 text-destructive" />
-                      Failed Extractions
-                      <span className="rounded-full bg-destructive px-1.5 py-0.5 text-xs font-medium text-destructive-foreground">
-                        {failedCount}
-                      </span>
-                    </Button>
-                  </Link>
+                {!isErrorsView && (
+                  <Button
+                    variant={bulkMode ? "secondary" : "outline"}
+                    onClick={() => {
+                      setBulkMode(!bulkMode);
+                      if (bulkMode) {
+                        setSelectedIds(new Set());
+                      }
+                    }}
+                    className="gap-2"
+                  >
+                    <Grid3x3 className="h-4 w-4" />
+                    {bulkMode ? "Exit Selection" : "Select"}
+                  </Button>
                 )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -773,7 +1007,25 @@ export default function DocumentsPage() {
                 </DropdownMenu>
               </div>
 
-              <div className="flex shrink-0 items-center gap-1 rounded-md border border-border p-0.5">
+              <div className="flex shrink-0 items-center gap-1">
+                {isErrorsView && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        aria-label="Keyboard shortcuts"
+                      >
+                        <Keyboard className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      j/k or arrows focus · Space toggles · Enter opens · Ctrl/Cmd+A selects page · A retries · Esc clears
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                <div className="flex shrink-0 items-center gap-1 rounded-md border border-border p-0.5">
                 <Button
                   variant={viewMode === "grid" ? "secondary" : "ghost"}
                   size="sm"
@@ -792,6 +1044,7 @@ export default function DocumentsPage() {
                   <List className="h-4 w-4" />
                   <span className="hidden sm:inline">List</span>
                 </Button>
+                </div>
               </div>
             </div>
 
@@ -821,9 +1074,12 @@ export default function DocumentsPage() {
               onDelete={handleDeleteClick}
               selectedIds={selectedIds}
               onSelectionChange={handleSelectionChange}
+              onRangeSelect={handleRangeSelect}
+              enableSelection={selectionEnabled}
+              focusedRowIndex={focusedRowIndex}
               bulkMode={bulkMode}
               onSelectAll={handleSelectAll}
-              infiniteScroll={viewMode === "grid"}
+              infiniteScroll={useInfiniteScroll}
               hasMore={hasMore}
               hideEmptyState={!loading && total === 0}
               emptyTitle={
@@ -875,7 +1131,7 @@ export default function DocumentsPage() {
                 Showing {documents.length} of {total} document{total !== 1 ? "s" : ""}
               </div>
             )}
-            {!loading && total > 0 && viewMode === "grid" && (
+            {!loading && total > 0 && useInfiniteScroll && (
               <div className="border-t border-border px-6 py-4 text-center text-sm text-muted-foreground">
                 Loaded {documents.length} of {total} document{total !== 1 ? "s" : ""}
                 {!hasMore && documents.length < total
@@ -884,6 +1140,49 @@ export default function DocumentsPage() {
               </div>
             )}
           </main>
+
+          {isErrorsView && selectedIds.size > 0 && (
+            <div className="sticky bottom-0 z-10 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur supports-[backdrop-filter]:bg-background/80">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-sm font-medium">
+                    {selectedIds.size} selected on this page
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => {
+                      setSelectedIds(new Set());
+                      lastSelectedIndexRef.current = null;
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkRetryExtraction}
+                    className="h-9 gap-2"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Retry ID extract ({selectedIds.size})
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    className="h-9 gap-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete ({selectedIds.size})
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Document Viewer Modal */}
           {selectedDocument && (
