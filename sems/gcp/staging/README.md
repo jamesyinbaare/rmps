@@ -59,8 +59,8 @@ Root files:
      - Prefer a SA JSON key via `GCS_CREDENTIALS_PATH`, **or**
      - On GCE/Cloud Run ADC: grant the VM/runtime SA `roles/iam.serviceAccountTokenCreator` on itself (or `iam.serviceAccounts.signBlob`) so V4 signed URLs work without a private key file.
    - Object create/delete still needs `roles/storage.objectAdmin` (or equivalent) on the bucket.
-8. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `CLOUD_SQL_CONNECTION_NAME`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`.
-9. **Reducto concurrency** — Set `REDUCTO_RATE_LIMIT_PER_SECOND` to your plan RPS (Growth ≈ 10) and `REDUCTO_QUEUE_WORKERS` for parallel documents (start at 4; 6–8 if extracts are slow). The in-process token bucket prevents exceeding RPS; workers only control docs in flight. Operators can also resize workers at runtime via `PATCH /api/v1/documents/reducto-queue/workers` (Registrar+) or the Reducto Extraction UI control.
+8. **Secrets** — Place values in `sems/.env.staging.gcp` (never commit). Required: `CLOUD_SQL_CONNECTION_NAME`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `SUPER_ADMIN_*`, `GCS_*`, `REDUCTO_API_KEY`. Optional for Llama Extract: `LLAMA_CLOUD_API_KEY`.
+9. **Extraction concurrency** — Set `REDUCTO_RATE_LIMIT_PER_SECOND` to your Reducto plan RPS (Growth ≈ 10) and `REDUCTO_QUEUE_WORKERS` for parallel documents (start at 4; 6–8 if extracts are slow). The in-process token bucket prevents exceeding RPS; workers only control docs in flight. Operators can also resize workers at runtime via `PATCH /api/v1/documents/reducto-queue/workers` (Registrar+) or the Score Extraction UI control. Llama Extract uses `LLAMA_EXTRACT_RATE_LIMIT_PER_SECOND` (default 5) on the same worker pool.
 
 ## Deploy
 
@@ -72,6 +72,7 @@ cp .env.staging.gcp.example .env.staging.gcp
 # Edit CLOUD_SQL_CONNECTION_NAME, DATABASE_URL (host = sems-cloud-sql-proxy-staging),
 # SECRET_KEY, GCS_*, CORS_ORIGINS, SUPER_ADMIN_*, REDUCTO_API_KEY,
 # REDUCTO_RATE_LIMIT_PER_SECOND, REDUCTO_QUEUE_WORKERS
+# Optional: LLAMA_CLOUD_API_KEY (Llama Extract provider)
 
 chmod +x gcp/staging/scripts/deploy.sh
 ./gcp/staging/scripts/deploy.sh

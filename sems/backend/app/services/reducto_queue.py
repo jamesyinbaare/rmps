@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class ReductoQueueService:
-    """Service for queuing and processing documents through Reducto API."""
+    """Service for queuing and processing documents through structured extraction providers."""
 
     def __init__(self):
-        self._queue: asyncio.Queue[int] = asyncio.Queue()
-        self._queue_items: list[int] = []  # Track queue order for position calculation
+        self._queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+        self._queue_items: list[tuple[int, str]] = []  # Track queue order for position calculation
         self._worker_tasks: dict[int, asyncio.Task[None]] = {}  # worker_id -> task
         self._processing_documents: set[int] = set()  # Track actively processing documents
         self._stopping_workers: set[int] = set()  # Workers asked to exit after current work
@@ -28,11 +28,13 @@ class ReductoQueueService:
         self._next_worker_id: int = 0
         self._lock = asyncio.Lock()
 
-    def enqueue_document(self, document_id: int) -> None:
-        """Add document to queue."""
-        if document_id not in self._queue_items:
-            self._queue.put_nowait(document_id)
-            self._queue_items.append(document_id)
+    def enqueue_document(self, document_id: int, method: str = "reducto") -> None:
+        """Add document to queue. Duplicate document IDs already in the queue are ignored."""
+        if any(queued_id == document_id for queued_id, _ in self._queue_items):
+            return
+        item = (document_id, method)
+        self._queue.put_nowait(item)
+        self._queue_items.append(item)
 
     def _calculate_optimal_workers(self) -> int:
         """Calculate optimal number of workers based on rate limit."""
@@ -62,13 +64,13 @@ class ReductoQueueService:
 
     def get_document_queue_position(self, document_id: int) -> int | None:
         """Get position of document in queue (1-based, None if not in queue)."""
-        try:
-            return self._queue_items.index(document_id) + 1
-        except ValueError:
-            return None
+        for index, (queued_id, _) in enumerate(self._queue_items):
+            if queued_id == document_id:
+                return index + 1
+        return None
 
-    async def _process_document(self, document_id: int) -> None:
-        """Process a single document through Reducto API."""
+    async def _process_document(self, document_id: int, method: str = "reducto") -> None:
+        """Process a single document through the chosen extraction provider."""
         sessionmanager = get_sessionmanager()
         async with sessionmanager.session() as session:
             try:
@@ -92,9 +94,9 @@ class ReductoQueueService:
                     await session.commit()
                     return
 
-                # Extract content using Reducto
+                # Extract content using the requested provider
                 extraction_result = await content_extraction_service.extract_content(
-                    file_content, method="reducto", test_type=document.test_type
+                    file_content, method=method, test_type=document.test_type
                 )
 
                 # Update document with extraction results
@@ -133,20 +135,22 @@ class ReductoQueueService:
             try:
                 # Get next document from queue (with timeout to allow checking for shutdown/resize)
                 try:
-                    document_id = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                    item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
 
+                document_id, method = item
+
                 # Remove from tracking list
-                if document_id in self._queue_items:
-                    self._queue_items.remove(document_id)
+                if item in self._queue_items:
+                    self._queue_items.remove(item)
 
                 # Track active processing
                 self._processing_documents.add(document_id)
 
                 try:
                     # Process document (rate limiter is shared, so it will throttle automatically)
-                    await self._process_document(document_id)
+                    await self._process_document(document_id, method)
                 finally:
                     # Remove from active processing
                     self._processing_documents.discard(document_id)

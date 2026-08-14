@@ -23,6 +23,7 @@ export interface Document {
   id_extraction_error_code?: string | null; // no_id, duplicate, invalid_format, etc.
   id_extracted_at: string | null; // When the ID was extracted
   scores_extraction_data?: Record<string, any> | null; // Omitted from list responses for scale
+  scores_extraction_provider?: string | null; // reducto | llama | ocr
   scores_extraction_status: string | null; // Status: pending, success, error
   scores_extraction_methods: string[] | null; // Set of extraction methods used: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   scores_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
@@ -488,6 +489,21 @@ export interface BatchScoreUpdateResponse {
   errors: Array<{ [key: string]: string }>;
 }
 
+export type ExtractionProvider = "reducto" | "llama";
+
+export function extractionProviderLabel(provider: string | null | undefined): string {
+  switch ((provider || "").toLowerCase()) {
+    case "llama":
+      return "Llama Extract";
+    case "reducto":
+      return "Reducto";
+    case "ocr":
+      return "OCR";
+    default:
+      return provider || "Unknown";
+  }
+}
+
 export interface ScoreDocumentFilters {
   exam_id?: number;
   exam_type?: ExamType;
@@ -498,6 +514,7 @@ export interface ScoreDocumentFilters {
   test_type?: string;
   extraction_status?: string; // Single or comma-separated: pending,queued,processing,success,error
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
+  extraction_provider?: ExtractionProvider; // Filter by Reducto vs Llama Extract
   scores_applied?: boolean; // true=applied, false=not applied
   page?: number;
   page_size?: number;
@@ -515,6 +532,7 @@ export interface ScoresExtractionStatusCounts {
 export interface ReductoQueueRequest {
   document_ids: number[];
   require_extracted_id?: boolean;
+  method?: ExtractionProvider;
 }
 
 export interface DocumentQueueStatus {

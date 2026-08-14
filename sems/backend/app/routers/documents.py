@@ -46,7 +46,11 @@ from app.schemas.document import (
     UploadSlot,
 )
 from app.schemas.id_extraction import IDExtractionResponse
-from app.services.content_extraction import content_extraction_service
+from app.services.content_extraction import (
+    STRUCTURED_EXTRACTION_METHODS,
+    content_extraction_service,
+    extraction_provider_error,
+)
 from app.services.id_extraction import (
     IDExtractionErrorCode,
     IDValidator,
@@ -1150,7 +1154,7 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
 async def parse_content(
     session: DBSessionDep,
     document_id: int,
-    method: str | None = Query(None, description="Extraction method: 'ocr' or 'reducto'. If None, uses configured default"),
+    method: str | None = Query(None, description="Extraction method: 'ocr', 'reducto', or 'llama'. If None, uses configured default"),
 ) -> ContentExtractionResponse:
     """Parse document content and extract full text and tables."""
     stmt = select(Document).where(Document.id == document_id)
@@ -1173,11 +1177,10 @@ async def parse_content(
     # Update document with extraction results
     # Determine extraction method based on the method used
     extraction_method_to_add: DataExtractionMethod | None = None
-    if method == "reducto" or extraction_result.get("parsing_method") == "reducto":
+    parsing_method = extraction_result.get("parsing_method")
+    if method in STRUCTURED_EXTRACTION_METHODS or parsing_method in STRUCTURED_EXTRACTION_METHODS:
         extraction_method_to_add = DataExtractionMethod.AUTOMATED_EXTRACTION
     else:
-        # If parsing_method is a string, try to convert it to Enum
-        parsing_method = extraction_result.get("parsing_method")
         if parsing_method:
             try:
                 extraction_method_to_add = DataExtractionMethod(parsing_method)
@@ -1318,7 +1321,11 @@ async def update_reducto_queue_workers(
 async def queue_reducto_extraction(
     request: ReductoQueueRequest, session: DBSessionDep
 ) -> ReductoQueueResponse:
-    """Queue documents for Reducto extraction."""
+    """Queue documents for structured extraction (Reducto or Llama Extract)."""
+    provider_error = extraction_provider_error(request.method)
+    if provider_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=provider_error)
+
     document_statuses: list[DocumentQueueStatus] = []
 
     for document_id in request.document_ids:
@@ -1344,7 +1351,7 @@ async def queue_reducto_extraction(
             continue
 
         # Enqueue document
-        reducto_queue_service.enqueue_document(document_id)
+        reducto_queue_service.enqueue_document(document_id, request.method)
 
         # Update document status to queued
         document.scores_extraction_status = "queued"

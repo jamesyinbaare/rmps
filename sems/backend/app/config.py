@@ -94,6 +94,13 @@ class Settings(BaseSettings):
         "Also extract sheet metadata: sheet_id, series, paper/test type, centre, and subject. "
         "Preserve exact marks and text as they appear."
     )
+    # Llama Extract (LlamaCloud) — alternative structured score-sheet extractor
+    llama_extract_enabled: bool = True
+    llama_cloud_api_key: str | None = None
+    llama_extract_rate_limit_per_second: float = 5.0
+    llama_extract_poll_interval_seconds: float = 2.0
+    llama_extract_poll_timeout_seconds: float = 120.0
+    llama_extract_tier: str = "agentic"  # cost_effective | agentic
     reducto_extraction_schema: dict | None = {
         "type": "object",
         "properties": {

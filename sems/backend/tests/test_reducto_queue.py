@@ -12,7 +12,7 @@ async def test_set_worker_count_scales_up_and_down(monkeypatch):
 
     service = ReductoQueueService()
     # Avoid real document processing if anything is dequeued
-    async def noop_process(_document_id: int) -> None:
+    async def noop_process(_document_id: int, _method: str = "reducto") -> None:
         await asyncio.sleep(0.05)
 
     monkeypatch.setattr(service, "_process_document", noop_process)
@@ -56,3 +56,32 @@ def test_calculate_optimal_workers_uses_explicit_and_auto(monkeypatch):
 
     monkeypatch.setattr("app.services.reducto_queue.settings.reducto_rate_limit_per_second", 100.0)
     assert service._calculate_optimal_workers() == 20
+
+
+def test_enqueue_document_stores_method_and_ignores_duplicates():
+    service = ReductoQueueService()
+    service.enqueue_document(1, "llama")
+    service.enqueue_document(2, "reducto")
+    service.enqueue_document(1, "reducto")
+
+    assert service._queue_items == [(1, "llama"), (2, "reducto")]
+    assert service.get_document_queue_position(1) == 1
+    assert service.get_document_queue_position(2) == 2
+    assert service.get_document_queue_position(99) is None
+
+
+@pytest.mark.asyncio
+async def test_process_document_passes_queued_method(monkeypatch):
+    service = ReductoQueueService()
+    received: list[tuple[int, str]] = []
+
+    async def capture(document_id: int, method: str = "reducto") -> None:
+        received.append((document_id, method))
+
+    monkeypatch.setattr(service, "_process_document", capture)
+    service.enqueue_document(42, "llama")
+    service.start_worker()
+    await asyncio.sleep(0.2)
+    await service.stop_worker()
+
+    assert received == [(42, "llama")]

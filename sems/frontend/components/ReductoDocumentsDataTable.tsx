@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ColumnDef,
   flexRender,
@@ -15,20 +16,17 @@ import {
   ArrowUp,
   ArrowUpDown,
   CheckCircle2,
-  ChevronDown,
   Clock,
-  Eye,
   FileText,
+  Keyboard,
   Loader2,
-  RefreshCw,
-  RotateCcw,
+  MoreHorizontal,
   Search,
   Send,
-  Users,
   X,
   XCircle,
 } from "lucide-react";
-import type { Document } from "@/types/document";
+import type { Document, ExtractionProvider } from "@/types/document";
 import {
   Table,
   TableBody,
@@ -37,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,16 +51,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TableSkeleton } from "@/components/certificates/TableSkeleton";
+import { QueueSettingsPopover } from "@/components/data-entry/QueueSettingsPopover";
+import { paperLabel, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
 import { cn } from "@/lib/utils";
 
 export type ExtractionStatusFilter =
@@ -123,19 +122,18 @@ interface ReductoDocumentsDataTableProps {
   applyingDocumentId?: number | null;
   requeueingDocumentId?: number | null;
   statusFilter?: string;
-  onStatusFilterChange: (statuses: ExtractionStatusFilter[]) => void;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
+  extractionProvider: ExtractionProvider;
+  onExtractionProviderChange: (provider: ExtractionProvider) => void;
   concurrentWorkers: number;
   workersMax: number;
   rateLimitPerSecond: number;
   onConcurrentWorkersChange: (workers: number) => void;
   updatingWorkers?: boolean;
   queuing?: boolean;
-  isPolling?: boolean;
-  batchProgress?: BatchProgress | null;
   skipPreview?: { willQueue: number; willSkip: number } | null;
   onQueueSelected: () => void;
   onQueueAllPending: () => void;
@@ -157,50 +155,48 @@ function getStatusBadge(document: Document) {
 
   if (status === "queued") {
     return (
-      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
-        <Clock className="mr-1 h-3 w-3" />
+      <Badge variant="outline" className="bg-muted text-foreground">
+        <Clock className="h-3 w-3" />
         Queued
       </Badge>
     );
   }
   if (status === "processing") {
     return (
-      <Badge className="bg-blue-600 text-white">
-        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+      <Badge className="bg-muted text-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
         Processing
       </Badge>
     );
   }
   if (status === "success") {
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Badge className="bg-green-600 text-white">
-              <CheckCircle2 className="mr-1 h-3 w-3" />
-              Success
-            </Badge>
-          </TooltipTrigger>
-          {methodDisplay && (
-            <TooltipContent>
-              <p>{methodDisplay}</p>
-            </TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge className="bg-primary text-primary-foreground">
+            <CheckCircle2 className="h-3 w-3" />
+            Success
+          </Badge>
+        </TooltipTrigger>
+        {methodDisplay && (
+          <TooltipContent>
+            <p>{methodDisplay}</p>
+          </TooltipContent>
+        )}
+      </Tooltip>
     );
   }
   if (status === "error") {
     return (
       <Badge variant="destructive">
-        <XCircle className="mr-1 h-3 w-3" />
+        <XCircle className="h-3 w-3" />
         Failed
       </Badge>
     );
   }
   return (
-    <Badge variant="secondary" className="border-yellow-300 bg-yellow-100 text-yellow-800">
-      <Clock className="mr-1 h-3 w-3" />
+    <Badge variant="secondary">
+      <Clock className="h-3 w-3" />
       Pending
     </Badge>
   );
@@ -227,19 +223,18 @@ export function ReductoDocumentsDataTable({
   applyingDocumentId,
   requeueingDocumentId,
   statusFilter,
-  onStatusFilterChange,
   pageSize,
   onPageSizeChange,
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
+  extractionProvider,
+  onExtractionProviderChange,
   concurrentWorkers,
   workersMax,
   rateLimitPerSecond,
   onConcurrentWorkersChange,
   updatingWorkers,
   queuing,
-  isPolling,
-  batchProgress,
   skipPreview,
   onQueueSelected,
   onQueueAllPending,
@@ -261,21 +256,8 @@ export function ReductoDocumentsDataTable({
     (d) => !d.scores_extraction_status || d.scores_extraction_status === "pending"
   ).length;
   const selectedStatuses = parseExtractionStatuses(statusFilter);
-
-  const toggleStatus = (status: ExtractionStatusFilter) => {
-    const next = selectedStatuses.includes(status)
-      ? selectedStatuses.filter((s) => s !== status)
-      : [...selectedStatuses, status];
-    onStatusFilterChange(next);
-  };
-
-  const statusTriggerLabel =
-    selectedStatuses.length === 0
-      ? "All statuses"
-      : selectedStatuses.length === 1
-        ? EXTRACTION_STATUS_OPTIONS.find((o) => o.value === selectedStatuses[0])?.label ||
-          selectedStatuses[0]
-        : `${selectedStatuses.length} statuses`;
+  const selectedCount = selectedDocuments.size;
+  const showActionBar = selectedCount > 0 || !!queuing;
 
   useEffect(() => {
     if (documents.length === 0) {
@@ -323,7 +305,21 @@ export function ReductoDocumentsDataTable({
       {
         accessorKey: "school_name",
         header: "School",
-        cell: ({ row }) => row.original.school_name || "-",
+        cell: ({ row }) => row.original.school_name || "—",
+      },
+      {
+        accessorKey: "subject_name",
+        header: "Subject",
+        cell: ({ row }) => row.original.subject_name || "—",
+      },
+      {
+        accessorKey: "test_type",
+        header: "Paper",
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {paperLabel(row.original.test_type)}
+          </span>
+        ),
       },
       {
         accessorKey: "scores_extraction_status",
@@ -345,13 +341,7 @@ export function ReductoDocumentsDataTable({
       {
         accessorKey: "scores_extracted_at",
         header: "Extracted",
-        cell: ({ row }) => (
-          <div className="text-sm text-muted-foreground">
-            {row.original.scores_extracted_at
-              ? new Date(row.original.scores_extracted_at).toLocaleString()
-              : "—"}
-          </div>
-        ),
+        cell: ({ row }) => <RelativeTimestamp iso={row.original.scores_extracted_at} />,
       },
       {
         id: "applied",
@@ -359,13 +349,13 @@ export function ReductoDocumentsDataTable({
         header: "Scores",
         cell: ({ row }) =>
           row.original.scores_applied_at ? (
-            <Badge className="border-transparent bg-green-600 text-white">
-              <CheckCircle2 className="mr-1 h-3 w-3" />
+            <Badge className="bg-primary text-primary-foreground">
+              <CheckCircle2 className="h-3 w-3" />
               Applied
             </Badge>
           ) : row.original.scores_extraction_status === "success" ? (
-            <Badge variant="secondary" className="border-yellow-300 bg-yellow-100 text-yellow-800">
-              <Clock className="mr-1 h-3 w-3" />
+            <Badge variant="secondary">
+              <Clock className="h-3 w-3" />
               Not applied
             </Badge>
           ) : (
@@ -383,51 +373,48 @@ export function ReductoDocumentsDataTable({
           const canRequeue =
             status === "pending" || status === "error" || status === "success";
           const canApply = status === "success" && !!onApply;
+          const requeueLabel = status === "error" ? "Retry" : "Queue";
 
           return (
-            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2"
-                disabled={!canPreview}
-                onClick={() => onPreview(doc)}
-                title="Preview"
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2"
-                disabled={!canRequeue || requeueingDocumentId === doc.id || queuing}
-                onClick={() => onRequeue(doc)}
-                title={status === "error" ? "Retry" : "Queue"}
-              >
-                {requeueingDocumentId === doc.id ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : status === "error" ? (
-                  <RotateCcw className="h-3.5 w-3.5" />
-                ) : (
-                  <Send className="h-3.5 w-3.5" />
-                )}
-              </Button>
-              {canApply && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2"
-                  disabled={applyingDocumentId === doc.id}
-                  onClick={() => onApply?.(doc)}
-                  title="Apply scores"
-                >
-                  {applyingDocumentId === doc.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
+            <div onClick={(e) => e.stopPropagation()}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    aria-label="Row actions"
+                  >
+                    {requeueingDocumentId === doc.id || applyingDocumentId === doc.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={!canPreview}
+                    onSelect={() => onPreview(doc)}
+                  >
+                    Preview extraction
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!canRequeue || requeueingDocumentId === doc.id || queuing}
+                    onSelect={() => onRequeue(doc)}
+                  >
+                    {requeueLabel}
+                  </DropdownMenuItem>
+                  {canApply && (
+                    <DropdownMenuItem
+                      disabled={applyingDocumentId === doc.id}
+                      onSelect={() => onApply?.(doc)}
+                    >
+                      Apply scores
+                    </DropdownMenuItem>
                   )}
-                </Button>
-              )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         },
@@ -461,6 +448,7 @@ export function ReductoDocumentsDataTable({
       return (
         (doc.extracted_id?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.school_name?.toLowerCase().includes(searchValue) ?? false) ||
+        (doc.subject_name?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.file_name?.toLowerCase().includes(searchValue) ?? false)
       );
     },
@@ -471,11 +459,13 @@ export function ReductoDocumentsDataTable({
   });
 
   const rowClassForStatus = (status: string | null) => {
-    if (status === "error") return "bg-red-50/50 hover:bg-red-100/50";
-    if (status === "processing") return "bg-blue-50/50 hover:bg-blue-100/50";
-    if (status === "queued") return "bg-yellow-50/50 hover:bg-yellow-100/50";
+    if (status === "error") return "bg-destructive/5 hover:bg-destructive/10";
+    if (status === "processing") return "bg-muted/60 hover:bg-muted";
+    if (status === "queued") return "bg-muted/40 hover:bg-muted/70";
     return "hover:bg-muted/50";
   };
+
+  const showInitialSkeleton = loading && documents.length === 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -502,59 +492,13 @@ export function ReductoDocumentsDataTable({
             )}
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 min-w-[150px] justify-between gap-2">
-                <span className="truncate">{statusTriggerLabel}</span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52">
-              <DropdownMenuLabel>Filter by status</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {EXTRACTION_STATUS_OPTIONS.map((option) => {
-                const checked = selectedStatuses.includes(option.value);
-                const id = `status-filter-${option.value}`;
-                return (
-                  <DropdownMenuItem
-                    key={option.value}
-                    className="gap-2"
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      toggleStatus(option.value);
-                    }}
-                  >
-                    <Checkbox
-                      id={id}
-                      checked={checked}
-                      onCheckedChange={() => toggleStatus(option.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={option.label}
-                    />
-                    <label htmlFor={id} className="flex-1 cursor-pointer">
-                      {option.label}
-                    </label>
-                  </DropdownMenuItem>
-                );
-              })}
-              {selectedStatuses.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => onStatusFilterChange([])}>
-                    Clear status filter
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Show</span>
             <Select
               value={pageSize.toString()}
               onValueChange={(value) => onPageSizeChange(parseInt(value, 10))}
             >
-              <SelectTrigger className="h-8 w-[90px]">
+              <SelectTrigger size="sm" className="h-8 w-[90px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -567,66 +511,26 @@ export function ReductoDocumentsDataTable({
             </Select>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="skip-without-extracted-id"
-              checked={skipWithoutExtractedId}
-              onCheckedChange={(checked) => onSkipWithoutExtractedIdChange(checked === true)}
-            />
-            <label
-              htmlFor="skip-without-extracted-id"
-              className="cursor-pointer text-sm font-medium"
-            >
-              Skip without ID
-            </label>
-          </div>
-
-          <div className="flex items-center gap-2" title={`API rate limited to ${rateLimitPerSecond}/s`}>
-            <span className="text-sm text-muted-foreground whitespace-nowrap">At a time</span>
-            <Select
-              value={String(concurrentWorkers)}
-              onValueChange={(value) => onConcurrentWorkersChange(parseInt(value, 10))}
-              disabled={updatingWorkers || queuing}
-            >
-              <SelectTrigger className="h-8 w-[90px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from(
-                  new Set([
-                    ...Array.from({ length: Math.min(workersMax, 20) }, (_, i) => i + 1),
-                    concurrentWorkers,
-                  ])
-                )
-                  .filter((n) => n >= 1 && n <= workersMax)
-                  .sort((a, b) => a - b)
-                  .map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            {updatingWorkers && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-          </div>
+          <QueueSettingsPopover
+            extractionProvider={extractionProvider}
+            onExtractionProviderChange={onExtractionProviderChange}
+            skipWithoutExtractedId={skipWithoutExtractedId}
+            onSkipWithoutExtractedIdChange={onSkipWithoutExtractedIdChange}
+            concurrentWorkers={concurrentWorkers}
+            workersMax={workersMax}
+            rateLimitPerSecond={rateLimitPerSecond}
+            onConcurrentWorkersChange={onConcurrentWorkersChange}
+            updatingWorkers={updatingWorkers}
+            disabled={queuing}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {batchProgress && batchProgress.total > 0 && (
-            <Badge variant="outline" className="gap-1 text-xs">
-              {isPolling && <RefreshCw className="h-3 w-3 animate-spin" />}
-              {batchProgress.done}/{batchProgress.total} done
-              {batchProgress.processing > 0 && ` · ${batchProgress.processing} processing`}
-              {batchProgress.queued > 0 && ` · ${batchProgress.queued} queued`}
-              {batchProgress.failed > 0 && ` · ${batchProgress.failed} failed`}
-            </Badge>
-          )}
-          {!batchProgress && isPolling && (
-            <Badge variant="outline" className="text-xs">
-              <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
-              Auto-refreshing
-            </Badge>
-          )}
+          <span className="text-sm text-muted-foreground">
+            {documents.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
+            {Math.min(currentPage * pageSize, total)} of {total.toLocaleString()}
+            {globalFilter ? ` · ${table.getFilteredRowModel().rows.length} match on this page` : ""}
+          </span>
           <Button
             variant="outline"
             size="sm"
@@ -642,161 +546,102 @@ export function ReductoDocumentsDataTable({
             Queue all pending
             {pendingOnPage > 0 ? ` (${pendingOnPage}+)` : ""}
           </Button>
-          <Button
-            onClick={onQueueSelected}
-            disabled={selectedDocuments.size === 0 || queuing}
-            size="sm"
-            className="h-8"
-          >
-            {queuing ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Queueing...
-              </>
-            ) : (
-              <>
-                <Send className="mr-2 h-4 w-4" />
-                Queue{selectedDocuments.size > 0 ? ` ${selectedDocuments.size}` : ""}
-              </>
-            )}
-          </Button>
         </div>
-      </div>
-
-      {skipPreview && selectedDocuments.size > 0 && (
-        <div className="border-b border-border bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
-          Will queue{" "}
-          <span className="font-medium text-foreground">{skipPreview.willQueue}</span>
-          {skipWithoutExtractedId && skipPreview.willSkip > 0 && (
-            <>
-              {" "}
-              · skip{" "}
-              <span className="font-medium text-amber-700">{skipPreview.willSkip}</span> (no
-              extracted ID)
-            </>
-          )}
-        </div>
-      )}
-
-      {selectedDocuments.size > 0 && (
-        <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2">
-          <div className="flex items-center gap-2 text-sm text-blue-900">
-            <Users className="h-4 w-4" />
-            <span className="font-medium">{selectedDocuments.size} selected</span>
-            <span className="text-blue-700/80">· Space toggles · Enter opens · Q queues</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="h-7" onClick={onClearSelection}>
-              Clear
-            </Button>
-            <Button size="sm" className="h-7" onClick={onQueueSelected} disabled={queuing}>
-              Queue selection
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-sm text-muted-foreground">
-        <span>
-          Showing {documents.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{" "}
-          {Math.min(currentPage * pageSize, total)} of {total} documents
-        </span>
-        {globalFilter && (
-          <span>{table.getFilteredRowModel().rows.length} match on this page</span>
-        )}
       </div>
 
       {error && (
-        <div className="mx-4 mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mx-4 mt-3">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-            <div className="text-sm text-muted-foreground">Loading documents...</div>
-          </div>
+      <div className={cn("relative min-h-0 flex-1 overflow-hidden", showActionBar && "pb-2")}>
+        {showInitialSkeleton ? (
+          <TableSkeleton rows={10} cols={7} className="h-full rounded-none border-0" />
         ) : (
-          <Table containerClassName="sems-table-scroll h-full overflow-auto">
-            <TableHeader className="sticky top-0 z-10 bg-background/95 shadow-[inset_0_-1px_0_0_var(--border)] backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 [&_tr]:border-b-0">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="hover:bg-transparent">
-                  {headerGroup.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      className={header.id === "select" ? "w-12 bg-transparent" : "bg-transparent"}
-                    >
-                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center hover:text-foreground"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          <SortIcon sorted={header.column.getIsSorted()} />
-                        </button>
-                      ) : (
-                        flexRender(header.column.columnDef.header, header.getContext())
-                      )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length} className="py-12 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-3">
-                      <FileText className="h-12 w-12 text-muted-foreground/50" />
-                      <div>
-                        <p className="font-medium text-foreground">No documents found</p>
-                        <p className="mt-1 text-sm">
-                        {selectedStatuses.includes("pending") && selectedStatuses.length === 1
-                          ? "No pending sheets for these filters."
-                          : "Try adjusting filters or status."}
-                      </p>
+          <>
+            {loading && documents.length > 0 && (
+              <div className="pointer-events-none absolute inset-0 z-10 bg-background/40" />
+            )}
+            <Table containerClassName="sems-table-scroll h-full overflow-auto">
+              <TableHeader className="sticky top-0 z-10 bg-background/95 shadow-[inset_0_-1px_0_0_var(--border)] backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 [&_tr]:border-b-0">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id} className="hover:bg-transparent">
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={header.id === "select" ? "w-12 bg-transparent" : "bg-transparent"}
+                      >
+                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center hover:text-foreground"
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            <SortIcon sorted={header.column.getIsSorted()} />
+                          </button>
+                        ) : (
+                          flexRender(header.column.columnDef.header, header.getContext())
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="py-12 text-center text-muted-foreground">
+                      <div className="flex flex-col items-center gap-3">
+                        <FileText className="h-12 w-12 text-muted-foreground/50" />
+                        <div>
+                          <p className="font-medium text-foreground">No documents found</p>
+                          <p className="mt-1 text-sm">
+                            {selectedStatuses.includes("pending") && selectedStatuses.length === 1
+                              ? "No pending sheets for these filters."
+                              : "Try adjusting filters or status."}
+                          </p>
+                        </div>
+                        {emptyActionHref && emptyActionLabel && (
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={emptyActionHref}>{emptyActionLabel}</Link>
+                          </Button>
+                        )}
                       </div>
-                      {emptyActionHref && emptyActionLabel && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={emptyActionHref}>{emptyActionLabel}</a>
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                table.getRowModel().rows.map((row, index) => {
-                  const status = row.original.scores_extraction_status;
-                  const focused = index === focusedRowIndex;
-                  return (
-                    <TableRow
-                      key={row.id}
-                      className={cn(
-                        "cursor-pointer",
-                        rowClassForStatus(status),
-                        focused && "ring-2 ring-inset ring-primary/40"
-                      )}
-                      onClick={() => {
-                        onFocusedRowIndexChange(index);
-                        onRowClick(row.original);
-                      }}
-                      onMouseEnter={() => onFocusedRowIndexChange(index)}
-                      data-state={selectedDocuments.has(row.original.id) ? "selected" : undefined}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  table.getRowModel().rows.map((row, index) => {
+                    const status = row.original.scores_extraction_status;
+                    const focused = index === focusedRowIndex;
+                    return (
+                      <TableRow
+                        key={row.id}
+                        className={cn(
+                          "cursor-pointer",
+                          rowClassForStatus(status),
+                          focused && "ring-2 ring-inset ring-primary/40"
+                        )}
+                        onClick={() => {
+                          onFocusedRowIndexChange(index);
+                          onRowClick(row.original);
+                        }}
+                        onMouseEnter={() => onFocusedRowIndexChange(index)}
+                        data-state={selectedDocuments.has(row.original.id) ? "selected" : undefined}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </>
         )}
       </div>
 
@@ -821,6 +666,71 @@ export function ReductoDocumentsDataTable({
               disabled={currentPage === totalPages}
             >
               Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {showActionBar && (
+        <div className="sticky bottom-0 z-10 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium">
+                {selectedCount} document{selectedCount === 1 ? "" : "s"} selected
+              </span>
+              {skipPreview && selectedCount > 0 && (
+                <span className="text-sm text-muted-foreground">
+                  will queue{" "}
+                  <span className="font-medium text-foreground">{skipPreview.willQueue}</span>
+                  {skipWithoutExtractedId && skipPreview.willSkip > 0 && (
+                    <>
+                      {" "}
+                      · skip{" "}
+                      <span className="font-medium text-secondary-foreground">
+                        {skipPreview.willSkip}
+                      </span>{" "}
+                      (no ID)
+                    </>
+                  )}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8"
+                onClick={onClearSelection}
+                disabled={queuing || selectedCount === 0}
+              >
+                Clear
+              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Keyboard shortcuts">
+                    <Keyboard className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Space toggles · Enter opens · Q queues
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <Button
+              onClick={onQueueSelected}
+              disabled={selectedCount === 0 || queuing}
+              size="sm"
+              className="h-9 gap-2"
+            >
+              {queuing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Queueing...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" />
+                  Queue{selectedCount > 0 ? ` ${selectedCount}` : ""}
+                </>
+              )}
             </Button>
           </div>
         </div>

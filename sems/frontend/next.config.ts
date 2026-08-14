@@ -3,6 +3,15 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  async redirects() {
+    return [
+      {
+        source: "/scores/data-entry/reducto-extraction",
+        destination: "/scores/data-entry/extraction",
+        permanent: false,
+      },
+    ];
+  },
   // Pre-existing app TS errors block `next build`; bundling still typechecks via IDE.
   // Track cleanup separately — not introduced by the GSL/CTVET theme pilot.
   typescript: {

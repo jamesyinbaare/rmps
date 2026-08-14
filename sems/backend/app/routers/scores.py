@@ -1,6 +1,6 @@
 from datetime import datetime
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -125,6 +125,28 @@ def _document_id_match_condition(document: Document, extracted_id: str):
     )
 
 
+def _scores_extraction_provider_col() -> Any:
+    return Document.scores_extraction_data.op("->>")("provider")
+
+
+def _apply_extraction_provider_filter(stmt: Any, extraction_provider: str | None) -> Any:
+    """Filter by scores_extraction_data.provider. Missing provider counts as reducto (legacy)."""
+    if extraction_provider == "llama":
+        return stmt.where(_scores_extraction_provider_col() == "llama")
+    if extraction_provider == "reducto":
+        provider_col = _scores_extraction_provider_col()
+        return stmt.where(or_(provider_col == "reducto", provider_col.is_(None)))
+    return stmt
+
+
+def _provider_from_extraction_data(data: Any) -> str | None:
+    if isinstance(data, dict):
+        value = data.get("provider")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 @router.get("/documents", response_model=DocumentListResponse)
 async def get_filtered_documents(
     session: DBSessionDep,
@@ -146,6 +168,10 @@ async def get_filtered_documents(
         ),
     ),
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
+    extraction_provider: Literal["reducto", "llama"] | None = Query(
+        None,
+        description="Filter by extraction provider stored on scores_extraction_data.provider",
+    ),
     scores_applied: bool | None = Query(
         None,
         description="Filter by whether extracted scores have been applied (true=applied, false=not applied)",
@@ -214,6 +240,7 @@ async def get_filtered_documents(
         base_stmt = base_stmt.where(Document.scores_applied_at.isnot(None))
     elif scores_applied is False:
         base_stmt = base_stmt.where(Document.scores_applied_at.is_(None))
+    base_stmt = _apply_extraction_provider_filter(base_stmt, extraction_provider)
     if clerk_assigned_ids is not None:
         base_stmt = base_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -257,6 +284,7 @@ async def get_filtered_documents(
         count_stmt = count_stmt.where(Document.scores_applied_at.isnot(None))
     elif scores_applied is False:
         count_stmt = count_stmt.where(Document.scores_applied_at.is_(None))
+    count_stmt = _apply_extraction_provider_filter(count_stmt, extraction_provider)
     if clerk_assigned_ids is not None:
         count_stmt = count_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -273,6 +301,9 @@ async def get_filtered_documents(
     for document, school_name in rows:
         doc_dict = DocumentResponse.model_validate(document).model_dump()
         doc_dict["school_name"] = school_name
+        doc_dict["scores_extraction_provider"] = _provider_from_extraction_data(
+            document.scores_extraction_data
+        )
         document_responses.append(DocumentResponse(**doc_dict))
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -299,6 +330,10 @@ async def get_scores_extraction_status_counts(
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_method: DataExtractionMethod | None = Query(
         None, description="Filter by extraction method in scores_extraction_methods array"
+    ),
+    extraction_provider: Literal["reducto", "llama"] | None = Query(
+        None,
+        description="Filter by extraction provider stored on scores_extraction_data.provider",
     ),
     scores_applied: bool | None = Query(
         None,
@@ -347,6 +382,7 @@ async def get_scores_extraction_status_counts(
         stmt = stmt.where(Document.scores_applied_at.isnot(None))
     elif scores_applied is False:
         stmt = stmt.where(Document.scores_applied_at.is_(None))
+    stmt = _apply_extraction_provider_filter(stmt, extraction_provider)
     if clerk_assigned_ids is not None:
         stmt = stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 

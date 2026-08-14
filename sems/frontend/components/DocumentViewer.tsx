@@ -19,7 +19,14 @@ import {
   TableRow,
 } from "./ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
-import type { Document, Exam, School, Subject, ReductoDataResponse } from "@/types/document";
+import {
+  extractionProviderLabel,
+  type Document,
+  type Exam,
+  type School,
+  type Subject,
+  type ReductoDataResponse,
+} from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import {
@@ -927,6 +934,12 @@ export function DocumentViewer({
                           ? `${(extractionData.confidence * 100).toFixed(1)}%`
                           : "N/A"}
                       </div>
+                      {typeof extractionData.data?.provider === "string" && (
+                        <div>
+                          <span className="font-medium">Provider:</span>{" "}
+                          {extractionProviderLabel(extractionData.data.provider)}
+                        </div>
+                      )}
                       {extractionData.extracted_at && (
                         <div className="col-span-2">
                           <span className="font-medium">Extracted At:</span>{" "}
