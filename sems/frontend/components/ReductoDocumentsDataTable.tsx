@@ -26,7 +26,14 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import type { Document, ExtractionProvider } from "@/types/document";
+import type { Document, DocumentScoreExtraction, ExtractionProvider } from "@/types/document";
+import {
+  DEFAULT_EXTRACTION_PROVIDER,
+  extractionFor,
+  extractionProviderLabel,
+  extractionProviderShortLabel,
+} from "@/types/document";
+import { ExtractionApplyBadge } from "@/components/data-entry/ExtractionAppliedBadge";
 import {
   Table,
   TableBody,
@@ -118,8 +125,6 @@ interface ReductoDocumentsDataTableProps {
   onRowClick: (document: Document) => void;
   onPreview: (document: Document) => void;
   onRequeue: (document: Document) => void;
-  onApply?: (document: Document) => void;
-  applyingDocumentId?: number | null;
   requeueingDocumentId?: number | null;
   statusFilter?: string;
   pageSize: number;
@@ -202,6 +207,37 @@ function getStatusBadge(document: Document) {
   );
 }
 
+function providerRow(document: Document, provider: ExtractionProvider): DocumentScoreExtraction | undefined {
+  return extractionFor(document, provider);
+}
+
+function ExtractionStatusCell({ document }: { document: Document }) {
+  const rows = [...(document.extractions ?? [])].sort((a, b) => {
+    if (a.provider === DEFAULT_EXTRACTION_PROVIDER) return -1;
+    if (b.provider === DEFAULT_EXTRACTION_PROVIDER) return 1;
+    return a.provider.localeCompare(b.provider);
+  });
+  if (rows.length === 0) {
+    return getStatusBadge(document);
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {rows.map((row) =>
+        row.status === "success" ? (
+          <ExtractionApplyBadge key={row.provider} row={row} showProvider compact />
+        ) : (
+          <div key={row.provider} className="flex items-center gap-1 whitespace-nowrap">
+            <span className="text-xs text-muted-foreground">
+              {extractionProviderShortLabel(row.provider)}
+            </span>
+            {getStatusBadge({ ...document, scores_extraction_status: row.status })}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 function SortIcon({ sorted }: { sorted: false | "asc" | "desc" }) {
   if (sorted === "asc") return <ArrowUp className="ml-1 inline h-3.5 w-3.5" />;
   if (sorted === "desc") return <ArrowDown className="ml-1 inline h-3.5 w-3.5" />;
@@ -219,8 +255,6 @@ export function ReductoDocumentsDataTable({
   onRowClick,
   onPreview,
   onRequeue,
-  onApply,
-  applyingDocumentId,
   requeueingDocumentId,
   statusFilter,
   pageSize,
@@ -309,8 +343,21 @@ export function ReductoDocumentsDataTable({
       },
       {
         accessorKey: "subject_name",
+        accessorFn: (row) => `${row.subject_code ?? ""} ${row.subject_name ?? ""}`.trim(),
         header: "Subject",
-        cell: ({ row }) => row.original.subject_name || "—",
+        cell: ({ row }) => {
+          const code = row.original.subject_code;
+          const name = row.original.subject_name;
+          if (!code && !name) return "—";
+          return (
+            <div className="min-w-0">
+              <div className="font-mono text-sm font-medium">{code || "—"}</div>
+              {name ? (
+                <div className="truncate text-xs text-muted-foreground">{name}</div>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "test_type",
@@ -322,21 +369,13 @@ export function ReductoDocumentsDataTable({
         ),
       },
       {
-        accessorKey: "scores_extraction_status",
-        header: "Status",
-        cell: ({ row }) => (
-          <div className="space-y-1">
-            {getStatusBadge(row.original)}
-            {row.original.scores_extraction_status === "error" && (
-              <p className="text-xs text-destructive">Extraction failed · retry</p>
-            )}
-          </div>
-        ),
-        sortingFn: (a, b) => {
-          const sa = a.original.scores_extraction_status || "pending";
-          const sb = b.original.scores_extraction_status || "pending";
-          return sa.localeCompare(sb);
-        },
+        id: "extraction",
+        accessorFn: (row) =>
+          (row.extractions ?? [])
+            .map((e) => `${e.provider} ${e.status}`)
+            .join(" ") || row.scores_extraction_status || "",
+        header: "Extraction",
+        cell: ({ row }) => <ExtractionStatusCell document={row.original} />,
       },
       {
         accessorKey: "scores_extracted_at",
@@ -344,35 +383,19 @@ export function ReductoDocumentsDataTable({
         cell: ({ row }) => <RelativeTimestamp iso={row.original.scores_extracted_at} />,
       },
       {
-        id: "applied",
-        accessorFn: (row) => row.scores_applied_at || "",
-        header: "Scores",
-        cell: ({ row }) =>
-          row.original.scores_applied_at ? (
-            <Badge className="bg-primary text-primary-foreground">
-              <CheckCircle2 className="h-3 w-3" />
-              Applied
-            </Badge>
-          ) : row.original.scores_extraction_status === "success" ? (
-            <Badge variant="secondary">
-              <Clock className="h-3 w-3" />
-              Not applied
-            </Badge>
-          ) : (
-            <span className="text-sm text-muted-foreground">—</span>
-          ),
-      },
-      {
         id: "actions",
         enableSorting: false,
         header: "Actions",
         cell: ({ row }) => {
           const doc = row.original;
-          const status = doc.scores_extraction_status;
-          const canPreview = status === "success";
+          const queuedProvider = providerRow(doc, extractionProvider);
+          const anySuccess =
+            (doc.extractions ?? []).some((e) => e.status === "success") ||
+            doc.scores_extraction_status === "success";
+          const status = queuedProvider?.status || doc.scores_extraction_status;
+          const canPreview = anySuccess;
           const canRequeue =
-            status === "pending" || status === "error" || status === "success";
-          const canApply = status === "success" && !!onApply;
+            status === "pending" || status === "error" || status === "success" || !queuedProvider;
           const requeueLabel = status === "error" ? "Retry" : "Queue";
 
           return (
@@ -385,7 +408,7 @@ export function ReductoDocumentsDataTable({
                     className="h-7 w-7 p-0"
                     aria-label="Row actions"
                   >
-                    {requeueingDocumentId === doc.id || applyingDocumentId === doc.id ? (
+                    {requeueingDocumentId === doc.id ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <MoreHorizontal className="h-4 w-4" />
@@ -405,14 +428,6 @@ export function ReductoDocumentsDataTable({
                   >
                     {requeueLabel}
                   </DropdownMenuItem>
-                  {canApply && (
-                    <DropdownMenuItem
-                      disabled={applyingDocumentId === doc.id}
-                      onSelect={() => onApply?.(doc)}
-                    >
-                      Apply scores
-                    </DropdownMenuItem>
-                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -422,8 +437,6 @@ export function ReductoDocumentsDataTable({
     ],
     [
       allSelected,
-      applyingDocumentId,
-      onApply,
       onPreview,
       onRequeue,
       onSelectAll,
@@ -431,6 +444,7 @@ export function ReductoDocumentsDataTable({
       queuing,
       requeueingDocumentId,
       selectedDocuments,
+      extractionProvider,
     ]
   );
 
@@ -449,6 +463,7 @@ export function ReductoDocumentsDataTable({
         (doc.extracted_id?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.school_name?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.subject_name?.toLowerCase().includes(searchValue) ?? false) ||
+        (doc.subject_code?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.file_name?.toLowerCase().includes(searchValue) ?? false)
       );
     },
@@ -475,7 +490,7 @@ export function ReductoDocumentsDataTable({
             <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search ID or school..."
+              placeholder="Search ID, school, or subject..."
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
               className="h-8 pl-8 pr-8"
@@ -543,7 +558,7 @@ export function ReductoDocumentsDataTable({
             ) : (
               <Send className="mr-2 h-4 w-4" />
             )}
-            Queue all pending
+            Queue all pending · {extractionProviderLabel(extractionProvider)}
             {pendingOnPage > 0 ? ` (${pendingOnPage}+)` : ""}
           </Button>
         </div>

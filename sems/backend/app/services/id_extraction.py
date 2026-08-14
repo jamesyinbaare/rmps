@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Document, School, Subject, programme_subjects, school_programmes
+from app.utils.school_code import sheet_prefix_to_school_code
 
 
 class ExtractionMethod(str, Enum):
@@ -192,7 +193,7 @@ class IDValidator:
         if not extracted_id.isalnum():
             return IDValidationResult(is_valid=False, error_message="ID must be alphanumeric")
 
-        school_code = extracted_id[0:6]
+        school_code = sheet_prefix_to_school_code(extracted_id[0:6])
         subject_code = extracted_id[6:9]
         subject_series = extracted_id[9:10]
         test_type = extracted_id[10:11]

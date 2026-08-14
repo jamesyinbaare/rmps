@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -145,20 +146,27 @@ class CandidateScoreListResponse(BaseModel):
 
 
 class ReductoDataResponse(BaseModel):
-    """Response for reducto extraction data preview."""
+    """Response for extraction data preview."""
 
     data: dict
     status: str
     confidence: float | None
     extracted_at: datetime | None
+    provider: str | None = None
+    applied_at: datetime | None = None
+    current_applied: bool = False
 
 
 class UpdateScoresFromReductoRequest(BaseModel):
-    """Request for updating scores from reducto data."""
+    """Request for updating scores from extracted data."""
 
     verify: bool = Field(
         default=True,
         description="If True, compare score and verify fields before inserting (default True)",
+    )
+    provider: Literal["reducto", "llama"] = Field(
+        ...,
+        description="Which provider's current extract to apply (llama or reducto).",
     )
 
 
@@ -191,6 +199,7 @@ class UnmatchedExtractionRecordResponse(BaseModel):
     raw_data: dict | None
     status: str
     extraction_method: str
+    extraction_provider: str | None = None
     created_at: datetime
     updated_at: datetime
     resolved_at: datetime | None

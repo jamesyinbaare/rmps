@@ -270,6 +270,34 @@ class Document(Base):
     subject = relationship("Subject", back_populates="documents")
     exam = relationship("Exam", back_populates="documents")
     unmatched_records = relationship("UnmatchedExtractionRecord", back_populates="document", cascade="all, delete-orphan")
+    score_extractions = relationship(
+        "DocumentScoreExtraction", back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class DocumentScoreExtraction(Base):
+    """Per-provider score extraction result for a document (Reducto, Llama, OCR)."""
+
+    __tablename__ = "document_score_extractions"
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(20), nullable=False, index=True)
+    data = Column(JSON, nullable=True)
+    status = Column(String(20), default="pending", nullable=False, index=True)
+    confidence = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+    extracted_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    applied_count = Column(Integer, nullable=True)
+    unmatched_count = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    document = relationship("Document", back_populates="score_extractions")
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "provider", name="uq_document_score_extraction_provider"),
+    )
 
 
 
@@ -463,6 +491,7 @@ class UnmatchedExtractionRecord(Base):
     raw_data = Column(JSON, nullable=True)  # Full extraction data as JSON
     status = Column(Enum(UnmatchedRecordStatus), default=UnmatchedRecordStatus.PENDING, nullable=False, index=True)
     extraction_method = Column(Enum(DataExtractionMethod), nullable=False)
+    extraction_provider = Column(String(20), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)

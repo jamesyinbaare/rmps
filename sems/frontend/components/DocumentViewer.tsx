@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, Send } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -20,13 +20,18 @@ import {
 } from "./ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import {
+  applyScoresActionLabel,
+  extractionFor,
   extractionProviderLabel,
+  successfulExtractionProviders,
   type Document,
   type Exam,
+  type ExtractionProvider,
   type School,
   type Subject,
   type ReductoDataResponse,
 } from "@/types/document";
+import { ExtractionApplyBadge } from "@/components/data-entry/ExtractionAppliedBadge";
 import { formatFileSize } from "@/lib/utils";
 import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import {
@@ -60,7 +65,9 @@ interface DocumentViewerProps {
   enableReductoPreview?: boolean;
   /** Open the extraction preview panel immediately when the viewer opens */
   initialShowExtractionPanel?: boolean;
-  onUpdateScores?: (document: Document) => void;
+  /** Prefer this provider when both extracts exist (e.g. Apply page filter). */
+  preferredProvider?: ExtractionProvider;
+  onUpdateScores?: (document: Document, provider?: ExtractionProvider) => void;
   updatingScores?: boolean;
 }
 
@@ -137,6 +144,7 @@ export function DocumentViewer({
   onDelete,
   enableReductoPreview,
   initialShowExtractionPanel = false,
+  preferredProvider,
   onUpdateScores,
   updatingScores,
 }: DocumentViewerProps) {
@@ -155,6 +163,7 @@ export function DocumentViewer({
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [extractionData, setExtractionData] = useState<ReductoDataResponse | null>(null);
   const [extractionViewMode, setExtractionViewMode] = useState<"table" | "json">("table");
+  const [previewProvider, setPreviewProvider] = useState<ExtractionProvider | undefined>();
 
   useEffect(() => {
     if (open !== false && initialShowExtractionPanel) {
@@ -175,8 +184,20 @@ export function DocumentViewer({
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
-  const canPreviewExtraction =
-    !!enableReductoPreview && document.scores_extraction_status === "success";
+  const providerOptions = successfulExtractionProviders(document);
+  const canPreviewExtraction = !!enableReductoPreview && providerOptions.length > 0;
+  const activeProvider: ExtractionProvider | undefined =
+    (previewProvider && providerOptions.includes(previewProvider)
+      ? previewProvider
+      : undefined) ||
+    (preferredProvider && providerOptions.includes(preferredProvider)
+      ? preferredProvider
+      : undefined) ||
+    providerOptions[0] ||
+    (document.scores_extraction_provider === "llama" || document.scores_extraction_provider === "reducto"
+      ? document.scores_extraction_provider
+      : undefined);
+  const activeExtraction = extractionFor(document, activeProvider);
 
   const getExtractionMethodLabel = (method: string | null): string => {
     if (!method) return "Unknown";
@@ -249,6 +270,7 @@ export function DocumentViewer({
     setImageLoading(true);
     setIdError(null);
     setExtractionData(null);
+    setPreviewProvider(undefined);
   }, [document.id, document.extracted_id]);
 
   // Close preview only when the dialog itself closes
@@ -266,7 +288,7 @@ export function DocumentViewer({
       return;
     }
 
-    if (document.scores_extraction_status !== "success") {
+    if (document.scores_extraction_status !== "success" && providerOptions.length === 0) {
       setExtractionData(null);
       setLoadingExtraction(false);
       return;
@@ -276,10 +298,13 @@ export function DocumentViewer({
     setLoadingExtraction(true);
     setExtractionData(null);
 
-    void getReductoData(document.id)
+    void getReductoData(document.id, activeProvider)
       .then((data) => {
         if (!cancelled) {
           setExtractionData(data);
+          if (data.provider === "llama" || data.provider === "reducto") {
+            setPreviewProvider(data.provider);
+          }
         }
       })
       .catch((err) => {
@@ -299,7 +324,7 @@ export function DocumentViewer({
     return () => {
       cancelled = true;
     };
-  }, [document.id, document.scores_extraction_status, showExtractionPanel, open]);
+  }, [document.id, document.scores_extraction_status, showExtractionPanel, open, activeProvider]);
 
   // Fetch exam, school, and subject names
   useEffect(() => {
@@ -567,7 +592,7 @@ export function DocumentViewer({
       return;
     }
 
-    if (document.scores_extraction_status !== "success") {
+    if (!canPreviewExtraction) {
       toast.error("No extraction data available for this document");
       return;
     }
@@ -668,8 +693,9 @@ export function DocumentViewer({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {document.scores_applied_at && (
-              <Badge className="border-transparent bg-green-600 text-white">
+            {activeExtraction && <ExtractionApplyBadge row={activeExtraction} />}
+            {!activeExtraction && document.scores_applied_at && (
+              <Badge className="border-transparent bg-primary text-primary-foreground">
                 Applied
                 {document.scores_applied_count != null ? ` · ${document.scores_applied_count}` : ""}
               </Badge>
@@ -701,26 +727,28 @@ export function DocumentViewer({
               </Button>
             )}
             {onUpdateScores &&
-              document.scores_extraction_status === "success" &&
+              (document.scores_extraction_status === "success" || providerOptions.length > 0) &&
               !showExtractionPanel && (
               <Button
-                variant={document.scores_applied_at ? "outline" : "default"}
+                variant={activeExtraction?.current_applied ? "outline" : "default"}
                 size="sm"
                 className="h-8 gap-1.5"
-                onClick={() => onUpdateScores(document)}
+                onClick={() => onUpdateScores(document, activeProvider)}
                 disabled={updatingScores}
               >
-                {updatingScores ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Applying...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    {document.scores_applied_at ? "Re-apply Scores" : "Apply Scores"}
-                  </>
-                )}
+                    {updatingScores ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Applying...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />
+                        {applyScoresActionLabel(activeProvider, {
+                          reapply: !!activeExtraction?.current_applied,
+                        })}
+                      </>
+                    )}
               </Button>
             )}
             {onDelete && (
@@ -885,22 +913,40 @@ export function DocumentViewer({
                 <div className="min-w-0">
                   <h3 className="text-sm font-medium">Extracted Data</h3>
                   <p className="truncate text-xs text-muted-foreground">{document.file_name}</p>
-                  {document.scores_applied_at && (
-                    <p className="mt-1 flex items-center gap-1 text-xs text-green-700">
-                      <CheckCircle2 className="h-3 w-3" />
-                      Applied {new Date(document.scores_applied_at).toLocaleString()}
-                      {document.scores_applied_count != null
-                        ? ` · ${document.scores_applied_count} scores`
-                        : ""}
+                  {providerOptions.length > 1 && (
+                    <div className="mt-2 flex gap-1">
+                      {providerOptions.map((provider) => (
+                        <Button
+                          key={provider}
+                          type="button"
+                          size="sm"
+                          variant={activeProvider === provider ? "secondary" : "outline"}
+                          className="h-7"
+                          onClick={() => setPreviewProvider(provider)}
+                        >
+                          {extractionProviderLabel(provider)}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  {providerOptions.length === 1 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {extractionProviderLabel(activeProvider)}
                     </p>
                   )}
+                  {activeExtraction && (
+                    <div className="mt-1">
+                      <ExtractionApplyBadge row={activeExtraction} />
+                    </div>
+                  )}
                 </div>
-                {onUpdateScores && document.scores_extraction_status === "success" && (
+                {onUpdateScores &&
+                  (document.scores_extraction_status === "success" || providerOptions.length > 0) && (
                   <Button
-                    variant={document.scores_applied_at ? "outline" : "default"}
+                    variant={activeExtraction?.current_applied ? "outline" : "default"}
                     size="sm"
                     className="h-8 shrink-0 gap-1.5"
-                    onClick={() => onUpdateScores(document)}
+                    onClick={() => onUpdateScores(document, activeProvider)}
                     disabled={updatingScores}
                   >
                     {updatingScores ? (
@@ -910,8 +956,10 @@ export function DocumentViewer({
                       </>
                     ) : (
                       <>
-                        <RefreshCw className="h-4 w-4" />
-                        {document.scores_applied_at ? "Re-apply" : "Apply Scores"}
+                        <Send className="h-4 w-4" />
+                        {applyScoresActionLabel(activeProvider, {
+                          reapply: !!activeExtraction?.current_applied,
+                        })}
                       </>
                     )}
                   </Button>

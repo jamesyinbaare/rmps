@@ -575,12 +575,13 @@ class ContentExtractionService:
         """
         # Determine extraction method
         if method is None:
-            if settings.reducto_enabled and settings.reducto_api_key:
+            if not extraction_provider_error("llama"):
+                method = "llama"
+            elif not extraction_provider_error("reducto"):
                 method = "reducto"
-                logger.debug("Method not specified, using 'reducto' (configured default)")
             else:
                 method = "ocr"
-                logger.debug("Method not specified, using 'ocr' (configured default)")
+            logger.debug("Method not specified, using %s (configured default)", method)
         else:
             logger.debug(f"Using explicitly specified extraction method: {method}")
 

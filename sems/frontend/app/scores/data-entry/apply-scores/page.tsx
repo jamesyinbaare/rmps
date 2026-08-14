@@ -28,7 +28,7 @@ import {
   getFilteredDocuments,
   getUnmatchedRecords,
   listSchools,
-  listSubjects,
+  getAllSubjects,
   updateScoresFromReducto,
 } from "@/lib/api";
 import type {
@@ -36,10 +36,12 @@ import type {
   Exam,
   ExamSeries,
   ExamType,
+  ExtractionProvider,
   School,
   ScoreDocumentFilters,
   Subject,
 } from "@/types/document";
+import { DEFAULT_EXTRACTION_PROVIDER, extractionFor, extractionProviderLabel, otherExtractionProvider } from "@/types/document";
 import { AlertTriangle, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +54,7 @@ export default function ApplyScoresPage() {
     page_size: 50,
     extraction_status: "success",
     scores_applied: false,
+    extraction_provider: DEFAULT_EXTRACTION_PROVIDER,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -79,6 +82,11 @@ export default function ApplyScoresPage() {
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
 
   const view: AppliedView = filters.scores_applied === true ? "applied" : "ready";
+  const applyProvider: ExtractionProvider =
+    filters.extraction_provider === "reducto" ? "reducto" : DEFAULT_EXTRACTION_PROVIDER;
+  const applyProviderLabel = extractionProviderLabel(applyProvider);
+  const otherProvider = otherExtractionProvider(applyProvider);
+  const otherProviderLabel = extractionProviderLabel(otherProvider);
 
   const loadUnmatchedRecords = useCallback(async () => {
     try {
@@ -103,7 +111,7 @@ export default function ApplyScoresPage() {
         const [examsData, schoolsData, subjectsData] = await Promise.all([
           getAllExams(),
           listSchools(1, 100),
-          listSubjects(1, 100),
+          getAllSubjects(),
         ]);
         setExams(examsData);
         setSchools(schoolsData);
@@ -228,6 +236,9 @@ export default function ApplyScoresPage() {
 
   const selectedDocs = documents.filter((d) => selectedDocuments.has(d.id));
   const alreadyAppliedInSelection = selectedDocs.filter((d) => d.scores_applied_at).length;
+  const otherAppliedInSelection = selectedDocs.filter((d) =>
+    extractionFor(d, otherProvider)?.current_applied
+  ).length;
 
   const runBulkApply = async () => {
     const ids = Array.from(selectedDocuments);
@@ -237,12 +248,17 @@ export default function ApplyScoresPage() {
     setApplyProgress({ done: 0, total: ids.length });
     setError(null);
     try {
-      const result = await bulkUpdateScoresFromReducto(ids, verifyEnabled, (done, totalCount) => {
-        setApplyProgress({ done, total: totalCount });
-      });
+      const result = await bulkUpdateScoresFromReducto(
+        ids,
+        verifyEnabled,
+        applyProvider,
+        (done, totalCount) => {
+          setApplyProgress({ done, total: totalCount });
+        }
+      );
 
       const parts = [
-        `${result.updated_count} score(s) updated`,
+        `${applyProviderLabel} · ${result.updated_count} score(s) updated`,
         `${result.documents_succeeded}/${result.documents_processed} document(s)`,
       ];
       if (result.skipped_count > 0) {
@@ -295,11 +311,18 @@ export default function ApplyScoresPage() {
     }
   };
 
-  const handleUpdateScores = async (document: Document) => {
+  const handleUpdateScores = async (document: Document, provider?: ExtractionProvider) => {
+    const appliedProvider = provider ?? applyProvider;
     setUpdatingScores(document.id);
     try {
-      const response = await updateScoresFromReducto(document.id, verifyEnabled);
-      const parts = [`${response.updated_count} score(s) updated`];
+      const response = await updateScoresFromReducto(
+        document.id,
+        verifyEnabled,
+        appliedProvider
+      );
+      const parts = [
+        `${extractionProviderLabel(appliedProvider)} · ${response.updated_count} score(s) updated`,
+      ];
       if (response.skipped_count) {
         parts.push(`${response.skipped_count} skipped (verify mismatch)`);
         const skipped = response.skipped_records ?? [];
@@ -435,6 +458,7 @@ export default function ApplyScoresPage() {
       page_size: filters.page_size || 50,
       extraction_status: "success",
       scores_applied: view === "applied",
+      extraction_provider: DEFAULT_EXTRACTION_PROVIDER,
     });
     setSelectedDocuments(new Set());
   };
@@ -496,16 +520,13 @@ export default function ApplyScoresPage() {
               schoolId={filters.school_id}
               subjectId={filters.subject_id}
               testType={filters.test_type}
-              extractionProvider={filters.extraction_provider}
+              extractionProvider={applyProvider}
               onSchoolChange={(value) => handleFilterChange("school_id", parseNumericFilter(value))}
               onSubjectChange={(value) =>
                 handleFilterChange("subject_id", parseNumericFilter(value))
               }
               onTestTypeChange={(value) => handleFilterChange("test_type", value)}
-              onExtractionProviderChange={(value) =>
-                handleFilterChange("extraction_provider", value)
-              }
-              showProviderFilter
+              requireProvider
               loading={loadingFilters}
               onRefresh={loadDocuments}
               refreshing={loading}
@@ -513,15 +534,30 @@ export default function ApplyScoresPage() {
               trailing={
                 <>
                   <Tabs
+                    value={applyProvider}
+                    onValueChange={(value) => handleFilterChange("extraction_provider", value)}
+                  >
+                    <TabsList className="h-8" aria-label="Apply extraction provider">
+                      <TabsTrigger value="llama" className="h-7 px-3 text-xs">
+                        Llama Extract
+                      </TabsTrigger>
+                      <TabsTrigger value="reducto" className="h-7 px-3 text-xs">
+                        Reducto
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <Tabs
                     value={view}
                     onValueChange={(value) => handleViewChange(value as AppliedView)}
                   >
                     <TabsList className="h-8">
                       <TabsTrigger value="ready" className="h-7 px-3 text-xs">
-                        Ready{view === "ready" ? ` (${total.toLocaleString()})` : ""}
+                        Ready
+                        {view === "ready" ? ` (${total.toLocaleString()})` : ""}
                       </TabsTrigger>
                       <TabsTrigger value="applied" className="h-7 px-3 text-xs">
-                        Applied{view === "applied" ? ` (${total.toLocaleString()})` : ""}
+                        Applied
+                        {view === "applied" ? ` (${total.toLocaleString()})` : ""}
                       </TabsTrigger>
                     </TabsList>
                   </Tabs>
@@ -543,6 +579,7 @@ export default function ApplyScoresPage() {
             onRowClick={handleViewDocument}
             onApplyRow={handleUpdateScores}
             applyingDocumentId={updatingScores}
+            applyProvider={applyProvider}
             view={view}
             pageSize={filters.page_size || 50}
             onPageSizeChange={(size) =>
@@ -559,6 +596,8 @@ export default function ApplyScoresPage() {
             totalPages={totalPages}
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
+            emptyReadyTitle={`No ${applyProviderLabel} results waiting`}
+            emptyReadyDescription="Switch provider, or go to Extract."
           />
         </div>
       </div>
@@ -567,12 +606,16 @@ export default function ApplyScoresPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Apply scores to {selectedDocuments.size} document
+              Apply {applyProviderLabel} scores to {selectedDocuments.size} document
               {selectedDocuments.size === 1 ? "" : "s"}?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <ul className="list-disc space-y-1 pl-4">
+                  <li>
+                    Writes {applyProviderLabel} results. {otherProviderLabel} extracts on these
+                    documents are not written.
+                  </li>
                   <li>
                     {verifyEnabled
                       ? "Score and verify fields must match before a score is written."
@@ -583,6 +626,14 @@ export default function ApplyScoresPage() {
                       {alreadyAppliedInSelection} selected document
                       {alreadyAppliedInSelection === 1 ? " was" : "s were"} already applied and will
                       be re-applied.
+                    </li>
+                  )}
+                  {otherAppliedInSelection > 0 && (
+                    <li className="text-destructive">
+                      {otherAppliedInSelection} selected document
+                      {otherAppliedInSelection === 1 ? " currently has" : "s currently have"}{" "}
+                      {otherProviderLabel} scores applied. Applying {applyProviderLabel} will
+                      overwrite those live scores.
                     </li>
                   )}
                 </ul>
@@ -616,6 +667,7 @@ export default function ApplyScoresPage() {
           onNavigate={handleNavigate}
           onDownload={handleDownload}
           enableReductoPreview
+          preferredProvider={applyProvider}
           onUpdateScores={handleUpdateScores}
           updatingScores={updatingScores === selectedDocument.id}
         />

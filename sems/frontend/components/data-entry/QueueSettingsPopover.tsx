@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ExtractionProvider } from "@/types/document";
+import { extractionProviderLabel } from "@/types/document";
 
 interface QueueSettingsPopoverProps {
   extractionProvider: ExtractionProvider;
@@ -63,7 +64,7 @@ export function QueueSettingsPopover({
           disabled={disabled}
         >
           <Settings className="h-3.5 w-3.5" />
-          Settings
+          Settings · {extractionProviderLabel(extractionProvider)}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 space-y-4">
@@ -75,7 +76,7 @@ export function QueueSettingsPopover({
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Provider</Label>
+          <Label className="text-xs text-muted-foreground">Queue with</Label>
           <Select
             value={extractionProvider}
             onValueChange={(value) =>
@@ -87,8 +88,8 @@ export function QueueSettingsPopover({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="reducto">Reducto</SelectItem>
               <SelectItem value="llama">Llama Extract</SelectItem>
+              <SelectItem value="reducto">Reducto</SelectItem>
             </SelectContent>
           </Select>
         </div>
