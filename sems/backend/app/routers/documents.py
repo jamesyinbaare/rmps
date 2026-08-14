@@ -60,6 +60,12 @@ from app.services.id_extraction import (
     mark_id_extraction_failure,
 )
 from app.services.reducto_queue import reducto_queue_service
+from app.services.document_score_extraction import (
+    apply_extract_result,
+    get_or_create_extraction,
+    normalize_provider,
+    sync_document_snapshot,
+)
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import add_extraction_method_to_document
@@ -1154,7 +1160,7 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
 async def parse_content(
     session: DBSessionDep,
     document_id: int,
-    method: str | None = Query(None, description="Extraction method: 'ocr', 'reducto', or 'llama'. If None, uses configured default"),
+    method: str | None = Query(None, description="Extraction method: 'ocr', 'reducto', or 'llama'. If None, uses Llama Extract when configured"),
 ) -> ContentExtractionResponse:
     """Parse document content and extract full text and tables."""
     stmt = select(Document).where(Document.id == document_id)
@@ -1188,17 +1194,31 @@ async def parse_content(
                 extraction_method_to_add = None
 
     if extraction_result["is_valid"]:
-        document.scores_extraction_data = extraction_result["parsed_content"]
         if extraction_method_to_add:
             add_extraction_method_to_document(document, extraction_method_to_add)
-        document.scores_extraction_confidence = extraction_result["parsing_confidence"]
-        document.scores_extraction_status = "success"
-        document.scores_extracted_at = datetime.utcnow()
+        provider = normalize_provider(parsing_method or method)
+        row = await get_or_create_extraction(session, document.id, provider)
+        apply_extract_result(
+            row,
+            is_valid=True,
+            parsed_content=extraction_result["parsed_content"],
+            confidence=extraction_result["parsing_confidence"],
+            error_message=extraction_result.get("error_message"),
+        )
+        sync_document_snapshot(document, row)
     else:
         if extraction_method_to_add:
             add_extraction_method_to_document(document, extraction_method_to_add)
-        document.scores_extraction_confidence = extraction_result.get("parsing_confidence", 0.0)
-        document.scores_extraction_status = "error"
+        provider = normalize_provider(parsing_method or method)
+        row = await get_or_create_extraction(session, document.id, provider)
+        apply_extract_result(
+            row,
+            is_valid=False,
+            parsed_content=extraction_result.get("parsed_content"),
+            confidence=extraction_result.get("parsing_confidence", 0.0),
+            error_message=extraction_result.get("error_message"),
+        )
+        sync_document_snapshot(document, row)
 
     await session.commit()
     await session.refresh(document)
@@ -1350,15 +1370,19 @@ async def queue_reducto_extraction(
             )
             continue
 
-        # Enqueue document
-        reducto_queue_service.enqueue_document(document_id, request.method)
-
-        # Update document status to queued
-        document.scores_extraction_status = "queued"
+        row = await get_or_create_extraction(session, document.id, request.method)
+        row.status = "queued"
+        sync_document_snapshot(document, row)
         await session.commit()
 
+        # Enqueue after commit so the worker finds the existing row instead of
+        # racing an insert on the same (document_id, provider).
+        reducto_queue_service.enqueue_document(document_id, request.method)
+
         # Get queue position
-        queue_position = reducto_queue_service.get_document_queue_position(document_id)
+        queue_position = reducto_queue_service.get_document_queue_position(
+            document_id, request.method
+        )
 
         document_statuses.append(
             DocumentQueueStatus(

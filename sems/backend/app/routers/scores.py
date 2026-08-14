@@ -4,13 +4,14 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
     Document,
+    DocumentScoreExtraction,
     Exam,
     ExamRegistration,
     ExamSeries,
@@ -52,6 +53,17 @@ from app.services.issue_batch_service import (
     clerk_may_access_score,
 )
 from app.services.app_settings_service import is_clerk_digital_entry_enabled
+from app.services.document_score_extraction import (
+    apply_extraction_list_filters,
+    extraction_to_item,
+    get_extraction,
+    is_current_applied,
+    list_extractions_by_document_ids,
+    normalize_provider,
+    payload_for_apply,
+    sync_document_snapshot,
+    DEFAULT_PROVIDER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,20 +137,6 @@ def _document_id_match_condition(document: Document, extracted_id: str):
     )
 
 
-def _scores_extraction_provider_col() -> Any:
-    return Document.scores_extraction_data.op("->>")("provider")
-
-
-def _apply_extraction_provider_filter(stmt: Any, extraction_provider: str | None) -> Any:
-    """Filter by scores_extraction_data.provider. Missing provider counts as reducto (legacy)."""
-    if extraction_provider == "llama":
-        return stmt.where(_scores_extraction_provider_col() == "llama")
-    if extraction_provider == "reducto":
-        provider_col = _scores_extraction_provider_col()
-        return stmt.where(or_(provider_col == "reducto", provider_col.is_(None)))
-    return stmt
-
-
 def _provider_from_extraction_data(data: Any) -> str | None:
     if isinstance(data, dict):
         value = data.get("provider")
@@ -170,7 +168,7 @@ async def get_filtered_documents(
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
     extraction_provider: Literal["reducto", "llama"] | None = Query(
         None,
-        description="Filter by extraction provider stored on scores_extraction_data.provider",
+        description="Filter by per-provider extraction row (reducto or llama)",
     ),
     scores_applied: bool | None = Query(
         None,
@@ -197,9 +195,17 @@ async def get_filtered_documents(
                 total_pages=0,
             )
 
-    # Build base query with filters, join with School to get school name
-    # Also join with Exam if filtering by exam_type, series, or year
-    base_stmt = select(Document, School.name).outerjoin(School, Document.school_id == School.id)
+    # Build base query with filters, join School and Subject for display names
+    base_stmt = (
+        select(
+            Document,
+            School.name.label("school_name"),
+            Subject.code.label("subject_code"),
+            Subject.name.label("subject_name"),
+        )
+        .outerjoin(School, Document.school_id == School.id)
+        .outerjoin(Subject, Document.subject_id == Subject.id)
+    )
 
     # Join with Exam table if filtering by exam_type, series, or year (and not using exam_id)
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
@@ -223,12 +229,6 @@ async def get_filtered_documents(
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
     if test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == test_type)
-    if extraction_status is not None:
-        statuses = [s.strip() for s in extraction_status.split(",") if s.strip()]
-        if len(statuses) == 1:
-            base_stmt = base_stmt.where(Document.scores_extraction_status == statuses[0])
-        elif len(statuses) > 1:
-            base_stmt = base_stmt.where(Document.scores_extraction_status.in_(statuses))
     if extraction_method is not None:
         # Filter by array contains operation - check if extraction_method is in the array
         # For PostgreSQL arrays, use the @> (contains) operator
@@ -236,11 +236,12 @@ async def get_filtered_documents(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
-    if scores_applied is True:
-        base_stmt = base_stmt.where(Document.scores_applied_at.isnot(None))
-    elif scores_applied is False:
-        base_stmt = base_stmt.where(Document.scores_applied_at.is_(None))
-    base_stmt = _apply_extraction_provider_filter(base_stmt, extraction_provider)
+    base_stmt = apply_extraction_list_filters(
+        base_stmt,
+        extraction_provider=extraction_provider,
+        extraction_status=extraction_status,
+        scores_applied=scores_applied,
+    )
     if clerk_assigned_ids is not None:
         base_stmt = base_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -269,22 +270,17 @@ async def get_filtered_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == test_type)
-    if extraction_status is not None:
-        statuses = [s.strip() for s in extraction_status.split(",") if s.strip()]
-        if len(statuses) == 1:
-            count_stmt = count_stmt.where(Document.scores_extraction_status == statuses[0])
-        elif len(statuses) > 1:
-            count_stmt = count_stmt.where(Document.scores_extraction_status.in_(statuses))
     if extraction_method is not None:
         count_stmt = count_stmt.where(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
-    if scores_applied is True:
-        count_stmt = count_stmt.where(Document.scores_applied_at.isnot(None))
-    elif scores_applied is False:
-        count_stmt = count_stmt.where(Document.scores_applied_at.is_(None))
-    count_stmt = _apply_extraction_provider_filter(count_stmt, extraction_provider)
+    count_stmt = apply_extraction_list_filters(
+        count_stmt,
+        extraction_provider=extraction_provider,
+        extraction_status=extraction_status,
+        scores_applied=scores_applied,
+    )
     if clerk_assigned_ids is not None:
         count_stmt = count_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -296,14 +292,38 @@ async def get_filtered_documents(
     result = await session.execute(stmt)
     rows = result.all()
 
-    # Convert to DocumentResponse with school_name
+    # Convert to DocumentResponse with school_name and per-provider extractions
+    document_ids = [document.id for document, _school_name, _subject_code, _subject_name in rows]
+    extractions_by_doc = await list_extractions_by_document_ids(session, document_ids)
+
     document_responses = []
-    for document, school_name in rows:
+    for document, school_name, subject_code, subject_name in rows:
         doc_dict = DocumentResponse.model_validate(document).model_dump()
         doc_dict["school_name"] = school_name
-        doc_dict["scores_extraction_provider"] = _provider_from_extraction_data(
-            document.scores_extraction_data
-        )
+        doc_dict["subject_code"] = subject_code
+        doc_dict["subject_name"] = subject_name
+        ext_rows = extractions_by_doc.get(document.id, [])
+        doc_dict["extractions"] = [extraction_to_item(row) for row in ext_rows]
+        overlay = None
+        if extraction_provider:
+            overlay = next((row for row in ext_rows if row.provider == extraction_provider), None)
+        if overlay is None and ext_rows:
+            overlay = next(
+                (row for row in ext_rows if row.provider == _provider_from_extraction_data(document.scores_extraction_data)),
+                ext_rows[0],
+            )
+        if overlay is not None:
+            doc_dict["scores_extraction_provider"] = overlay.provider
+            doc_dict["scores_extraction_status"] = overlay.status
+            doc_dict["scores_extraction_confidence"] = overlay.confidence
+            doc_dict["scores_extracted_at"] = overlay.extracted_at
+            doc_dict["scores_applied_at"] = overlay.applied_at
+            doc_dict["scores_applied_count"] = overlay.applied_count
+            doc_dict["scores_unmatched_count"] = overlay.unmatched_count
+        else:
+            doc_dict["scores_extraction_provider"] = _provider_from_extraction_data(
+                document.scores_extraction_data
+            )
         document_responses.append(DocumentResponse(**doc_dict))
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -333,7 +353,7 @@ async def get_scores_extraction_status_counts(
     ),
     extraction_provider: Literal["reducto", "llama"] | None = Query(
         None,
-        description="Filter by extraction provider stored on scores_extraction_data.provider",
+        description="Filter by per-provider extraction row (reducto or llama)",
     ),
     scores_applied: bool | None = Query(
         None,
@@ -353,6 +373,20 @@ async def get_scores_extraction_status_counts(
             return ScoresExtractionStatusCounts()
 
     stmt = select(Document.scores_extraction_status, func.count(Document.id)).select_from(Document)
+    status_col = Document.scores_extraction_status
+    if extraction_provider:
+        stmt = (
+            select(DocumentScoreExtraction.status, func.count(Document.id))
+            .select_from(Document)
+            .outerjoin(
+                DocumentScoreExtraction,
+                and_(
+                    DocumentScoreExtraction.document_id == Document.id,
+                    DocumentScoreExtraction.provider == extraction_provider,
+                ),
+            )
+        )
+        status_col = DocumentScoreExtraction.status
 
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         stmt = stmt.join(Exam, Document.exam_id == Exam.id)
@@ -378,15 +412,16 @@ async def get_scores_extraction_status_counts(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
-    if scores_applied is True:
-        stmt = stmt.where(Document.scores_applied_at.isnot(None))
-    elif scores_applied is False:
-        stmt = stmt.where(Document.scores_applied_at.is_(None))
-    stmt = _apply_extraction_provider_filter(stmt, extraction_provider)
+    stmt = apply_extraction_list_filters(
+        stmt,
+        extraction_provider=extraction_provider if scores_applied is not None else None,
+        extraction_status=None,
+        scores_applied=scores_applied,
+    )
     if clerk_assigned_ids is not None:
         stmt = stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
-    stmt = stmt.group_by(Document.scores_extraction_status)
+    stmt = stmt.group_by(status_col)
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -1243,9 +1278,23 @@ async def batch_update_scores_manual_entry(
     return BatchScoreUpdateResponse(successful=successful, failed=failed, errors=errors)
 
 
+async def _load_extraction_row(
+    session: DBSessionDep, document: Document, provider: str | None
+) -> DocumentScoreExtraction | None:
+    key = normalize_provider(provider or _provider_from_extraction_data(document.scores_extraction_data))
+    return await get_extraction(session, document.id, key)
+
+
+@router.get("/documents/{document_id}/extraction-data", response_model=ReductoDataResponse)
 @router.get("/documents/{document_id}/reducto-data", response_model=ReductoDataResponse)
-async def get_reducto_data(document_id: int, session: DBSessionDep) -> ReductoDataResponse:
-    """Get reducto extraction data for a document."""
+async def get_extraction_data(
+    document_id: int,
+    session: DBSessionDep,
+    provider: Literal["reducto", "llama"] | None = Query(
+        None, description="Provider whose extract to preview. Defaults to the last-touched snapshot."
+    ),
+) -> ReductoDataResponse:
+    """Get extraction data for a document, optionally for a specific provider."""
     stmt = select(Document).where(Document.id == document_id)
     result = await session.execute(stmt)
     document = result.scalar_one_or_none()
@@ -1253,16 +1302,34 @@ async def get_reducto_data(document_id: int, session: DBSessionDep) -> ReductoDa
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if not document.scores_extraction_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="No extraction data available for this document"
+    row = await _load_extraction_row(session, document, provider)
+    if row and row.data:
+        return ReductoDataResponse(
+            data=row.data,
+            status=row.status or "pending",
+            confidence=row.confidence,
+            extracted_at=row.extracted_at,
+            provider=row.provider,
+            applied_at=row.applied_at,
+            current_applied=is_current_applied(row),
         )
 
-    return ReductoDataResponse(
-        data=document.scores_extraction_data,
-        status=document.scores_extraction_status or "pending",
-        confidence=document.scores_extraction_confidence,
-        extracted_at=document.scores_extracted_at,
+    if not provider and document.scores_extraction_data:
+        snapshot_provider = _provider_from_extraction_data(document.scores_extraction_data)
+        return ReductoDataResponse(
+            data=document.scores_extraction_data,
+            status=document.scores_extraction_status or "pending",
+            confidence=document.scores_extraction_confidence,
+            extracted_at=document.scores_extracted_at,
+            provider=snapshot_provider,
+            applied_at=document.scores_applied_at,
+            current_applied=bool(document.scores_applied_at),
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="No extraction data available for this document"
+        + (f" ({provider})" if provider else ""),
     )
 
 
@@ -1306,6 +1373,7 @@ def scores_match(score: str | float | None, verify: str | float | None) -> bool:
         return False
 
 
+@router.post("/documents/{document_id}/apply-extraction", response_model=UpdateScoresFromReductoResponse)
 @router.post("/documents/{document_id}/update-from-reducto", response_model=UpdateScoresFromReductoResponse)
 async def update_scores_from_reducto(
     document_id: int, request: UpdateScoresFromReductoRequest, session: DBSessionDep
@@ -1323,14 +1391,27 @@ async def update_scores_from_reducto(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     logger.debug(f"Document found: id={document.id}, extracted_id={document.extracted_id}, test_type={document.test_type}, exam_id={document.exam_id}, subject_id={document.subject_id}")
-    # print(document)
-    if not document.scores_extraction_data:
-        logger.warning(f"No extraction data available for document_id={document_id}")
+    if not request.provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="provider is required (llama or reducto)",
+        )
+    extraction_row = await _load_extraction_row(session, document, request.provider)
+    extraction_data = payload_for_apply(
+        extraction_row,
+        document.scores_extraction_data if isinstance(document.scores_extraction_data, dict) else None,
+        request.provider,
+    )
+    applied_provider = (
+        (extraction_row.provider if extraction_row else None)
+        or _provider_from_extraction_data(extraction_data)
+        or DEFAULT_PROVIDER
+    )
+    if not extraction_data:
+        logger.warning(f"No extraction data available for document_id={document_id} provider={applied_provider}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="No extraction data available for this document"
         )
-
-    extraction_data = document.scores_extraction_data
     # Log raw data structure for debugging (limit size to avoid huge logs)
     import json
     data_str = json.dumps(extraction_data, default=str)[:500] if extraction_data else "None"
@@ -1507,6 +1588,7 @@ async def update_scores_from_reducto(
                     raw_data=candidate_data,
                     status=UnmatchedRecordStatus.PENDING,
                     extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
+                    extraction_provider=applied_provider,
                 )
                 session.add(unmatched_record)
                 unmatched_records.append(
@@ -1559,6 +1641,7 @@ async def update_scores_from_reducto(
                     raw_data=candidate_data,
                     status=UnmatchedRecordStatus.PENDING,
                     extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
+                    extraction_provider=applied_provider,
                 )
                 session.add(unmatched_record)
                 unmatched_records.append(
@@ -1622,15 +1705,24 @@ async def update_scores_from_reducto(
             logger.error(f"Error processing candidate {idx+1} (index_number={candidate_data.get('index_number', 'unknown')}): {e}", exc_info=True)
             errors.append({"index_number": candidate_data.get("index_number", "unknown"), "error": str(e)})
 
-    # Update document extraction status and applied tracking
+    # Update per-provider applied tracking (do not overwrite extracted_at)
     if updated_count > 0:
         applied_at = datetime.utcnow()
-        document.scores_extraction_status = "success"
-        document.scores_extracted_at = applied_at
-        document.scores_applied_at = applied_at
-        document.scores_applied_count = updated_count
-        document.scores_unmatched_count = unmatched_count
-        logger.info(f"Updated document extraction status to 'success' and marked applied for document_id={document_id}")
+        if extraction_row is None:
+            extraction_row = await get_extraction(session, document.id, applied_provider)
+        if extraction_row is not None:
+            extraction_row.applied_at = applied_at
+            extraction_row.applied_count = updated_count
+            extraction_row.unmatched_count = unmatched_count
+            if extraction_row.status != "success":
+                extraction_row.status = "success"
+            sync_document_snapshot(document, extraction_row)
+        else:
+            document.scores_extraction_status = "success"
+            document.scores_applied_at = applied_at
+            document.scores_applied_count = updated_count
+            document.scores_unmatched_count = unmatched_count
+        logger.info(f"Marked {applied_provider} extract applied for document_id={document_id}")
 
     await session.commit()
 

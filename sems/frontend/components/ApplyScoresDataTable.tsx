@@ -15,8 +15,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
-  CheckCircle2,
-  Clock,
   FileText,
   Keyboard,
   Loader2,
@@ -26,8 +24,9 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import type { Document } from "@/types/document";
-import { extractionProviderLabel } from "@/types/document";
+import type { Document, ExtractionProvider } from "@/types/document";
+import { applyScoresActionLabel, extractionProviderLabel } from "@/types/document";
+import { DocumentAppliedBadges } from "@/components/data-entry/ExtractionAppliedBadge";
 import {
   Table,
   TableBody,
@@ -40,7 +39,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -55,7 +53,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TableSkeleton } from "@/components/certificates/TableSkeleton";
-import { paperLabel, formatRelativeDate, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
+import { paperLabel, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
 import { cn } from "@/lib/utils";
 
 export type AppliedView = "ready" | "applied";
@@ -71,6 +69,7 @@ interface ApplyScoresDataTableProps {
   onRowClick: (document: Document) => void;
   onApplyRow?: (document: Document) => void;
   applyingDocumentId?: number | null;
+  applyProvider: ExtractionProvider;
   view: AppliedView;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
@@ -85,36 +84,14 @@ interface ApplyScoresDataTableProps {
   totalPages: number;
   total: number;
   onPageChange: (page: number) => void;
+  emptyReadyTitle?: string;
+  emptyReadyDescription?: string;
 }
 
 function SortIcon({ sorted }: { sorted: false | "asc" | "desc" }) {
   if (sorted === "asc") return <ArrowUp className="ml-1 inline h-3.5 w-3.5" />;
   if (sorted === "desc") return <ArrowDown className="ml-1 inline h-3.5 w-3.5" />;
   return <ArrowUpDown className="ml-1 inline h-3.5 w-3.5 opacity-40" />;
-}
-
-function AppliedBadge({ document }: { document: Document }) {
-  if (document.scores_applied_at) {
-    const appliedAt = new Date(document.scores_applied_at);
-    return (
-      <div className="space-y-0.5">
-        <Badge className="bg-primary text-primary-foreground">
-          <CheckCircle2 className="h-3 w-3" />
-          Applied
-        </Badge>
-        <div className="text-xs text-muted-foreground" title={appliedAt.toLocaleString()}>
-          {formatRelativeDate(document.scores_applied_at)}
-          {document.scores_applied_count != null && ` · ${document.scores_applied_count} scores`}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <Badge variant="secondary">
-      <Clock className="h-3 w-3" />
-      Ready
-    </Badge>
-  );
 }
 
 export function ApplyScoresDataTable({
@@ -128,6 +105,7 @@ export function ApplyScoresDataTable({
   onRowClick,
   onApplyRow,
   applyingDocumentId,
+  applyProvider,
   view,
   pageSize,
   onPageSizeChange,
@@ -142,6 +120,8 @@ export function ApplyScoresDataTable({
   totalPages,
   total,
   onPageChange,
+  emptyReadyTitle,
+  emptyReadyDescription,
 }: ApplyScoresDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -199,8 +179,21 @@ export function ApplyScoresDataTable({
       },
       {
         accessorKey: "subject_name",
+        accessorFn: (row) => `${row.subject_code ?? ""} ${row.subject_name ?? ""}`.trim(),
         header: "Subject",
-        cell: ({ row }) => row.original.subject_name || "—",
+        cell: ({ row }) => {
+          const code = row.original.subject_code;
+          const name = row.original.subject_name;
+          if (!code && !name) return "—";
+          return (
+            <div className="min-w-0">
+              <div className="font-mono text-sm font-medium">{code || "—"}</div>
+              {name ? (
+                <div className="truncate text-xs text-muted-foreground">{name}</div>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "test_type",
@@ -208,16 +201,6 @@ export function ApplyScoresDataTable({
         cell: ({ row }) => (
           <span className="text-sm text-muted-foreground">
             {paperLabel(row.original.test_type)}
-          </span>
-        ),
-      },
-      {
-        id: "provider",
-        accessorFn: (row) => row.scores_extraction_provider || "reducto",
-        header: "Provider",
-        cell: ({ row }) => (
-          <span className="text-sm text-muted-foreground">
-            {extractionProviderLabel(row.original.scores_extraction_provider || "reducto")}
           </span>
         ),
       },
@@ -231,12 +214,12 @@ export function ApplyScoresDataTable({
         accessorFn: (row) => row.scores_applied_at || "",
         header: "Scores",
         cell: ({ row }) => (
-          <div className="space-y-1">
-            <AppliedBadge document={row.original} />
+          <div className="flex flex-wrap items-center gap-1">
+            <DocumentAppliedBadges document={row.original} activeProvider={applyProvider} />
             {(row.original.scores_unmatched_count ?? 0) > 0 && (
-              <p className="text-xs text-destructive">
+              <span className="text-xs text-destructive">
                 {row.original.scores_unmatched_count} unmatched
-              </p>
+              </span>
             )}
           </div>
         ),
@@ -263,7 +246,7 @@ export function ApplyScoresDataTable({
                 ) : (
                   <Send className="mr-1 h-3.5 w-3.5" />
                 )}
-                Apply
+                {applyScoresActionLabel(applyProvider, { compact: true })}
               </Button>
             </div>
           );
@@ -274,6 +257,7 @@ export function ApplyScoresDataTable({
       allSelected,
       applying,
       applyingDocumentId,
+      applyProvider,
       onApplyRow,
       onSelectAll,
       onSelectDocument,
@@ -297,6 +281,7 @@ export function ApplyScoresDataTable({
         (doc.extracted_id?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.school_name?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.subject_name?.toLowerCase().includes(searchValue) ?? false) ||
+        (doc.subject_code?.toLowerCase().includes(searchValue) ?? false) ||
         (doc.file_name?.toLowerCase().includes(searchValue) ?? false)
       );
     },
@@ -311,7 +296,7 @@ export function ApplyScoresDataTable({
             <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search ID or school..."
+              placeholder="Search ID, school, or subject..."
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
               className="h-8 pl-8 pr-8"
@@ -425,10 +410,12 @@ export function ApplyScoresDataTable({
                         <FileText className="h-12 w-12 text-muted-foreground/50" />
                         {view === "ready" ? (
                           <>
-                            <p className="font-medium text-foreground">No documents waiting to apply</p>
+                            <p className="font-medium text-foreground">
+                              {emptyReadyTitle ?? "No documents waiting to apply"}
+                            </p>
                             <p className="max-w-sm text-sm">
-                              Successful extractions that have not been applied yet will show
-                              up here.
+                              {emptyReadyDescription ??
+                                "Successful extractions that have not been applied yet will show up here."}
                             </p>
                             <Button variant="outline" size="sm" className="mt-2" asChild>
                               <Link href="/scores/data-entry/extraction">
@@ -564,7 +551,7 @@ export function ApplyScoresDataTable({
                 ) : (
                   <>
                     <Send className="h-4 w-4" />
-                    Apply scores to {selectedCount}
+                    Apply {extractionProviderLabel(applyProvider)} to {selectedCount}
                   </>
                 )}
               </Button>

@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
         destination: "/scores/data-entry/extraction",
         permanent: false,
       },
+      {
+        source: "/scores/processed",
+        destination: "/scores/data-entry/apply-scores",
+        permanent: false,
+      },
     ];
   },
   // Pre-existing app TS errors block `next build`; bundling still typechecks via IDE.

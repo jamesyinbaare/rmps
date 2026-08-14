@@ -22,11 +22,10 @@ import {
   getScoresExtractionStatusCounts,
   getAllExams,
   listSchools,
-  listSubjects,
+  getAllSubjects,
   queueReductoExtraction,
   getReductoQueueStatus,
   updateReductoQueueWorkers,
-  updateScoresFromReducto,
   downloadDocument,
   getDocumentDownloadFilename,
 } from "@/lib/api";
@@ -75,7 +74,6 @@ export default function ReductoExtractionPage() {
   const [selectedDocuments, setSelectedDocuments] = useState<Set<number>>(new Set());
   const [queuing, setQueuing] = useState(false);
   const [requeueingDocumentId, setRequeueingDocumentId] = useState<number | null>(null);
-  const [updatingScores, setUpdatingScores] = useState<number | null>(null);
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
   const [countsLoaded, setCountsLoaded] = useState(false);
   const [batchTrackedIds, setBatchTrackedIds] = useState<Set<number>>(new Set());
@@ -89,7 +87,7 @@ export default function ReductoExtractionPage() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
-  const [extractionProvider, setExtractionProvider] = useState<ExtractionProvider>("reducto");
+  const [extractionProvider, setExtractionProvider] = useState<ExtractionProvider>("llama");
   const [concurrentWorkers, setConcurrentWorkers] = useState(4);
   const [workersMax, setWorkersMax] = useState(50);
   const [rateLimitPerSecond, setRateLimitPerSecond] = useState(10);
@@ -118,7 +116,7 @@ export default function ReductoExtractionPage() {
         const [examsData, schoolsData, subjectsData] = await Promise.all([
           getAllExams(),
           listSchools(1, 100),
-          listSubjects(1, 100),
+          getAllSubjects(),
         ]);
         setExams(examsData);
         setSchools(schoolsData);
@@ -402,8 +400,9 @@ export default function ReductoExtractionPage() {
 
   const handleQueueAllPending = async () => {
     try {
+      const { extraction_provider: _listProvider, ...rest } = filters;
       const pendingFilters: ScoreDocumentFilters = {
-        ...filters,
+        ...rest,
         extraction_status: "pending",
         page: 1,
         page_size: 1000,
@@ -436,29 +435,15 @@ export default function ReductoExtractionPage() {
     }
   };
 
-  const handleUpdateScores = async (document: Document) => {
-    setUpdatingScores(document.id);
-    try {
-      const response = await updateScoresFromReducto(document.id, true);
-      toast.success(
-        `Updated ${response.updated_count} score(s). ${response.unmatched_count} unmatched.`
-      );
-      if (response.unmatched_count > 0) {
-        toast.message("Review unmatched records on Apply Scores");
-      }
-      await loadDocuments(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update scores");
-    } finally {
-      setUpdatingScores(null);
-    }
-  };
-
   const handleViewDocument = (document: Document, withPreview = false) => {
     const index = documents.findIndex((d) => d.id === document.id);
     setSelectedIndex(index >= 0 ? index : -1);
     setSelectedDocument(document);
-    setOpenPreviewPanel(withPreview && document.scores_extraction_status === "success");
+    setOpenPreviewPanel(
+      withPreview &&
+        (document.scores_extraction_status === "success" ||
+          (document.extractions ?? []).some((e) => e.status === "success"))
+    );
     setViewerOpen(true);
   };
 
@@ -719,8 +704,6 @@ export default function ReductoExtractionPage() {
             onRowClick={(doc) => handleViewDocument(doc, false)}
             onPreview={(doc) => handleViewDocument(doc, true)}
             onRequeue={handleRequeue}
-            onApply={handleUpdateScores}
-            applyingDocumentId={updatingScores}
             requeueingDocumentId={requeueingDocumentId}
             statusFilter={filters.extraction_status}
             pageSize={filters.page_size || 50}
@@ -772,8 +755,6 @@ export default function ReductoExtractionPage() {
           onDownload={handleDownload}
           enableReductoPreview
           initialShowExtractionPanel={openPreviewPanel}
-          onUpdateScores={handleUpdateScores}
-          updatingScores={updatingScores === selectedDocument.id}
         />
       )}
     </DashboardLayout>

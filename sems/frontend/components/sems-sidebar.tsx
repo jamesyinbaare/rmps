@@ -130,7 +130,6 @@ const getNavMain = (
         { title: "Score Extraction", url: "/scores/data-entry/extraction" },
         { title: "Apply Scores", url: "/scores/data-entry/apply-scores" },
         { title: "Manual", url: "/scores/data-entry/manual" },
-        { title: "Processed ICMs", url: "/scores/processed" },
         { title: "Export Results", url: "/scores/export" },
         { title: "Unmatched Records", url: "/scores/unmatched-records" },
         { title: "Issues", url: "/scores/issues" },

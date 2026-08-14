@@ -58,14 +58,23 @@ def test_calculate_optimal_workers_uses_explicit_and_auto(monkeypatch):
     assert service._calculate_optimal_workers() == 20
 
 
-def test_enqueue_document_stores_method_and_ignores_duplicates():
+def test_enqueue_document_defaults_to_llama():
+    service = ReductoQueueService()
+    service.enqueue_document(1)
+    assert service._queue_items == [(1, "llama")]
+
+
+def test_enqueue_document_allows_same_doc_different_providers():
     service = ReductoQueueService()
     service.enqueue_document(1, "llama")
     service.enqueue_document(2, "reducto")
     service.enqueue_document(1, "reducto")
+    service.enqueue_document(1, "llama")
 
-    assert service._queue_items == [(1, "llama"), (2, "reducto")]
+    assert service._queue_items == [(1, "llama"), (2, "reducto"), (1, "reducto")]
     assert service.get_document_queue_position(1) == 1
+    assert service.get_document_queue_position(1, "llama") == 1
+    assert service.get_document_queue_position(1, "reducto") == 3
     assert service.get_document_queue_position(2) == 2
     assert service.get_document_queue_position(99) is None
 

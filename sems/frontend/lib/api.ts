@@ -656,6 +656,18 @@ export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]>
   return handleResponse<Subject[]>(response);
 }
 
+export async function getAllSubjects(): Promise<Subject[]> {
+  const all: Subject[] = [];
+  let page = 1;
+  while (page <= 20) {
+    const chunk = await listSubjects(page, 100);
+    all.push(...chunk);
+    if (chunk.length < 100) break;
+    page += 1;
+  }
+  return all;
+}
+
 const ALL_EXAMS_CACHE_TTL_MS = 5 * 60 * 1000;
 let allExamsCache: { expiresAt: number; promise: Promise<Exam[]> } | null = null;
 
@@ -2172,7 +2184,7 @@ export async function batchUpdateScores(
 export async function queueReductoExtraction(
   documentIds: number[],
   requireExtractedId: boolean = true,
-  method: "reducto" | "llama" = "reducto"
+  method: "reducto" | "llama" = "llama"
 ): Promise<ReductoQueueResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/queue-reducto-extraction`, {
     method: "POST",
@@ -2211,23 +2223,32 @@ export async function getReductoStatus(documentId: number): Promise<ReductoStatu
   return handleResponse<ReductoStatusResponse>(response);
 }
 
-export async function getReductoData(documentId: number): Promise<ReductoDataResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/reducto-data`);
+export async function getReductoData(
+  documentId: number,
+  provider?: "reducto" | "llama"
+): Promise<ReductoDataResponse> {
+  const params = new URLSearchParams();
+  if (provider) params.set("provider", provider);
+  const query = params.toString();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/documents/${documentId}/extraction-data${query ? `?${query}` : ""}`
+  );
   return handleResponse<ReductoDataResponse>(response);
 }
 
 export async function updateScoresFromReducto(
   documentId: number,
-  verify: boolean = true
+  verify: boolean = true,
+  provider: "reducto" | "llama"
 ): Promise<UpdateScoresFromReductoResponse> {
   // Always send an explicit boolean — API defaults to true when omitted, but we never omit.
   const verifyFlag = verify !== false;
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/update-from-reducto`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/apply-extraction`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ verify: verifyFlag }),
+    body: JSON.stringify({ verify: verifyFlag, provider }),
   });
   return handleResponse<UpdateScoresFromReductoResponse>(response);
 }
@@ -2251,6 +2272,7 @@ export interface BulkUpdateScoresFromReductoResult {
 export async function bulkUpdateScoresFromReducto(
   documentIds: number[],
   verify: boolean = true,
+  provider: "reducto" | "llama",
   onProgress?: (done: number, total: number) => void
 ): Promise<BulkUpdateScoresFromReductoResult> {
   const result: BulkUpdateScoresFromReductoResult = {
@@ -2267,7 +2289,7 @@ export async function bulkUpdateScoresFromReducto(
   for (let i = 0; i < documentIds.length; i++) {
     const documentId = documentIds[i];
     try {
-      const response = await updateScoresFromReducto(documentId, verify);
+      const response = await updateScoresFromReducto(documentId, verify, provider);
       result.documents_succeeded += 1;
       result.updated_count += response.updated_count;
       result.unmatched_count += response.unmatched_count;

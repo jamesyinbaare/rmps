@@ -10,6 +10,7 @@ export interface Document {
   school_id: number | null;
   school_name: string | null; // School name from relationship
   subject_id: number | null;
+  subject_code?: string | null;
   subject_name?: string | null;
   exam_id: number;
   test_type: string | null;
@@ -31,6 +32,7 @@ export interface Document {
   scores_applied_at: string | null; // When extracted scores were applied to SubjectScore
   scores_applied_count: number | null;
   scores_unmatched_count: number | null;
+  extractions?: DocumentScoreExtraction[];
 }
 
 export interface DocumentListResponse {
@@ -491,6 +493,56 @@ export interface BatchScoreUpdateResponse {
 
 export type ExtractionProvider = "reducto" | "llama";
 
+export const DEFAULT_EXTRACTION_PROVIDER: ExtractionProvider = "llama";
+
+export interface DocumentScoreExtraction {
+  provider: string;
+  status: string;
+  confidence: number | null;
+  extracted_at: string | null;
+  applied_at: string | null;
+  applied_count: number | null;
+  unmatched_count: number | null;
+  current_applied: boolean;
+  error_message?: string | null;
+}
+
+export function extractionFor(
+  document: Document,
+  provider: string | null | undefined
+): DocumentScoreExtraction | undefined {
+  if (!provider) return undefined;
+  return document.extractions?.find((row) => row.provider === provider);
+}
+
+export function isExtractionReady(row: DocumentScoreExtraction | undefined | null): boolean {
+  if (!row || row.status !== "success") return false;
+  return !row.current_applied;
+}
+
+export type ExtractionApplyLabel = "Ready" | "Applied" | "New extract";
+
+/** Ready / Applied / New extract for a successful per-provider extract. */
+export function extractionApplyLabel(
+  row: DocumentScoreExtraction | undefined | null
+): ExtractionApplyLabel | null {
+  if (!row || row.status !== "success") return null;
+  if (row.current_applied) return "Applied";
+  if (row.applied_at) return "New extract";
+  return "Ready";
+}
+
+export function successfulExtractionProviders(document: Document): ExtractionProvider[] {
+  const providers = (document.extractions ?? [])
+    .filter((row) => row.status === "success" && (row.provider === "reducto" || row.provider === "llama"))
+    .map((row) => row.provider as ExtractionProvider);
+  return providers.sort((a, b) => {
+    if (a === DEFAULT_EXTRACTION_PROVIDER) return -1;
+    if (b === DEFAULT_EXTRACTION_PROVIDER) return 1;
+    return a.localeCompare(b);
+  });
+}
+
 export function extractionProviderLabel(provider: string | null | undefined): string {
   switch ((provider || "").toLowerCase()) {
     case "llama":
@@ -502,6 +554,36 @@ export function extractionProviderLabel(provider: string | null | undefined): st
     default:
       return provider || "Unknown";
   }
+}
+
+/** Compact name for table cells so two providers fit on one row. */
+export function extractionProviderShortLabel(provider: string | null | undefined): string {
+  switch ((provider || "").toLowerCase()) {
+    case "llama":
+      return "Llama";
+    case "reducto":
+      return "Reducto";
+    case "ocr":
+      return "OCR";
+    default:
+      return extractionProviderLabel(provider);
+  }
+}
+
+export function otherExtractionProvider(provider: ExtractionProvider): ExtractionProvider {
+  return provider === "llama" ? "reducto" : "llama";
+}
+
+export function applyScoresActionLabel(
+  provider: ExtractionProvider | null | undefined,
+  options?: { reapply?: boolean; compact?: boolean }
+): string {
+  const reapply = options?.reapply ?? false;
+  if (!provider) return reapply ? "Re-apply Scores" : "Apply Scores";
+  const name = options?.compact
+    ? extractionProviderShortLabel(provider)
+    : extractionProviderLabel(provider);
+  return reapply ? `Re-apply ${name}` : `Apply ${name}`;
 }
 
 export interface ScoreDocumentFilters {
@@ -625,6 +707,9 @@ export interface ReductoDataResponse {
   status: string;
   confidence: number | null;
   extracted_at: string | null;
+  provider?: string | null;
+  applied_at?: string | null;
+  current_applied?: boolean;
 }
 
 export interface SkippedVerifyRecord {

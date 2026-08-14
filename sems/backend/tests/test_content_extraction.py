@@ -114,6 +114,21 @@ def test_extraction_provider_error(monkeypatch):
     assert "Unknown" in (extraction_provider_error("other") or "")
 
 
+@pytest.mark.asyncio
+async def test_extract_content_defaults_to_llama(monkeypatch):
+    service = ContentExtractionService()
+
+    async def fake_extract(image_data: bytes, test_type: str | None = None):
+        return {"full_text": "", "tables": [{"rows": [{"index_number": "X", "raw_score": "1"}]}]}, 0.9
+
+    monkeypatch.setattr("app.services.content_extraction.settings.llama_extract_enabled", True)
+    monkeypatch.setattr("app.services.content_extraction.settings.llama_cloud_api_key", "test-key")
+    monkeypatch.setattr(service.llama_extractor, "extract", fake_extract)
+    result = await service.extract_content(b"img", method=None, test_type="1")
+    assert result["parsing_method"] == "llama"
+    assert result["parsed_content"]["provider"] == "llama"
+
+
 class FakeExtract:
     def __init__(self, jobs: list[SimpleNamespace]) -> None:
         self.jobs = jobs

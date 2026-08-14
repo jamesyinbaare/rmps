@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -9,6 +8,11 @@ from app.config import settings
 from app.dependencies.database import get_sessionmanager
 from app.models import Document, DataExtractionMethod
 from app.services.content_extraction import content_extraction_service
+from app.services.document_score_extraction import (
+    apply_extract_result,
+    get_or_create_extraction,
+    sync_document_snapshot,
+)
 from app.services.storage import storage_service
 from app.utils.score_utils import add_extraction_method_to_document
 
@@ -22,17 +26,17 @@ class ReductoQueueService:
         self._queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
         self._queue_items: list[tuple[int, str]] = []  # Track queue order for position calculation
         self._worker_tasks: dict[int, asyncio.Task[None]] = {}  # worker_id -> task
-        self._processing_documents: set[int] = set()  # Track actively processing documents
+        self._processing_documents: set[tuple[int, str]] = set()  # (document_id, method)
         self._stopping_workers: set[int] = set()  # Workers asked to exit after current work
         self._target_workers: int = 0
         self._next_worker_id: int = 0
         self._lock = asyncio.Lock()
 
-    def enqueue_document(self, document_id: int, method: str = "reducto") -> None:
-        """Add document to queue. Duplicate document IDs already in the queue are ignored."""
-        if any(queued_id == document_id for queued_id, _ in self._queue_items):
-            return
+    def enqueue_document(self, document_id: int, method: str = "llama") -> None:
+        """Add document+provider to queue. Duplicate (document_id, method) pairs are ignored."""
         item = (document_id, method)
+        if item in self._queue_items:
+            return
         self._queue.put_nowait(item)
         self._queue_items.append(item)
 
@@ -56,20 +60,22 @@ class ReductoQueueService:
             "queue_length": self._queue.qsize(),
             "active_workers": len(active),
             "target_workers": self._target_workers,
-            "processing_documents": list(self._processing_documents),
+            "processing_documents": sorted({doc_id for doc_id, _method in self._processing_documents}),
             "total_workers": len(self._worker_tasks),
             "rate_limit_per_second": settings.reducto_rate_limit_per_second,
             "workers_max": settings.reducto_queue_workers_max,
         }
 
-    def get_document_queue_position(self, document_id: int) -> int | None:
+    def get_document_queue_position(self, document_id: int, method: str | None = None) -> int | None:
         """Get position of document in queue (1-based, None if not in queue)."""
-        for index, (queued_id, _) in enumerate(self._queue_items):
-            if queued_id == document_id:
+        for index, (queued_id, queued_method) in enumerate(self._queue_items):
+            if queued_id != document_id:
+                continue
+            if method is None or queued_method == method:
                 return index + 1
         return None
 
-    async def _process_document(self, document_id: int, method: str = "reducto") -> None:
+    async def _process_document(self, document_id: int, method: str = "llama") -> None:
         """Process a single document through the chosen extraction provider."""
         sessionmanager = get_sessionmanager()
         async with sessionmanager.session() as session:
@@ -82,15 +88,19 @@ class ReductoQueueService:
                 if not document:
                     return
 
-                # Update status to processing
-                document.scores_extraction_status = "processing"
+                # Update per-provider status to processing
+                row = await get_or_create_extraction(session, document.id, method)
+                row.status = "processing"
+                sync_document_snapshot(document, row)
                 await session.commit()
 
                 # Retrieve file content
                 try:
                     file_content = await storage_service.retrieve(document.file_path)
                 except FileNotFoundError:
-                    document.scores_extraction_status = "error"
+                    row.status = "error"
+                    row.error_message = "File not found in storage"
+                    sync_document_snapshot(document, row)
                     await session.commit()
                     return
 
@@ -99,27 +109,27 @@ class ReductoQueueService:
                     file_content, method=method, test_type=document.test_type
                 )
 
-                # Update document with extraction results
-                if extraction_result["is_valid"]:
-                    document.scores_extraction_data = extraction_result["parsed_content"]
-                    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
-                    document.scores_extraction_confidence = extraction_result["parsing_confidence"]
-                    document.scores_extraction_status = "success"
-                    document.scores_extracted_at = datetime.utcnow()
-                else:
-                    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
-                    document.scores_extraction_confidence = extraction_result.get("parsing_confidence", 0.0)
-                    document.scores_extraction_status = "error"
+                apply_extract_result(
+                    row,
+                    is_valid=extraction_result["is_valid"],
+                    parsed_content=extraction_result.get("parsed_content"),
+                    confidence=extraction_result.get("parsing_confidence", 0.0),
+                    error_message=extraction_result.get("error_message"),
+                )
+                add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
+                sync_document_snapshot(document, row)
 
                 await session.commit()
             except Exception:
-                # On error, mark document as error
+                # On error, mark this provider as error without clearing prior data
                 try:
                     stmt = select(Document).where(Document.id == document_id)
                     result = await session.execute(stmt)
                     document = result.scalar_one_or_none()
                     if document:
-                        document.scores_extraction_status = "error"
+                        row = await get_or_create_extraction(session, document.id, method)
+                        row.status = "error"
+                        sync_document_snapshot(document, row)
                         await session.commit()
                 except Exception:
                     pass  # Ignore errors during error handling
@@ -145,15 +155,14 @@ class ReductoQueueService:
                 if item in self._queue_items:
                     self._queue_items.remove(item)
 
-                # Track active processing
-                self._processing_documents.add(document_id)
+                # Track active processing per document+provider
+                self._processing_documents.add((document_id, method))
 
                 try:
                     # Process document (rate limiter is shared, so it will throttle automatically)
                     await self._process_document(document_id, method)
                 finally:
-                    # Remove from active processing
-                    self._processing_documents.discard(document_id)
+                    self._processing_documents.discard((document_id, method))
                     # Mark task as done
                     self._queue.task_done()
             except asyncio.CancelledError:

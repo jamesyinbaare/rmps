@@ -6,6 +6,20 @@ from pydantic import BaseModel, Field
 from app.models import DataExtractionMethod
 
 
+class ScoreExtractionItem(BaseModel):
+    """Per-provider extraction status on a document (list payload, no blob)."""
+
+    provider: str
+    status: str
+    confidence: float | None = None
+    extracted_at: datetime | None = None
+    applied_at: datetime | None = None
+    applied_count: int | None = None
+    unmatched_count: int | None = None
+    current_applied: bool = False
+    error_message: str | None = None
+
+
 class DocumentBase(BaseModel):
     """Base document schema."""
 
@@ -49,6 +63,8 @@ class DocumentResponse(DocumentBase):
     school_id: int | None
     school_name: str | None = None  # School name from relationship
     subject_id: int | None
+    subject_code: str | None = None
+    subject_name: str | None = None
     exam_id: int
     test_type: str | None
     subject_series: str | None
@@ -69,6 +85,7 @@ class DocumentResponse(DocumentBase):
     scores_applied_at: datetime | None = None
     scores_applied_count: int | None = None
     scores_unmatched_count: int | None = None
+    extractions: list[ScoreExtractionItem] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -85,6 +102,7 @@ class DocumentListItem(DocumentBase):
     school_id: int | None
     school_name: str | None = None
     subject_id: int | None
+    subject_code: str | None = None
     subject_name: str | None = None
     exam_id: int
     test_type: str | None
@@ -105,6 +123,7 @@ class DocumentListItem(DocumentBase):
     scores_applied_at: datetime | None = None
     scores_applied_count: int | None = None
     scores_unmatched_count: int | None = None
+    extractions: list[ScoreExtractionItem] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -280,7 +299,7 @@ class ReductoQueueRequest(BaseModel):
         description="If True, skip documents that have no extracted_id",
     )
     method: Literal["reducto", "llama"] = Field(
-        default="reducto",
+        default="llama",
         description="Extraction provider: 'reducto' or 'llama'",
     )
 
