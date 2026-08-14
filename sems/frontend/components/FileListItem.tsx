@@ -19,6 +19,9 @@ interface FileListItemProps {
   isSelected?: boolean;
   onSelectionChange?: (id: number, selected: boolean) => void;
   bulkMode?: boolean;
+  enableSelection?: boolean;
+  onRangeSelect?: (id: number) => void;
+  focused?: boolean;
   size?: "list" | "large-list";
 }
 
@@ -32,6 +35,9 @@ export function FileListItem({
   isSelected = false,
   onSelectionChange,
   bulkMode = false,
+  enableSelection,
+  onRangeSelect,
+  focused = false,
   size = "list",
 }: FileListItemProps) {
   const getFileIcon = (mimeType: string) => {
@@ -46,6 +52,7 @@ export function FileListItem({
 
   const Icon = getFileIcon(document.mime_type);
   const isFailed = document.id_extraction_status === "error";
+  const selectionOn = enableSelection ?? bulkMode;
 
   const isLarge = size === "large-list";
   const paddingClass = isLarge ? "py-4" : "py-3";
@@ -56,29 +63,36 @@ export function FileListItem({
 
   return (
     <div
+      id={`document-row-${document.id}`}
       className={cn(
         "group flex items-center gap-4 border-b transition-colors cursor-pointer",
         paddingClass,
         isFailed
           ? "border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
           : "border-border hover:bg-accent/50",
-        isSelected && "bg-accent"
+        isSelected && "bg-accent",
+        focused && "ring-2 ring-inset ring-primary/40"
       )}
       onClick={(e) => {
-        if (bulkMode && onSelectionChange) {
-          // In bulk mode, clicking the row toggles selection
-          onSelectionChange(document.id, !isSelected);
-        } else {
-          // Normal mode, open document
-          onSelect?.(document);
+        if (e.shiftKey && onRangeSelect) {
+          e.preventDefault();
+          onRangeSelect(document.id);
+          return;
         }
+        onSelect?.(document);
       }}
     >
       {/* Selection Checkbox */}
-      {bulkMode && onSelectionChange && (
+      {selectionOn && onSelectionChange && (
         <div
           className={cn("flex shrink-0 items-center justify-center", iconSize)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.shiftKey && onRangeSelect) {
+              e.preventDefault();
+              onRangeSelect(document.id);
+            }
+          }}
         >
           <Checkbox
             checked={isSelected}
@@ -91,7 +105,7 @@ export function FileListItem({
       )}
 
       {/* File Icon */}
-      {!bulkMode && (
+      {!selectionOn && (
         <div className={cn("flex shrink-0 items-center justify-center rounded bg-muted", iconSize)}>
           <Icon className={cn("text-muted-foreground", iconInnerSize)} />
         </div>

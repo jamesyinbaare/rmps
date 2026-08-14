@@ -28,6 +28,8 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentQueueStatus,
     DocumentResponse,
+    IdExtractionErrorCodeCount,
+    IdExtractionStatusCounts,
     ReductoQueueStatusResponse,
     ReductoWorkersUpdateRequest,
     DocumentSchoolFacet,
@@ -833,6 +835,101 @@ async def bulk_extract_id(
         await session.commit()
         background_tasks.add_task(_extract_ids_for_documents, ids)
     return BulkExtractIdResponse(queued=len(ids), document_ids=ids)
+
+
+def _apply_document_scope_filters(
+    stmt: Any,
+    *,
+    exam_id: int | None,
+    exam_type: ExamType | None,
+    series: ExamSeries | None,
+    year: int | None,
+    school_id: int | None,
+    subject_id: int | None,
+    q: str | None,
+) -> Any:
+    if exam_id is not None:
+        stmt = stmt.where(Document.exam_id == exam_id)
+    else:
+        if exam_type is not None:
+            stmt = stmt.where(Exam.exam_type == exam_type)
+        if series is not None:
+            stmt = stmt.where(Exam.series == series)
+        if year is not None:
+            stmt = stmt.where(Exam.year == year)
+    if school_id is not None:
+        stmt = stmt.where(Document.school_id == school_id)
+    if subject_id is not None:
+        stmt = stmt.where(Document.subject_id == subject_id)
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        stmt = stmt.where(
+            (Document.file_name.ilike(search)) | (Document.extracted_id.ilike(search))
+        )
+    return stmt.where(Document.upload_status == "uploaded")
+
+
+@router.get("/id-extraction-status-counts", response_model=IdExtractionStatusCounts)
+async def get_id_extraction_status_counts(
+    session: DBSessionDep,
+    exam_id: int | None = Query(None),
+    exam_type: ExamType | None = Query(None),
+    series: ExamSeries | None = Query(None),
+    year: int | None = Query(None, ge=1900, le=2100),
+    school_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
+    q: str | None = Query(None, description="Search file_name or extracted_id (case-insensitive)"),
+) -> IdExtractionStatusCounts:
+    """Return ID extraction status and error-type counts for the current document scope.
+
+    Ignores id_extraction_status / error-code filters so the pills stay accurate.
+    """
+    join_exam = (exam_type is not None or series is not None or year is not None) and exam_id is None
+    status_stmt = select(Document.id_extraction_status, func.count(Document.id)).select_from(Document)
+    if join_exam:
+        status_stmt = status_stmt.join(Exam, Document.exam_id == Exam.id)
+    status_stmt = _apply_document_scope_filters(
+        status_stmt,
+        exam_id=exam_id,
+        exam_type=exam_type,
+        series=series,
+        year=year,
+        school_id=school_id,
+        subject_id=subject_id,
+        q=q,
+    ).group_by(Document.id_extraction_status)
+
+    status_result = await session.execute(status_stmt)
+    counts = IdExtractionStatusCounts()
+    for status_value, n in status_result.all():
+        counts.total += n
+        if status_value == "pending":
+            counts.pending = n
+        elif status_value == "success":
+            counts.success = n
+        elif status_value == "error":
+            counts.error = n
+
+    code_stmt = select(Document.id_extraction_error_code, func.count(Document.id)).select_from(Document)
+    if join_exam:
+        code_stmt = code_stmt.join(Exam, Document.exam_id == Exam.id)
+    code_stmt = _apply_document_scope_filters(
+        code_stmt,
+        exam_id=exam_id,
+        exam_type=exam_type,
+        series=series,
+        year=year,
+        school_id=school_id,
+        subject_id=subject_id,
+        q=q,
+    ).where(Document.id_extraction_status == "error").group_by(Document.id_extraction_error_code)
+
+    code_result = await session.execute(code_stmt)
+    counts.error_codes = [
+        IdExtractionErrorCodeCount(code=code or "exception", count=n)
+        for code, n in code_result.all()
+    ]
+    return counts
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

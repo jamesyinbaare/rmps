@@ -25,6 +25,9 @@ interface FileGridProps {
   selectedIds?: Set<number>;
   onSelectionChange?: (id: number, selected: boolean) => void;
   bulkMode?: boolean;
+  enableSelection?: boolean;
+  onRangeSelect?: (id: number) => void;
+  focusedRowIndex?: number;
   size?: "grid" | "large-grid";
 }
 
@@ -36,8 +39,12 @@ export function FileGrid({
   selectedIds = new Set(),
   onSelectionChange,
   bulkMode = false,
+  enableSelection,
+  onRangeSelect,
+  focusedRowIndex = -1,
   size = "grid",
 }: FileGridProps) {
+  const selectionOn = enableSelection ?? bulkMode;
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith("image/")) {
       return ImageIcon;
@@ -69,7 +76,7 @@ export function FileGrid({
 
   return (
     <div className={gridClasses}>
-      {documents.map((doc) => {
+      {documents.map((doc, index) => {
         const Icon = getFileIcon(doc.mime_type);
         const fileType = getFileType(doc.mime_type, doc.file_name);
         const previewUrl = getDocumentThumbnailUrl(doc.id, size === "large-grid" ? 480 : 320);
@@ -88,7 +95,9 @@ export function FileGrid({
             onDelete={onDelete}
             isSelected={selectedIds.has(doc.id)}
             onSelectionChange={onSelectionChange}
-            bulkMode={bulkMode}
+            onRangeSelect={onRangeSelect}
+            enableSelection={selectionOn}
+            focused={index === focusedRowIndex}
             size={size}
           />
         );
@@ -108,7 +117,9 @@ function DocumentCard({
   onDelete,
   isSelected = false,
   onSelectionChange,
-  bulkMode = false,
+  onRangeSelect,
+  enableSelection = false,
+  focused = false,
   size = "grid",
 }: {
   doc: Document;
@@ -121,7 +132,9 @@ function DocumentCard({
   onDelete?: (document: Document) => void;
   isSelected?: boolean;
   onSelectionChange?: (id: number, selected: boolean) => void;
-  bulkMode?: boolean;
+  onRangeSelect?: (id: number) => void;
+  enableSelection?: boolean;
+  focused?: boolean;
   size?: "grid" | "large-grid";
 }) {
   const [imageError, setImageError] = useState(false);
@@ -188,30 +201,38 @@ function DocumentCard({
 
   return (
     <div
+      id={`document-row-${doc.id}`}
       className={cn(
         "group relative flex flex-col rounded-lg border transition-all hover:shadow-lg aspect-square w-full cursor-pointer overflow-hidden",
         isSelected && "ring-2 ring-primary ring-offset-2",
+        focused && "ring-2 ring-primary/40 ring-offset-2",
         isFailed
           ? "border-destructive/50 bg-destructive/5 hover:border-destructive"
           : "border-border bg-card hover:border-primary/50 hover:shadow-md"
       )}
       onClick={(e) => {
-        if (bulkMode && onSelectionChange) {
-          e.stopPropagation();
-          onSelectionChange(doc.id, !isSelected);
-        } else {
-          onSelect?.(doc);
+        if (e.shiftKey && onRangeSelect) {
+          e.preventDefault();
+          onRangeSelect(doc.id);
+          return;
         }
+        onSelect?.(doc);
       }}
     >
       {/* Selection Checkbox */}
-      {bulkMode && onSelectionChange && (
+      {enableSelection && onSelectionChange && (
         <div
           className={cn(
             "absolute z-20",
             size === "large-grid" ? "left-4 top-4" : "left-2 top-2"
           )}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.shiftKey && onRangeSelect) {
+              e.preventDefault();
+              onRangeSelect(doc.id);
+            }
+          }}
         >
           <Checkbox
             checked={isSelected}
@@ -251,7 +272,7 @@ function DocumentCard({
       {/* Status Badges - Top Right (or below checkbox if bulk mode) */}
       <div className={cn(
         "absolute flex flex-col gap-1.5 z-10",
-        bulkMode
+        enableSelection
           ? (size === "large-grid" ? "left-4 top-14" : "left-2 top-10")
           : (size === "large-grid" ? "left-4 top-4" : "left-2 top-2")
       )}>

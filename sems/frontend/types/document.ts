@@ -208,6 +208,19 @@ export interface DocumentFilters {
   page_size?: number;
 }
 
+export interface IdExtractionErrorCodeCount {
+  code: string;
+  count: number;
+}
+
+export interface IdExtractionStatusCounts {
+  total: number;
+  pending: number;
+  success: number;
+  error: number;
+  error_codes: IdExtractionErrorCodeCount[];
+}
+
 export interface ApiError {
   detail: string | object | Array<{ loc: (string | number)[]; msg: string; type: string }>;
 }

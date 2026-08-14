@@ -732,7 +732,7 @@ export default function ReductoExtractionPage() {
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
             emptyActionHref={
               selectedStatuses.length === 1 && selectedStatuses[0] === "pending"
-                ? "/icm-studio/documents/failed-extractions"
+                ? "/icm-studio/documents?id_extraction_status=error"
                 : "/scores/data-entry/apply-scores"
             }
             emptyActionLabel={

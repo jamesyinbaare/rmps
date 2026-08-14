@@ -59,7 +59,13 @@ interface DocumentViewerProps {
   onClose: () => void;
   onNavigate?: (index: number) => void;
   onDownload?: (document: Document) => void;
-  onUpdateId?: (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => Promise<void>;
+  onUpdateId?: (
+    documentId: number,
+    extractedId: string,
+    schoolId?: number,
+    subjectId?: number,
+    options?: { advance?: boolean }
+  ) => Promise<void>;
   onDelete?: (documentId: number) => Promise<void>;
   /** Show Preview Data toggle that opens extraction panel inside this viewer */
   enableReductoPreview?: boolean;
@@ -567,8 +573,10 @@ export function DocumentViewer({
       if (result.is_valid) {
         toast.success(`Extracted ID: ${result.extracted_id}`);
         if (onUpdateId && result.extracted_id) {
-          // Parent refresh path — pass extracted values so list updates
-          await onUpdateId(document.id, result.extracted_id);
+          // Stay on this sheet after retry; parent still refreshes list state.
+          await onUpdateId(document.id, result.extracted_id, undefined, undefined, {
+            advance: false,
+          });
         }
       } else {
         toast.error(result.error_message || "Extraction failed again");
