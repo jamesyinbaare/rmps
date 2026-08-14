@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -61,6 +61,7 @@ class DocumentResponse(DocumentBase):
     id_extraction_error_code: str | None = None
     id_extracted_at: datetime | None = None
     scores_extraction_data: dict[str, Any] | None = None
+    scores_extraction_provider: str | None = None
     scores_extraction_status: str | None = None
     scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
@@ -97,6 +98,7 @@ class DocumentListItem(DocumentBase):
     id_extraction_error_code: str | None = None
     id_extracted_at: datetime | None = None
     scores_extraction_status: str | None = None
+    scores_extraction_provider: str | None = None
     scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
     scores_extracted_at: datetime | None = None
@@ -270,12 +272,16 @@ class ContentExtractionResponse(BaseModel):
 
 
 class ReductoQueueRequest(BaseModel):
-    """Schema for queuing documents for Reducto extraction."""
+    """Schema for queuing documents for structured extraction."""
 
     document_ids: list[int] = Field(..., description="List of document IDs to queue for extraction")
     require_extracted_id: bool = Field(
         default=True,
         description="If True, skip documents that have no extracted_id",
+    )
+    method: Literal["reducto", "llama"] = Field(
+        default="reducto",
+        description="Extraction provider: 'reducto' or 'llama'",
     )
 
 

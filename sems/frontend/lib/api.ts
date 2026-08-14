@@ -2090,6 +2090,7 @@ export async function getFilteredDocuments(
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_status) params.append("extraction_status", filters.extraction_status);
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.extraction_provider) params.append("extraction_provider", filters.extraction_provider);
   if (filters.scores_applied !== undefined) {
     params.append("scores_applied", filters.scores_applied ? "true" : "false");
   }
@@ -2114,6 +2115,7 @@ export async function getScoresExtractionStatusCounts(
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.extraction_provider) params.append("extraction_provider", filters.extraction_provider);
   if (filters.scores_applied !== undefined) {
     params.append("scores_applied", filters.scores_applied ? "true" : "false");
   }
@@ -2169,7 +2171,8 @@ export async function batchUpdateScores(
 
 export async function queueReductoExtraction(
   documentIds: number[],
-  requireExtractedId: boolean = true
+  requireExtractedId: boolean = true,
+  method: "reducto" | "llama" = "reducto"
 ): Promise<ReductoQueueResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/queue-reducto-extraction`, {
     method: "POST",
@@ -2179,6 +2182,7 @@ export async function queueReductoExtraction(
     body: JSON.stringify({
       document_ids: documentIds,
       require_extracted_id: requireExtractedId,
+      method,
     }),
   });
   return handleResponse<ReductoQueueResponse>(response);

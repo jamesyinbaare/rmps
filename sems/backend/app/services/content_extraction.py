@@ -1,6 +1,8 @@
 import asyncio
 import io
 import logging
+import time
+import uuid
 from typing import Any
 
 import pytesseract
@@ -13,6 +15,98 @@ from app.services.reducto_rate_limiter import ReductoRateLimiter
 from app.utils.score_utils import parse_score_value
 
 logger = logging.getLogger(__name__)
+
+STRUCTURED_EXTRACTION_METHODS = frozenset({"reducto", "llama"})
+
+
+def extraction_provider_error(method: str) -> str | None:
+    """Return a user-facing error if the provider is unavailable, else None."""
+    if method == "reducto":
+        if not settings.reducto_enabled:
+            return "Reducto extraction is disabled"
+        if not settings.reducto_api_key:
+            return "Reducto API key is not configured"
+        return None
+    if method == "llama":
+        if not settings.llama_extract_enabled:
+            return "Llama Extract is disabled"
+        if not settings.llama_cloud_api_key:
+            return "Llama Cloud API key is not configured"
+        return None
+    if method == "ocr":
+        return None
+    return f"Unknown extraction method: {method}"
+
+
+def unwrap_extract_data(result: Any) -> dict[str, Any]:
+    """Normalize provider extract payloads (dict, list, or model) to a dict."""
+    if result is None:
+        return {}
+    if hasattr(result, "model_dump") and not isinstance(result, dict):
+        try:
+            result = result.model_dump()
+        except Exception:
+            result = getattr(result, "__dict__", result)
+    if isinstance(result, list):
+        first = result[0] if result else {}
+        return first if isinstance(first, dict) else {}
+    if isinstance(result, dict):
+        return result
+    return {}
+
+
+def transform_candidates_to_tables(
+    extract_data: dict[str, Any],
+    test_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """Map structured extract JSON (candidates[]) to scores_extraction_data tables."""
+    candidates = extract_data.get("candidates") or []
+    if not isinstance(candidates, list) or not candidates:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        score_value = candidate.get("score")
+        verify_value = candidate.get("verify")
+        try:
+            raw_score = parse_score_value(score_value)
+        except ValueError as e:
+            logger.debug(f"Failed to parse score value '{score_value}': {e}")
+            raw_score = None
+        try:
+            verify = parse_score_value(verify_value)
+        except ValueError as e:
+            logger.debug(f"Failed to parse verify value '{verify_value}': {e}")
+            verify = None
+        rows.append(
+            {
+                "index_number": candidate.get("index_number", ""),
+                "raw_score": raw_score,
+                "sn": candidate.get("sn"),
+                "candidate_name": candidate.get("candidate_name"),
+                "attend": candidate.get("attend"),
+                "verify": verify,
+            }
+        )
+
+    if not rows:
+        return []
+
+    return [
+        {
+            "test_type": test_type or str(extract_data.get("paper", "1")),
+            "rows": rows,
+            "metadata": {
+                "sheet_id": extract_data.get("sheet_id"),
+                "series": extract_data.get("series"),
+                "paper": extract_data.get("paper"),
+                "centre": extract_data.get("centre"),
+                "subject": extract_data.get("subject"),
+            },
+        }
+    ]
 
 
 class FullTextExtractor:
@@ -231,14 +325,11 @@ class ReductoExtractor:
                         # Fallback for other response types
                         result = extract_result.result if hasattr(extract_result, "result") else extract_result
 
-                    # Handle result being a list (default: list of length 1) or a single object
-                    if isinstance(result, list):
-                        # Get the first element if it's a list (typical case when chunking is disabled)
-                        extract_data = result[0] if len(result) > 0 else {}
-                        logger.debug(f"Extract result is a list with {len(result)} element(s)")
-                    else:
-                        extract_data = result if isinstance(result, dict) else {}
-                        logger.debug("Extract result is a single object")
+                    extract_data = unwrap_extract_data(result)
+                    logger.debug(
+                        "Extract result unwrapped: %s keys",
+                        list(extract_data.keys()) if extract_data else "empty",
+                    )
 
                     # Log usage information if available
                     if isinstance(extract_result, V3ExtractResponse):
@@ -252,59 +343,12 @@ class ReductoExtractor:
                         if extract_result.studio_link:
                             logger.debug(f"Extract studio_link: {extract_result.studio_link}")
 
-                    # Extract performs Parse first, but full text is not directly in the Extract response
-                    # We would need to use Parse separately if we need the full markdown text
-                    # For now, full_text remains empty when using Extract endpoint
-
-                    candidates = extract_data.get("candidates", []) if isinstance(extract_data, dict) else []
-                    logger.debug(f"Extracted {len(candidates)} candidates from structured data")
-
-                    if candidates:
-                        # Transform candidates to rows format
-                        rows = []
-                        for candidate in candidates:
-                            # Extract and normalize score/verify - handle number, string (A/AA), or None
-                            score_value = candidate.get("score")
-                            verify_value = candidate.get("verify")
-                            try:
-                                # Parse and normalize score value (handles numeric, "A"/"AA", or None)
-                                raw_score = parse_score_value(score_value)
-                            except ValueError as e:
-                                logger.debug(f"Failed to parse score value '{score_value}': {e}")
-                                # Invalid format - set to None
-                                raw_score = None
-
-                            try:
-                                verify = parse_score_value(verify_value)
-                            except ValueError as e:
-                                logger.debug(f"Failed to parse verify value '{verify_value}': {e}")
-                                verify = None
-
-                            row = {
-                                "index_number": candidate.get("index_number", ""),
-                                "raw_score": raw_score,  # Now stored as string: numeric, "A"/"AA", or None
-                                "sn": candidate.get("sn"),
-                                "candidate_name": candidate.get("candidate_name"),
-                                "attend": candidate.get("attend"),
-                                "verify": verify,  # Normalized like raw_score
-                            }
-                            rows.append(row)
-
-                        if rows:
-                            tables.append(
-                                {
-                                    "test_type": test_type or str(extract_data.get("paper", "1")),
-                                    "rows": rows,
-                                    "metadata": {
-                                        "sheet_id": extract_data.get("sheet_id"),
-                                        "series": extract_data.get("series"),
-                                        "paper": extract_data.get("paper"),
-                                        "centre": extract_data.get("centre"),
-                                        "subject": extract_data.get("subject"),
-                                    },
-                                }
-                            )
-                            logger.debug(f"Created table with {len(rows)} rows and metadata")
+                    tables = transform_candidates_to_tables(extract_data, test_type)
+                    if tables:
+                        logger.debug(
+                            "Created table with %s rows and metadata",
+                            len(tables[0].get("rows", [])),
+                        )
                     else:
                         logger.warning("No candidates found in extracted data")
                 except Exception as e:
@@ -385,6 +429,134 @@ class ReductoExtractor:
             return {"full_text": "", "tables": []}, 0.0
 
 
+def _job_status_name(job: Any) -> str:
+    """Normalize SDK enum/string job status to an uppercase name."""
+    raw = getattr(job, "status", job)
+    return str(raw).rsplit(".", 1)[-1].upper()
+
+
+class LlamaExtractExtractor:
+    """Extract content using LlamaCloud Llama Extract v2."""
+
+    def __init__(self) -> None:
+        self.api_key = settings.llama_cloud_api_key
+        self.enabled = settings.llama_extract_enabled
+        self._client: Any = None
+        self._rate_limiter: ReductoRateLimiter | None = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            from llama_cloud import LlamaCloud
+
+            logger.debug("Initializing LlamaCloud client")
+            self._client = LlamaCloud(api_key=self.api_key)
+        return self._client
+
+    def _get_rate_limiter(self) -> ReductoRateLimiter:
+        if self._rate_limiter is None:
+            logger.debug(
+                "Initializing Llama Extract rate limiter (rate=%s req/s)",
+                settings.llama_extract_rate_limit_per_second,
+            )
+            self._rate_limiter = ReductoRateLimiter(settings.llama_extract_rate_limit_per_second)
+        return self._rate_limiter
+
+    def _file_id(self, file_obj: Any) -> str | None:
+        file_id = getattr(file_obj, "id", None) or getattr(file_obj, "file_id", None)
+        if file_id:
+            return str(file_id)
+        if isinstance(file_obj, dict):
+            value = file_obj.get("id") or file_obj.get("file_id")
+            return str(value) if value else None
+        return None
+
+    async def extract(self, image_data: bytes, test_type: str | None = None) -> tuple[dict[str, Any], float]:
+        """
+        Extract content from document using Llama Extract.
+        Returns (parsed_content, confidence) where parsed_content contains full_text and tables.
+        """
+        empty: dict[str, Any] = {"full_text": "", "tables": []}
+        if not self.enabled:
+            logger.warning("Llama Extract is disabled")
+            return empty, 0.0
+        if not self.api_key:
+            logger.warning("Llama Cloud API key is not configured")
+            return empty, 0.0
+        if not settings.reducto_extraction_schema:
+            logger.warning("Extraction schema is not configured")
+            return empty, 0.0
+
+        try:
+            logger.info(
+                "Starting Llama Extract (test_type=%s, image_size=%s bytes)",
+                test_type,
+                len(image_data),
+            )
+            client = self._get_client()
+            rate_limiter = self._get_rate_limiter()
+
+            await rate_limiter.acquire()
+            # Llama Cloud unique-constrains (project_id, data_source_id, external_file_id).
+            upload_id = uuid.uuid4().hex
+            file_obj = await asyncio.to_thread(
+                client.files.create,
+                file=(f"{upload_id}.jpg", image_data, "image/jpeg"),
+                purpose="extract",
+                external_file_id=upload_id,
+            )
+            file_id = self._file_id(file_obj)
+            if not file_id:
+                logger.error("Failed to get file id from Llama Cloud upload")
+                return empty, 0.0
+
+            await rate_limiter.acquire()
+            job = await asyncio.to_thread(
+                client.extract.create,
+                file_input=file_id,
+                configuration={
+                    "data_schema": settings.reducto_extraction_schema,
+                    "extraction_target": "per_doc",
+                    "tier": settings.llama_extract_tier,
+                    "system_prompt": settings.reducto_extraction_prompt,
+                },
+            )
+
+            deadline = time.monotonic() + settings.llama_extract_poll_timeout_seconds
+            status_name = _job_status_name(job)
+            while status_name not in {"COMPLETED", "FAILED", "CANCELLED"}:
+                if time.monotonic() >= deadline:
+                    logger.error("Llama Extract timed out waiting for job %s", getattr(job, "id", None))
+                    return empty, 0.0
+                await asyncio.sleep(settings.llama_extract_poll_interval_seconds)
+                job_id = str(getattr(job, "id", "") or "")
+                if not job_id:
+                    logger.error("Llama Extract job is missing an id")
+                    return empty, 0.0
+                job = await asyncio.to_thread(client.extract.get, job_id)
+                status_name = _job_status_name(job)
+
+            if status_name != "COMPLETED":
+                error_message = getattr(job, "error_message", None) or status_name
+                logger.error("Llama Extract job failed: %s", error_message)
+                return empty, 0.0
+
+            extract_data = unwrap_extract_data(getattr(job, "extract_result", None))
+            tables = transform_candidates_to_tables(extract_data, test_type)
+            parsed_content: dict[str, Any] = {"full_text": "", "tables": tables}
+            confidence = 0.9 if tables else 0.0
+            total_rows = sum(len(table.get("rows", [])) for table in tables)
+            logger.info(
+                "Llama Extract completed: %s tables, %s rows, confidence=%.2f",
+                len(tables),
+                total_rows,
+                confidence,
+            )
+            return parsed_content, confidence
+        except Exception as e:
+            logger.error(f"Llama Extract failed: {e}", exc_info=True)
+            return empty, 0.0
+
+
 class ContentExtractionService:
     """Service for extracting content from documents."""
 
@@ -392,6 +564,7 @@ class ContentExtractionService:
         self.full_text_extractor = FullTextExtractor()
         self.table_extractor = TableExtractor()
         self.reducto_extractor = ReductoExtractor()
+        self.llama_extractor = LlamaExtractExtractor()
 
     async def extract_content(
         self, image_data: bytes, method: str | None = None, test_type: str | None = None
@@ -413,19 +586,21 @@ class ContentExtractionService:
 
         logger.info(f"Starting content extraction: method={method}, test_type={test_type}, image_size={len(image_data)} bytes")
 
-        parsed_content = {"full_text": "", "tables": []}
-        extraction_method = None
+        parsed_content: dict[str, Any] = {"full_text": "", "tables": []}
+        extraction_method = method
         confidence = 0.0
         error_message = None
 
         try:
             if method == "reducto":
-                # Use Reducto exclusively
                 logger.debug("Using Reducto extraction method")
                 parsed_content, confidence = await self.reducto_extractor.extract(image_data, test_type)
                 extraction_method = "reducto"
+            elif method == "llama":
+                logger.debug("Using Llama Extract method")
+                parsed_content, confidence = await self.llama_extractor.extract(image_data, test_type)
+                extraction_method = "llama"
             elif method == "ocr":
-                # Use OCR-based extraction
                 logger.debug("Using OCR extraction method")
                 full_text, text_confidence = await self.full_text_extractor.extract(image_data)
                 tables, table_confidence = await self.table_extractor.extract(image_data, test_type)
@@ -435,19 +610,19 @@ class ContentExtractionService:
                     "tables": tables,
                 }
                 extraction_method = "ocr"
-                # Average confidence of text and table extraction
                 confidence = (text_confidence + table_confidence) / 2 if table_confidence > 0 else text_confidence
             else:
-                logger.warning(f"Unknown extraction method: {method}, falling back to OCR")
-                # Fallback to OCR for unknown methods
-                full_text, text_confidence = await self.full_text_extractor.extract(image_data)
-                tables, table_confidence = await self.table_extractor.extract(image_data, test_type)
-                parsed_content = {
-                    "full_text": full_text,
-                    "tables": tables,
+                logger.warning(f"Unknown extraction method: {method}")
+                return {
+                    "parsed_content": {"full_text": "", "tables": [], "provider": method},
+                    "parsing_method": method,
+                    "parsing_confidence": 0.0,
+                    "is_valid": False,
+                    "error_message": f"Unknown extraction method: {method}",
                 }
-                extraction_method = "ocr"
-                confidence = (text_confidence + table_confidence) / 2 if table_confidence > 0 else text_confidence
+
+            if isinstance(parsed_content, dict):
+                parsed_content = {**parsed_content, "provider": extraction_method}
 
             # Validate extraction result
             is_valid = bool(parsed_content.get("full_text") or parsed_content.get("tables"))
@@ -472,7 +647,7 @@ class ContentExtractionService:
         except Exception as e:
             logger.error(f"Content extraction failed with exception: {e}", exc_info=True)
             return {
-                "parsed_content": {"full_text": "", "tables": []},
+                "parsed_content": {"full_text": "", "tables": [], "provider": extraction_method},
                 "parsing_method": extraction_method,
                 "parsing_confidence": 0.0,
                 "is_valid": False,

@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import type { Document } from "@/types/document";
+import { extractionProviderLabel } from "@/types/document";
 import {
   Table,
   TableBody,
@@ -182,6 +183,16 @@ export function ApplyScoresDataTable({
         cell: ({ row }) => row.original.school_name || "-",
       },
       {
+        id: "provider",
+        accessorFn: (row) => row.scores_extraction_provider || "reducto",
+        header: "Provider",
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {extractionProviderLabel(row.original.scores_extraction_provider || "reducto")}
+          </span>
+        ),
+      },
+      {
         accessorKey: "scores_extracted_at",
         header: "Extracted At",
         cell: ({ row }) => (
@@ -325,12 +336,12 @@ export function ApplyScoresDataTable({
                         <>
                           <p className="font-medium text-foreground">No documents waiting to apply</p>
                           <p className="max-w-sm text-sm">
-                            Successful Reducto extractions that have not been applied yet will show
+                            Successful extractions that have not been applied yet will show
                             up here.
                           </p>
                           <Button variant="outline" size="sm" className="mt-2" asChild>
                             <Link href="/scores/data-entry/reducto-extraction">
-                              Go to Reducto Extraction
+                              Go to Score Extraction
                             </Link>
                           </Button>
                         </>

@@ -17,7 +17,7 @@ const STEPS: Array<{
     id: "extract",
     label: "Extract",
     href: "/scores/data-entry/reducto-extraction",
-    description: "Queue Reducto",
+    description: "Queue extraction",
     icon: Send,
   },
   {

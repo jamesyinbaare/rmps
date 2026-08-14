@@ -45,6 +45,7 @@ import type {
   ExamType,
   ExamSeries,
   ScoresExtractionStatusCounts,
+  ExtractionProvider,
 } from "@/types/document";
 import {
   Loader2,
@@ -106,6 +107,7 @@ export default function ReductoExtractionPage() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [skipWithoutExtractedId, setSkipWithoutExtractedId] = useState(true);
+  const [extractionProvider, setExtractionProvider] = useState<ExtractionProvider>("reducto");
   const [concurrentWorkers, setConcurrentWorkers] = useState(4);
   const [workersMax, setWorkersMax] = useState(50);
   const [rateLimitPerSecond, setRateLimitPerSecond] = useState(10);
@@ -376,7 +378,11 @@ export default function ReductoExtractionPage() {
     setQueuing(true);
     setError(null);
     try {
-      const response = await queueReductoExtraction(documentIds, skipWithoutExtractedId);
+      const response = await queueReductoExtraction(
+        documentIds,
+        skipWithoutExtractedId,
+        extractionProvider
+      );
       if (trackBatch) {
         const queuedIds = response.documents
           .filter((d) => d.status === "queued" || d.status === "processing")
@@ -747,7 +753,7 @@ export default function ReductoExtractionPage() {
   return (
     <DashboardLayout>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TopBar title="Reducto Extraction" />
+        <TopBar title="Score Extraction" />
 
         <div className="border-b border-border bg-background px-4 py-2">
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
@@ -959,6 +965,8 @@ export default function ReductoExtractionPage() {
             }
             skipWithoutExtractedId={skipWithoutExtractedId}
             onSkipWithoutExtractedIdChange={setSkipWithoutExtractedId}
+            extractionProvider={extractionProvider}
+            onExtractionProviderChange={setExtractionProvider}
             concurrentWorkers={concurrentWorkers}
             workersMax={workersMax}
             rateLimitPerSecond={rateLimitPerSecond}

@@ -28,7 +28,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import type { Document } from "@/types/document";
+import type { Document, ExtractionProvider } from "@/types/document";
 import {
   Table,
   TableBody,
@@ -128,6 +128,8 @@ interface ReductoDocumentsDataTableProps {
   onPageSizeChange: (size: number) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
+  extractionProvider: ExtractionProvider;
+  onExtractionProviderChange: (provider: ExtractionProvider) => void;
   concurrentWorkers: number;
   workersMax: number;
   rateLimitPerSecond: number;
@@ -232,6 +234,8 @@ export function ReductoDocumentsDataTable({
   onPageSizeChange,
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
+  extractionProvider,
+  onExtractionProviderChange,
   concurrentWorkers,
   workersMax,
   rateLimitPerSecond,
@@ -563,6 +567,23 @@ export function ReductoDocumentsDataTable({
                 <SelectItem value="100">100</SelectItem>
                 <SelectItem value="200">200</SelectItem>
                 <SelectItem value="500">500</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Provider</span>
+            <Select
+              value={extractionProvider}
+              onValueChange={(value) => onExtractionProviderChange(value as ExtractionProvider)}
+              disabled={queuing}
+            >
+              <SelectTrigger className="h-8 w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reducto">Reducto</SelectItem>
+                <SelectItem value="llama">Llama Extract</SelectItem>
               </SelectContent>
             </Select>
           </div>

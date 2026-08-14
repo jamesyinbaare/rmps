@@ -51,11 +51,13 @@ import type {
   Exam,
   ExamSeries,
   ExamType,
+  ExtractionProvider,
   School,
   ScoreDocumentFilters,
   Subject,
   UnmatchedExtractionRecord,
 } from "@/types/document";
+import { extractionProviderLabel } from "@/types/document";
 import { Loader2, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -428,6 +430,12 @@ export default function ApplyScoresPage() {
         onRemove: () => handleFilterChange("test_type", undefined),
       });
     }
+    if (filters.extraction_provider) {
+      chips.push({
+        label: `Provider: ${extractionProviderLabel(filters.extraction_provider)}`,
+        onRemove: () => handleFilterChange("extraction_provider", undefined),
+      });
+    }
     return chips;
   };
 
@@ -443,7 +451,11 @@ export default function ApplyScoresPage() {
   };
 
   const hasActiveFilters =
-    !!selectedExamId || !!filters.school_id || !!filters.subject_id || !!filters.test_type;
+    !!selectedExamId ||
+    !!filters.school_id ||
+    !!filters.subject_id ||
+    !!filters.test_type ||
+    !!filters.extraction_provider;
 
   return (
     <DashboardLayout>
@@ -557,6 +569,26 @@ export default function ApplyScoresPage() {
                   <SelectItem value="all">All papers</SelectItem>
                   <SelectItem value="1">1</SelectItem>
                   <SelectItem value="2">2</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={filters.extraction_provider || "all"}
+                onValueChange={(value) =>
+                  handleFilterChange(
+                    "extraction_provider",
+                    value === "all" ? undefined : (value as ExtractionProvider)
+                  )
+                }
+                disabled={loadingFilters}
+              >
+                <SelectTrigger className="h-8 w-[160px]">
+                  <SelectValue placeholder="Provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All providers</SelectItem>
+                  <SelectItem value="reducto">Reducto</SelectItem>
+                  <SelectItem value="llama">Llama Extract</SelectItem>
                 </SelectContent>
               </Select>
 
