@@ -1546,6 +1546,7 @@ async def update_scores_from_reducto(
     updated_count = 0
     unmatched_count = 0
     skipped_count = 0
+    cleared_count = 0
     skipped_records: list[dict] = []
     unmatched_records = []
     errors: list[dict[str, str]] = []
@@ -1667,9 +1668,20 @@ async def update_scores_from_reducto(
             # If verify is enabled, check if score and verify fields match
             if verify_enabled:
                 if not scores_match(score_value, verify_value):
-                    logger.debug(
-                        f"Skipping candidate {index_number}: score={score_value} and verify={verify_value} do not match"
-                    )
+                    existing_score = getattr(subject_score, update_score_attr)
+                    cleared = existing_score is not None
+                    if cleared:
+                        setattr(subject_score, update_score_attr, None)
+                        setattr(subject_score, update_method_attr, None)
+                        cleared_count += 1
+                        logger.debug(
+                            f"Cleared {update_score_attr} for index_number={index_number} "
+                            f"(score={score_value} verify={verify_value} mismatch; left {update_doc_attr} unchanged)"
+                        )
+                    else:
+                        logger.debug(
+                            f"Skipping candidate {index_number}: score={score_value} and verify={verify_value} do not match"
+                        )
                     skipped_count += 1
                     skipped_records.append(
                         {
@@ -1677,6 +1689,7 @@ async def update_scores_from_reducto(
                             "candidate_name": candidate_name,
                             "score": score_value,
                             "verify": verify_value,
+                            "cleared": cleared,
                         }
                     )
                     continue
@@ -1706,7 +1719,7 @@ async def update_scores_from_reducto(
             errors.append({"index_number": candidate_data.get("index_number", "unknown"), "error": str(e)})
 
     # Update per-provider applied tracking (do not overwrite extracted_at)
-    if updated_count > 0:
+    if updated_count > 0 or cleared_count > 0:
         applied_at = datetime.utcnow()
         if extraction_row is None:
             extraction_row = await get_extraction(session, document.id, applied_provider)
@@ -1728,7 +1741,8 @@ async def update_scores_from_reducto(
 
     logger.info(
         f"Completed update_scores_from_reducto for document_id={document_id}: "
-        f"updated={updated_count}, unmatched={unmatched_count}, skipped={skipped_count}, errors={len(errors)}"
+        f"updated={updated_count}, unmatched={unmatched_count}, skipped={skipped_count}, "
+        f"cleared={cleared_count}, errors={len(errors)}"
     )
 
     return UpdateScoresFromReductoResponse(
@@ -1738,6 +1752,7 @@ async def update_scores_from_reducto(
         skipped_records=skipped_records,
         unmatched_records=unmatched_records,
         errors=errors,
+        cleared_count=cleared_count,
         scores_applied_at=document.scores_applied_at,
         scores_applied_count=document.scores_applied_count,
         scores_unmatched_count=document.scores_unmatched_count,

@@ -730,6 +730,7 @@ export interface SkippedVerifyRecord {
   candidate_name: string | null;
   score: string | number | null;
   verify: string | number | null;
+  cleared?: boolean;
 }
 
 export interface UpdateScoresFromReductoResponse {
@@ -737,6 +738,7 @@ export interface UpdateScoresFromReductoResponse {
   unmatched_count: number;
   skipped_count?: number;
   skipped_records?: SkippedVerifyRecord[];
+  cleared_count?: number;
   unmatched_records: Array<{
     index_number: string | null;
     candidate_name: string | null;

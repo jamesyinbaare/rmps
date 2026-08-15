@@ -2279,11 +2279,13 @@ export interface BulkUpdateScoresFromReductoResult {
   updated_count: number;
   unmatched_count: number;
   skipped_count: number;
+  cleared_count: number;
   skipped_records: Array<{
     index_number: string | null;
     candidate_name: string | null;
     score: string | number | null;
     verify: string | number | null;
+    cleared?: boolean;
   }>;
   errors: Array<{ document_id: number; error: string }>;
 }
@@ -2301,6 +2303,7 @@ export async function bulkUpdateScoresFromReducto(
     updated_count: 0,
     unmatched_count: 0,
     skipped_count: 0,
+    cleared_count: 0,
     skipped_records: [],
     errors: [],
   };
@@ -2313,6 +2316,7 @@ export async function bulkUpdateScoresFromReducto(
       result.updated_count += response.updated_count;
       result.unmatched_count += response.unmatched_count;
       result.skipped_count += response.skipped_count ?? 0;
+      result.cleared_count += response.cleared_count ?? 0;
       if (response.skipped_records?.length) {
         result.skipped_records.push(...response.skipped_records);
       }
