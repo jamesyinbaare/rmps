@@ -94,3 +94,68 @@ async def test_process_document_passes_queued_method(monkeypatch):
     await service.stop_worker()
 
     assert received == [(42, "llama")]
+
+
+def test_dequeue_documents_cancels_queued_not_processing():
+    service = ReductoQueueService()
+    service.enqueue_document(1, "llama")
+    service.enqueue_document(2, "llama")
+    service._processing_documents.add((2, "llama"))
+
+    result = service.dequeue_documents([1, 2, 3], "llama")
+    assert result["removed"] == [1]
+    assert result["skipped_processing"] == [2]
+    assert result["skipped_not_queued"] == [3]
+    assert (1, "llama") in service._cancelled
+    assert (1, "llama") not in service._queue_items
+    assert (2, "llama") in service._queue_items
+
+
+@pytest.mark.asyncio
+async def test_cancelled_item_is_not_processed(monkeypatch):
+    service = ReductoQueueService()
+    received: list[tuple[int, str]] = []
+
+    async def capture(document_id: int, method: str = "reducto") -> None:
+        received.append((document_id, method))
+
+    monkeypatch.setattr(service, "_process_document", capture)
+    service.enqueue_document(10, "llama")
+    service.enqueue_document(11, "llama")
+    service.dequeue_documents([10], "llama")
+    service.start_worker()
+    await asyncio.sleep(0.2)
+    await service.stop_worker()
+
+    assert received == [(11, "llama")]
+
+
+def test_enqueue_after_dequeue_resurrects_without_duplicate():
+    service = ReductoQueueService()
+    service.enqueue_document(1, "llama")
+    service.dequeue_documents([1], "llama")
+    service.enqueue_document(1, "llama")
+
+    assert service._queue_items == [(1, "llama")]
+    assert (1, "llama") not in service._cancelled
+    assert service._queue.qsize() == 1
+    assert service.get_queue_status()["queue_length"] == 1
+
+
+@pytest.mark.asyncio
+async def test_requeued_cancelled_item_is_processed(monkeypatch):
+    service = ReductoQueueService()
+    received: list[tuple[int, str]] = []
+
+    async def capture(document_id: int, method: str = "reducto") -> None:
+        received.append((document_id, method))
+
+    monkeypatch.setattr(service, "_process_document", capture)
+    service.enqueue_document(10, "llama")
+    service.dequeue_documents([10], "llama")
+    service.enqueue_document(10, "llama")
+    service.start_worker()
+    await asyncio.sleep(0.2)
+    await service.stop_worker()
+
+    assert received == [(10, "llama")]

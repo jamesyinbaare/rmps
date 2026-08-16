@@ -28,6 +28,7 @@ class ReductoQueueService:
         self._worker_tasks: dict[int, asyncio.Task[None]] = {}  # worker_id -> task
         self._processing_documents: set[tuple[int, str]] = set()  # (document_id, method)
         self._stopping_workers: set[int] = set()  # Workers asked to exit after current work
+        self._cancelled: set[tuple[int, str]] = set()
         self._target_workers: int = 0
         self._next_worker_id: int = 0
         self._lock = asyncio.Lock()
@@ -35,10 +36,42 @@ class ReductoQueueService:
     def enqueue_document(self, document_id: int, method: str = "llama") -> None:
         """Add document+provider to queue. Duplicate (document_id, method) pairs are ignored."""
         item = (document_id, method)
+        if item in self._cancelled:
+            # A cancelled copy may still sit in asyncio.Queue until a worker pops it.
+            # Resurrect tracking instead of putting a second copy.
+            self._cancelled.discard(item)
+            if item not in self._queue_items:
+                self._queue_items.append(item)
+            return
         if item in self._queue_items:
             return
         self._queue.put_nowait(item)
         self._queue_items.append(item)
+
+    def dequeue_documents(self, document_ids: list[int], method: str = "llama") -> dict[str, list[int]]:
+        """Cancel queued (document_id, method) pairs so workers skip them.
+
+        Processing items are not cancelled. Returns removed / skipped_processing / skipped_not_queued ids.
+        """
+        removed: list[int] = []
+        skipped_processing: list[int] = []
+        skipped_not_queued: list[int] = []
+        for document_id in document_ids:
+            item = (document_id, method)
+            if item in self._processing_documents:
+                skipped_processing.append(document_id)
+                continue
+            if item in self._queue_items:
+                self._queue_items.remove(item)
+                self._cancelled.add(item)
+                removed.append(document_id)
+            else:
+                skipped_not_queued.append(document_id)
+        return {
+            "removed": removed,
+            "skipped_processing": skipped_processing,
+            "skipped_not_queued": skipped_not_queued,
+        }
 
     def _calculate_optimal_workers(self) -> int:
         """Calculate optimal number of workers based on rate limit."""
@@ -57,7 +90,7 @@ class ReductoQueueService:
         """Get queue length and current processing status."""
         active = [wid for wid, t in self._worker_tasks.items() if not t.done()]
         return {
-            "queue_length": self._queue.qsize(),
+            "queue_length": len(self._queue_items),
             "active_workers": len(active),
             "target_workers": self._target_workers,
             "processing_documents": sorted({doc_id for doc_id, _method in self._processing_documents}),
@@ -150,6 +183,13 @@ class ReductoQueueService:
                     continue
 
                 document_id, method = item
+
+                if item in self._cancelled:
+                    self._cancelled.discard(item)
+                    if item in self._queue_items:
+                        self._queue_items.remove(item)
+                    self._queue.task_done()
+                    continue
 
                 # Remove from tracking list
                 if item in self._queue_items:

@@ -42,6 +42,7 @@ import type {
   BatchScoreUpdate,
   BatchScoreUpdateResponse,
   ReductoQueueResponse,
+  ReductoDequeueResponse,
   ReductoQueueStatusResponse,
   ReductoStatusResponse,
   ManualEntryFilters,
@@ -2125,6 +2126,9 @@ export async function getFilteredDocuments(
   if (filters.scores_applied !== undefined) {
     params.append("scores_applied", filters.scores_applied ? "true" : "false");
   }
+  if (filters.id_ready !== undefined) {
+    params.append("id_ready", filters.id_ready ? "true" : "false");
+  }
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -2217,6 +2221,26 @@ export async function queueReductoExtraction(
     }),
   });
   return handleResponse<ReductoQueueResponse>(response);
+}
+
+export async function dequeueReductoExtraction(
+  documentIds: number[],
+  method: "reducto" | "llama" = "llama"
+): Promise<ReductoDequeueResponse> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/documents/dequeue-reducto-extraction`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        document_ids: documentIds,
+        method,
+      }),
+    }
+  );
+  return handleResponse<ReductoDequeueResponse>(response);
 }
 
 export async function getReductoQueueStatus(): Promise<ReductoQueueStatusResponse> {

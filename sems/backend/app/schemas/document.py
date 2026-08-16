@@ -148,6 +148,7 @@ class ScoresExtractionStatusCounts(BaseModel):
     processing: int = 0
     success: int = 0
     error: int = 0
+    needs_id: int = 0
 
 
 class IdExtractionErrorCodeCount(BaseModel):
@@ -332,6 +333,26 @@ class ReductoQueueResponse(BaseModel):
 
     queued_count: int
     skipped_count: int = 0
+    documents: list[DocumentQueueStatus]
+    queue_length: int
+
+
+class ReductoDequeueRequest(BaseModel):
+    """Schema for removing documents from the structured extraction queue."""
+
+    document_ids: list[int] = Field(..., description="List of document IDs to remove from the queue")
+    method: Literal["reducto", "llama"] = Field(
+        default="llama",
+        description="Extraction provider: 'reducto' or 'llama'",
+    )
+
+
+class ReductoDequeueResponse(BaseModel):
+    """Schema for dequeue response."""
+
+    removed_count: int
+    skipped_processing: int = 0
+    skipped_not_queued: int = 0
     documents: list[DocumentQueueStatus]
     queue_length: int
 

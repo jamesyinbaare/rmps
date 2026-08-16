@@ -24,6 +24,7 @@ import {
   listSchools,
   getAllSubjects,
   queueReductoExtraction,
+  dequeueReductoExtraction,
   getReductoQueueStatus,
   updateReductoQueueWorkers,
   downloadDocument,
@@ -42,6 +43,7 @@ import type {
 } from "@/types/document";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COUNTS: ScoresExtractionStatusCounts = {
   total: 0,
@@ -50,6 +52,7 @@ const EMPTY_COUNTS: ScoresExtractionStatusCounts = {
   processing: 0,
   success: 0,
   error: 0,
+  needs_id: 0,
 };
 
 export default function ReductoExtractionPage() {
@@ -66,6 +69,7 @@ export default function ReductoExtractionPage() {
     page: 1,
     page_size: 50,
     extraction_status: initialStatus,
+    id_ready: true,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -73,6 +77,7 @@ export default function ReductoExtractionPage() {
   const [statusCounts, setStatusCounts] = useState<ScoresExtractionStatusCounts>(EMPTY_COUNTS);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<number>>(new Set());
   const [queuing, setQueuing] = useState(false);
+  const [dequeuing, setDequeuing] = useState(false);
   const [requeueingDocumentId, setRequeueingDocumentId] = useState<number | null>(null);
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
   const [countsLoaded, setCountsLoaded] = useState(false);
@@ -164,7 +169,7 @@ export default function ReductoExtractionPage() {
 
   const loadStatusCounts = useCallback(async () => {
     try {
-      const { extraction_status: _s, page: _p, page_size: _ps, ...rest } = filters;
+      const { extraction_status: _s, page: _p, page_size: _ps, id_ready: _ready, ...rest } = filters;
       const counts = await getScoresExtractionStatusCounts(rest);
       setStatusCounts(counts);
     } catch (err) {
@@ -345,6 +350,7 @@ export default function ReductoExtractionPage() {
   };
 
   const handleSelectAll = () => {
+    if (filters.id_ready === false) return;
     if (selectedDocuments.size === documents.length) {
       setSelectedDocuments(new Set());
     } else {
@@ -378,7 +384,7 @@ export default function ReductoExtractionPage() {
         parts.push(`${response.queued_count} queued`);
       }
       if ((response.skipped_count ?? 0) > 0) {
-        parts.push(`${response.skipped_count} skipped (no ID)`);
+        parts.push(`${response.skipped_count} skipped (needs ID)`);
       }
       if (parts.length > 0) toast.success(parts.join(" · "));
       else toast.message("No documents were queued");
@@ -404,25 +410,55 @@ export default function ReductoExtractionPage() {
       const pendingFilters: ScoreDocumentFilters = {
         ...rest,
         extraction_status: "pending",
+        id_ready: true,
         page: 1,
         page_size: 1000,
       };
       const response = await getFilteredDocuments(pendingFilters);
-      let ids = response.items.map((d) => d.id);
-      if (skipWithoutExtractedId) {
-        ids = response.items.filter((d) => !!d.extracted_id).map((d) => d.id);
-      }
+      const ids = response.items
+        .filter((d) => !!d.extracted_id && d.id_extraction_status !== "error")
+        .map((d) => d.id);
       if (ids.length === 0) {
-        toast.message(
-          skipWithoutExtractedId
-            ? "No pending documents with extracted IDs"
-            : "No pending documents to queue"
-        );
+        toast.message("No pending documents with extracted IDs");
         return;
       }
       await queueDocuments(ids);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to queue pending documents");
+    }
+  };
+
+  const handleDequeueSelected = async () => {
+    const ids = documents
+      .filter((d) => {
+        if (!selectedDocuments.has(d.id)) return false;
+        const row = d.extractions?.find((e) => e.provider === extractionProvider);
+        const status = row?.status ?? ((d.extractions ?? []).length > 0 ? null : d.scores_extraction_status);
+        return status === "queued" || status === "processing";
+      })
+      .map((d) => d.id);
+    if (ids.length === 0) {
+      toast.message("No queued documents in the selection");
+      return;
+    }
+    setDequeuing(true);
+    try {
+      const response = await dequeueReductoExtraction(ids, extractionProvider);
+      await loadDocuments(false);
+      setSelectedDocuments(new Set());
+      const parts: string[] = [];
+      if (response.removed_count > 0) {
+        parts.push(`${response.removed_count} removed`);
+      }
+      if ((response.skipped_processing ?? 0) > 0) {
+        parts.push(`${response.skipped_processing} already processing`);
+      }
+      if (parts.length > 0) toast.success(parts.join(" · "));
+      else toast.message("No documents were removed from the queue");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove documents from the queue");
+    } finally {
+      setDequeuing(false);
     }
   };
 
@@ -474,34 +510,59 @@ export default function ReductoExtractionPage() {
     [filters.extraction_status]
   );
 
-  const handleStatusFilterChange = (statuses: ExtractionStatusFilter[]) => {
-    const next = { ...filters, page: 1 };
-    const serialized = formatExtractionStatuses(statuses);
-    if (serialized) {
-      next.extraction_status = serialized;
-    } else {
-      delete next.extraction_status;
-    }
-    setFilters(next);
-    setSelectedDocuments(new Set());
-  };
+  const needsIdView = filters.id_ready === false;
+  const needsIdCount = statusCounts.needs_id ?? 0;
 
-  /** Toggle a status from the summary chips (multi-select). Empty = all. */
   const handleStatusChipToggle = (status: string | undefined) => {
     if (!status) {
-      handleStatusFilterChange([]);
+      setFilters((prev) => {
+        const next = { ...prev, page: 1, id_ready: true };
+        delete next.extraction_status;
+        return next;
+      });
+      setSelectedDocuments(new Set());
       return;
     }
     const value = status as ExtractionStatusFilter;
-    const next = selectedStatuses.includes(value)
+    const nextStatuses = selectedStatuses.includes(value)
       ? selectedStatuses.filter((s) => s !== value)
       : [...selectedStatuses, value];
-    handleStatusFilterChange(next);
+    const serialized = formatExtractionStatuses(nextStatuses);
+    setFilters((prev) => {
+      const updated = { ...prev, page: 1, id_ready: true };
+      if (serialized) {
+        updated.extraction_status = serialized;
+      } else {
+        delete updated.extraction_status;
+      }
+      return updated;
+    });
+    setSelectedDocuments(new Set());
+  };
+
+  const handleNeedsIdToggle = () => {
+    setFilters((prev) => {
+      const next = { ...prev, page: 1 };
+      if (prev.id_ready === false) {
+        next.id_ready = true;
+        next.extraction_status = "pending";
+      } else {
+        next.id_ready = false;
+        delete next.extraction_status;
+      }
+      return next;
+    });
+    setSelectedDocuments(new Set());
   };
 
   const handleClearFilters = () => {
     setSelectedExamId(undefined);
-    setFilters({ page: 1, page_size: filters.page_size || 50, extraction_status: "pending" });
+    setFilters({
+      page: 1,
+      page_size: filters.page_size || 50,
+      extraction_status: "pending",
+      id_ready: true,
+    });
     setSelectedDocuments(new Set());
   };
 
@@ -580,7 +641,7 @@ export default function ReductoExtractionPage() {
       }
       if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        handleSelectAll();
+        if (filters.id_ready !== false) handleSelectAll();
         return;
       }
       if (e.key === "j" || e.key === "ArrowDown") {
@@ -605,13 +666,13 @@ export default function ReductoExtractionPage() {
       }
       if ((e.key === "q" || e.key === "Q") && selectedDocuments.size > 0) {
         e.preventDefault();
-        void handleQueueSelected();
+        if (filters.id_ready !== false) void handleQueueSelected();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen]);
+  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen, filters.id_ready]);
 
   const parseNumericFilter = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") return undefined;
@@ -641,12 +702,39 @@ export default function ReductoExtractionPage() {
                   : "extract"
               }
             />
-            <ExtractionStatusPills
-              counts={statusCounts}
-              selected={selectedStatuses}
-              onToggle={handleStatusChipToggle}
-              loading={!countsLoaded}
-            />
+            <div className="flex flex-wrap items-center gap-1.5">
+              <ExtractionStatusPills
+                counts={statusCounts}
+                selected={selectedStatuses}
+                onToggle={handleStatusChipToggle}
+                loading={!countsLoaded}
+                needsIdSelected={needsIdView}
+              />
+              <button
+                type="button"
+                onClick={handleNeedsIdToggle}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors",
+                  needsIdView
+                    ? "border-foreground/20 bg-background text-foreground shadow-sm"
+                    : "border-transparent bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+                aria-pressed={needsIdView}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+                Needs ID
+                <span className="tabular-nums text-foreground">
+                  {needsIdCount.toLocaleString()}
+                </span>
+              </button>
+              {needsIdCount > 0 && (
+                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" asChild>
+                  <Link href="/icm-studio/documents?id_extraction_status=error">
+                    Fix failed IDs
+                  </Link>
+                </Button>
+              )}
+            </div>
             <Button variant="outline" size="sm" className="h-8" asChild>
               <Link href="/scores/data-entry/apply-scores">Go to Apply</Link>
             </Button>
@@ -720,10 +808,14 @@ export default function ReductoExtractionPage() {
             onConcurrentWorkersChange={handleConcurrentWorkersChange}
             updatingWorkers={updatingWorkers}
             queuing={queuing}
+            dequeuing={dequeuing}
             skipPreview={skipPreview}
             onQueueSelected={handleQueueSelected}
+            onDequeueSelected={handleDequeueSelected}
             onQueueAllPending={handleQueueAllPending}
-            queueAllPendingDisabled={statusCounts.pending === 0}
+            queueAllPendingDisabled={statusCounts.pending === 0 || needsIdView}
+            pendingReadyCount={statusCounts.pending}
+            queueable={!needsIdView}
             focusedRowIndex={focusedRowIndex}
             onFocusedRowIndexChange={setFocusedRowIndex}
             currentPage={currentPage}
@@ -731,12 +823,12 @@ export default function ReductoExtractionPage() {
             total={total}
             onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
             emptyActionHref={
-              selectedStatuses.length === 1 && selectedStatuses[0] === "pending"
+              needsIdView || (selectedStatuses.length === 1 && selectedStatuses[0] === "pending")
                 ? "/icm-studio/documents?id_extraction_status=error"
                 : "/scores/data-entry/apply-scores"
             }
             emptyActionLabel={
-              selectedStatuses.length === 1 && selectedStatuses[0] === "pending"
+              needsIdView || (selectedStatuses.length === 1 && selectedStatuses[0] === "pending")
                 ? "Fix failed IDs"
                 : "Go to Apply Scores"
             }

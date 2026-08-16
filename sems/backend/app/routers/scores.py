@@ -70,6 +70,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
 
 
+def _id_ready_clause():
+    """Has a usable extracted ID (not an ID-extraction failure)."""
+    return Document.extracted_id.isnot(None) & (
+        (Document.id_extraction_status.is_(None)) | (Document.id_extraction_status != "error")
+    )
+
+
+def _needs_id_clause():
+    """Missing extracted ID or ID extraction failed."""
+    return Document.extracted_id.is_(None) | (Document.id_extraction_status == "error")
+
+
+def _apply_id_readiness_filter(stmt: Any, id_ready: bool | None):
+    if id_ready is True:
+        return stmt.where(_id_ready_clause())
+    if id_ready is False:
+        return stmt.where(_needs_id_clause())
+    return stmt
+
+
 async def _require_clerk_digital_entry_enabled(
     session: DBSessionDep,
     current_user: User,
@@ -174,6 +194,10 @@ async def get_filtered_documents(
         None,
         description="Filter by whether extracted scores have been applied (true=applied, false=not applied)",
     ),
+    id_ready: bool | None = Query(
+        None,
+        description="If true, only documents with a usable extracted ID. If false, only ID extraction failures / missing IDs.",
+    ),
 ) -> DocumentListResponse:
     """Get documents filtered by exam, school, subject, test_type, and extraction status.
 
@@ -242,6 +266,7 @@ async def get_filtered_documents(
         extraction_status=extraction_status,
         scores_applied=scores_applied,
     )
+    base_stmt = _apply_id_readiness_filter(base_stmt, id_ready)
     if clerk_assigned_ids is not None:
         base_stmt = base_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -281,6 +306,7 @@ async def get_filtered_documents(
         extraction_status=extraction_status,
         scores_applied=scores_applied,
     )
+    count_stmt = _apply_id_readiness_filter(count_stmt, id_ready)
     if clerk_assigned_ids is not None:
         count_stmt = count_stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
@@ -421,11 +447,17 @@ async def get_scores_extraction_status_counts(
     if clerk_assigned_ids is not None:
         stmt = stmt.where(Document.extracted_id.in_(clerk_assigned_ids))
 
+    needs_id_stmt = stmt.with_only_columns(func.count(Document.id), maintain_column_froms=True)
+    needs_id_stmt = needs_id_stmt.where(_needs_id_clause())
+    needs_id = int((await session.execute(needs_id_stmt)).scalar() or 0)
+
+    stmt = stmt.where(_id_ready_clause())
     stmt = stmt.group_by(status_col)
     result = await session.execute(stmt)
     rows = result.all()
 
     counts = ScoresExtractionStatusCounts()
+    counts.needs_id = needs_id
     for status_value, count in rows:
         key = (status_value or "pending").strip().lower()
         n = int(count or 0)
