@@ -2448,7 +2448,7 @@ export async function exportCandidateResults(
   exportFormat?: "standard" | "multi_subject",
   testType?: "obj" | "essay",
   subjectIds?: number[]
-): Promise<void> {
+): Promise<string> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
   if (filters.exam_type) params.append("exam_type", filters.exam_type);
@@ -2523,6 +2523,7 @@ export async function exportCandidateResults(
   a.click();
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
+  return filename;
 }
 
 export async function batchUpdateScoresForManualEntry(

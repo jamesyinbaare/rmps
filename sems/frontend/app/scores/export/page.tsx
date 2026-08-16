@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -19,27 +19,39 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   getCandidatesForManualEntry,
   getAllExams,
   listProgrammes,
   listSubjects,
-  findExamId,
   listSchools,
   listSchoolProgrammes,
-  listProgrammeSubjects,
-  exportCandidateResults
+  exportCandidateResults,
 } from "@/lib/api";
-import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, ExamType, ExamSeries, ExportFormat, TestType } from "@/types/document";
-import { Loader2, Download, Search, X, Filter, FileText, ChevronDown, ChevronUp, Check } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DATA_ENTRY_EXAM_STORAGE_KEY } from "@/hooks/useDataEntryExamScope";
+import { examLabel } from "@/components/results/exam-label";
+import { cn } from "@/lib/utils";
+import type {
+  Exam,
+  Programme,
+  Subject,
+  School,
+  ManualEntryFilters,
+  CandidateScoreEntry,
+  ExportFormat,
+  TestType,
+} from "@/types/document";
+import { Loader2, Download, ChevronDown, ChevronUp, LayoutList, Table2 } from "lucide-react";
 import { toast } from "sonner";
 
-// Available export fields grouped by category
+const PREVIEW_PAGE_SIZE = 20;
+const PREVIEW_DEBOUNCE_MS = 300;
+
 const EXPORT_FIELDS = {
   candidate: [
     { id: "candidate_name", label: "Candidate Name" },
@@ -87,69 +99,180 @@ const EXPORT_FIELDS = {
     { id: "created_at", label: "Created At" },
     { id: "updated_at", label: "Updated At" },
   ],
-};
+} as const;
+
+const ALL_FIELD_IDS = Object.values(EXPORT_FIELDS).flatMap((category) =>
+  category.map((field) => field.id)
+);
+
+const MULTI_SUBJECT_ALLOWED = new Set([
+  "candidate_name",
+  "candidate_index_number",
+  "school_name",
+  "school_code",
+  "exam_name",
+  "exam_type",
+  "exam_year",
+  "exam_series",
+  "programme_name",
+  "programme_code",
+]);
+
+const PRESET_SCORES = [
+  "candidate_name",
+  "candidate_index_number",
+  "school_name",
+  "subject_name",
+  "subject_code",
+  "obj_raw_score",
+  "essay_raw_score",
+  "pract_raw_score",
+  "total_score",
+  "grade",
+];
+
+const PRESET_GRADES = [
+  "candidate_name",
+  "candidate_index_number",
+  "school_name",
+  "subject_name",
+  "subject_code",
+  "total_score",
+  "grade",
+];
+
+const PREVIEWABLE_FIELDS = new Set([
+  "candidate_name",
+  "candidate_index_number",
+  "exam_name",
+  "exam_year",
+  "exam_series",
+  "programme_name",
+  "programme_code",
+  "subject_name",
+  "subject_code",
+  "subject_series",
+  "obj_raw_score",
+  "essay_raw_score",
+  "pract_raw_score",
+  "obj_document_id",
+  "essay_document_id",
+  "pract_document_id",
+]);
+
+type ScopeMode = "CORE" | "ELECTIVE" | "subject";
+type FieldPreset = "scores" | "grades" | "all" | "custom";
+
+function allowedFieldIds(format: ExportFormat): string[] {
+  if (format === "multi_subject") {
+    return ALL_FIELD_IDS.filter((id) => MULTI_SUBJECT_ALLOWED.has(id));
+  }
+  return [...ALL_FIELD_IDS];
+}
+
+function presetFieldSet(preset: Exclude<FieldPreset, "custom">, format: ExportFormat): Set<string> {
+  const allowed = new Set(allowedFieldIds(format));
+  if (preset === "all") return allowed;
+  const source = preset === "scores" ? PRESET_SCORES : PRESET_GRADES;
+  return new Set(source.filter((id) => allowed.has(id)));
+}
+
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
+}
+
+function subjectDisplayCode(subject: Pick<Subject, "code" | "original_code">): string {
+  return subject.original_code || subject.code;
+}
+
+function previewValue(
+  candidate: CandidateScoreEntry,
+  fieldId: string,
+  originalCodes: Map<number, string>
+): string {
+  switch (fieldId) {
+    case "candidate_name":
+      return candidate.candidate_name;
+    case "candidate_index_number":
+      return candidate.candidate_index_number;
+    case "exam_name":
+      return candidate.exam_name;
+    case "exam_year":
+      return String(candidate.exam_year);
+    case "exam_series":
+      return candidate.exam_series;
+    case "programme_name":
+      return candidate.programme_name || "—";
+    case "programme_code":
+      return candidate.programme_code || "—";
+    case "subject_name":
+      return candidate.subject_name;
+    case "subject_code":
+      return originalCodes.get(candidate.subject_id) || candidate.subject_code;
+    case "subject_series":
+      return candidate.subject_series != null ? String(candidate.subject_series) : "—";
+    case "obj_raw_score":
+      return candidate.obj_raw_score || "—";
+    case "essay_raw_score":
+      return candidate.essay_raw_score || "—";
+    case "pract_raw_score":
+      return candidate.pract_raw_score || "—";
+    case "obj_document_id":
+      return candidate.obj_document_id || "—";
+    case "essay_document_id":
+      return candidate.essay_document_id || "—";
+    case "pract_document_id":
+      return candidate.pract_document_id || "—";
+    default:
+      return "—";
+  }
+}
+
+function fieldLabel(fieldId: string): string {
+  for (const category of Object.values(EXPORT_FIELDS)) {
+    const field = category.find((item) => item.id === fieldId);
+    if (field) return field.label;
+  }
+  return fieldId;
+}
 
 export default function ExportResultsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const restoredExamRef = useRef(false);
+
   const [candidates, setCandidates] = useState<CandidateScoreEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [filters, setFilters] = useState<ManualEntryFilters>({
-    page: 1,
-    page_size: 100, // Default page size for export preview
-  });
-  const [pendingFilters, setPendingFilters] = useState<ManualEntryFilters>({
-    page: 1,
-    page_size: 100,
-  });
-  const [customPageSize, setCustomPageSize] = useState<string>("");
-  const [showCustomInput, setShowCustomInput] = useState(false);
-  const [totalPages, setTotalPages] = useState(1);
-  const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
 
-  // Filter options
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [programmes, setProgrammes] = useState<Programme[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [loadingProgrammes, setLoadingProgrammes] = useState(false);
-  const [loadingSubjects, setLoadingSubjects] = useState(false);
-  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
 
-  // Exam selection state (single select)
-  const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
+  const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
+  const [schoolId, setSchoolId] = useState<number | undefined>();
+  const [programmeId, setProgrammeId] = useState<number | undefined>();
+  const [subjectId, setSubjectId] = useState<number | undefined>();
+  const [scopeMode, setScopeMode] = useState<ScopeMode | null>(null);
 
-  // Subject type selection state
-  const [subjectType, setSubjectType] = useState<"CORE" | "ELECTIVE" | null>(null);
-
-  // Export format selection state
   const [exportFormat, setExportFormat] = useState<ExportFormat>("standard");
   const [testType, setTestType] = useState<TestType>("obj");
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<Set<number>>(new Set());
 
-  // Field selection state
   const [selectedFields, setSelectedFields] = useState<Set<string>>(
-    new Set([
-      "candidate_name",
-      "candidate_index_number",
-      "school_name",
-      "subject_name",
-      "subject_code",
-      "obj_raw_score",
-      "essay_raw_score",
-      "pract_raw_score",
-      "total_score",
-      "grade",
-    ])
+    () => presetFieldSet("scores", "standard")
   );
+  const [customFieldsOpen, setCustomFieldsOpen] = useState(false);
 
-  // Collapsible state
-  const [filtersOpen, setFiltersOpen] = useState(true);
-  const [fieldsOpen, setFieldsOpen] = useState(true);
-
-  // Load filter options
   useEffect(() => {
     async function loadFilterOptions() {
       setLoadingFilters(true);
@@ -169,1130 +292,837 @@ export default function ExportResultsPage() {
             return allSchools;
           })(),
           (async () => {
-            const allSubjects: Subject[] = [];
+            const loaded: Subject[] = [];
             let page = 1;
             let hasMore = true;
             while (hasMore) {
               const subjectsPage = await listSubjects(page, 100);
-              allSubjects.push(...subjectsPage);
+              loaded.push(...subjectsPage);
               hasMore = subjectsPage.length === 100;
               page++;
             }
-            return allSubjects;
+            return loaded;
           })(),
         ]);
-        setExams(examsData);
+        setExams(Array.isArray(examsData) ? examsData : []);
         setSchools(schoolsData);
         setAllSubjects(subjectsData);
-        setSubjects([]);
-        setProgrammes([]);
       } catch (err) {
         console.error("Error loading filter options:", err);
+        toast.error("Failed to load examinations");
       } finally {
         setLoadingFilters(false);
       }
     }
-    loadFilterOptions();
+    void loadFilterOptions();
   }, []);
 
-  // Load programmes when school is selected or when ELECTIVE subject type is selected
+  const persistExamId = useCallback(
+    (id: number | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (id != null) {
+        try {
+          localStorage.setItem(DATA_ENTRY_EXAM_STORAGE_KEY, String(id));
+        } catch {
+          /* ignore */
+        }
+        params.set("exam_id", String(id));
+      } else {
+        params.delete("exam_id");
+      }
+      const qs = params.toString();
+      router.replace(qs ? `/scores/export?${qs}` : "/scores/export");
+    },
+    [router, searchParams]
+  );
+
+  const applyExamId = useCallback(
+    (id: number | null) => {
+      setSelectedExamId(id);
+      persistExamId(id);
+    },
+    [persistExamId]
+  );
+
+  useEffect(() => {
+    if (restoredExamRef.current || loadingFilters) return;
+    restoredExamRef.current = true;
+
+    const fromQuery = searchParams.get("exam_id");
+    let initial: number | null = fromQuery ? Number(fromQuery) : null;
+    if (initial == null || Number.isNaN(initial)) {
+      try {
+        const stored = localStorage.getItem(DATA_ENTRY_EXAM_STORAGE_KEY);
+        if (stored) initial = Number(stored);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (initial == null || Number.isNaN(initial)) return;
+    if (exams.length > 0 && !exams.some((exam) => exam.id === initial)) return;
+    setSelectedExamId(initial);
+    try {
+      localStorage.setItem(DATA_ENTRY_EXAM_STORAGE_KEY, String(initial));
+    } catch {
+      /* ignore */
+    }
+    if (!fromQuery) persistExamId(initial);
+  }, [loadingFilters, exams, searchParams, persistExamId]);
+
   useEffect(() => {
     async function loadProgrammes() {
-      // If ELECTIVE is selected, we need programmes (can load all or from school)
-      // If school is selected, load programmes for that school
-      // Otherwise, clear programmes
-      if (subjectType === "ELECTIVE") {
-        setLoadingProgrammes(true);
-        try {
-          let programmesData: Programme[] = [];
-          if (pendingFilters.school_id) {
-            // Load programmes for the selected school
-            programmesData = await listSchoolProgrammes(pendingFilters.school_id);
-          } else {
-            // Load all programmes when ELECTIVE is selected but no school
-            let page = 1;
-            let hasMore = true;
-            while (hasMore) {
-              const programmesPage = await listProgrammes(page, 100);
-              programmesData.push(...programmesPage.items);
-              hasMore = page < programmesPage.total_pages;
-              page++;
-            }
-          }
-          setProgrammes(programmesData);
-          setPendingFilters((prev) => ({
-            ...prev,
-            programme_id: undefined,
-          }));
-        } catch (err) {
-          console.error("Error loading programmes:", err);
-        } finally {
-          setLoadingProgrammes(false);
-        }
-      } else if (pendingFilters.school_id) {
-        // Load programmes for school when school is selected (but not ELECTIVE)
-        setLoadingProgrammes(true);
-        try {
-          const programmesData = await listSchoolProgrammes(pendingFilters.school_id);
-          setProgrammes(programmesData);
-          setPendingFilters((prev) => ({
-            ...prev,
-            programme_id: undefined,
-          }));
-        } catch (err) {
-          console.error("Error loading programmes for school:", err);
-        } finally {
-          setLoadingProgrammes(false);
-        }
-      } else {
-        // Clear programmes if no school and not ELECTIVE
+      if (scopeMode !== "ELECTIVE") {
         setProgrammes([]);
-        setSubjects([]);
-      }
-    }
-    loadProgrammes();
-  }, [pendingFilters.school_id, subjectType]);
-
-  // Load subjects when school/programme is selected (optional)
-  useEffect(() => {
-    async function loadSubjectsForSchoolAndProgramme() {
-      // If no school is selected, show all subjects (for exam-wide exports)
-      if (!pendingFilters.school_id) {
-        setSubjects(allSubjects);
         return;
       }
-
-      setLoadingSubjects(true);
+      setLoadingProgrammes(true);
       try {
-        let subjectsToShow: Subject[] = [];
-
-        if (pendingFilters.programme_id) {
-          const programmeSubjects = await listProgrammeSubjects(pendingFilters.programme_id);
-          const programmeSubjectIds = new Set(programmeSubjects.map(ps => ps.subject_id));
-          subjectsToShow = allSubjects.filter(subject => programmeSubjectIds.has(subject.id));
+        let programmesData: Programme[] = [];
+        if (schoolId) {
+          programmesData = await listSchoolProgrammes(schoolId);
         } else {
-          subjectsToShow = allSubjects;
+          let page = 1;
+          let hasMore = true;
+          while (hasMore) {
+            const programmesPage = await listProgrammes(page, 100);
+            programmesData.push(...programmesPage.items);
+            hasMore = page < programmesPage.total_pages;
+            page++;
+          }
         }
-
-        setSubjects(subjectsToShow);
+        setProgrammes(programmesData);
       } catch (err) {
-        console.error("Error loading subjects:", err);
-        setSubjects(allSubjects);
+        console.error("Error loading programmes:", err);
       } finally {
-        setLoadingSubjects(false);
+        setLoadingProgrammes(false);
       }
     }
-    loadSubjectsForSchoolAndProgramme();
-  }, [pendingFilters.school_id, pendingFilters.programme_id, allSubjects]);
+    void loadProgrammes();
+  }, [schoolId, scopeMode]);
 
-  // Load candidates
-  const loadCandidates = useCallback(async () => {
-    // Exam is always required
-    if (!filters.exam_id) {
-      setCandidates([]);
-      setTotal(0);
-      setTotalPages(0);
-      setCurrentPage(1);
-      return;
+  const examOptions = useMemo(
+    () =>
+      [...exams]
+        .sort((a, b) => {
+          if (b.year !== a.year) return b.year - a.year;
+          if (a.series !== b.series) return a.series.localeCompare(b.series);
+          return a.exam_type.localeCompare(b.exam_type);
+        })
+        .map((exam) => ({
+          value: exam.id,
+          label: examLabel(exam),
+        })),
+    [exams]
+  );
+
+  const selectedExam = exams.find((exam) => exam.id === selectedExamId) ?? null;
+
+  const sortedSubjects = useMemo(
+    () =>
+      [...allSubjects].sort((a, b) =>
+        subjectDisplayCode(a).localeCompare(subjectDisplayCode(b), undefined, { numeric: true })
+      ),
+    [allSubjects]
+  );
+
+  const originalCodeById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const subject of allSubjects) {
+      map.set(subject.id, subjectDisplayCode(subject));
     }
+    return map;
+  }, [allSubjects]);
 
-    // For preview, if subject_type is selected (CORE or ELECTIVE),
-    // school and subject are not required
-    if (subjectType === "CORE" || subjectType === "ELECTIVE") {
-      // Allow preview without school/subject for subject type exports
-    } else if (filters.document_id) {
-      // Document ID search requires exam filters only (already checked above)
-    } else if (filters.subject_id) {
-      // Specific subject selected - allow preview
-    } else {
-      // No specific filters - show empty
+  const hasValidScope = useMemo(() => {
+    if (scopeMode === "CORE") return true;
+    if (scopeMode === "ELECTIVE") return programmeId != null;
+    if (scopeMode === "subject") {
+      return exportFormat === "standard" ? subjectId != null : selectedSubjectIds.size > 0;
+    }
+    return false;
+  }, [scopeMode, programmeId, subjectId, selectedSubjectIds, exportFormat]);
+
+  const exportDisableReason = useMemo(() => {
+    if (!selectedExamId) return "Select an examination";
+    if (selectedFields.size === 0) return "Select at least one column";
+    if (!scopeMode) {
+      return exportFormat === "multi_subject"
+        ? "Select Core, Elective, or specific subjects"
+        : "Select Core, Elective, or one subject";
+    }
+    if (scopeMode === "ELECTIVE" && !programmeId) {
+      return "Select a programme for elective subjects";
+    }
+    if (scopeMode === "subject" && exportFormat === "standard" && !subjectId) {
+      return "Select a subject";
+    }
+    if (scopeMode === "subject" && exportFormat === "multi_subject" && selectedSubjectIds.size === 0) {
+      return "Select at least one subject";
+    }
+    return null;
+  }, [
+    selectedExamId,
+    selectedFields.size,
+    scopeMode,
+    exportFormat,
+    programmeId,
+    subjectId,
+    selectedSubjectIds,
+  ]);
+
+  const scopeSummary = useMemo(() => {
+    if (scopeMode === "CORE") return "Core subjects";
+    if (scopeMode === "ELECTIVE") {
+      const programme = programmes.find((item) => item.id === programmeId);
+      return programme ? `Elective · ${programme.name}` : "Elective";
+    }
+    if (scopeMode === "subject") {
+      if (exportFormat === "multi_subject") {
+        return `${selectedSubjectIds.size} subject${selectedSubjectIds.size === 1 ? "" : "s"}`;
+      }
+      const subject = allSubjects.find((item) => item.id === subjectId);
+      return subject ? `${subjectDisplayCode(subject)} — ${subject.name}` : "One subject";
+    }
+    return "No scope";
+  }, [scopeMode, programmeId, programmes, exportFormat, selectedSubjectIds, allSubjects, subjectId]);
+
+  const activePreset = useMemo<FieldPreset>(() => {
+    if (setsEqual(selectedFields, presetFieldSet("scores", exportFormat))) return "scores";
+    if (setsEqual(selectedFields, presetFieldSet("grades", exportFormat))) return "grades";
+    if (setsEqual(selectedFields, presetFieldSet("all", exportFormat))) return "all";
+    return "custom";
+  }, [selectedFields, exportFormat]);
+
+  const previewColumns = useMemo(
+    () => Array.from(selectedFields).filter((fieldId) => PREVIEWABLE_FIELDS.has(fieldId)),
+    [selectedFields]
+  );
+
+  const buildFilters = useCallback(
+    (forPreview = false): ManualEntryFilters => {
+      const firstSelectedSubject =
+        selectedSubjectIds.size > 0 ? Array.from(selectedSubjectIds)[0] : undefined;
+      return {
+        exam_id: selectedExamId ?? undefined,
+        school_id: schoolId,
+        programme_id: scopeMode === "ELECTIVE" ? programmeId : undefined,
+        subject_id:
+          scopeMode === "subject" && exportFormat === "standard"
+            ? subjectId
+            : forPreview && scopeMode === "subject" && exportFormat === "multi_subject"
+              ? firstSelectedSubject
+              : undefined,
+        subject_type: scopeMode === "CORE" || scopeMode === "ELECTIVE" ? scopeMode : undefined,
+        page: 1,
+        page_size: PREVIEW_PAGE_SIZE,
+      };
+    },
+    [
+      selectedExamId,
+      schoolId,
+      scopeMode,
+      programmeId,
+      exportFormat,
+      subjectId,
+      selectedSubjectIds,
+    ]
+  );
+
+  const loadPreview = useCallback(async () => {
+    if (!selectedExamId || !hasValidScope) {
       setCandidates([]);
       setTotal(0);
-      setTotalPages(0);
-      setCurrentPage(1);
+      setError(null);
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const response = await getCandidatesForManualEntry(filters);
+      const response = await getCandidatesForManualEntry(buildFilters(true));
       setCandidates(response.items);
       setTotal(response.total);
-      setTotalPages(response.total_pages);
-      setCurrentPage(response.page);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load candidates");
-      console.error("Error loading candidates:", err);
+      setError(err instanceof Error ? err.message : "Failed to load preview");
+      setCandidates([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
-  }, [filters, subjectType]);
+  }, [selectedExamId, hasValidScope, buildFilters]);
 
   useEffect(() => {
-    loadCandidates();
-  }, [loadCandidates]);
+    if (!selectedExamId || !hasValidScope) {
+      setCandidates([]);
+      setTotal(0);
+      setError(null);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void loadPreview();
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [selectedExamId, hasValidScope, loadPreview]);
 
-  // Update pending filters when exam is selected (don't auto-update active filters)
-  useEffect(() => {
-    if (selectedExamId) {
-      setPendingFilters((prev) => ({
-        ...prev,
-        exam_id: selectedExamId,
-        exam_type: undefined,
-        series: undefined,
-        year: undefined,
-        page: 1,
-      }));
+  const handleFormatChange = (format: ExportFormat) => {
+    setExportFormat(format);
+    setSelectedFields(presetFieldSet(activePreset === "custom" ? "scores" : activePreset, format));
+    if (format === "standard") {
+      setSelectedSubjectIds(new Set());
+      setTestType("obj");
     } else {
-      setPendingFilters((prev) => ({
-        ...prev,
-        exam_id: undefined,
-        exam_type: undefined,
-        series: undefined,
-        year: undefined,
-        page: 1,
-      }));
+      setSubjectId(undefined);
     }
-  }, [selectedExamId]);
-
-  const handleFilterChange = (key: keyof ManualEntryFilters, value: number | string | undefined) => {
-    setPendingFilters((prev) => {
-      const newFilters = {
-        ...prev,
-        [key]: value,
-        page: 1,
-      };
-
-      if (key === "school_id") {
-        newFilters.programme_id = undefined;
-        newFilters.subject_id = undefined;
-        setProgrammes([]);
-        setSubjects([]);
-      }
-      if (key === "programme_id") {
-        newFilters.subject_id = undefined;
-      }
-
-      return newFilters;
-    });
   };
 
-  const handleSearch = () => {
-    const searchFilters: ManualEntryFilters = {
-      ...pendingFilters,
-      page: 1,
-    };
-
-    // Ensure exam_id is set from selectedExamId
-    if (selectedExamId) {
-      searchFilters.exam_id = selectedExamId;
-      searchFilters.exam_type = undefined;
-      searchFilters.series = undefined;
-      searchFilters.year = undefined;
+  const handleScopeChange = (mode: ScopeMode) => {
+    setScopeMode(mode);
+    if (mode !== "ELECTIVE") setProgrammeId(undefined);
+    if (mode !== "subject") {
+      setSubjectId(undefined);
+      setSelectedSubjectIds(new Set());
     }
+  };
 
-    // Add subject_type to filters if selected
-    if (subjectType) {
-      searchFilters.subject_type = subjectType;
-      // Clear subject_id when subject_type is set (they're mutually exclusive)
-      searchFilters.subject_id = undefined;
+  const handleSchoolChange = (value: string | number | "all" | "") => {
+    if (value === "" || value === "all" || value === undefined) {
+      setSchoolId(undefined);
     } else {
-      searchFilters.subject_type = undefined;
+      setSchoolId(typeof value === "number" ? value : parseInt(value.toString(), 10));
     }
-
-    setFilters(searchFilters);
-    setPendingFilters(searchFilters);
+    setProgrammeId(undefined);
   };
 
-  const handleClearFilters = () => {
-    setSelectedExamId(undefined);
-    setSubjectType(null);
-    setCustomPageSize("");
-    setShowCustomInput(false);
-    setPendingFilters({
-      page: 1,
-      page_size: 100,
-    });
-    setFilters({
-      page: 1,
-      page_size: 100,
-    });
-    setProgrammes([]);
-    setSubjects([]);
-  };
-
-  const handlePageSizeChange = (newPageSize: number) => {
-    setFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
-    setPendingFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
-    setShowCustomInput(false);
-    setCustomPageSize("");
-  };
-
-  const handleCustomPageSizeSubmit = () => {
-    const size = parseInt(customPageSize, 10);
-    if (size > 0 && size <= 10000) {
-      handlePageSizeChange(size);
-    } else {
-      toast.error("Page size must be between 1 and 10000");
-      setCustomPageSize("");
-    }
-  };
-
-  const handleExamChange = (value: number | string | undefined) => {
-    if (value === "" || value === undefined || value === null) {
-      setSelectedExamId(undefined);
-    } else {
-      const examId = typeof value === "number" ? value : parseInt(value.toString(), 10);
-      setSelectedExamId(isNaN(examId) ? undefined : examId);
-    }
-  };
-
-  const handleFieldToggle = (fieldId: string) => {
-    setSelectedFields((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(fieldId)) {
-        newSet.delete(fieldId);
-      } else {
-        newSet.add(fieldId);
-      }
-      return newSet;
-    });
-  };
-
-  const handleSelectAllFields = (category: keyof typeof EXPORT_FIELDS) => {
-    const categoryFields = EXPORT_FIELDS[category].map((f) => f.id);
-    setSelectedFields((prev) => {
-      const newSet = new Set(prev);
-      const allSelected = categoryFields.every((f) => newSet.has(f));
-      if (allSelected) {
-        categoryFields.forEach((f) => newSet.delete(f));
-      } else {
-        categoryFields.forEach((f) => newSet.add(f));
-      }
-      return newSet;
-    });
+  const handleClearScope = () => {
+    setSchoolId(undefined);
+    setProgrammeId(undefined);
+    setSubjectId(undefined);
+    setScopeMode(null);
+    setSelectedSubjectIds(new Set());
+    setExportFormat("standard");
+    setTestType("obj");
+    setSelectedFields(presetFieldSet("scores", "standard"));
+    setCustomFieldsOpen(false);
   };
 
   const handleExport = async () => {
-    if (selectedFields.size === 0) {
-      toast.error("Please select at least one field to export");
+    if (exportDisableReason) {
+      toast.error(exportDisableReason);
       return;
     }
 
-    if (!filters.exam_id) {
-      toast.error("Please select an examination before exporting");
-      return;
-    }
-
-    // Validation for standard format
-    if (exportFormat === "standard") {
-      // Validate filter combinations
-      if (subjectType && filters.subject_id) {
-        toast.error("Cannot select both subject type and specific subject. Please choose one.");
-        return;
-      }
-
-      // For ELECTIVE subject type, require programme
-      if (subjectType === "ELECTIVE" && !filters.programme_id) {
-        toast.error("Please select a programme for elective subjects export");
-        return;
-      }
-
-      // If no subject type and no subject selected, show error
-      if (!subjectType && !filters.subject_id) {
-        toast.error("Please select either a subject type (CORE/ELECTIVE) or a specific subject");
-        return;
-      }
-    }
-
-    // Validation for multi-subject format
-    if (exportFormat === "multi_subject") {
-      // Test type is always required (has default value, but validate anyway)
-      if (!testType) {
-        toast.error("Please select a test type (Objectives or Essay)");
-        return;
-      }
-
-      // Either subject type or specific subjects must be selected
-      if (subjectType === null && selectedSubjectIds.size === 0) {
-        toast.error("Please select either a subject type or specific subjects for multi-subject export");
-        return;
-      }
-
-      // Cannot have both subject type and specific subjects
-      if (subjectType !== null && selectedSubjectIds.size > 0) {
-        toast.error("Please select either subject type OR specific subjects, not both");
-        return;
-      }
-
-      // For ELECTIVE subject type, require programme
-      if (subjectType === "ELECTIVE" && !filters.programme_id) {
-        toast.error("Please select a programme for elective subjects export");
-        return;
-      }
-    }
+    const fieldsToExport = Array.from(selectedFields);
+    const subjectIdsArray =
+      exportFormat === "multi_subject" && selectedSubjectIds.size > 0
+        ? Array.from(selectedSubjectIds)
+        : undefined;
+    const exportSubjectType: "CORE" | "ELECTIVE" | undefined =
+      scopeMode === "CORE" || scopeMode === "ELECTIVE" ? scopeMode : undefined;
 
     setExporting(true);
     try {
-      // Filter fields based on export format
-      let fieldsToExport = Array.from(selectedFields);
-      if (exportFormat === "multi_subject") {
-        // Only allow candidate info fields for multi-subject format
-        const allowedFields = [
-          "candidate_name",
-          "candidate_index_number",
-          "school_name",
-          "school_code",
-          "exam_name",
-          "exam_type",
-          "exam_year",
-          "exam_series",
-          "programme_name",
-          "programme_code",
-        ];
-        fieldsToExport = fieldsToExport.filter((field) => allowedFields.includes(field));
-
-        if (fieldsToExport.length === 0) {
-          toast.error("Please select at least one valid candidate info field for multi-subject export");
-          setExporting(false);
-          return;
-        }
-      }
-
-      const subjectIdsArray = selectedSubjectIds.size > 0 ? Array.from(selectedSubjectIds) : undefined;
-      // For multi-subject format: if subjectIds are selected, don't pass subjectType; otherwise pass subjectType
-      // For standard format: pass subjectType as before
-      let exportSubjectType: "CORE" | "ELECTIVE" | undefined = undefined;
-      if (exportFormat === "standard") {
-        exportSubjectType = subjectType || undefined;
-      } else if (exportFormat === "multi_subject" && subjectIdsArray === undefined && subjectType !== null) {
-        exportSubjectType = subjectType;
-      }
-
-      await exportCandidateResults(
-        filters,
+      const filename = await exportCandidateResults(
+        buildFilters(false),
         fieldsToExport,
         exportSubjectType,
         exportFormat,
         exportFormat === "multi_subject" ? testType : undefined,
-        exportFormat === "multi_subject" ? subjectIdsArray : undefined
+        subjectIdsArray
       );
-      toast.success("Export started successfully");
+      toast.success(`Downloaded ${filename}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to export results");
-      console.error("Error exporting:", err);
     } finally {
       setExporting(false);
     }
   };
 
-  const getFieldLabel = (fieldId: string): string => {
-    for (const category of Object.values(EXPORT_FIELDS)) {
-      const field = category.find((f) => f.id === fieldId);
-      if (field) return field.label;
-    }
-    return fieldId;
-  };
-
-  // Get visible columns based on selected fields
-  const visibleColumns = candidates.length > 0
-    ? Array.from(selectedFields).filter((fieldId) => {
-        const candidate = candidates[0];
-        // Map field IDs to candidate properties for preview
-        return true; // Show all selected fields in preview
+  const visibleFieldCategories = useMemo(() => {
+    return Object.entries(EXPORT_FIELDS)
+      .map(([key, fields]) => {
+        const filtered =
+          exportFormat === "multi_subject"
+            ? fields.filter((field) => MULTI_SUBJECT_ALLOWED.has(field.id))
+            : [...fields];
+        return { key, fields: filtered };
       })
-    : [];
+      .filter((category) => category.fields.length > 0);
+  }, [exportFormat]);
+
+  const emptyPreviewMessage = !selectedExamId
+    ? "Select an examination to export"
+    : !hasValidScope
+      ? exportFormat === "multi_subject"
+        ? "Choose Core, Elective, or specific subjects to preview"
+        : "Choose Core, Elective, or a subject to preview"
+      : "No candidates match these filters";
 
   return (
-    <DashboardLayout>
-      <div className="flex flex-col h-full">
-        <TopBar title="Export Candidate Results" />
+    <DashboardLayout title="Export Results">
+      <div className="flex h-full min-h-0 flex-col">
+        <header className="shrink-0 border-b border-border px-6 py-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0 flex-1 space-y-3">
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight">Export Results</h1>
+                <p className="mt-1 text-muted-foreground">
+                  Download candidate scores for one examination.
+                </p>
+              </div>
+              <div className="max-w-md">
+                <Label className="mb-1.5 text-xs text-muted-foreground">
+                  Examination <span className="text-destructive">*</span>
+                </Label>
+                <SearchableSelect
+                  options={examOptions}
+                  value={selectedExamId ?? ""}
+                  onValueChange={(value) => {
+                    if (value === "" || value === "all" || value === undefined) {
+                      applyExamId(null);
+                    } else {
+                      applyExamId(typeof value === "number" ? value : Number(value));
+                    }
+                  }}
+                  placeholder="Select examination"
+                  disabled={loadingFilters}
+                  allowAll={false}
+                  searchPlaceholder="Search by year, series, or type..."
+                  emptyMessage="No examinations found"
+                />
+              </div>
+            </div>
+            {selectedExamId ? (
+              <Button variant="ghost" size="sm" onClick={handleClearScope}>
+                Reset options
+              </Button>
+            ) : null}
+          </div>
+        </header>
 
-        <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
-          {/* Filters */}
-          <Card>
-            <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-              <CardHeader>
-                <CollapsibleTrigger className="flex items-center justify-between w-full">
-                  <CardTitle className="flex items-center gap-2">
-                    <Filter className="h-5 w-5" />
-                    Filters
-                  </CardTitle>
-                  {filtersOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </CollapsibleTrigger>
-              </CardHeader>
-              <CollapsibleContent>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">Examination <span className="text-red-500">*</span></label>
-                      <SearchableSelect
-                        options={exams
-                          .sort((a, b) => {
-                            // Sort by year (desc), then series, then type
-                            if (b.year !== a.year) return b.year - a.year;
-                            if (a.series !== b.series) return a.series.localeCompare(b.series);
-                            return a.exam_type.localeCompare(b.exam_type);
-                          })
-                          .map((exam) => {
-                            // Format exam type for display
-                            let examTypeDisplay = exam.exam_type;
-                            if (exam.exam_type === "Certificate II Examination" || exam.exam_type === "Certificate II Examinations") {
-                              examTypeDisplay = "Certificate II";
-                            }
-                            // Format: {year} {series} {type}
-                            return {
-                              value: exam.id,
-                              label: `${exam.year} ${exam.series} ${examTypeDisplay}`,
-                            };
-                          })}
-                        value={selectedExamId || ""}
-                        onValueChange={handleExamChange}
-                        placeholder="Search examination..."
-                        disabled={loadingFilters}
-                        allowAll={false}
-                        searchPlaceholder="Search by year, series, or type..."
-                        emptyMessage="No examinations found"
-                      />
+        <div className="flex-1 overflow-y-auto p-6">
+          {!selectedExamId ? (
+            <div className="mx-auto max-w-lg rounded-xl border border-dashed p-12 text-center">
+              <p className="font-medium">Select an examination to export</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Format, columns, and preview appear after you choose an examination.
+              </p>
+            </div>
+          ) : (
+            <div className="mx-auto flex max-w-5xl flex-col gap-4">
+              <Card className="gap-4 py-4">
+                <CardHeader className="px-6">
+                  <CardTitle>Format</CardTitle>
+                  <CardDescription>How rows are arranged in the spreadsheet.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => handleFormatChange("standard")}
+                    className={cn(
+                      "rounded-xl border p-4 text-left transition-colors",
+                      exportFormat === "standard"
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-muted/40"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      <LayoutList className="h-4 w-4" />
+                      Standard
                     </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      One row per candidate-subject combination.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFormatChange("multi_subject")}
+                    className={cn(
+                      "rounded-xl border p-4 text-left transition-colors",
+                      exportFormat === "multi_subject"
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-muted/40"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      <Table2 className="h-4 w-4" />
+                      Multi-subject
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      One row per candidate, subject codes as columns.
+                    </p>
+                  </button>
+                </CardContent>
+              </Card>
 
+              <Card className="gap-4 py-4">
+                <CardHeader className="px-6">
+                  <CardTitle>Scope</CardTitle>
+                  <CardDescription>
+                    {exportFormat === "multi_subject"
+                      ? "Choose Core, Elective, or specific subjects."
+                      : "Choose Core, Elective, or one subject."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="inline-flex rounded-lg border border-border bg-muted/30 p-0.5">
+                    {(
+                      [
+                        { value: "CORE", label: "Core" },
+                        { value: "ELECTIVE", label: "Elective" },
+                        {
+                          value: "subject",
+                          label: exportFormat === "multi_subject" ? "Subjects" : "One subject",
+                        },
+                      ] as const
+                    ).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => handleScopeChange(option.value)}
+                        className={cn(
+                          "rounded-md px-3 py-1.5 text-sm transition-colors",
+                          scopeMode === option.value
+                            ? "bg-background font-medium text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {!scopeMode ? (
+                    <p className="text-sm text-muted-foreground">
+                      {exportFormat === "multi_subject"
+                        ? "Select Core, Elective, or specific subjects."
+                        : "Select Core, Elective, or one subject."}
+                    </p>
+                  ) : null}
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
-                      <label className="text-sm font-medium mb-2 block">School (optional)</label>
+                      <Label className="mb-1.5 text-xs text-muted-foreground">School (optional)</Label>
                       <SearchableSelect
                         options={schools.map((school) => ({
                           value: school.id,
                           label: `${school.code} - ${school.name}`,
                         }))}
-                        value={pendingFilters.school_id || ""}
-                        onValueChange={(value) => {
-                          if (value === "" || value === undefined) {
-                            handleFilterChange("school_id", undefined);
-                          } else {
-                            handleFilterChange("school_id", typeof value === "number" ? value : parseInt(value.toString(), 10));
-                          }
-                        }}
-                        placeholder="All Schools (optional)"
+                        value={schoolId || ""}
+                        onValueChange={handleSchoolChange}
+                        placeholder="All schools"
                         disabled={loadingFilters}
-                        allowAll={true}
+                        allowAll
+                        allLabel="All schools"
                         searchPlaceholder="Search schools..."
                         emptyMessage="No schools found"
                       />
                     </div>
 
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Subject Type
-                      </label>
-                      <Select
-                        value={subjectType || ""}
-                        onValueChange={(value) => {
-                          if (value === "" || value === "none") {
-                            setSubjectType(null);
-                            // Clear subject_id if subject type is cleared
-                            handleFilterChange("subject_id", undefined);
-                          } else {
-                            setSubjectType(value as "CORE" | "ELECTIVE");
-                            // Clear subject_id when subject type is selected
-                            handleFilterChange("subject_id", undefined);
+                    {scopeMode === "ELECTIVE" ? (
+                      <div>
+                        <Label className="mb-1.5 text-xs text-muted-foreground">
+                          Programme <span className="text-destructive">*</span>
+                        </Label>
+                        <Select
+                          value={programmeId?.toString()}
+                          onValueChange={(value) =>
+                            setProgrammeId(value ? parseInt(value, 10) : undefined)
                           }
-                        }}
-                        disabled={loadingFilters}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select subject type (optional)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          <SelectItem value="CORE">Core Subjects</SelectItem>
-                          <SelectItem value="ELECTIVE">Elective Subjects</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                          disabled={loadingFilters || loadingProgrammes}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                loadingProgrammes ? "Loading programmes..." : "Select programme"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {programmes.map((programme) => (
+                              <SelectItem key={programme.id} value={programme.id.toString()}>
+                                {programme.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {!programmeId ? (
+                          <p className="mt-1.5 text-xs text-muted-foreground">
+                            A programme is required for elective subjects.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
 
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Programme {subjectType === "ELECTIVE" && <span className="text-red-500">*</span>}
-                      </label>
-                      <Select
-                        value={pendingFilters.programme_id?.toString() || ""}
-                        onValueChange={(value) => handleFilterChange("programme_id", value && value !== "all" ? parseInt(value) : undefined)}
-                        disabled={loadingFilters || loadingProgrammes || (subjectType !== "ELECTIVE")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={subjectType === "ELECTIVE" ? "Select programme (required)" : "All programmes (optional)"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Programmes</SelectItem>
-                          {programmes.map((programme) => (
-                            <SelectItem key={programme.id} value={programme.id.toString()}>
-                              {programme.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {exportFormat === "multi_subject" ? (
+                      <div>
+                        <Label className="mb-1.5 text-xs text-muted-foreground">
+                          Test type <span className="text-destructive">*</span>
+                        </Label>
+                        <Select value={testType} onValueChange={(value) => setTestType(value as TestType)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="obj">Objectives (OBJ)</SelectItem>
+                            <SelectItem value="essay">Essay</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                  </div>
 
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Subject {subjectType ? "(disabled when subject type selected)" : "(optional)"}
-                      </label>
+                  {scopeMode === "subject" && exportFormat === "standard" ? (
+                    <div className="max-w-md">
+                      <Label className="mb-1.5 text-xs text-muted-foreground">
+                        Subject <span className="text-destructive">*</span>
+                      </Label>
                       <SearchableSelect
-                        options={subjects.map((subject) => ({
+                        options={sortedSubjects.map((subject) => ({
                           value: subject.id,
-                          label: `${subject.code} - ${subject.name}`,
+                          label: `${subjectDisplayCode(subject)} - ${subject.name}`,
                         }))}
-                        value={pendingFilters.subject_id || ""}
+                        value={subjectId || ""}
                         onValueChange={(value) => {
-                          if (value === "" || value === undefined) {
-                            handleFilterChange("subject_id", undefined);
-                          } else {
-                            handleFilterChange("subject_id", typeof value === "number" ? value : parseInt(value.toString(), 10));
-                            // Clear subject type when specific subject is selected
-                            setSubjectType(null);
-                          }
+                          if (value === "" || value === undefined) setSubjectId(undefined);
+                          else setSubjectId(typeof value === "number" ? value : parseInt(value.toString(), 10));
                         }}
-                        placeholder="Select specific subject (optional)"
-                        disabled={loadingFilters || loadingSubjects || !!subjectType}
+                        placeholder="Select subject"
+                        disabled={loadingFilters}
                         allowAll={false}
                         searchPlaceholder="Search subjects..."
                         emptyMessage="No subjects found"
                       />
                     </div>
-                  </div>
+                  ) : null}
 
-                  <div className="flex gap-2 mt-4">
-                    <Button onClick={handleSearch} disabled={loading}>
-                      <Search className="h-4 w-4 mr-2" />
-                      Search
-                    </Button>
-                    <Button variant="outline" onClick={handleClearFilters}>
-                      <X className="h-4 w-4 mr-2" />
-                      Clear
-                    </Button>
-                  </div>
-                </CardContent>
-              </CollapsibleContent>
-            </Collapsible>
-          </Card>
-
-          {/* Export Format Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Export Format
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium mb-2 block">Format Type</label>
-                  <Select
-                    value={exportFormat}
-                    onValueChange={(value) => {
-                      const newFormat = value as ExportFormat;
-                      setExportFormat(newFormat);
-
-                      if (newFormat === "standard") {
-                        // Reset multi-subject specific selections when switching to standard
-                        setSelectedSubjectIds(new Set());
-                        setTestType("obj");
-                      } else if (newFormat === "multi_subject") {
-                        // Remove invalid fields when switching to multi-subject format
-                        const invalidFields = [
-                          "subject_name",
-                          "subject_code",
-                          "subject_series",
-                          "obj_raw_score",
-                          "essay_raw_score",
-                          "pract_raw_score",
-                          "obj_normalized",
-                          "essay_normalized",
-                          "pract_normalized",
-                          "total_score",
-                          "grade",
-                          "obj_document_id",
-                          "essay_document_id",
-                          "pract_document_id",
-                        ];
-                        setSelectedFields((prev) => {
-                          const newSet = new Set(prev);
-                          invalidFields.forEach((field) => newSet.delete(field));
-                          return newSet;
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="standard">Standard Format</SelectItem>
-                      <SelectItem value="multi_subject">Multi-Subject Format</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {exportFormat === "standard"
-                      ? "Traditional format with one row per candidate-subject combination"
-                      : "Multiple subjects on same sheet with subject codes as column headers"}
-                  </p>
-                </div>
-
-                {exportFormat === "multi_subject" && (
-                  <>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Test Type <span className="text-red-500">*</span>
-                      </label>
-                      <Select value={testType} onValueChange={(value) => setTestType(value as TestType)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="obj">Objectives (OBJ)</SelectItem>
-                          <SelectItem value="essay">Essay</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Select which raw score type to export for each subject
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Subject Selection <span className="text-red-500">*</span>
-                      </label>
-                      <div className="space-y-2">
-                        <div className="flex gap-4">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="subjectSelection"
-                              checked={subjectType !== null}
-                              onChange={() => {
-                                setSelectedSubjectIds(new Set());
-                                if (subjectType === null) setSubjectType("CORE");
-                              }}
-                              className="w-4 h-4"
-                            />
-                            <span className="text-sm">By Subject Type</span>
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="subjectSelection"
-                              checked={subjectType === null && selectedSubjectIds.size > 0}
-                              onChange={() => {
-                                setSubjectType(null);
-                              }}
-                              className="w-4 h-4"
-                            />
-                            <span className="text-sm">Select Specific Subjects</span>
-                          </label>
-                        </div>
-
-                        {subjectType !== null ? (
-                          <div className="space-y-2">
-                            <Select
-                              value={subjectType || ""}
-                              onValueChange={(value) => {
-                                setSubjectType(value as "CORE" | "ELECTIVE");
-                              }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select subject type" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="CORE">CORE</SelectItem>
-                                <SelectItem value="ELECTIVE">ELECTIVE</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            {subjectType === "ELECTIVE" && (
-                              <p className="text-xs text-muted-foreground">
-                                Programme selection is required for ELECTIVE subjects
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="border rounded-md p-4 max-h-60 overflow-y-auto">
-                            {loadingSubjects ? (
-                              <div className="flex items-center justify-center py-4">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                <span className="ml-2 text-sm text-muted-foreground">Loading subjects...</span>
-                              </div>
-                            ) : allSubjects.length === 0 ? (
-                              <p className="text-sm text-muted-foreground">Please select an examination first</p>
-                            ) : (
-                              <div className="space-y-2">
-                                {allSubjects
-                                  .filter((subject) => {
-                                    // Filter subjects based on exam if available
-                                    if (!filters.exam_id) return true;
-                                    // For now, show all subjects - could be filtered by exam subjects
-                                    return true;
-                                  })
-                                  .map((subject) => (
-                                    <div key={subject.id} className="flex items-center gap-2">
-                                      <Checkbox
-                                        checked={selectedSubjectIds.has(subject.id)}
-                                        onCheckedChange={(checked) => {
-                                          setSelectedSubjectIds((prev) => {
-                                            const newSet = new Set(prev);
-                                            if (checked) {
-                                              newSet.add(subject.id);
-                                            } else {
-                                              newSet.delete(subject.id);
-                                            }
-                                            return newSet;
-                                          });
-                                        }}
-                                      />
-                                      <label className="text-sm cursor-pointer">
-                                        {subject.code} - {subject.name}
-                                      </label>
-                                    </div>
-                                  ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Field Selection */}
-          <Card>
-            <Collapsible open={fieldsOpen} onOpenChange={setFieldsOpen}>
-              <CardHeader>
-                <CollapsibleTrigger className="flex items-center justify-between w-full">
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5" />
-                    Select Fields to Export ({selectedFields.size})
-                  </CardTitle>
-                  {fieldsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </CollapsibleTrigger>
-              </CardHeader>
-              <CollapsibleContent>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {Object.entries(EXPORT_FIELDS).map(([categoryKey, categoryFields]) => {
-                    // Filter out subject-specific fields for multi-subject format
-                    const filteredFields = exportFormat === "multi_subject"
-                      ? categoryFields.filter((f) => {
-                          // Exclude subject-specific fields
-                          return !["subject_name", "subject_code", "subject_series"].includes(f.id) &&
-                                 !f.id.includes("raw_score") &&
-                                 !f.id.includes("normalized") &&
-                                 !f.id.includes("total_score") &&
-                                 !f.id.includes("grade") &&
-                                 !f.id.includes("document_id");
-                        })
-                      : categoryFields;
-
-                    if (filteredFields.length === 0) return null;
-
-                    const categoryLabel = categoryKey
-                      .replace(/([A-Z])/g, " $1")
-                      .replace(/^./, (str) => str.toUpperCase());
-                    const allSelected = filteredFields.every((f) => selectedFields.has(f.id));
-                    const someSelected = filteredFields.some((f) => selectedFields.has(f.id));
-
-                      return (
-                        <div key={categoryKey} className="space-y-2">
-                          <div className="flex items-center gap-2 pb-2 border-b">
-                            <Checkbox
-                              checked={allSelected}
-                              ref={(el) => {
-                                if (el) el.indeterminate = someSelected && !allSelected;
-                              }}
-                              onCheckedChange={() => {
-                                // Only toggle filtered fields
-                                const filteredFieldIds = filteredFields.map((f) => f.id);
-                                setSelectedFields((prev) => {
-                                  const newSet = new Set(prev);
-                                  const allSelected = filteredFieldIds.every((f) => newSet.has(f));
-                                  if (allSelected) {
-                                    filteredFieldIds.forEach((f) => newSet.delete(f));
-                                  } else {
-                                    filteredFieldIds.forEach((f) => newSet.add(f));
-                                  }
-                                  return newSet;
-                                });
-                              }}
-                            />
-                            <label
-                              className="text-sm font-medium cursor-pointer"
-                              onClick={() => {
-                                const filteredFieldIds = filteredFields.map((f) => f.id);
-                                setSelectedFields((prev) => {
-                                  const newSet = new Set(prev);
-                                  const allSelected = filteredFieldIds.every((f) => newSet.has(f));
-                                  if (allSelected) {
-                                    filteredFieldIds.forEach((f) => newSet.delete(f));
-                                  } else {
-                                    filteredFieldIds.forEach((f) => newSet.add(f));
-                                  }
-                                  return newSet;
-                                });
-                              }}
-                            >
-                              {categoryLabel}
+                  {scopeMode === "subject" && exportFormat === "multi_subject" ? (
+                    <div className="max-h-60 overflow-y-auto rounded-md border p-3">
+                      {sortedSubjects.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No subjects found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {sortedSubjects.map((subject) => (
+                            <label key={subject.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={selectedSubjectIds.has(subject.id)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedSubjectIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (checked) next.add(subject.id);
+                                    else next.delete(subject.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              {subjectDisplayCode(subject)} — {subject.name}
                             </label>
-                          </div>
-                          <div className="space-y-1 pl-6">
-                            {filteredFields.map((field) => (
-                              <div key={field.id} className="flex items-center gap-2">
-                                <Checkbox
-                                  checked={selectedFields.has(field.id)}
-                                  onCheckedChange={() => handleFieldToggle(field.id)}
-                                />
-                                <label className="text-sm cursor-pointer" onClick={() => handleFieldToggle(field.id)}>
-                                  {field.label}
-                                </label>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </CollapsibleContent>
-            </Collapsible>
-          </Card>
-
-          {/* Preview and Export */}
-          <Card className="flex-1 overflow-hidden flex flex-col">
-            <CardHeader>
-              <div className="flex items-center justify-between mb-4">
-                <CardTitle>Preview ({total} candidates)</CardTitle>
-                <Button onClick={handleExport} disabled={exporting || selectedFields.size === 0 || loading}>
-                  {exporting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Exporting...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4 mr-2" />
-                      Export to Excel
-                    </>
-                  )}
-                </Button>
-              </div>
-              {/* Page Size Selector */}
-              {total > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground whitespace-nowrap">Rows per page:</span>
-                  {!showCustomInput ? (
-                    <Select
-                      value={(filters.page_size || 100).toString()}
-                      onValueChange={(value) => {
-                        if (value === "custom") {
-                          setShowCustomInput(true);
-                        } else {
-                          handlePageSizeChange(parseInt(value, 10));
-                        }
-                      }}
-                      disabled={loading}
-                    >
-                      <SelectTrigger className="h-8 w-[100px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="100">100</SelectItem>
-                        <SelectItem value="200">200</SelectItem>
-                        <SelectItem value="500">500</SelectItem>
-                        <SelectItem value="1000">1000</SelectItem>
-                        <SelectItem value="custom">Custom...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min="1"
-                        max="10000"
-                        value={customPageSize}
-                        onChange={(e) => setCustomPageSize(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            handleCustomPageSizeSubmit();
-                          } else if (e.key === "Escape") {
-                            setShowCustomInput(false);
-                            setCustomPageSize("");
-                          }
-                        }}
-                        placeholder="Enter size"
-                        className="h-8 w-24"
-                        autoFocus
-                      />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleCustomPageSizeSubmit}
-                        className="h-8 w-8 p-0"
-                      >
-                        <Check className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setShowCustomInput(false);
-                          setCustomPageSize("");
-                        }}
-                        className="h-8 w-8 p-0"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className="flex-1 overflow-auto">
-              {error && (
-                <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
-                  {error}
-                </div>
-              )}
-
-              {loading ? (
-                <div className="flex items-center justify-center h-32">
-                  <Loader2 className="h-6 w-6 animate-spin" />
-                </div>
-              ) : candidates.length === 0 ? (
-                <div className="text-center text-muted-foreground py-12">
-                  No candidates found. Please adjust your filters and search again.
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-16">SN</TableHead>
-                          {visibleColumns.slice(0, 15).map((fieldId) => (
-                            <TableHead key={fieldId}>{getFieldLabel(fieldId)}</TableHead>
                           ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {candidates.map((candidate, idx) => {
-                          const serialNumber = ((currentPage - 1) * (filters.page_size || 100)) + idx + 1;
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <Card className="gap-4 py-4">
+                <CardHeader className="px-6">
+                  <CardTitle>Columns</CardTitle>
+                  <CardDescription>
+                    {exportFormat === "multi_subject"
+                      ? "Candidate information only. Subject scores become column headers."
+                      : "Choose a preset, or customize the spreadsheet columns."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="inline-flex rounded-lg border border-border bg-muted/30 p-0.5">
+                    {(
+                      [
+                        { value: "scores", label: "Scores" },
+                        { value: "grades", label: "Grades" },
+                        { value: "all", label: "All" },
+                      ] as const
+                    ).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setSelectedFields(presetFieldSet(option.value, exportFormat))}
+                        className={cn(
+                          "rounded-md px-3 py-1.5 text-sm transition-colors",
+                          activePreset === option.value
+                            ? "bg-background font-medium text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {activePreset === "custom" ? (
+                    <p className="text-xs text-muted-foreground">Custom column set ({selectedFields.size})</p>
+                  ) : null}
+
+                  <Collapsible open={customFieldsOpen} onOpenChange={setCustomFieldsOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="px-0">
+                        Customize columns
+                        {customFieldsOpen ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-3 grid grid-cols-1 gap-6 md:grid-cols-3">
+                        {visibleFieldCategories.map((category) => {
+                          const categoryLabel = category.key
+                            .replace(/([A-Z])/g, " $1")
+                            .replace(/^./, (str) => str.toUpperCase());
+                          const allSelected = category.fields.every((field) =>
+                            selectedFields.has(field.id)
+                          );
+                          const someSelected = category.fields.some((field) =>
+                            selectedFields.has(field.id)
+                          );
                           return (
-                            <TableRow key={idx}>
-                              <TableCell className="font-medium">{serialNumber}</TableCell>
-                              {visibleColumns.slice(0, 15).map((fieldId) => {
-                              let value: any = "";
-                              switch (fieldId) {
-                                case "candidate_name":
-                                  value = candidate.candidate_name;
-                                  break;
-                                case "candidate_index_number":
-                                  value = candidate.candidate_index_number;
-                                  break;
-                                case "school_name":
-                                  value = "N/A"; // Not in CandidateScoreEntry
-                                  break;
-                                case "school_code":
-                                  value = "N/A";
-                                  break;
-                                case "exam_name":
-                                  value = candidate.exam_name;
-                                  break;
-                                case "exam_type":
-                                  value = candidate.exam_name;
-                                  break;
-                                case "exam_year":
-                                  value = candidate.exam_year;
-                                  break;
-                                case "exam_series":
-                                  value = candidate.exam_series;
-                                  break;
-                                case "programme_name":
-                                  value = candidate.programme_name || "-";
-                                  break;
-                                case "programme_code":
-                                  value = candidate.programme_code || "-";
-                                  break;
-                                case "subject_name":
-                                  value = candidate.subject_name;
-                                  break;
-                                case "subject_code":
-                                  value = candidate.subject_code;
-                                  break;
-                                case "subject_series":
-                                  value = candidate.subject_series || "-";
-                                  break;
-                                case "obj_raw_score":
-                                  value = candidate.obj_raw_score || "-";
-                                  break;
-                                case "essay_raw_score":
-                                  value = candidate.essay_raw_score || "-";
-                                  break;
-                                case "pract_raw_score":
-                                  value = candidate.pract_raw_score || "-";
-                                  break;
-                                case "total_score":
-                                  value = "N/A"; // Need to calculate or get from API
-                                  break;
-                                case "grade":
-                                  value = "N/A"; // Need to calculate or get from API
-                                  break;
-                                default:
-                                  value = "-";
-                              }
-                              return <TableCell key={fieldId}>{String(value)}</TableCell>;
-                              })}
-                            </TableRow>
+                            <div key={category.key} className="space-y-2">
+                              <div className="flex items-center gap-2 border-b pb-2">
+                                <Checkbox
+                                  checked={allSelected}
+                                  ref={(el) => {
+                                    if (el) el.indeterminate = someSelected && !allSelected;
+                                  }}
+                                  onCheckedChange={() => {
+                                    const ids = category.fields.map((field) => field.id);
+                                    setSelectedFields((prev) => {
+                                      const next = new Set(prev);
+                                      const selected = ids.every((id) => next.has(id));
+                                      ids.forEach((id) => {
+                                        if (selected) next.delete(id);
+                                        else next.add(id);
+                                      });
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                <span className="text-sm font-medium">{categoryLabel}</span>
+                              </div>
+                              <div className="space-y-1 pl-6">
+                                {category.fields.map((field) => (
+                                  <label
+                                    key={field.id}
+                                    className="flex cursor-pointer items-center gap-2 text-sm"
+                                  >
+                                    <Checkbox
+                                      checked={selectedFields.has(field.id)}
+                                      onCheckedChange={() => {
+                                        setSelectedFields((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(field.id)) next.delete(field.id);
+                                          else next.add(field.id);
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                    {field.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
                           );
                         })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </>
-              )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </CardContent>
+              </Card>
 
-              {/* Pagination */}
-              {(totalPages > 1 || total > 0) && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-                  <div className="text-sm text-muted-foreground">
-                    Showing {((currentPage - 1) * (filters.page_size || 100)) + 1} to{" "}
-                    {Math.min(currentPage * (filters.page_size || 100), total)} of {total} candidate{total !== 1 ? "s" : ""}
-                    {totalPages > 1 && ` (Page ${currentPage} of ${totalPages})`}
-                  </div>
-                  {totalPages > 1 && (
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setFilters((prev) => ({ ...prev, page: (prev.page || 1) - 1 }))}
-                        disabled={currentPage === 1 || loading}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setFilters((prev) => ({ ...prev, page: (prev.page || 1) + 1 }))}
-                        disabled={currentPage === totalPages || loading}
-                      >
-                        Next
-                      </Button>
+              <Card className="gap-4 py-4">
+                <CardHeader className="px-6">
+                  <CardTitle>Preview</CardTitle>
+                  <CardDescription>
+                    {hasValidScope
+                      ? exportFormat === "multi_subject" && scopeMode === "subject" && selectedSubjectIds.size > 1
+                        ? `Sample of the first selected subject (${Math.min(candidates.length, PREVIEW_PAGE_SIZE)} of ${total} rows). Export includes all selected subjects.`
+                        : `Sample of ${Math.min(candidates.length, PREVIEW_PAGE_SIZE)} of ${total} matching rows.`
+                      : "A short sample appears once the examination and scope are set."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {error ? (
+                    <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-destructive">
+                      {error}
+                    </div>
+                  ) : null}
+                  {loading ? (
+                    <div className="flex h-32 items-center justify-center">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                  ) : candidates.length === 0 ? (
+                    <div className="py-10 text-center text-sm text-muted-foreground">
+                      {emptyPreviewMessage}
+                    </div>
+                  ) : previewColumns.length === 0 ? (
+                    <div className="py-10 text-center text-sm text-muted-foreground">
+                      Selected columns are not available in preview. Export still includes them.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            {previewColumns.map((fieldId) => (
+                              <TableHead key={fieldId}>{fieldLabel(fieldId)}</TableHead>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {candidates.map((candidate, idx) => (
+                            <TableRow key={`${candidate.subject_registration_id}-${idx}`}>
+                              {previewColumns.map((fieldId) => (
+                                <TableCell key={fieldId}>{previewValue(candidate, fieldId, originalCodeById)}</TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
+
+        <footer className="shrink-0 border-t border-border bg-background px-6 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 text-sm">
+              <p className="truncate font-medium">
+                {selectedExam ? examLabel(selectedExam) : "No examination selected"}
+                {selectedExamId ? ` · ${scopeSummary} · ${exportFormat === "standard" ? "Standard" : "Multi-subject"}` : ""}
+              </p>
+              <p className="text-muted-foreground">
+                {exportDisableReason
+                  ? exportDisableReason
+                  : total > 0
+                    ? `${total} candidate row${total === 1 ? "" : "s"} ready to export`
+                    : "Ready to export"}
+              </p>
+            </div>
+            <Button onClick={handleExport} disabled={exporting || !!exportDisableReason}>
+              {exporting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Export to Excel
+                </>
+              )}
+            </Button>
+          </div>
+        </footer>
       </div>
     </DashboardLayout>
   );
