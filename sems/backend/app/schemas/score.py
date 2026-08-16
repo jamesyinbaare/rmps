@@ -179,6 +179,7 @@ class UpdateScoresFromReductoResponse(BaseModel):
     skipped_records: list[dict] = []
     unmatched_records: list[dict]
     errors: list[dict[str, str]]
+    cleared_count: int = 0
     scores_applied_at: datetime | None = None
     scores_applied_count: int | None = None
     scores_unmatched_count: int | None = None

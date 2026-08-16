@@ -262,7 +262,12 @@ export default function ApplyScoresPage() {
         `${result.documents_succeeded}/${result.documents_processed} document(s)`,
       ];
       if (result.skipped_count > 0) {
-        parts.push(`${result.skipped_count} skipped (verify mismatch)`);
+        const cleared = result.cleared_count ?? 0;
+        parts.push(
+          cleared > 0
+            ? `${result.skipped_count} skipped (verify mismatch, ${cleared} cleared)`
+            : `${result.skipped_count} skipped (verify mismatch)`
+        );
         const details = result.skipped_records
           .slice(0, 3)
           .map(
@@ -324,7 +329,12 @@ export default function ApplyScoresPage() {
         `${extractionProviderLabel(appliedProvider)} · ${response.updated_count} score(s) updated`,
       ];
       if (response.skipped_count) {
-        parts.push(`${response.skipped_count} skipped (verify mismatch)`);
+        const cleared = response.cleared_count ?? 0;
+        parts.push(
+          cleared > 0
+            ? `${response.skipped_count} skipped (verify mismatch, ${cleared} cleared)`
+            : `${response.skipped_count} skipped (verify mismatch)`
+        );
         const skipped = response.skipped_records ?? [];
         const details = skipped
           .slice(0, 3)
@@ -618,7 +628,7 @@ export default function ApplyScoresPage() {
                   </li>
                   <li>
                     {verifyEnabled
-                      ? "Score and verify fields must match before a score is written."
+                      ? "Score and verify fields must match before a score is written. Mismatches with an existing raw score will be blanked (sheet IDs stay assigned)."
                       : "Verify is off — scores will be written without comparing to the verify field."}
                   </li>
                   {alreadyAppliedInSelection > 0 && (

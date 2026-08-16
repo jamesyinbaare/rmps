@@ -31,6 +31,7 @@ from app.routers import (
     validation_batches,
 )
 from app.services.reducto_queue import reducto_queue_service
+from app.services.document_score_extraction import reset_stale_queue_statuses
 from app.config import logging_settings, settings
 from starlette.types import ASGIApp
 
@@ -128,7 +129,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Ensure SUPER_ADMIN user exists
         async with sessionmanager.session() as session:
             await ensure_super_admin_user(session)
-        # Start Reducto queue worker
+        async with sessionmanager.session() as session:
+            reset_count = await reset_stale_queue_statuses(session)
+            if reset_count:
+                logger.info(
+                    "reset stale extract queue statuses",
+                    extra={"count": reset_count},
+                )
+        # Start Reducto queue worker after orphans are pending (do not rehydrate)
         reducto_queue_service.start_worker()
         sweeper_task = asyncio.create_task(_abandoned_upload_sweeper_loop())
         try:

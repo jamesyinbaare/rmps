@@ -42,6 +42,7 @@ import type {
   BatchScoreUpdate,
   BatchScoreUpdateResponse,
   ReductoQueueResponse,
+  ReductoDequeueResponse,
   ReductoQueueStatusResponse,
   ReductoStatusResponse,
   ManualEntryFilters,
@@ -2125,6 +2126,9 @@ export async function getFilteredDocuments(
   if (filters.scores_applied !== undefined) {
     params.append("scores_applied", filters.scores_applied ? "true" : "false");
   }
+  if (filters.id_ready !== undefined) {
+    params.append("id_ready", filters.id_ready ? "true" : "false");
+  }
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -2219,6 +2223,26 @@ export async function queueReductoExtraction(
   return handleResponse<ReductoQueueResponse>(response);
 }
 
+export async function dequeueReductoExtraction(
+  documentIds: number[],
+  method: "reducto" | "llama" = "llama"
+): Promise<ReductoDequeueResponse> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/documents/dequeue-reducto-extraction`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        document_ids: documentIds,
+        method,
+      }),
+    }
+  );
+  return handleResponse<ReductoDequeueResponse>(response);
+}
+
 export async function getReductoQueueStatus(): Promise<ReductoQueueStatusResponse> {
   const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/documents/reducto-queue/status`);
   return handleResponse<ReductoQueueStatusResponse>(response);
@@ -2279,11 +2303,13 @@ export interface BulkUpdateScoresFromReductoResult {
   updated_count: number;
   unmatched_count: number;
   skipped_count: number;
+  cleared_count: number;
   skipped_records: Array<{
     index_number: string | null;
     candidate_name: string | null;
     score: string | number | null;
     verify: string | number | null;
+    cleared?: boolean;
   }>;
   errors: Array<{ document_id: number; error: string }>;
 }
@@ -2301,6 +2327,7 @@ export async function bulkUpdateScoresFromReducto(
     updated_count: 0,
     unmatched_count: 0,
     skipped_count: 0,
+    cleared_count: 0,
     skipped_records: [],
     errors: [],
   };
@@ -2313,6 +2340,7 @@ export async function bulkUpdateScoresFromReducto(
       result.updated_count += response.updated_count;
       result.unmatched_count += response.unmatched_count;
       result.skipped_count += response.skipped_count ?? 0;
+      result.cleared_count += response.cleared_count ?? 0;
       if (response.skipped_records?.length) {
         result.skipped_records.push(...response.skipped_records);
       }

@@ -11,6 +11,7 @@ from app.services.document_score_extraction import (
     legacy_extraction_provider,
     normalize_provider,
     payload_for_apply,
+    reset_stale_extraction_row,
     sync_document_snapshot,
 )
 
@@ -119,6 +120,85 @@ def test_sync_document_snapshot_copies_last_touched_row() -> None:
     assert document.scores_extraction_confidence == 0.8
     assert document.scores_extracted_at == extracted_at
     assert document.scores_applied_at is None
+
+
+def _document_stub() -> Document:
+    return Document(
+        file_path="x",
+        file_name="x.jpg",
+        mime_type="image/jpeg",
+        file_size=1,
+        checksum="a" * 64,
+        exam_id=1,
+    )
+
+
+def test_reset_stale_extraction_row_queued_and_processing() -> None:
+    extracted_at = datetime.utcnow()
+    applied_at = extracted_at
+    payload = {"provider": "llama", "tables": []}
+
+    queued_doc = _document_stub()
+    queued_doc.scores_extraction_status = "queued"
+    queued_row = DocumentScoreExtraction(
+        document_id=1,
+        provider="llama",
+        status="queued",
+        data=payload,
+        extracted_at=extracted_at,
+        applied_at=applied_at,
+        applied_count=4,
+    )
+    assert reset_stale_extraction_row(queued_doc, queued_row) is True
+    assert queued_row.status == "pending"
+    assert queued_row.data == payload
+    assert queued_row.applied_at == applied_at
+    assert queued_row.applied_count == 4
+    assert queued_doc.scores_extraction_status == "pending"
+
+    processing_doc = _document_stub()
+    processing_doc.scores_extraction_status = "processing"
+    processing_row = DocumentScoreExtraction(
+        document_id=2,
+        provider="llama",
+        status="processing",
+        data=payload,
+    )
+    assert reset_stale_extraction_row(processing_doc, processing_row) is True
+    assert processing_row.status == "pending"
+    assert processing_doc.scores_extraction_status == "pending"
+
+
+def test_reset_stale_extraction_row_leaves_success_untouched() -> None:
+    document = _document_stub()
+    document.scores_extraction_status = "success"
+    document.scores_extraction_data = {"provider": "reducto"}
+    row = DocumentScoreExtraction(
+        document_id=1,
+        provider="llama",
+        status="success",
+        data={"provider": "llama"},
+    )
+    assert reset_stale_extraction_row(document, row) is False
+    assert row.status == "success"
+    assert document.scores_extraction_status == "success"
+    assert document.scores_extraction_data == {"provider": "reducto"}
+
+
+def test_reset_stale_extraction_row_does_not_overwrite_success_snapshot() -> None:
+    document = _document_stub()
+    document.scores_extraction_status = "success"
+    document.scores_extraction_data = {"provider": "reducto"}
+    row = DocumentScoreExtraction(
+        document_id=1,
+        provider="llama",
+        status="processing",
+        data={"provider": "llama"},
+    )
+    assert reset_stale_extraction_row(document, row) is True
+    assert row.status == "pending"
+    assert document.scores_extraction_status == "success"
+    assert document.scores_extraction_data == {"provider": "reducto"}
 
 
 def test_legacy_blob_conversion_uses_embedded_provider() -> None:

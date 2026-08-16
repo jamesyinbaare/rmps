@@ -25,6 +25,7 @@ interface ExtractionStatusPillsProps {
   selected: ExtractionStatusFilter[];
   onToggle: (status: string | undefined) => void;
   loading?: boolean;
+  needsIdSelected?: boolean;
 }
 
 export function ExtractionStatusPills({
@@ -32,6 +33,7 @@ export function ExtractionStatusPills({
   selected,
   onToggle,
   loading,
+  needsIdSelected,
 }: ExtractionStatusPillsProps) {
   if (loading) {
     return (
@@ -47,8 +49,8 @@ export function ExtractionStatusPills({
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by extraction status">
       {PILLS.map((pill) => {
         const active =
-          (pill.filter && selected.includes(pill.filter)) ||
-          (!pill.filter && selected.length === 0);
+          (pill.filter && selected.includes(pill.filter) && !needsIdSelected) ||
+          (!pill.filter && selected.length === 0 && !needsIdSelected);
         const count = pill.key === "all" ? counts.total : counts[pill.key];
         return (
           <button

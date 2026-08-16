@@ -25,6 +25,7 @@ import {
   Send,
   X,
   XCircle,
+  ListMinus,
 } from "lucide-react";
 import type { Document, DocumentScoreExtraction, ExtractionProvider } from "@/types/document";
 import {
@@ -69,6 +70,16 @@ import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { QueueSettingsPopover } from "@/components/data-entry/QueueSettingsPopover";
 import { paperLabel, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
 import { cn } from "@/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export type ExtractionStatusFilter =
   | "pending"
@@ -141,8 +152,12 @@ interface ReductoDocumentsDataTableProps {
   queuing?: boolean;
   skipPreview?: { willQueue: number; willSkip: number } | null;
   onQueueSelected: () => void;
+  onDequeueSelected?: () => void;
   onQueueAllPending: () => void;
   queueAllPendingDisabled?: boolean;
+  pendingReadyCount?: number;
+  queueable?: boolean;
+  dequeuing?: boolean;
   focusedRowIndex: number;
   onFocusedRowIndexChange: (index: number) => void;
   currentPage: number;
@@ -211,6 +226,16 @@ function providerRow(document: Document, provider: ExtractionProvider): Document
   return extractionFor(document, provider);
 }
 
+function providerQueueStatus(
+  document: Document,
+  provider: ExtractionProvider
+): string | null {
+  const row = providerRow(document, provider);
+  if (row?.status) return row.status;
+  if ((document.extractions ?? []).length > 0) return null;
+  return document.scores_extraction_status;
+}
+
 function ExtractionStatusCell({ document }: { document: Document }) {
   const rows = [...(document.extractions ?? [])].sort((a, b) => {
     if (a.provider === DEFAULT_EXTRACTION_PROVIDER) return -1;
@@ -271,8 +296,12 @@ export function ReductoDocumentsDataTable({
   queuing,
   skipPreview,
   onQueueSelected,
+  onDequeueSelected,
   onQueueAllPending,
   queueAllPendingDisabled,
+  pendingReadyCount = 0,
+  queueable = true,
+  dequeuing = false,
   focusedRowIndex,
   onFocusedRowIndexChange,
   currentPage,
@@ -284,6 +313,7 @@ export function ReductoDocumentsDataTable({
 }: ReductoDocumentsDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
+  const [confirmQueueAllOpen, setConfirmQueueAllOpen] = useState(false);
 
   const allSelected = documents.length > 0 && selectedDocuments.size === documents.length;
   const pendingOnPage = documents.filter(
@@ -291,7 +321,18 @@ export function ReductoDocumentsDataTable({
   ).length;
   const selectedStatuses = parseExtractionStatuses(statusFilter);
   const selectedCount = selectedDocuments.size;
-  const showActionBar = selectedCount > 0 || !!queuing;
+  const busy = !!queuing || dequeuing;
+  const selectedQueuedCount = documents.filter(
+    (d) =>
+      selectedDocuments.has(d.id) && providerQueueStatus(d, extractionProvider) === "queued"
+  ).length;
+  const selectedProcessingCount = documents.filter(
+    (d) =>
+      selectedDocuments.has(d.id) &&
+      providerQueueStatus(d, extractionProvider) === "processing"
+  ).length;
+  const showDequeue = queueable && selectedQueuedCount + selectedProcessingCount > 0;
+  const showActionBar = queueable && (selectedCount > 0 || busy);
 
   useEffect(() => {
     if (documents.length === 0) {
@@ -312,6 +353,7 @@ export function ReductoDocumentsDataTable({
           <Checkbox
             checked={allSelected}
             onCheckedChange={onSelectAll}
+            disabled={!queueable}
             onClick={(e) => e.stopPropagation()}
             aria-label="Select all"
           />
@@ -320,6 +362,7 @@ export function ReductoDocumentsDataTable({
           <Checkbox
             checked={selectedDocuments.has(row.original.id)}
             onCheckedChange={() => onSelectDocument(row.original.id)}
+            disabled={!queueable}
             onClick={(e) => e.stopPropagation()}
             aria-label={`Select document ${row.original.id}`}
           />
@@ -395,7 +438,12 @@ export function ReductoDocumentsDataTable({
           const status = queuedProvider?.status || doc.scores_extraction_status;
           const canPreview = anySuccess;
           const canRequeue =
-            status === "pending" || status === "error" || status === "success" || !queuedProvider;
+            status === "pending" ||
+            status === "queued" ||
+            status === "processing" ||
+            status === "error" ||
+            status === "success" ||
+            !queuedProvider;
           const requeueLabel = status === "error" ? "Retry" : "Queue";
 
           return (
@@ -423,7 +471,7 @@ export function ReductoDocumentsDataTable({
                     Preview extraction
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    disabled={!canRequeue || requeueingDocumentId === doc.id || queuing}
+                    disabled={!canRequeue || requeueingDocumentId === doc.id || busy}
                     onSelect={() => onRequeue(doc)}
                   >
                     {requeueLabel}
@@ -442,6 +490,8 @@ export function ReductoDocumentsDataTable({
       onSelectAll,
       onSelectDocument,
       queuing,
+      dequeuing,
+      queueable,
       requeueingDocumentId,
       selectedDocuments,
       extractionProvider,
@@ -536,7 +586,7 @@ export function ReductoDocumentsDataTable({
             rateLimitPerSecond={rateLimitPerSecond}
             onConcurrentWorkersChange={onConcurrentWorkersChange}
             updatingWorkers={updatingWorkers}
-            disabled={queuing}
+            disabled={queuing || dequeuing}
           />
         </div>
 
@@ -546,12 +596,13 @@ export function ReductoDocumentsDataTable({
             {Math.min(currentPage * pageSize, total)} of {total.toLocaleString()}
             {globalFilter ? ` · ${table.getFilteredRowModel().rows.length} match on this page` : ""}
           </span>
+          {queueable && (
           <Button
             variant="outline"
             size="sm"
             className="h-8"
-            onClick={onQueueAllPending}
-            disabled={queueAllPendingDisabled || queuing}
+            onClick={() => setConfirmQueueAllOpen(true)}
+            disabled={queueAllPendingDisabled || busy}
           >
             {queuing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -559,8 +610,13 @@ export function ReductoDocumentsDataTable({
               <Send className="mr-2 h-4 w-4" />
             )}
             Queue all pending · {extractionProviderLabel(extractionProvider)}
-            {pendingOnPage > 0 ? ` (${pendingOnPage}+)` : ""}
+            {pendingReadyCount > 0
+              ? ` (${pendingReadyCount.toLocaleString()})`
+              : pendingOnPage > 0
+                ? ` (${pendingOnPage}+)`
+                : ""}
           </Button>
+          )}
         </div>
       </div>
 
@@ -714,7 +770,7 @@ export function ReductoDocumentsDataTable({
                 size="sm"
                 className="h-8"
                 onClick={onClearSelection}
-                disabled={queuing || selectedCount === 0}
+                disabled={busy || selectedCount === 0}
               >
                 Clear
               </Button>
@@ -729,27 +785,72 @@ export function ReductoDocumentsDataTable({
                 </TooltipContent>
               </Tooltip>
             </div>
-            <Button
-              onClick={onQueueSelected}
-              disabled={selectedCount === 0 || queuing}
-              size="sm"
-              className="h-9 gap-2"
-            >
-              {queuing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Queueing...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  Queue{selectedCount > 0 ? ` ${selectedCount}` : ""}
-                </>
+            <div className="flex flex-wrap items-center gap-2">
+              {showDequeue && onDequeueSelected && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 gap-2"
+                  onClick={onDequeueSelected}
+                  disabled={busy}
+                >
+                  {dequeuing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ListMinus className="h-4 w-4" />
+                  )}
+                  Remove from queue
+                  {selectedQueuedCount > 0 ? ` (${selectedQueuedCount})` : ""}
+                </Button>
               )}
-            </Button>
+              <Button
+                onClick={onQueueSelected}
+                disabled={selectedCount === 0 || busy}
+                size="sm"
+                className="h-9 gap-2"
+              >
+                {queuing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Queueing...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    Queue{selectedCount > 0 ? ` ${selectedCount}` : ""}
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}
+
+      <AlertDialog open={confirmQueueAllOpen} onOpenChange={setConfirmQueueAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Queue {pendingReadyCount.toLocaleString()} pending document
+              {pendingReadyCount === 1 ? "" : "s"} for {extractionProviderLabel(extractionProvider)}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Sheets that need an ID are not included. Cancel leaves the queue unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy || pendingReadyCount === 0}
+              onClick={() => {
+                setConfirmQueueAllOpen(false);
+                onQueueAllPending();
+              }}
+            >
+              Queue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

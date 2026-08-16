@@ -611,6 +611,7 @@ export interface ScoreDocumentFilters {
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   extraction_provider?: ExtractionProvider; // Filter by Reducto vs Llama Extract
   scores_applied?: boolean; // true=applied, false=not applied
+  id_ready?: boolean; // true=usable extracted ID, false=ID failures / missing IDs
   page?: number;
   page_size?: number;
 }
@@ -622,6 +623,7 @@ export interface ScoresExtractionStatusCounts {
   processing: number;
   success: number;
   error: number;
+  needs_id?: number;
 }
 
 export interface ReductoQueueRequest {
@@ -639,6 +641,14 @@ export interface DocumentQueueStatus {
 export interface ReductoQueueResponse {
   queued_count: number;
   skipped_count?: number;
+  documents: DocumentQueueStatus[];
+  queue_length: number;
+}
+
+export interface ReductoDequeueResponse {
+  removed_count: number;
+  skipped_processing?: number;
+  skipped_not_queued?: number;
   documents: DocumentQueueStatus[];
   queue_length: number;
 }
@@ -730,6 +740,7 @@ export interface SkippedVerifyRecord {
   candidate_name: string | null;
   score: string | number | null;
   verify: string | number | null;
+  cleared?: boolean;
 }
 
 export interface UpdateScoresFromReductoResponse {
@@ -737,6 +748,7 @@ export interface UpdateScoresFromReductoResponse {
   unmatched_count: number;
   skipped_count?: number;
   skipped_records?: SkippedVerifyRecord[];
+  cleared_count?: number;
   unmatched_records: Array<{
     index_number: string | null;
     candidate_name: string | null;

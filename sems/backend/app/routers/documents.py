@@ -37,6 +37,8 @@ from app.schemas.document import (
     DocumentUpdate,
     ReductoQueueRequest,
     ReductoQueueResponse,
+    ReductoDequeueRequest,
+    ReductoDequeueResponse,
     ReductoStatusResponse,
     UploadConfirmItem,
     UploadConfirmRequest,
@@ -64,8 +66,10 @@ from app.services.id_extraction import (
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import (
     apply_extract_result,
+    get_extraction,
     get_or_create_extraction,
     normalize_provider,
+    reset_stale_extraction_row,
     sync_document_snapshot,
 )
 from app.services.storage import storage_service
@@ -1457,7 +1461,9 @@ async def queue_reducto_extraction(
             )
             continue
 
-        if request.require_extracted_id and not document.extracted_id:
+        if document.id_extraction_status == "error" or (
+            request.require_extracted_id and not document.extracted_id
+        ):
             document_statuses.append(
                 DocumentQueueStatus(
                     document_id=document_id,
@@ -1494,6 +1500,74 @@ async def queue_reducto_extraction(
     return ReductoQueueResponse(
         queued_count=queued_count,
         skipped_count=skipped_count,
+        documents=document_statuses,
+        queue_length=queue_status["queue_length"],
+    )
+
+
+@router.post("/dequeue-reducto-extraction", response_model=ReductoDequeueResponse)
+async def dequeue_reducto_extraction(
+    request: ReductoDequeueRequest, session: DBSessionDep
+) -> ReductoDequeueResponse:
+    """Remove queued documents from the structured extraction queue.
+
+    Processing jobs are left running. Removed rows return to pending for that provider.
+    """
+    provider_error = extraction_provider_error(request.method)
+    if provider_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=provider_error)
+
+    result = reducto_queue_service.dequeue_documents(request.document_ids, request.method)
+    removed_ids = set(result["removed"])
+    processing_ids = set(result["skipped_processing"])
+    not_queued_ids = list(result["skipped_not_queued"])
+
+    db_changed = False
+    still_not_queued: list[int] = []
+    for document_id in [*result["removed"], *not_queued_ids]:
+        if document_id in processing_ids:
+            continue
+        stmt = select(Document).where(Document.id == document_id)
+        doc_result = await session.execute(stmt)
+        document = doc_result.scalar_one_or_none()
+        if not document:
+            if document_id not in removed_ids:
+                still_not_queued.append(document_id)
+            continue
+        row = await get_extraction(session, document.id, request.method)
+        if row is not None and reset_stale_extraction_row(document, row):
+            removed_ids.add(document_id)
+            db_changed = True
+        elif document_id not in removed_ids:
+            still_not_queued.append(document_id)
+
+    if db_changed:
+        await session.commit()
+
+    document_statuses: list[DocumentQueueStatus] = []
+    for document_id in request.document_ids:
+        if document_id in removed_ids:
+            document_statuses.append(
+                DocumentQueueStatus(document_id=document_id, queue_position=None, status="pending")
+            )
+        elif document_id in processing_ids:
+            document_statuses.append(
+                DocumentQueueStatus(
+                    document_id=document_id, queue_position=None, status="processing"
+                )
+            )
+        else:
+            document_statuses.append(
+                DocumentQueueStatus(
+                    document_id=document_id, queue_position=None, status="not_queued"
+                )
+            )
+
+    queue_status = reducto_queue_service.get_queue_status()
+    return ReductoDequeueResponse(
+        removed_count=len(removed_ids),
+        skipped_processing=len(result["skipped_processing"]),
+        skipped_not_queued=len(still_not_queued),
         documents=document_statuses,
         queue_length=queue_status["queue_length"],
     )
