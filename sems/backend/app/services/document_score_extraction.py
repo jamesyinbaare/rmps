@@ -168,6 +168,40 @@ def sync_document_snapshot(document: Document, row: DocumentScoreExtraction) -> 
     document.scores_unmatched_count = row.unmatched_count
 
 
+STALE_QUEUE_STATUSES = frozenset({"queued", "processing"})
+
+
+def reset_stale_extraction_row(document: Document, row: DocumentScoreExtraction) -> bool:
+    """Set a queued/processing row back to pending without clearing extract payloads.
+
+    Syncs the document snapshot only when it is also queued/processing, so a
+    successful other-provider snapshot is not overwritten.
+    """
+    if row.status not in STALE_QUEUE_STATUSES:
+        return False
+    row.status = "pending"
+    if document.scores_extraction_status in STALE_QUEUE_STATUSES:
+        sync_document_snapshot(document, row)
+    return True
+
+
+async def reset_stale_queue_statuses(session: AsyncSession) -> int:
+    """Reset orphaned queued/processing extraction rows after an API restart."""
+    stmt = (
+        select(DocumentScoreExtraction, Document)
+        .join(Document, Document.id == DocumentScoreExtraction.document_id)
+        .where(DocumentScoreExtraction.status.in_(STALE_QUEUE_STATUSES))
+    )
+    result = await session.execute(stmt)
+    count = 0
+    for row, document in result.all():
+        if reset_stale_extraction_row(document, row):
+            count += 1
+    if count:
+        await session.commit()
+    return count
+
+
 def apply_extract_result(
     row: DocumentScoreExtraction,
     *,

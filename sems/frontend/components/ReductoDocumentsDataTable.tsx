@@ -438,7 +438,12 @@ export function ReductoDocumentsDataTable({
           const status = queuedProvider?.status || doc.scores_extraction_status;
           const canPreview = anySuccess;
           const canRequeue =
-            status === "pending" || status === "error" || status === "success" || !queuedProvider;
+            status === "pending" ||
+            status === "queued" ||
+            status === "processing" ||
+            status === "error" ||
+            status === "success" ||
+            !queuedProvider;
           const requeueLabel = status === "error" ? "Retry" : "Queue";
 
           return (

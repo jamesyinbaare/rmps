@@ -69,6 +69,7 @@ from app.services.document_score_extraction import (
     get_extraction,
     get_or_create_extraction,
     normalize_provider,
+    reset_stale_extraction_row,
     sync_document_snapshot,
 )
 from app.services.storage import storage_service
@@ -1519,17 +1520,28 @@ async def dequeue_reducto_extraction(
     result = reducto_queue_service.dequeue_documents(request.document_ids, request.method)
     removed_ids = set(result["removed"])
     processing_ids = set(result["skipped_processing"])
+    not_queued_ids = list(result["skipped_not_queued"])
 
-    for document_id in result["removed"]:
+    db_changed = False
+    still_not_queued: list[int] = []
+    for document_id in [*result["removed"], *not_queued_ids]:
+        if document_id in processing_ids:
+            continue
         stmt = select(Document).where(Document.id == document_id)
         doc_result = await session.execute(stmt)
         document = doc_result.scalar_one_or_none()
-        if document:
-            row = await get_extraction(session, document.id, request.method)
-            if row is not None and row.status == "queued":
-                row.status = "pending"
-                sync_document_snapshot(document, row)
-    if result["removed"]:
+        if not document:
+            if document_id not in removed_ids:
+                still_not_queued.append(document_id)
+            continue
+        row = await get_extraction(session, document.id, request.method)
+        if row is not None and reset_stale_extraction_row(document, row):
+            removed_ids.add(document_id)
+            db_changed = True
+        elif document_id not in removed_ids:
+            still_not_queued.append(document_id)
+
+    if db_changed:
         await session.commit()
 
     document_statuses: list[DocumentQueueStatus] = []
@@ -1553,9 +1565,9 @@ async def dequeue_reducto_extraction(
 
     queue_status = reducto_queue_service.get_queue_status()
     return ReductoDequeueResponse(
-        removed_count=len(result["removed"]),
+        removed_count=len(removed_ids),
         skipped_processing=len(result["skipped_processing"]),
-        skipped_not_queued=len(result["skipped_not_queued"]),
+        skipped_not_queued=len(still_not_queued),
         documents=document_statuses,
         queue_length=queue_status["queue_length"],
     )
