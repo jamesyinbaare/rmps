@@ -77,3 +77,48 @@ async def test_list_bank_branches_route_returns_rows_for_inspector() -> None:
     assert len(result.items) == 1
     assert result.items[0].id == branch_id
     assert result.items[0].bank_name == "GCB BANK LTD"
+
+
+@pytest.mark.asyncio
+async def test_list_bank_branches_route_returns_rows_for_finance_officer() -> None:
+    session = AsyncMock()
+    user = MagicMock(role=UserRole.FINANCE_OFFICER)
+    branch_id = uuid4()
+    now = datetime.now(UTC)
+    row = BankBranch(
+        id=branch_id,
+        bank_code="654321",
+        bank_name="APEX BANK",
+        branch_name="Accra Branch",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch(
+        "app.routers.bank_branches.query_bank_branches",
+        new_callable=AsyncMock,
+        return_value=([row], 1),
+    ) as query_mock:
+        result = await list_bank_branches(
+            session=session,
+            _user=user,
+            search="apex",
+            bank_name=None,
+            bank_name_exact=None,
+            branch_name=None,
+            skip=0,
+            limit=200,
+        )
+
+    query_mock.assert_awaited_once_with(
+        session,
+        search="apex",
+        bank_name=None,
+        bank_name_exact=None,
+        branch_name=None,
+        skip=0,
+        limit=200,
+    )
+    assert result.total == 1
+    assert result.items[0].bank_name == "APEX BANK"
+    assert result.items[0].bank_code == "654321"

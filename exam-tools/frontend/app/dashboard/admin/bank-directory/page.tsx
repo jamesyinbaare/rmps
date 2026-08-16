@@ -1,71 +1,97 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileSpreadsheet } from "lucide-react";
 
 import { BankDirectoryTable, BANK_DIRECTORY_DEFAULT_PAGE_SIZE } from "@/components/bank-directory/bank-directory-table";
 import { BankDirectoryUploadPanel } from "@/components/bank-directory/bank-directory-upload-panel";
 import { BankDirectoryUploadResult } from "@/components/bank-directory/bank-directory-upload-result";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
+import { RoleGuard } from "@/components/role-guard";
 import {
+  getDistinctBankNames,
   listBankBranches,
   uploadBankBranchesBulk,
   type BankBranchBulkUploadResponse,
   type BankBranchRow,
 } from "@/lib/api";
+import { getMe, type UserMe } from "@/lib/auth";
 
-export default function AdminBankDirectoryPage() {
+/** Max branches loaded per bank for client-side filter (API cap). */
+const BANK_BRANCH_FETCH_LIMIT = 500;
+
+function BankDirectoryContent() {
+  const [me, setMe] = useState<UserMe | null>(null);
   const [uploadOpen, setUploadOpen] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BankBranchBulkUploadResponse | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedBankName, setSelectedBankName] = useState("");
+  const [bankSearchQuery, setBankSearchQuery] = useState("");
+  const [bankOptions, setBankOptions] = useState<{ value: string; label: string }[]>([]);
+  const [branchQuery, setBranchQuery] = useState("");
+
   const [items, setItems] = useState<BankBranchRow[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(BANK_DIRECTORY_DEFAULT_PAGE_SIZE);
-  const [listBusy, setListBusy] = useState(true);
+  const [listBusy, setListBusy] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
+  const canUpload = me?.role === "SUPER_ADMIN";
+
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
+    void getMe().then(setMe).catch(() => setMe(null));
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const names = await getDistinctBankNames(bankSearchQuery.trim() || null);
+          setBankOptions(names.map((n) => ({ value: n, label: n })));
+        } catch {
+          setBankOptions([]);
+        }
+      })();
+    }, 250);
     return () => clearTimeout(t);
-  }, [searchQuery]);
+  }, [bankSearchQuery]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, pageSize]);
+  const bankComboboxOptions = useMemo(() => {
+    if (!selectedBankName.trim()) return bankOptions;
+    if (bankOptions.some((o) => o.value === selectedBankName)) return bankOptions;
+    return [{ value: selectedBankName, label: selectedBankName }, ...bankOptions];
+  }, [bankOptions, selectedBankName]);
 
-  const loadList = useCallback(async () => {
+  const loadBranchesForBank = useCallback(async (bankName: string) => {
+    if (!bankName.trim()) {
+      setItems([]);
+      setListBusy(false);
+      setListError(null);
+      return;
+    }
     setListBusy(true);
     setListError(null);
-    const skip = (page - 1) * pageSize;
     try {
       const res = await listBankBranches({
-        search: debouncedSearch || undefined,
-        skip,
-        limit: pageSize,
+        bank_name_exact: bankName.trim(),
+        skip: 0,
+        limit: BANK_BRANCH_FETCH_LIMIT,
       });
       setItems(res.items);
-      setTotal(res.total);
-      if (res.total === 0 && !debouncedSearch) {
-        setUploadOpen(true);
-      }
     } catch (e) {
-      setListError(e instanceof Error ? e.message : "Failed to load bank directory");
+      setListError(e instanceof Error ? e.message : "Failed to load branches");
       setItems([]);
-      setTotal(0);
     } finally {
       setListBusy(false);
     }
-  }, [debouncedSearch, page, pageSize]);
+  }, []);
 
   useEffect(() => {
-    void loadList();
-  }, [loadList]);
+    void loadBranchesForBank(selectedBankName);
+  }, [loadBranchesForBank, selectedBankName]);
 
   async function onUpload() {
     if (!file) {
@@ -82,7 +108,16 @@ export default function AdminBankDirectoryPage() {
       if (res.failed === 0) {
         setUploadOpen(false);
       }
-      await loadList();
+      await loadBranchesForBank(selectedBankName);
+      try {
+        const names = await getDistinctBankNames(bankSearchQuery.trim() || null);
+        setBankOptions(names.map((n) => ({ value: n, label: n })));
+      } catch {
+        /* ignore */
+      }
+      if (!selectedBankName.trim() && res.successful > 0) {
+        setUploadOpen(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
     } finally {
@@ -93,38 +128,48 @@ export default function AdminBankDirectoryPage() {
   return (
     <div className="space-y-6">
       <OfficialAccountsPageIntro
-        description="The bank directory powers branch pickers when examiners and officials enter their account details. Search below to find a branch, or upload a spreadsheet to add or update entries in bulk."
+        description={
+          canUpload
+            ? "Pick a bank to see its branches and sort codes. You can also upload a spreadsheet to add or update entries in bulk."
+            : "Pick a bank to see its branches, then type a name or sort code to find the one you need."
+        }
         footerNote={
-          <span className="flex items-start gap-2.5">
-            <FileSpreadsheet className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span>
-              <span className="font-medium text-foreground">Spreadsheet format. </span>
-              Include three columns:{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">bank_code</code>,{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">bank_name</code>, and{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">branch_name</code>. Headers can use spaces
-              or underscores — they are normalised automatically. Format bank codes as{" "}
-              <strong className="font-medium text-foreground">text</strong> in Excel so leading zeros are kept. Rows
-              with an existing bank code are updated rather than duplicated.
+          canUpload ? (
+            <span className="flex items-start gap-2.5">
+              <FileSpreadsheet className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span>
+                <span className="font-medium text-foreground">Spreadsheet format. </span>
+                Include three columns:{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px]">bank_code</code>,{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px]">bank_name</code>, and{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px]">branch_name</code>. Headers can use spaces
+                or underscores — they are normalised automatically. Format bank codes as{" "}
+                <strong className="font-medium text-foreground">text</strong> in Excel so leading zeros are kept. Rows
+                with an existing bank code are updated rather than duplicated.
+              </span>
             </span>
-          </span>
+          ) : undefined
         }
       />
 
-      <BankDirectoryUploadPanel
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        file={file}
-        onFileChange={(next) => {
-          setFile(next);
-          setError(null);
-        }}
-        busy={busy}
-        error={error}
-        onSubmit={() => void onUpload()}
-      />
+      {canUpload ? (
+        <BankDirectoryUploadPanel
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          file={file}
+          onFileChange={(next) => {
+            setFile(next);
+            setError(null);
+          }}
+          busy={busy}
+          error={error}
+          onSubmit={() => void onUpload()}
+        />
+      ) : null}
 
-      {result ? <BankDirectoryUploadResult result={result} onDismiss={() => setResult(null)} /> : null}
+      {canUpload && result ? (
+        <BankDirectoryUploadResult result={result} onDismiss={() => setResult(null)} />
+      ) : null}
 
       {listError ? (
         <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
@@ -134,15 +179,26 @@ export default function AdminBankDirectoryPage() {
 
       <BankDirectoryTable
         items={items}
-        total={total}
+        busy={listBusy}
+        selectedBankName={selectedBankName}
+        onSelectedBankNameChange={setSelectedBankName}
+        bankOptions={bankComboboxOptions}
+        onBankSearchChange={setBankSearchQuery}
+        branchQuery={branchQuery}
+        onBranchQueryChange={setBranchQuery}
         page={page}
         pageSize={pageSize}
-        busy={listBusy}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
         onPageChange={setPage}
         onPageSizeChange={setPageSize}
       />
     </div>
+  );
+}
+
+export default function AdminBankDirectoryPage() {
+  return (
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "FINANCE_OFFICER"]} loginHref="/login/admin">
+      <BankDirectoryContent />
+    </RoleGuard>
   );
 }
