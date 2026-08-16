@@ -3000,10 +3000,12 @@ async def export_finance_centre_school_summary(
         summary.center_name,
         subject_filter,
     )
+    from app.utils.content_disposition import content_disposition_attachment
+
     return Response(
         content=payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
     )
 
 
@@ -3058,10 +3060,12 @@ async def export_finance_centre_school_summary_bog(
     title = f"BoG payment — {centre_code} {centre_name} · {exam_label}"
     payload = bog_workbook_bytes(pairs, rates_map, title=title)
     filename = centre_bog_export_filename(centre_code, centre_name, subject_filter)
+    from app.utils.content_disposition import content_disposition_attachment
+
     return Response(
         content=payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
     )
 
 
