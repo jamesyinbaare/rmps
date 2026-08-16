@@ -265,8 +265,32 @@ def get_sessionmanager() -> DatabaseSessionManager:
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
+async def ensure_process_type_enum_values(manager: DatabaseSessionManager) -> None:
+    """Add new processtype labels that Alembic may not have applied yet.
+
+    docker compose watch syncs code without re-running the prestart migration
+    job, so RESULTS_EXPORT inserts otherwise fail with invalid enum input.
+    """
+    if manager._engine is None:
+        return
+    try:
+        async with manager._engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(
+                text("ALTER TYPE processtype ADD VALUE IF NOT EXISTS 'RESULTS_EXPORT'")
+            )
+        # asyncpg caches enum codecs per connection; drop stale pooled ones.
+        await manager._engine.dispose()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Could not ensure RESULTS_EXPORT process type enum value",
+            exc_info=True,
+        )
+
+
 @contextlib.asynccontextmanager
 async def initialize_db(manager: DatabaseSessionManager) -> AsyncIterator[DatabaseSessionManager]:
     await manager.configure()
+    await ensure_process_type_enum_values(manager)
     yield manager
     await manager.close()

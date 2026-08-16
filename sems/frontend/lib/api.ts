@@ -2441,14 +2441,14 @@ export async function getCandidatesForManualEntry(
   return handleResponse<CandidateScoreListResponse>(response);
 }
 
-export async function exportCandidateResults(
+function buildResultsExportParams(
   filters: ManualEntryFilters,
   fields: string[],
   subjectType?: "CORE" | "ELECTIVE",
   exportFormat?: "standard" | "multi_subject",
   testType?: "obj" | "essay",
   subjectIds?: number[]
-): Promise<void> {
+): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
   if (filters.exam_type) params.append("exam_type", filters.exam_type);
@@ -2458,63 +2458,26 @@ export async function exportCandidateResults(
   if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.document_id) params.append("document_id", filters.document_id);
-
-  // Add fields parameter
   params.append("fields", fields.join(","));
-  // Add subject type parameter if provided
-  if (subjectType) {
-    params.append("subject_type", subjectType);
-  }
-  // Add export format parameter
-  if (exportFormat) {
-    params.append("export_format", exportFormat);
-  }
-  // Add test type parameter for multi-subject format
-  if (testType) {
-    params.append("test_type", testType);
-  }
-  // Add subject IDs parameter for multi-subject format
-  if (subjectIds && subjectIds.length > 0) {
-    params.append("subject_ids", subjectIds.join(","));
-  }
+  if (subjectType) params.append("subject_type", subjectType);
+  if (exportFormat) params.append("export_format", exportFormat);
+  if (testType) params.append("test_type", testType);
+  if (subjectIds && subjectIds.length > 0) params.append("subject_ids", subjectIds.join(","));
+  return params;
+}
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
-    method: "GET",
-    headers: getAuthHeaders(),
-  });
+function filenameFromContentDisposition(header: string | null, fallback = "candidate_results_export.xlsx"): string {
+  if (!header) return fallback;
+  let filenameMatch = header.match(/filename="([^"]+)"/);
+  if (filenameMatch?.[1]) return filenameMatch[1];
+  filenameMatch = header.match(/filename=([^;]+)/);
+  if (filenameMatch?.[1]) return filenameMatch[1].trim();
+  filenameMatch = header.match(/filename\*=UTF-8''(.+)/);
+  if (filenameMatch?.[1]) return decodeURIComponent(filenameMatch[1]);
+  return fallback;
+}
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Failed to export results" }));
-    throw new Error(error.detail || "Failed to export results");
-  }
-
-  // Get filename from Content-Disposition header or use default
-  const contentDisposition = response.headers.get("Content-Disposition");
-  let filename = "candidate_results_export.xlsx";
-  if (contentDisposition) {
-    // Try to extract filename from Content-Disposition header
-    // Handle formats: filename="value", filename=value, filename*=UTF-8''value
-    // Pattern 1: filename="value" (with quotes)
-    let filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
-    if (filenameMatch && filenameMatch[1]) {
-      filename = filenameMatch[1];
-    } else {
-      // Pattern 2: filename=value (without quotes)
-      filenameMatch = contentDisposition.match(/filename=([^;]+)/);
-      if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].trim();
-      } else {
-        // Pattern 3: RFC 5987 format: filename*=UTF-8''value
-        filenameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = decodeURIComponent(filenameMatch[1]);
-        }
-      }
-    }
-  }
-
-  // Create blob and download
-  const blob = await response.blob();
+function triggerBlobDownload(blob: Blob, filename: string): void {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -2523,6 +2486,75 @@ export async function exportCandidateResults(
   a.click();
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
+}
+
+async function downloadExcelResponse(response: Response): Promise<string> {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to export results" }));
+    throw new Error(error.detail || "Failed to export results");
+  }
+  const filename = filenameFromContentDisposition(response.headers.get("Content-Disposition"));
+  const blob = await response.blob();
+  triggerBlobDownload(blob, filename);
+  return filename;
+}
+
+export async function exportCandidateResults(
+  filters: ManualEntryFilters,
+  fields: string[],
+  subjectType?: "CORE" | "ELECTIVE",
+  exportFormat?: "standard" | "multi_subject",
+  testType?: "obj" | "essay",
+  subjectIds?: number[]
+): Promise<string> {
+  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testType, subjectIds);
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  return downloadExcelResponse(response);
+}
+
+export type ResultsExportJobStatus = {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  filename?: string | null;
+  message?: string | null;
+  error_message?: string | null;
+};
+
+export async function startResultsExportJob(
+  filters: ManualEntryFilters,
+  fields: string[],
+  subjectType?: "CORE" | "ELECTIVE",
+  exportFormat?: "standard" | "multi_subject",
+  testType?: "obj" | "essay",
+  subjectIds?: number[]
+): Promise<{ job_id: number; status: string }> {
+  if (!filters.exam_id) {
+    throw new Error("Please select an examination before exporting");
+  }
+  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testType, subjectIds);
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ job_id: number; status: string }>(response);
+}
+
+export async function getResultsExportJob(jobId: number): Promise<ResultsExportJobStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export/${jobId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<ResultsExportJobStatus>(response);
+}
+
+export async function downloadResultsExportJobFile(jobId: number): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export/${jobId}/file`, {
+    headers: getAuthHeaders(),
+  });
+  return downloadExcelResponse(response);
 }
 
 export async function batchUpdateScoresForManualEntry(

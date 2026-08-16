@@ -1,9 +1,11 @@
 from datetime import datetime
+from pathlib import Path
 import logging
 from typing import Any, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, func, or_, select
 
 from app.dependencies.auth import CurrentUserDep
@@ -17,6 +19,9 @@ from app.models import (
     ExamSeries,
     ExamSubject,
     ExamType,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
     Programme,
     School,
     Subject,
@@ -38,6 +43,8 @@ from app.schemas.score import (
     DocumentScoresResponse,
     ReductoDataResponse,
     ResolveUnmatchedRecordRequest,
+    ResultsExportJobCreateResponse,
+    ResultsExportJobStatusResponse,
     ScoreResponse,
     ScoreUpdate,
     UnmatchedExtractionRecordResponse,
@@ -46,7 +53,7 @@ from app.schemas.score import (
     UpdateScoresFromReductoResponse,
 )
 from app.utils.score_utils import add_extraction_method_to_document, is_absent, parse_score_value, parse_score_value_safe
-from app.services.results_export import generate_results_export
+from app.services.results_export import generate_export_filename, generate_results_export, process_results_export_job
 from app.services.issue_batch_service import (
     assigned_document_extracted_ids,
     clerk_may_access_extracted_id,
@@ -2059,6 +2066,73 @@ async def ignore_unmatched_record(record_id: int, session: DBSessionDep) -> dict
     return {"message": "Record ignored successfully", "record_id": record_id}
 
 
+def _parse_export_fields(fields: str) -> list[str]:
+    fields_list = [f.strip() for f in fields.split(",") if f.strip()]
+    if not fields_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one field must be specified",
+        )
+    return fields_list
+
+
+def _parse_subject_ids(subject_ids: str | None) -> list[int] | None:
+    if not subject_ids:
+        return None
+    try:
+        return [int(sid.strip()) for sid in subject_ids.split(",") if sid.strip()]
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject_ids must be comma-separated integers",
+        )
+
+
+def _validate_export_filters(
+    *,
+    subject_type: SubjectType | None,
+    subject_id: int | None,
+    programme_id: int | None,
+    export_format: str,
+    test_type: str | None,
+    subject_ids: str | None,
+) -> list[int] | None:
+    if subject_type is not None and subject_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject_type and subject_id cannot both be specified",
+        )
+    if subject_type == SubjectType.ELECTIVE and programme_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="programme_id is required when subject_type is ELECTIVE",
+        )
+    subject_ids_list = None
+    if export_format == "multi_subject":
+        if test_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="test_type is required when export_format is 'multi_subject'",
+            )
+        if subject_ids is None and subject_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either subject_ids or subject_type must be provided when export_format is 'multi_subject'",
+            )
+        if subject_ids is not None and subject_type is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="subject_ids and subject_type cannot both be specified",
+            )
+        subject_ids_list = _parse_subject_ids(subject_ids)
+    return subject_ids_list
+
+
+def _excel_content_disposition(filename: str) -> str:
+    encoded_filename = quote(filename, safe="")
+    return f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
+
+
 @router.get("/export")
 async def export_candidate_results(
     session: DBSessionDep,
@@ -2076,79 +2150,36 @@ async def export_candidate_results(
     test_type: Literal["obj", "essay"] | None = Query(None, description="Test type for multi_subject format: 'obj' for objectives or 'essay' for essay raw scores"),
     subject_ids: str | None = Query(None, description="Comma-separated list of subject IDs for multi_subject format (mutually exclusive with subject_type)"),
 ) -> StreamingResponse:
-    """
-    Export candidate processed results as Excel file.
-
-    Returns an Excel file with candidate results filtered by the specified criteria.
-    Fields parameter is required and should be a comma-separated list of field names to include.
-
-    Filtering rules:
-    - subject_type and subject_id are mutually exclusive
-    - If subject_type is ELECTIVE, programme_id is required
-    - If subject_type is CORE, exports all core subjects (each on separate sheet)
-    - If subject_type is ELECTIVE, exports all elective subjects for the programme (each on separate sheet)
-    - If subject_id is specified, exports single subject (single sheet)
-
-    Multi-subject format rules:
-    - export_format must be "multi_subject" to use multi-subject format
-    - test_type is required when export_format is "multi_subject"
-    - Either subject_ids or subject_type must be provided when export_format is "multi_subject"
-    - subject_ids and subject_type are mutually exclusive
-    """
+    """Export candidate processed results as Excel file (small/sync downloads)."""
     try:
-        # Parse fields parameter
-        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
-
-        if not fields_list:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least one field must be specified"
+        fields_list = _parse_export_fields(fields)
+        subject_ids_list = _validate_export_filters(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            programme_id=programme_id,
+            export_format=export_format,
+            test_type=test_type,
+            subject_ids=subject_ids,
+        )
+        try:
+            filename = await generate_export_filename(
+                session=session,
+                exam_id=exam_id,
+                exam_type=exam_type,
+                series=series,
+                year=year,
+                subject_type=subject_type,
+                programme_id=programme_id,
+                subject_id=subject_id,
+                export_format=export_format,
+                test_type=test_type,
+                subject_ids=subject_ids_list,
             )
+        except Exception as e:
+            logger.error(f"Error generating export filename: {e}")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"candidate_results_export_{timestamp}.xlsx"
 
-        # Validate filter combinations
-        if subject_type is not None and subject_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="subject_type and subject_id cannot both be specified"
-            )
-
-        if subject_type == SubjectType.ELECTIVE and programme_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="programme_id is required when subject_type is ELECTIVE"
-            )
-
-        # Validate multi-subject format requirements
-        if export_format == "multi_subject":
-            if test_type is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="test_type is required when export_format is 'multi_subject'"
-                )
-            if subject_ids is None and subject_type is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Either subject_ids or subject_type must be provided when export_format is 'multi_subject'"
-                )
-            if subject_ids is not None and subject_type is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="subject_ids and subject_type cannot both be specified"
-                )
-            # Parse subject_ids if provided
-            subject_ids_list = None
-            if subject_ids:
-                try:
-                    subject_ids_list = [int(sid.strip()) for sid in subject_ids.split(",") if sid.strip()]
-                except ValueError:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="subject_ids must be comma-separated integers"
-                    )
-        else:
-            subject_ids_list = None
-
-        # Generate Excel export
         excel_bytes = await generate_results_export(
             session=session,
             exam_id=exam_id,
@@ -2165,68 +2196,153 @@ async def export_candidate_results(
             test_type=test_type,
             subject_ids=subject_ids_list,
         )
-
-        # Generate descriptive filename based on filters
-        from app.services.results_export import generate_export_filename
-        try:
-            if export_format == "multi_subject":
-                # Generate filename for multi-subject format
-                parts = []
-                if exam_id:
-                    exam_stmt = select(Exam).where(Exam.id == exam_id)
-                    exam_result = await session.execute(exam_stmt)
-                    exam = exam_result.scalar_one_or_none()
-                    if exam:
-                        parts.append(str(exam.year))
-                        parts.append(exam.series.value)
-                        parts.append(exam.exam_type.value.replace(" ", "_"))
-
-                parts.append("multi_subject")
-                if test_type:
-                    parts.append(test_type)
-                if subject_type:
-                    parts.append(subject_type.value)
-                elif subject_ids_list:
-                    parts.append(f"{len(subject_ids_list)}_subjects")
-
-                parts.append("scores")
-                filename = "_".join(parts) + ".xlsx"
-            else:
-                filename = await generate_export_filename(
-                    session=session,
-                    exam_id=exam_id,
-                    exam_type=exam_type,
-                    series=series,
-                    year=year,
-                    subject_type=subject_type,
-                    programme_id=programme_id,
-                    subject_id=subject_id,
-                )
-        except Exception as e:
-            # Fallback to timestamp-based filename if generation fails
-            logger.error(f"Error generating export filename: {e}")
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"candidate_results_export_{timestamp}.xlsx"
-
-        # Use RFC 5987 format for filenames with special characters
-        # This ensures proper encoding and browser compatibility
-        from urllib.parse import quote
-        encoded_filename = quote(filename, safe='')
-        content_disposition = f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
         return StreamingResponse(
             iter([excel_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": content_disposition},
+            headers={"Content-Disposition": _excel_content_disposition(filename)},
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error generating export: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate export: {str(e)}"
+            detail=f"Failed to generate export: {str(e)}",
         )
+
+
+@router.post("/export", response_model=ResultsExportJobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
+async def start_results_export_job(
+    session: DBSessionDep,
+    background_tasks: BackgroundTasks,
+    exam_id: int = Query(..., description="Exam ID (required for background export)"),
+    exam_type: ExamType | None = Query(None),
+    series: ExamSeries | None = Query(None),
+    year: int | None = Query(None, ge=1900, le=2100),
+    school_id: int | None = Query(None),
+    programme_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
+    document_id: str | None = Query(None),
+    fields: str = Query(...),
+    subject_type: SubjectType | None = Query(None),
+    export_format: Literal["standard", "multi_subject"] = Query("standard"),
+    test_type: Literal["obj", "essay"] | None = Query(None),
+    subject_ids: str | None = Query(None),
+) -> ResultsExportJobCreateResponse:
+    """Start a background results export job for large exam-wide downloads."""
+    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    fields_list = _parse_export_fields(fields)
+    subject_ids_list = _validate_export_filters(
+        subject_type=subject_type,
+        subject_id=subject_id,
+        programme_id=programme_id,
+        export_format=export_format,
+        test_type=test_type,
+        subject_ids=subject_ids,
+    )
+    filename = await generate_export_filename(
+        session=session,
+        exam_id=exam_id,
+        exam_type=exam_type,
+        series=series,
+        year=year,
+        subject_type=subject_type,
+        programme_id=programme_id,
+        subject_id=subject_id,
+        export_format=export_format,
+        test_type=test_type,
+        subject_ids=subject_ids_list,
+    )
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.RESULTS_EXPORT,
+        school_id=school_id,
+        subject_id=subject_id,
+        status=ProcessStatus.PENDING,
+        process_metadata={
+            "exam_id": exam_id,
+            "exam_type": exam_type.value if exam_type else None,
+            "series": series.value if series else None,
+            "year": year,
+            "school_id": school_id,
+            "programme_id": programme_id,
+            "subject_id": subject_id,
+            "document_id": document_id,
+            "fields": fields_list,
+            "subject_type": subject_type.value if subject_type else None,
+            "export_format": export_format,
+            "test_type": test_type,
+            "subject_ids": subject_ids_list,
+            "filename": filename,
+            "message": "Queued",
+        },
+    )
+    session.add(tracking)
+    await session.commit()
+    await session.refresh(tracking)
+    background_tasks.add_task(process_results_export_job, tracking.id)
+    return ResultsExportJobCreateResponse(job_id=tracking.id, status=tracking.status.value)
+
+
+@router.get("/export/{job_id}", response_model=ResultsExportJobStatusResponse)
+async def get_results_export_job(
+    job_id: int,
+    session: DBSessionDep,
+) -> ResultsExportJobStatusResponse:
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.RESULTS_EXPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    metadata = tracking.process_metadata or {}
+    return ResultsExportJobStatusResponse(
+        job_id=tracking.id,
+        exam_id=tracking.exam_id,
+        status=tracking.status.value,
+        filename=metadata.get("filename"),
+        message=metadata.get("message"),
+        error_message=tracking.error_message,
+    )
+
+
+@router.get("/export/{job_id}/file")
+async def download_results_export_job_file(
+    job_id: int,
+    session: DBSessionDep,
+) -> FileResponse:
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.RESULTS_EXPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    if tracking.status != ProcessStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Export is not ready yet",
+        )
+    metadata = tracking.process_metadata or {}
+    file_path = metadata.get("file_path")
+    filename = metadata.get("filename") or "candidate_results_export.xlsx"
+    if not file_path or not Path(file_path).is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export file not found")
+    return FileResponse(
+        path=file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        headers={"Content-Disposition": _excel_content_disposition(filename)},
+    )

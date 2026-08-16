@@ -225,3 +225,17 @@ class ResolveUnmatchedRecordRequest(BaseModel):
     subject_registration_id: int
     score_field: str = Field(..., description="'obj', 'essay', or 'pract'")
     score_value: str | None = Field(None, description="Score value to apply")
+
+
+class ResultsExportJobCreateResponse(BaseModel):
+    job_id: int
+    status: str
+
+
+class ResultsExportJobStatusResponse(BaseModel):
+    job_id: int
+    exam_id: int
+    status: str
+    filename: str | None = None
+    message: str | None = None
+    error_message: str | None = None
