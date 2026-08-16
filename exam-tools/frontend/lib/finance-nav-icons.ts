@@ -66,6 +66,7 @@ export const FINANCE_NAV_SECTION_ICONS: Record<FinanceNavSectionIcon, LucideIcon
   workforce: ClipboardCheck,
   scriptChecking: ClipboardCheck,
   dataEntry: Keyboard,
+  directory: BookMarked,
 };
 
 export function financeNavItemIcon(icon: FinanceNavIcon): LucideIcon {

@@ -130,6 +130,15 @@ supervisor_or_inspector = RoleChecker(allowed_roles={UserRole.SUPERVISOR, UserRo
 supervisor_inspector_or_depot_keeper = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
 )
+bank_directory_reader = RoleChecker(
+    allowed_roles={
+        UserRole.SUPER_ADMIN,
+        UserRole.SUPERVISOR,
+        UserRole.INSPECTOR,
+        UserRole.DEPOT_KEEPER,
+        UserRole.FINANCE_OFFICER,
+    },
+)
 staff_active_examination_roles = RoleChecker(
     allowed_roles={
         UserRole.SUPER_ADMIN,
@@ -165,6 +174,7 @@ SubjectOfficerDep = Annotated[User, Depends(subject_officer_only)]
 DepotKeeperDep = Annotated[User, Depends(depot_keeper_only)]
 SupervisorOrInspectorDep = Annotated[User, Depends(supervisor_or_inspector)]
 SupervisorInspectorOrDepotKeeperDep = Annotated[User, Depends(supervisor_inspector_or_depot_keeper)]
+BankDirectoryReaderDep = Annotated[User, Depends(bank_directory_reader)]
 StaffActiveExaminationDep = Annotated[User, Depends(staff_active_examination_roles)]
 ExamDocumentReaderDep = Annotated[User, Depends(exam_document_reader)]
 

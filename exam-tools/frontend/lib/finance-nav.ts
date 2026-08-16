@@ -128,7 +128,8 @@ export type FinanceNavSectionIcon =
   | "workforce"
   | "scriptChecking"
   | "dataEntry"
-  | "analysis";
+  | "analysis"
+  | "directory";
 
 export type FinanceNavSection = {
   id: string;
@@ -148,8 +149,8 @@ export const FINANCE_OVERVIEW_ITEM: FinanceNavItem = {
 
 export const BANK_DIRECTORY_NAV_ITEM: FinanceNavItem = {
   href: BANK_DIRECTORY_HREF,
-  label: "Bank directory",
-  description: "Branches & codes",
+  label: "Banks & branches",
+  description: "Look up sort codes",
   icon: "directory",
 };
 
@@ -279,6 +280,13 @@ export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
     heading: "Reports",
     icon: "analysis",
     items: ANALYSIS_NAV_ITEMS,
+    deemphasized: true,
+  },
+  {
+    id: "bank-directory",
+    heading: "Bank directory",
+    icon: "directory",
+    items: [BANK_DIRECTORY_NAV_ITEM],
     deemphasized: true,
   },
 ];

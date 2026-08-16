@@ -6,7 +6,7 @@ from typing import cast
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 
-from app.dependencies.auth import SuperAdminDep, SupervisorInspectorOrDepotKeeperDep
+from app.dependencies.auth import BankDirectoryReaderDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import BankBranch
 from app.schemas.bank_branch import (
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/bank-branches", tags=["bank-branches"])
 @router.get("", response_model=BankBranchListResponse)
 async def list_bank_branches(
     session: DBSessionDep,
-    _user: SupervisorInspectorOrDepotKeeperDep,
+    _user: BankDirectoryReaderDep,
     search: str | None = Query(None, description="Substring match on bank name or branch name"),
     bank_name: str | None = Query(None, description="Substring match (case-insensitive)"),
     bank_name_exact: str | None = Query(None, description="Exact bank name match (case-sensitive)"),
@@ -61,7 +61,7 @@ async def list_bank_branches(
 @router.get("/distinct-bank-names", response_model=list[str])
 async def distinct_bank_names(
     session: DBSessionDep,
-    _user: SupervisorInspectorOrDepotKeeperDep,
+    _user: BankDirectoryReaderDep,
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
