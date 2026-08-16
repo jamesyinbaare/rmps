@@ -32,6 +32,9 @@ import {
   listSchools,
   listSchoolProgrammes,
   exportCandidateResults,
+  startResultsExportJob,
+  getResultsExportJob,
+  downloadResultsExportJobFile,
 } from "@/lib/api";
 import { DATA_ENTRY_EXAM_STORAGE_KEY } from "@/hooks/useDataEntryExamScope";
 import { examLabel } from "@/components/results/exam-label";
@@ -249,6 +252,9 @@ export default function ExportResultsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportStartedAt, setExportStartedAt] = useState<number | null>(null);
+  const [exportElapsedSec, setExportElapsedSec] = useState(0);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
 
   const [exams, setExams] = useState<Exam[]>([]);
@@ -605,7 +611,19 @@ export default function ExportResultsPage() {
     setCustomFieldsOpen(false);
   };
 
+  useEffect(() => {
+    if (!exporting || exportStartedAt == null) {
+      setExportElapsedSec(0);
+      return;
+    }
+    const tick = () => setExportElapsedSec(Math.floor((Date.now() - exportStartedAt) / 1000));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [exporting, exportStartedAt]);
+
   const handleExport = async () => {
+    if (exporting) return;
     if (exportDisableReason) {
       toast.error(exportDisableReason);
       return;
@@ -618,22 +636,58 @@ export default function ExportResultsPage() {
         : undefined;
     const exportSubjectType: "CORE" | "ELECTIVE" | undefined =
       scopeMode === "CORE" || scopeMode === "ELECTIVE" ? scopeMode : undefined;
+    const filters = buildFilters(false);
+    const useJob =
+      total > 5000 ||
+      (!schoolId &&
+        !subjectId &&
+        (scopeMode === "CORE" || scopeMode === "ELECTIVE" || exportFormat === "multi_subject"));
 
     setExporting(true);
+    setExportStartedAt(Date.now());
+    setExportMessage(useJob ? "Preparing file…" : "Downloading…");
     try {
-      const filename = await exportCandidateResults(
-        buildFilters(false),
-        fieldsToExport,
-        exportSubjectType,
-        exportFormat,
-        exportFormat === "multi_subject" ? testType : undefined,
-        subjectIdsArray
-      );
-      toast.success(`Downloaded ${filename}`);
+      if (useJob) {
+        const job = await startResultsExportJob(
+          filters,
+          fieldsToExport,
+          exportSubjectType,
+          exportFormat,
+          exportFormat === "multi_subject" ? testType : undefined,
+          subjectIdsArray
+        );
+        let status = job.status.toLowerCase();
+        while (status === "pending" || status === "in_progress") {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          const snapshot = await getResultsExportJob(job.job_id);
+          status = snapshot.status.toLowerCase();
+          if (snapshot.message) setExportMessage(snapshot.message);
+          if (status === "failed") {
+            throw new Error(snapshot.error_message || "Export failed");
+          }
+        }
+        if (status !== "completed") {
+          throw new Error("Export did not complete");
+        }
+        const filename = await downloadResultsExportJobFile(job.job_id);
+        toast.success(`Downloaded ${filename}`);
+      } else {
+        const filename = await exportCandidateResults(
+          filters,
+          fieldsToExport,
+          exportSubjectType,
+          exportFormat,
+          exportFormat === "multi_subject" ? testType : undefined,
+          subjectIdsArray
+        );
+        toast.success(`Downloaded ${filename}`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to export results");
     } finally {
       setExporting(false);
+      setExportStartedAt(null);
+      setExportMessage(null);
     }
   };
 
@@ -1101,18 +1155,20 @@ export default function ExportResultsPage() {
                 {selectedExamId ? ` · ${scopeSummary} · ${exportFormat === "standard" ? "Standard" : "Multi-subject"}` : ""}
               </p>
               <p className="text-muted-foreground">
-                {exportDisableReason
-                  ? exportDisableReason
-                  : total > 0
-                    ? `${total} candidate row${total === 1 ? "" : "s"} ready to export`
-                    : "Ready to export"}
+                {exporting
+                  ? `${exportMessage || "Exporting…"} · ${exportElapsedSec}s`
+                  : exportDisableReason
+                    ? exportDisableReason
+                    : total > 0
+                      ? `${total} candidate row${total === 1 ? "" : "s"} ready to export`
+                      : "Ready to export"}
               </p>
             </div>
             <Button onClick={handleExport} disabled={exporting || !!exportDisableReason}>
               {exporting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Exporting...
+                  {exportMessage || "Exporting..."}
                 </>
               ) : (
                 <>
