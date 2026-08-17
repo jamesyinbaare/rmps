@@ -1178,8 +1178,8 @@ export default function ReductoExtractionPage() {
                   : "Choose a subject to load sheets"}
               </p>
               <p className="mt-1.5 max-w-md text-center text-sm text-muted-foreground animate-in fade-in-0 duration-500 fill-mode-both [animation-delay:160ms]">
-                Sheets load per subject so you can queue extraction and see expected vs missing
-                coverage in one place.
+                Pick a subject to load its sheets, queue extraction, and check what’s still
+                missing—all in one place.
               </p>
               <div className="mt-8 flex w-full max-w-xl flex-col gap-3 sm:flex-row animate-in fade-in-0 slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:220ms]">
                 <div className="min-w-0 flex-1 space-y-1.5">

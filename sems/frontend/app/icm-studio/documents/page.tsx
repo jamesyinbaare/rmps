@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
@@ -10,6 +10,7 @@ import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +26,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Upload, Grid3x3, List, Trash2, Database, MoreHorizontal, RefreshCw, Keyboard } from "lucide-react";
+import {
+  Upload,
+  Grid3x3,
+  List,
+  Trash2,
+  Database,
+  MoreHorizontal,
+  RefreshCw,
+  Keyboard,
+  BookOpen,
+  Sparkles,
+} from "lucide-react";
 import {
   listDocuments,
   getIdExtractionStatusCounts,
@@ -34,10 +46,14 @@ import {
   updateDocumentId,
   bulkDeleteDocuments,
   bulkExtractDocumentIds,
+  getAllExams,
 } from "@/lib/api";
 import type {
   Document,
   DocumentFilters as DocumentFiltersType,
+  Exam,
+  ExamSeries,
+  ExamType,
   IdExtractionStatusCounts,
 } from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
@@ -50,9 +66,23 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  clearDocumentsResumeScope,
+  parseOptionalInt,
+  writeDocumentsResumeScope,
+} from "@/lib/extraction-scope";
 
 /** Cap accumulated infinite-scroll cards to avoid unbounded DOM growth at 50k+ scale. */
 const MAX_INFINITE_SCROLL_ITEMS = 300;
+
+function formatExamLabel(exam: Exam) {
+  const typeLabel =
+    exam.exam_type === "Certificate II Examinations" ||
+    exam.exam_type === "Certificate II Examination"
+      ? "Certificate II"
+      : exam.exam_type;
+  return `${exam.year} ${exam.series} ${typeLabel}`;
+}
 
 export default function DocumentsPage() {
   const searchParams = useSearchParams();
@@ -61,20 +91,20 @@ export default function DocumentsPage() {
   const examIdParam = searchParams.get("exam_id");
   const extractionStatusParam = searchParams.get("id_extraction_status");
   const errorParam = searchParams.get("error") || "";
+  const examIdFromUrl = parseOptionalInt(examIdParam);
 
+  const [exams, setExams] = useState<Exam[]>([]);
+  const [loadingExams, setLoadingExams] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<DocumentFiltersType>(() => {
     const initial: DocumentFiltersType = {
       page: 1,
       page_size: extractionStatusParam === "error" ? 50 : 30,
     };
-    if (examIdParam) {
-      const examId = parseInt(examIdParam, 10);
-      if (!Number.isNaN(examId)) {
-        initial.exam_id = examId;
-      }
+    if (examIdFromUrl != null) {
+      initial.exam_id = examIdFromUrl;
     }
     if (
       extractionStatusParam === "success" ||
@@ -89,6 +119,9 @@ export default function DocumentsPage() {
     }
     return initial;
   });
+  const lastUrlQueryRef = useRef<string | null>(null);
+  /** Allow writing exam_id into the URL only after an explicit exam pick (not soft-nav). */
+  const allowExamUrlWriteRef = useRef(false);
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -120,9 +153,67 @@ export default function DocumentsPage() {
   const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
 
+  const scopeReady = !!filters.exam_id;
   const isErrorsView = filters.id_extraction_status === "error";
   const selectionEnabled = isErrorsView || bulkMode;
   const useInfiniteScroll = viewMode === "grid" && !isErrorsView;
+
+  const examOptions = useMemo(
+    () =>
+      exams
+        .slice()
+        .sort((a, b) => {
+          if (b.year !== a.year) return b.year - a.year;
+          if (a.series !== b.series) return a.series.localeCompare(b.series);
+          return (a.exam_type || "").localeCompare(b.exam_type || "");
+        })
+        .map((exam) => ({
+          value: exam.id,
+          label: formatExamLabel(exam),
+        })),
+    [exams]
+  );
+
+  useEffect(() => {
+    async function loadExams() {
+      setLoadingExams(true);
+      try {
+        setExams(await getAllExams());
+      } catch (err) {
+        console.error("Failed to load exams:", err);
+      } finally {
+        setLoadingExams(false);
+      }
+    }
+    void loadExams();
+  }, []);
+
+  // Keep exam scope in sync with the URL (including soft-nav to bare /documents).
+  // Do not auto-hydrate from resume — that skipped the gate and dumped the full exam list.
+  useEffect(() => {
+    setFilters((prev) => {
+      const current = prev.exam_id ?? undefined;
+      const next = examIdFromUrl ?? undefined;
+      if (current === next) return prev;
+
+      if (next == null) {
+        clearDocumentsResumeScope();
+        const cleared: DocumentFiltersType = {
+          page: 1,
+          page_size: prev.page_size || 30,
+        };
+        if (prev.id_extraction_status) {
+          cleared.id_extraction_status = prev.id_extraction_status;
+        }
+        if (prev.id_extraction_error_code) {
+          cleared.id_extraction_error_code = prev.id_extraction_error_code;
+        }
+        return cleared;
+      }
+
+      return { ...prev, exam_id: next, page: 1 };
+    });
+  }, [examIdFromUrl]);
 
   // Debounce search into server-side `q` filter
   useEffect(() => {
@@ -136,11 +227,8 @@ export default function DocumentsPage() {
     return () => window.clearTimeout(handle);
   }, [searchQuery]);
 
-  // Sync filters when dashboard deep-link query params change
+  // Sync status/error from URL deep-links (exam is owned by local state + resume)
   useEffect(() => {
-    const nextExamId = examIdParam ? parseInt(examIdParam, 10) : undefined;
-    const validExamId =
-      nextExamId != null && !Number.isNaN(nextExamId) ? nextExamId : undefined;
     const nextStatus =
       extractionStatusParam === "success" ||
       extractionStatusParam === "pending" ||
@@ -148,24 +236,21 @@ export default function DocumentsPage() {
         ? extractionStatusParam
         : undefined;
     const nextError = errorParam || undefined;
-
     const resolvedStatus = nextError ? nextStatus || "error" : nextStatus;
 
     setFilters((prev) => {
-      const examChanged = (prev.exam_id ?? undefined) !== validExamId;
       const statusChanged = (prev.id_extraction_status ?? undefined) !== resolvedStatus;
       const errorChanged = (prev.id_extraction_error_code ?? undefined) !== nextError;
-      if (!examChanged && !statusChanged && !errorChanged) return prev;
+      if (!statusChanged && !errorChanged) return prev;
       return {
         ...prev,
-        exam_id: validExamId,
         id_extraction_status: resolvedStatus,
         id_extraction_error_code: nextError,
         page: 1,
         page_size: resolvedStatus === "error" ? 50 : statusChanged ? 30 : prev.page_size,
       };
     });
-  }, [examIdParam, extractionStatusParam, errorParam]);
+  }, [extractionStatusParam, errorParam]);
 
   const prevExtractionStatusParamRef = useRef(extractionStatusParam);
   useEffect(() => {
@@ -179,6 +264,16 @@ export default function DocumentsPage() {
   }, [extractionStatusParam]);
 
   const loadDocuments = useCallback(async (append = false) => {
+    if (!filters.exam_id) {
+      setDocuments([]);
+      setTotal(0);
+      setTotalPages(1);
+      setCurrentPage(1);
+      setHasMore(false);
+      setLoading(false);
+      setLoadingMore(false);
+      return;
+    }
     if (append) {
       setLoadingMore(true);
     } else {
@@ -189,12 +284,11 @@ export default function DocumentsPage() {
       const response = await listDocuments(filters);
       let sortedDocuments = response.items;
 
-      // Sort by recent (uploaded_at descending) if filter is "recent"
       if (filterParam === "recent") {
         sortedDocuments = [...response.items].sort((a, b) => {
           const dateA = new Date(a.uploaded_at).getTime();
           const dateB = new Date(b.uploaded_at).getTime();
-          return dateB - dateA; // Descending order (newest first)
+          return dateB - dateA;
         });
       }
 
@@ -235,11 +329,24 @@ export default function DocumentsPage() {
 
   // Handle filter/search changes (reset) vs page changes (append for infinite scroll)
   useEffect(() => {
-    // Skip on initial mount - handled by initial load effect
+    if (!scopeReady) {
+      setDocuments([]);
+      setTotal(0);
+      setTotalPages(1);
+      setCurrentPage(1);
+      setHasMore(false);
+      setLoading(false);
+      prevFiltersRef.current = filters;
+      prevFilterParamRef.current = filterParam;
+      isInitialMount.current = false;
+      return;
+    }
+
     if (isInitialMount.current) {
       isInitialMount.current = false;
       prevFiltersRef.current = filters;
       prevFilterParamRef.current = filterParam;
+      loadDocuments(false);
       return;
     }
 
@@ -258,7 +365,6 @@ export default function DocumentsPage() {
     const pageChanged = (prevFiltersRef.current?.page ?? 1) !== (filters.page ?? 1);
 
     if (filtersChanged && (filters.page ?? 1) === 1) {
-      // Filters changed, reset to page 1
       prevFiltersRef.current = filters;
       prevFilterParamRef.current = filterParam;
       loadDocuments(false);
@@ -269,38 +375,44 @@ export default function DocumentsPage() {
       prevFiltersRef.current = filters;
       loadDocuments(false);
     }
-  }, [filters, filterParam, viewMode, useInfiniteScroll, loadDocuments]);
+  }, [filters, filterParam, viewMode, useInfiniteScroll, loadDocuments, scopeReady]);
 
-  // Keep exam_id, extraction status, and error type in the URL
+  // Drive URL from filter state (avoid searchParams loops).
+  // Never re-add exam_id after the URL was cleared (e.g. sidebar "All files") unless
+  // the user just picked an exam via handleExamChange.
   useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams();
+    if (filterParam) params.set("filter", filterParam);
     if (filters.exam_id) {
-      params.set("exam_id", String(filters.exam_id));
-    } else {
-      params.delete("exam_id");
+      if (examIdFromUrl != null || allowExamUrlWriteRef.current) {
+        params.set("exam_id", String(filters.exam_id));
+        allowExamUrlWriteRef.current = false;
+      }
     }
     if (filters.id_extraction_status) {
       params.set("id_extraction_status", filters.id_extraction_status);
-    } else {
-      params.delete("id_extraction_status");
     }
     if (filters.id_extraction_error_code) {
       params.set("error", filters.id_extraction_error_code);
-    } else {
-      params.delete("error");
     }
     const next = params.toString();
-    const current = searchParams.toString();
-    if (next !== current) {
-      router.replace(`/icm-studio/documents${next ? `?${next}` : ""}`, { scroll: false });
-    }
+    if (lastUrlQueryRef.current === next) return;
+    lastUrlQueryRef.current = next;
+    router.replace(`/icm-studio/documents${next ? `?${next}` : ""}`, { scroll: false });
   }, [
     filters.exam_id,
     filters.id_extraction_status,
     filters.id_extraction_error_code,
+    filterParam,
+    examIdFromUrl,
     router,
-    searchParams,
   ]);
+
+  useEffect(() => {
+    if (filters.exam_id) {
+      writeDocumentsResumeScope(filters.exam_id);
+    }
+  }, [filters.exam_id]);
 
   // Check if we need to load more content to fill the viewport (after documents load)
   useEffect(() => {
@@ -388,13 +500,18 @@ export default function DocumentsPage() {
     };
   }, [useInfiniteScroll, hasMore, loadingMore, loading, currentPage, totalPages]);
 
-  // Initial load on mount
-  useEffect(() => {
-    loadDocuments(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const loadStatusCounts = useCallback(async () => {
+    if (!filters.exam_id) {
+      setStatusCounts({
+        total: 0,
+        pending: 0,
+        success: 0,
+        error: 0,
+        error_codes: [],
+      });
+      setCountsLoading(false);
+      return;
+    }
     setCountsLoading(true);
     try {
       const counts = await getIdExtractionStatusCounts({
@@ -426,6 +543,50 @@ export default function DocumentsPage() {
     void loadStatusCounts();
   }, [loadStatusCounts]);
 
+  const handleExamChange = (value: string | number | "all" | "") => {
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    if (value === "all" || value === "") {
+      clearDocumentsResumeScope();
+      allowExamUrlWriteRef.current = false;
+      setFilters((prev) => {
+        const next: DocumentFiltersType = {
+          page: 1,
+          page_size: prev.page_size || 30,
+        };
+        if (prev.id_extraction_status) {
+          next.id_extraction_status = prev.id_extraction_status;
+        }
+        if (prev.id_extraction_error_code) {
+          next.id_extraction_error_code = prev.id_extraction_error_code;
+        }
+        return next;
+      });
+      return;
+    }
+    const examId = typeof value === "number" ? value : parseInt(String(value), 10);
+    const exam = exams.find((e) => e.id === examId);
+    allowExamUrlWriteRef.current = true;
+    setFilters((prev) => {
+      const next: DocumentFiltersType = {
+        ...prev,
+        exam_id: examId,
+        page: 1,
+      };
+      delete next.school_id;
+      delete next.subject_id;
+      if (exam) {
+        next.exam_type = exam.exam_type as ExamType;
+        next.series = exam.series as ExamSeries;
+        next.year = exam.year;
+      } else {
+        delete next.exam_type;
+        delete next.series;
+        delete next.year;
+      }
+      return next;
+    });
+  };
   const handleStatusSelect = (status: "pending" | "success" | "error" | undefined) => {
     setSelectedIds(new Set());
     setBulkMode(false);
@@ -844,26 +1005,176 @@ export default function DocumentsPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
           title="All files"
-          activeFilter={filterParam || undefined}
-          onFilterChange={handleFilterChange}
-          onSearch={setSearchQuery}
+          onSearch={scopeReady ? setSearchQuery : undefined}
           searchValue={searchQuery}
-          showSearch={true}
+          showSearch={scopeReady}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <main className="min-h-0 flex-1 overflow-y-auto w-full">
-            {/* Filters */}
-            <div className="px-6 pt-4 pb-2 border-b border-border space-y-3">
-              <CompactFilters filters={filters} onFiltersChange={handleFiltersChange} />
-              <IdExtractionStatusPills
-                counts={statusCounts}
-                selected={filters.id_extraction_status}
-                onSelect={handleStatusSelect}
-                loading={countsLoading}
+          {!scopeReady ? (
+            <div className="relative mx-4 mb-4 mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(0,133,63,0.08),_transparent_55%),radial-gradient(ellipse_at_bottom_right,_rgba(0,55,100,0.06),_transparent_50%)]"
               />
+              <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-14">
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-border/60 bg-background/80 shadow-sm">
+                  <BookOpen className="h-6 w-6 text-primary" />
+                </div>
+                <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                  <Sparkles className="h-3 w-3 text-primary" />
+                  Exam-first documents
+                </div>
+                <p className="mt-3 text-lg font-semibold tracking-tight">
+                  Choose an examination to begin
+                </p>
+                <p className="mt-1.5 max-w-md text-center text-sm text-muted-foreground">
+                  Pick an exam to upload sheets and fix ID extraction for that sitting.
+                </p>
+                <div className="mt-8 w-full max-w-md space-y-1.5">
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    Examination
+                  </label>
+                  <SearchableSelect
+                    options={examOptions}
+                    value={filters.exam_id || ""}
+                    onValueChange={handleExamChange}
+                    placeholder="Select examination…"
+                    disabled={loadingExams}
+                    triggerClassName="h-11"
+                    searchPlaceholder="Search examinations..."
+                    emptyMessage="No examinations found"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+          <main className="min-h-0 flex-1 overflow-y-auto w-full">
+            {/* Dense control strip */}
+            <div className="sticky top-0 z-10 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <div className="w-[180px] sm:w-[240px]">
+                    <SearchableSelect
+                      options={examOptions}
+                      value={filters.exam_id || ""}
+                      onValueChange={handleExamChange}
+                      placeholder="Examination"
+                      disabled={loadingExams}
+                      triggerClassName="h-8"
+                      searchPlaceholder="Search examinations..."
+                      emptyMessage="No examinations found"
+                    />
+                  </div>
+                  <CompactFilters
+                    filters={filters}
+                    onFiltersChange={handleFiltersChange}
+                    hideExam
+                  />
+                  <IdExtractionStatusPills
+                    counts={statusCounts}
+                    selected={filters.id_extraction_status}
+                    onSelect={handleStatusSelect}
+                    loading={countsLoading}
+                    dense
+                  />
+                </div>
+
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Button
+                    variant={filterParam === "recent" ? "secondary" : "outline"}
+                    size="sm"
+                    className="h-8"
+                    onClick={() =>
+                      handleFilterChange(filterParam === "recent" ? "" : "recent")
+                    }
+                  >
+                    Recents
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setUploadOpen(true)}
+                    className="h-8 gap-1.5"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Upload</span>
+                  </Button>
+                  {!isErrorsView && (
+                    <Button
+                      variant={bulkMode ? "secondary" : "outline"}
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setBulkMode(!bulkMode);
+                        if (bulkMode) {
+                          setSelectedIds(new Set());
+                        }
+                      }}
+                    >
+                      <Grid3x3 className="h-3.5 w-3.5" />
+                      {bulkMode ? "Exit" : "Select"}
+                    </Button>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                        <MoreHorizontal className="h-4 w-4" />
+                        <span className="sr-only">More</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuItem
+                        onClick={() => setBackfillDialogOpen(true)}
+                        className="gap-2"
+                      >
+                        <Database className="h-4 w-4" />
+                        Backfill missing fields
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  {isErrorsView && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          aria-label="Keyboard shortcuts"
+                        >
+                          <Keyboard className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        j/k or arrows focus · Space toggles · Enter opens · Ctrl/Cmd+A selects page · A retries · Esc clears
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5">
+                    <Button
+                      variant={viewMode === "grid" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => setViewMode("grid")}
+                      aria-label="Grid view"
+                    >
+                      <Grid3x3 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant={viewMode === "list" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => setViewMode("list")}
+                      aria-label="List view"
+                    >
+                      <List className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
               {isErrorsView && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground mr-1">Error type:</span>
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 px-4 py-1.5">
+                  <span className="mr-1 text-xs text-muted-foreground">Error type:</span>
                   {ID_EXTRACTION_ERROR_FILTERS.map((opt) => {
                     const count =
                       opt.value === ""
@@ -907,7 +1218,7 @@ export default function DocumentsPage() {
 
             {/* Bulk Actions Bar (All / Success / Pending selection mode) */}
             {!isErrorsView && bulkMode && selectedIds.size > 0 && (
-              <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-muted/50">
+              <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
                 <div className="flex items-center gap-4">
                   <span className="text-sm font-medium">
                     {selectedIds.size} document{selectedIds.size !== 1 ? "s" : ""} selected
@@ -962,96 +1273,11 @@ export default function DocumentsPage() {
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => setUploadOpen(true)}
-                  className="gap-2"
-                >
-                  <Upload className="h-4 w-4" />
-                  Upload Scanned ICMs
-                </Button>
-                {!isErrorsView && (
-                  <Button
-                    variant={bulkMode ? "secondary" : "outline"}
-                    onClick={() => {
-                      setBulkMode(!bulkMode);
-                      if (bulkMode) {
-                        setSelectedIds(new Set());
-                      }
-                    }}
-                    className="gap-2"
-                  >
-                    <Grid3x3 className="h-4 w-4" />
-                    {bulkMode ? "Exit Selection" : "Select"}
-                  </Button>
-                )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1.5">
-                      <MoreHorizontal className="h-4 w-4" />
-                      More
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-52">
-                    <DropdownMenuItem
-                      onClick={() => setBackfillDialogOpen(true)}
-                      className="gap-2"
-                    >
-                      <Database className="h-4 w-4" />
-                      Backfill missing fields
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-1">
-                {isErrorsView && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        aria-label="Keyboard shortcuts"
-                      >
-                        <Keyboard className="h-4 w-4 text-muted-foreground" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      j/k or arrows focus · Space toggles · Enter opens · Ctrl/Cmd+A selects page · A retries · Esc clears
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                <div className="flex shrink-0 items-center gap-1 rounded-md border border-border p-0.5">
-                <Button
-                  variant={viewMode === "grid" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-8 gap-1.5 px-2.5"
-                  onClick={() => setViewMode("grid")}
-                >
-                  <Grid3x3 className="h-4 w-4" />
-                  <span className="hidden sm:inline">Grid</span>
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-8 gap-1.5 px-2.5"
-                  onClick={() => setViewMode("list")}
-                >
-                  <List className="h-4 w-4" />
-                  <span className="hidden sm:inline">List</span>
-                </Button>
-                </div>
-              </div>
-            </div>
-
             <DocumentUpload
               open={uploadOpen}
               onOpenChange={setUploadOpen}
               onUploadSuccess={handleUploadSuccess}
+              initialExamId={filters.exam_id}
             />
 
             {error && (
@@ -1140,6 +1366,7 @@ export default function DocumentsPage() {
               </div>
             )}
           </main>
+          )}
 
           {isErrorsView && selectedIds.size > 0 && (
             <div className="sticky bottom-0 z-10 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur supports-[backdrop-filter]:bg-background/80">

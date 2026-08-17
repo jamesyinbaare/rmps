@@ -10,9 +10,15 @@ import { X } from "lucide-react";
 interface CompactFiltersProps {
   filters: DocumentFilters;
   onFiltersChange: (filters: DocumentFilters) => void;
+  /** When true, exam is controlled elsewhere — only school/subject show. */
+  hideExam?: boolean;
 }
 
-export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps) {
+export function CompactFilters({
+  filters,
+  onFiltersChange,
+  hideExam = false,
+}: CompactFiltersProps) {
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -122,29 +128,50 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
   };
 
   const handleClearFilters = () => {
+    if (hideExam) {
+      const next: DocumentFilters = {
+        page: 1,
+        page_size: filters.page_size,
+        exam_id: filters.exam_id,
+        exam_type: filters.exam_type,
+        series: filters.series,
+        year: filters.year,
+      };
+      onFiltersChange(next);
+      return;
+    }
     onFiltersChange({ page: 1, page_size: filters.page_size });
   };
 
-  const hasActiveFilters =
-    !!filters.exam_id || !!filters.school_id || !!filters.subject_id;
+  const hasActiveFilters = hideExam
+    ? !!filters.school_id || !!filters.subject_id
+    : !!filters.exam_id || !!filters.school_id || !!filters.subject_id;
 
   return (
-    <div className="flex flex-col flex-wrap items-stretch gap-2 sm:flex-row sm:items-center">
-      <div className="w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
-        <SearchableSelect
-          options={examOptions}
-          value={filters.exam_id || "all"}
-          onValueChange={handleExamChange}
-          placeholder="Examination"
-          disabled={loading}
-          allowAll
-          allLabel="All examinations"
-          searchPlaceholder="Search examinations..."
-          emptyMessage="No examinations found"
-        />
-      </div>
+    <div
+      className={
+        hideExam
+          ? "flex flex-wrap items-center gap-1.5"
+          : "flex flex-col flex-wrap items-stretch gap-2 sm:flex-row sm:items-center"
+      }
+    >
+      {!hideExam ? (
+        <div className="w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
+          <SearchableSelect
+            options={examOptions}
+            value={filters.exam_id || "all"}
+            onValueChange={handleExamChange}
+            placeholder="Examination"
+            disabled={loading}
+            allowAll
+            allLabel="All examinations"
+            searchPlaceholder="Search examinations..."
+            emptyMessage="No examinations found"
+          />
+        </div>
+      ) : null}
 
-      <div className="w-full sm:w-[280px]">
+      <div className={hideExam ? "w-[160px] sm:w-[200px]" : "w-full sm:w-[280px]"}>
         <SearchableSelect
           options={schools.map((school) => ({
             value: school.id,
@@ -158,10 +185,11 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
           allLabel="All schools"
           searchPlaceholder="Search schools..."
           emptyMessage="No schools found"
+          triggerClassName={hideExam ? "h-8" : undefined}
         />
       </div>
 
-      <div className="w-full sm:w-[280px]">
+      <div className={hideExam ? "w-[160px] sm:w-[200px]" : "w-full sm:w-[280px]"}>
         <SearchableSelect
           options={subjects.map((subject) => ({
             value: subject.id,
@@ -175,6 +203,7 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
           allLabel="All subjects"
           searchPlaceholder="Search subjects..."
           emptyMessage="No subjects found"
+          triggerClassName={hideExam ? "h-8" : undefined}
         />
       </div>
 
@@ -184,10 +213,15 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
           size="sm"
           onClick={handleClearFilters}
           disabled={loading}
-          className="h-8 w-full gap-1 sm:w-auto"
+          className={
+            hideExam
+              ? "h-8 w-8 shrink-0 p-0"
+              : "h-8 w-full gap-1 sm:w-auto"
+          }
+          aria-label="Clear filters"
         >
           <X className="h-3 w-3" />
-          Clear
+          {!hideExam ? "Clear" : null}
         </Button>
       ) : null}
     </div>

@@ -1,11 +1,16 @@
 import type { ExtractionProvider } from "@/types/document";
 
 export const RESUME_STORAGE_KEY = "sems.extraction.resume";
+export const DOCUMENTS_RESUME_STORAGE_KEY = "sems.documents.resume";
 export const COMPLETED_WINDOW_STORAGE_KEY = "sems.extraction.completed_window";
 
 export type ExtractionResumeScope = {
   exam_id: number;
   subject_id: number;
+};
+
+export type DocumentsResumeScope = {
+  exam_id: number;
 };
 
 export type ExtractionScopeParams = {
@@ -84,6 +89,40 @@ export function clearResumeScope() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(RESUME_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function readDocumentsResumeScope(): DocumentsResumeScope | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DOCUMENTS_RESUME_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DocumentsResumeScope;
+    if (typeof parsed?.exam_id === "number") return parsed;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function writeDocumentsResumeScope(examId: number) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DOCUMENTS_RESUME_STORAGE_KEY,
+      JSON.stringify({ exam_id: examId } satisfies DocumentsResumeScope)
+    );
+  } catch {
+    // ignore
+  }
+}
+
+export function clearDocumentsResumeScope() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DOCUMENTS_RESUME_STORAGE_KEY);
   } catch {
     // ignore
   }

@@ -287,7 +287,7 @@ export default function ICMStudioPage() {
     {
       title: "All files",
       description: "Browse and upload",
-      href: examId ? docsHref(examId) : "/icm-studio/documents",
+      href: "/icm-studio/documents",
       icon: Files,
       well: "bg-[#003764]/12 text-[#003764] dark:text-[#5b9bd5]",
     },

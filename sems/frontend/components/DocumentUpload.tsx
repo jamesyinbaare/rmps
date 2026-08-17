@@ -46,6 +46,8 @@ interface DocumentUploadProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUploadSuccess?: () => void;
+  /** Pre-select this examination when the dialog opens. */
+  initialExamId?: number;
 }
 
 const BATCH_SIZE = 200;
@@ -102,9 +104,16 @@ async function mapPool<T, R>(
   return results;
 }
 
-export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: DocumentUploadProps) {
+export function DocumentUpload({
+  open,
+  onOpenChange,
+  onUploadSuccess,
+  initialExamId,
+}: DocumentUploadProps) {
   const [exams, setExams] = useState<Exam[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState<string>("");
+  const [selectedExamId, setSelectedExamId] = useState<string>(
+    initialExamId != null ? String(initialExamId) : ""
+  );
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -142,7 +151,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
   useEffect(() => {
     if (!open) {
       setFiles([]);
-      setSelectedExamId("");
+      setSelectedExamId(initialExamId != null ? String(initialExamId) : "");
       setUploading(false);
       setUploadProgress(0);
       setStatusLabel("");
@@ -153,8 +162,10 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
       setSummary(null);
       setIsDragging(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    } else if (initialExamId != null) {
+      setSelectedExamId(String(initialExamId));
     }
-  }, [open]);
+  }, [open, initialExamId]);
 
   const addFiles = (incoming: File[]) => {
     const validFiles = incoming.filter((file) => {
