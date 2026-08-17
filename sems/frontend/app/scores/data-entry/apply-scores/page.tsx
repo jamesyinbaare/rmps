@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -44,17 +45,35 @@ import type {
 import { DEFAULT_EXTRACTION_PROVIDER, extractionFor, extractionProviderLabel, otherExtractionProvider } from "@/types/document";
 import { AlertTriangle, X } from "lucide-react";
 import { toast } from "sonner";
+import {
+  appendScopeToHref,
+  clearResumeScope,
+  parseOptionalInt,
+  parseProvider,
+  readResumeScope,
+  writeResumeScope,
+} from "@/lib/extraction-scope";
 
 export default function ApplyScoresPage() {
+  const searchParams = useSearchParams();
+  const examIdFromUrl = parseOptionalInt(searchParams.get("exam_id"));
+  const subjectIdFromUrl = parseOptionalInt(searchParams.get("subject_id"));
+  const providerFromUrl = parseProvider(searchParams.get("provider"));
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<ScoreDocumentFilters>({
-    page: 1,
-    page_size: 50,
-    extraction_status: "success",
-    scores_applied: false,
-    extraction_provider: DEFAULT_EXTRACTION_PROVIDER,
+  const [filters, setFilters] = useState<ScoreDocumentFilters>(() => {
+    const initial: ScoreDocumentFilters = {
+      page: 1,
+      page_size: 50,
+      extraction_status: "success",
+      scores_applied: false,
+      extraction_provider: providerFromUrl ?? DEFAULT_EXTRACTION_PROVIDER,
+    };
+    if (examIdFromUrl) initial.exam_id = examIdFromUrl;
+    if (subjectIdFromUrl) initial.subject_id = subjectIdFromUrl;
+    return initial;
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -65,7 +84,8 @@ export default function ApplyScoresPage() {
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
-  const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
+  const [selectedExamId, setSelectedExamId] = useState<number | undefined>(examIdFromUrl);
+  const resumeHydratedRef = useRef(false);
 
   const [verifyEnabled, setVerifyEnabled] = useState(true);
   const [applying, setApplying] = useState(false);
@@ -103,6 +123,31 @@ export default function ApplyScoresPage() {
   useEffect(() => {
     void loadUnmatchedRecords();
   }, [loadUnmatchedRecords]);
+
+  useEffect(() => {
+    if (resumeHydratedRef.current) return;
+    if (examIdFromUrl != null || subjectIdFromUrl != null || providerFromUrl) {
+      resumeHydratedRef.current = true;
+      if (examIdFromUrl != null) setSelectedExamId(examIdFromUrl);
+      if (subjectIdFromUrl != null) {
+        setFilters((prev) => ({ ...prev, subject_id: subjectIdFromUrl, page: 1 }));
+      }
+      if (providerFromUrl) {
+        setFilters((prev) => ({ ...prev, extraction_provider: providerFromUrl }));
+      }
+      return;
+    }
+    const resume = readResumeScope();
+    if (!resume) return;
+    resumeHydratedRef.current = true;
+    setSelectedExamId(resume.exam_id);
+    setFilters((prev) => ({
+      ...prev,
+      exam_id: resume.exam_id,
+      subject_id: resume.subject_id,
+      page: 1,
+    }));
+  }, [examIdFromUrl, subjectIdFromUrl, providerFromUrl]);
 
   useEffect(() => {
     async function loadFilterOptions() {
@@ -169,6 +214,33 @@ export default function ApplyScoresPage() {
     setSelectedDocuments(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedExamId, exams]);
+
+  useEffect(() => {
+    if (filters.exam_id && filters.subject_id) {
+      writeResumeScope(filters.exam_id, filters.subject_id);
+    }
+  }, [filters.exam_id, filters.subject_id]);
+
+  const pipelineScope = useMemo(
+    () =>
+      filters.exam_id && filters.subject_id
+        ? {
+            exam_id: filters.exam_id,
+            subject_id: filters.subject_id,
+            provider: applyProvider,
+          }
+        : null,
+    [filters.exam_id, filters.subject_id, applyProvider]
+  );
+
+  const extractHref = useMemo(
+    () =>
+      appendScopeToHref("/scores/data-entry/extraction", {
+        exam_id: filters.exam_id,
+        subject_id: filters.subject_id,
+      }),
+    [filters.exam_id, filters.subject_id]
+  );
 
   const handleFilterChange = (key: keyof ScoreDocumentFilters, value: number | string | undefined) => {
     setFilters((prev) => {
@@ -463,6 +535,7 @@ export default function ApplyScoresPage() {
 
   const handleClearFilters = () => {
     setSelectedExamId(undefined);
+    clearResumeScope();
     setFilters({
       page: 1,
       page_size: filters.page_size || 50,
@@ -489,7 +562,7 @@ export default function ApplyScoresPage() {
 
         <div className="border-b border-border bg-background px-4 py-2">
           <div className="mx-auto flex max-w-[2000px] flex-wrap items-center justify-between gap-3">
-            <DataEntryPipelineNav current="apply" />
+            <DataEntryPipelineNav current="apply" scope={pipelineScope} />
             <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
               {showUnmatchedAlert && unmatchedCount > 0 && (
                 <Alert className="flex max-w-xl flex-row items-center gap-2 py-1.5 [&>svg]:static [&>svg]:translate-y-0">
@@ -513,7 +586,7 @@ export default function ApplyScoresPage() {
                 </Alert>
               )}
               <Button variant="outline" size="sm" className="h-8" asChild>
-                <Link href="/scores/data-entry/extraction">Back to Extract</Link>
+                <Link href={extractHref}>Back to Extract</Link>
               </Button>
             </div>
           </div>

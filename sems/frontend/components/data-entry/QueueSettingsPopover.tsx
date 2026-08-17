@@ -16,12 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { ExtractionProvider } from "@/types/document";
-import { extractionProviderLabel } from "@/types/document";
 
 interface QueueSettingsPopoverProps {
-  extractionProvider: ExtractionProvider;
-  onExtractionProviderChange: (provider: ExtractionProvider) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
   concurrentWorkers: number;
@@ -33,8 +29,6 @@ interface QueueSettingsPopoverProps {
 }
 
 export function QueueSettingsPopover({
-  extractionProvider,
-  onExtractionProviderChange,
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
   concurrentWorkers,
@@ -64,7 +58,7 @@ export function QueueSettingsPopover({
           disabled={disabled}
         >
           <Settings className="h-3.5 w-3.5" />
-          Settings · {extractionProviderLabel(extractionProvider)}
+          Settings
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 space-y-4">
@@ -73,25 +67,6 @@ export function QueueSettingsPopover({
           <p className="text-xs text-muted-foreground">
             Applies to the next queue action. API rate limit is {rateLimitPerSecond}/s.
           </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Queue with</Label>
-          <Select
-            value={extractionProvider}
-            onValueChange={(value) =>
-              onExtractionProviderChange(value as ExtractionProvider)
-            }
-            disabled={disabled}
-          >
-            <SelectTrigger size="sm" className="h-8 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="llama">Llama Extract</SelectItem>
-              <SelectItem value="reducto">Reducto</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
 
         <div className="flex items-center gap-2">

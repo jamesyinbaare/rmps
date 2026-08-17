@@ -31,7 +31,6 @@ import type { Document, DocumentScoreExtraction, ExtractionProvider } from "@/ty
 import {
   DEFAULT_EXTRACTION_PROVIDER,
   extractionFor,
-  extractionProviderLabel,
   extractionProviderShortLabel,
 } from "@/types/document";
 import { ExtractionApplyBadge } from "@/components/data-entry/ExtractionAppliedBadge";
@@ -70,16 +69,6 @@ import { TableSkeleton } from "@/components/certificates/TableSkeleton";
 import { QueueSettingsPopover } from "@/components/data-entry/QueueSettingsPopover";
 import { paperLabel, RelativeTimestamp } from "@/components/data-entry/score-entry-utils";
 import { cn } from "@/lib/utils";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 export type ExtractionStatusFilter =
   | "pending"
@@ -142,8 +131,8 @@ interface ReductoDocumentsDataTableProps {
   onPageSizeChange: (size: number) => void;
   skipWithoutExtractedId: boolean;
   onSkipWithoutExtractedIdChange: (enabled: boolean) => void;
-  extractionProvider: ExtractionProvider;
-  onExtractionProviderChange: (provider: ExtractionProvider) => void;
+  /** Last provider used for queueing; null until the operator picks one. */
+  extractionProvider: ExtractionProvider | null;
   concurrentWorkers: number;
   workersMax: number;
   rateLimitPerSecond: number;
@@ -228,8 +217,13 @@ function providerRow(document: Document, provider: ExtractionProvider): Document
 
 function providerQueueStatus(
   document: Document,
-  provider: ExtractionProvider
+  provider: ExtractionProvider | null
 ): string | null {
+  if (!provider) {
+    const status = document.scores_extraction_status;
+    if (status === "queued" || status === "processing") return status;
+    return null;
+  }
   const row = providerRow(document, provider);
   if (row?.status) return row.status;
   if ((document.extractions ?? []).length > 0) return null;
@@ -287,7 +281,6 @@ export function ReductoDocumentsDataTable({
   skipWithoutExtractedId,
   onSkipWithoutExtractedIdChange,
   extractionProvider,
-  onExtractionProviderChange,
   concurrentWorkers,
   workersMax,
   rateLimitPerSecond,
@@ -313,7 +306,6 @@ export function ReductoDocumentsDataTable({
 }: ReductoDocumentsDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
-  const [confirmQueueAllOpen, setConfirmQueueAllOpen] = useState(false);
 
   const allSelected = documents.length > 0 && selectedDocuments.size === documents.length;
   const pendingOnPage = documents.filter(
@@ -431,7 +423,9 @@ export function ReductoDocumentsDataTable({
         header: "Actions",
         cell: ({ row }) => {
           const doc = row.original;
-          const queuedProvider = providerRow(doc, extractionProvider);
+          const queuedProvider = extractionProvider
+            ? providerRow(doc, extractionProvider)
+            : undefined;
           const anySuccess =
             (doc.extractions ?? []).some((e) => e.status === "success") ||
             doc.scores_extraction_status === "success";
@@ -577,8 +571,6 @@ export function ReductoDocumentsDataTable({
           </div>
 
           <QueueSettingsPopover
-            extractionProvider={extractionProvider}
-            onExtractionProviderChange={onExtractionProviderChange}
             skipWithoutExtractedId={skipWithoutExtractedId}
             onSkipWithoutExtractedIdChange={onSkipWithoutExtractedIdChange}
             concurrentWorkers={concurrentWorkers}
@@ -601,7 +593,7 @@ export function ReductoDocumentsDataTable({
             variant="outline"
             size="sm"
             className="h-8"
-            onClick={() => setConfirmQueueAllOpen(true)}
+            onClick={onQueueAllPending}
             disabled={queueAllPendingDisabled || busy}
           >
             {queuing ? (
@@ -609,7 +601,7 @@ export function ReductoDocumentsDataTable({
             ) : (
               <Send className="mr-2 h-4 w-4" />
             )}
-            Queue all pending · {extractionProviderLabel(extractionProvider)}
+            Queue all pending
             {pendingReadyCount > 0
               ? ` (${pendingReadyCount.toLocaleString()})`
               : pendingOnPage > 0
@@ -825,32 +817,6 @@ export function ReductoDocumentsDataTable({
           </div>
         </div>
       )}
-
-      <AlertDialog open={confirmQueueAllOpen} onOpenChange={setConfirmQueueAllOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Queue {pendingReadyCount.toLocaleString()} pending document
-              {pendingReadyCount === 1 ? "" : "s"} for {extractionProviderLabel(extractionProvider)}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Sheets that need an ID are not included. Cancel leaves the queue unchanged.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy || pendingReadyCount === 0}
-              onClick={() => {
-                setConfirmQueueAllOpen(false);
-                onQueueAllPending();
-              }}
-            >
-              Queue
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

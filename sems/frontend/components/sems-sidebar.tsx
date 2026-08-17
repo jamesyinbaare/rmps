@@ -128,6 +128,7 @@ const getNavMain = (
       items: [
         { title: "Digital", url: "/scores/data-entry/digital" },
         { title: "Score Extraction", url: "/scores/data-entry/extraction" },
+        { title: "Extraction Activity", url: "/scores/data-entry/activity" },
         { title: "Apply Scores", url: "/scores/data-entry/apply-scores" },
         { title: "Manual", url: "/scores/data-entry/manual" },
         { title: "Export Results", url: "/scores/export" },

@@ -16,6 +16,8 @@ interface TopBarProps {
   onSearch?: (query: string) => void;
   searchValue?: string;
   showSearch?: boolean;
+  /** Optional actions on the right side of the top row. */
+  trailing?: React.ReactNode;
 }
 
 export function TopBar({
@@ -26,6 +28,7 @@ export function TopBar({
   onSearch,
   searchValue = "",
   showSearch = true,
+  trailing,
 }: TopBarProps) {
   const [searchQuery, setSearchQuery] = useState(searchValue);
   const hasFilters = filters || onFilterChange || activeFilter;
@@ -108,26 +111,29 @@ export function TopBar({
           </div>
         )}
 
-        {/* Right: mobile search only — profile lives in DashboardLayout AppHeader */}
-        {showSearch && onSearch ? (
+        {/* Right: trailing actions + mobile search — profile lives in DashboardLayout AppHeader */}
+        {(trailing || (showSearch && onSearch)) && (
           <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="md:hidden"
-              onClick={() => {
-                const searchInput = document.querySelector(
-                  'input[type="search"]'
-                ) as HTMLInputElement;
-                if (searchInput) {
-                  searchInput.focus();
-                }
-              }}
-            >
-              <Search className="h-4 w-4" />
-            </Button>
+            {trailing}
+            {showSearch && onSearch ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="md:hidden"
+                onClick={() => {
+                  const searchInput = document.querySelector(
+                    'input[type="search"]'
+                  ) as HTMLInputElement;
+                  if (searchInput) {
+                    searchInput.focus();
+                  }
+                }}
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            ) : null}
           </div>
-        ) : null}
+        )}
       </div>
 
       {/* Bottom Row: Filters */}
