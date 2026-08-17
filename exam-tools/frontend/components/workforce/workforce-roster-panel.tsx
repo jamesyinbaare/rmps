@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Copy, FileDown, Loader2, MessageSquare, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { Copy, FileDown, Link2, Loader2, MessageSquare, Pencil, Plus, Trash2, Upload } from "lucide-react";
 
 import { ExaminersAdminToolbar } from "@/components/examiners/toolbar/examiners-admin-toolbar";
 import { ExaminersSelectionBar } from "@/components/examiners/toolbar/examiners-selection-bar";
@@ -18,6 +18,7 @@ import {
   deleteAdminWorkforceRosterMember,
   downloadAdminWorkforceRosterBulkUploadTemplate,
   listAdminWorkforceRoster,
+  regenerateScriptCheckerPortalLink,
   sendAdminWorkforceInviteSms,
   updateAdminWorkforceRosterMember,
   uploadAdminWorkforceRosterBulkUpload,
@@ -261,6 +262,34 @@ export function WorkforceRosterPanel({ config, exams, examId, onRosterCountChang
       }, 2500);
     } catch {
       setCopyState((prev) => ({ ...prev, [row.id]: "error" }));
+    }
+  }
+
+  async function handleRegenerateLink(row: WorkforceRosterRow) {
+    if (examId == null || config.kind !== "script-checker") return;
+    if (
+      !window.confirm(
+        `Regenerate portal link for ${row.name}? The old link will stop working immediately.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const result = await regenerateScriptCheckerPortalLink(examId, row.id);
+      await loadRows();
+      try {
+        await navigator.clipboard.writeText(result.portal_url);
+        setCopyState((prev) => ({ ...prev, [row.id]: "copied" }));
+        setActionMessage(`New portal link for ${row.name} copied to clipboard.`);
+      } catch {
+        setActionMessage(`New portal link created for ${row.name}.`);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to regenerate portal link");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -518,6 +547,19 @@ export function WorkforceRosterPanel({ config, exams, examId, onRosterCountChang
                             <Copy className="size-4" aria-hidden />
                             <span className="sr-only">Copy link</span>
                           </Button>
+                          {config.kind === "script-checker" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => void handleRegenerateLink(row)}
+                              title="Regenerate portal link"
+                            >
+                              <Link2 className="size-4" aria-hidden />
+                              <span className="sr-only">Regenerate link</span>
+                            </Button>
+                          ) : null}
                           {copyState[row.id] === "copied" ? (
                             <span className="self-center text-xs text-emerald-600">Copied</span>
                           ) : null}

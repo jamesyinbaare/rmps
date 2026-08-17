@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ function parseTaxPercent(raw: string): string | null {
 }
 
 export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
+  const searchParams = useSearchParams();
   const [examId, setExamId] = useState<number | null>(null);
   const [form, setForm] = useState<RateForm>(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
@@ -69,8 +71,14 @@ export function WorkforceRatesPanel({ config, exams, formatExamLabel }: Props) {
   const unitLabel = isScriptChecker ? "script" : "entry";
 
   useEffect(() => {
-    if (exams.length > 0 && examId == null) setExamId(exams[0]!.id);
-  }, [examId, exams]);
+    if (exams.length === 0 || examId != null) return;
+    const raw = Number.parseInt(searchParams.get("exam") ?? "", 10);
+    if (Number.isInteger(raw) && exams.some((exam) => exam.id === raw)) {
+      setExamId(raw);
+      return;
+    }
+    setExamId(exams[0]!.id);
+  }, [examId, exams, searchParams]);
 
   const loadRates = useCallback(async () => {
     if (examId == null) return;

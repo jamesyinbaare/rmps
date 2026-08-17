@@ -8,6 +8,7 @@ export type WorkforceKindConfig = {
   publicPathPrefix: string;
   adminRosterPath: string;
   adminAssignmentsPath: string;
+  adminManualAllocationPath: string;
   adminRatesPath: string;
   adminPayoutsPath: string;
   subjectOfficerAssignmentsPath: string;
@@ -25,6 +26,7 @@ export const SCRIPT_CHECKER_CONFIG: WorkforceKindConfig = {
   publicPathPrefix: "/public/script-checkers",
   adminRosterPath: "/dashboard/admin/script-checkers",
   adminAssignmentsPath: "/dashboard/admin/script-checker-assignments",
+  adminManualAllocationPath: "/dashboard/admin/script-checker-manual-allocation",
   adminRatesPath: "/dashboard/admin/script-checker-rates",
   adminPayoutsPath: "/dashboard/admin/script-checker-payouts",
   subjectOfficerAssignmentsPath: "/dashboard/subject-officer/script-checker-assignments",
@@ -42,6 +44,7 @@ export const DATA_ENTRY_CLERK_CONFIG: WorkforceKindConfig = {
   publicPathPrefix: "/public/data-entry-clerks",
   adminRosterPath: "/dashboard/admin/data-entry-clerks",
   adminAssignmentsPath: "/dashboard/admin/data-entry-clerk-assignments",
+  adminManualAllocationPath: "/dashboard/admin/data-entry-clerk-assignments",
   adminRatesPath: "/dashboard/admin/data-entry-clerk-rates",
   adminPayoutsPath: "/dashboard/admin/data-entry-clerk-payouts",
   subjectOfficerAssignmentsPath: "/dashboard/subject-officer/data-entry-clerk-assignments",

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
 import { RoleGuard } from "@/components/role-guard";
 import { WorkforcePayoutsPanel } from "@/components/workforce/workforce-payouts-panel";
 import { apiJson, type Examination } from "@/lib/api";
@@ -18,12 +17,7 @@ export default function AdminScriptCheckerPayoutsPage() {
 
   return (
     <RoleGuard allowedRoles={["SUPER_ADMIN", "FINANCE_OFFICER"]} loginHref="/login/admin">
-      <div className="space-y-3">
-        <OfficialAccountsPageIntro
-          description="Preview completed work and export BoG payment file for script checkers."
-        />
-        <WorkforcePayoutsPanel config={SCRIPT_CHECKER_CONFIG} exams={exams} formatExamLabel={formatWorkforceExamLabel} />
-      </div>
+      <WorkforcePayoutsPanel config={SCRIPT_CHECKER_CONFIG} exams={exams} formatExamLabel={formatWorkforceExamLabel} />
     </RoleGuard>
   );
 }

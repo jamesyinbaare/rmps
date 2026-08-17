@@ -1055,6 +1055,12 @@ class ScriptChecker(Base):
         back_populates="checker",
         cascade="all, delete-orphan",
     )
+    bulk_assignment = relationship(
+        "ScriptCheckerBulkAssignment",
+        back_populates="checker",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     sms_deliveries = relationship("SmsDelivery", back_populates="script_checker")
 
     __table_args__ = (
@@ -1095,6 +1101,11 @@ class ScriptCheckerAssignmentBatch(Base):
     paper_number = Column(Integer, nullable=False)
     checker_id = Column(UUID(as_uuid=True), ForeignKey("script_checkers.id", ondelete="CASCADE"), nullable=False, index=True)
     script_count = Column(Integer, nullable=False)
+    num_days = Column(
+        SmallInteger,
+        nullable=True,
+        doc="Payable work days for commuting/lunch; null uses legacy completion-date derivation.",
+    )
     status = Column(
         Enum(
             WorkforceAssignmentBatchStatus,
@@ -1123,6 +1134,7 @@ class ScriptCheckerAssignmentBatch(Base):
         CheckConstraint("paper_number >= 1", name="ck_script_checker_batches_paper"),
         CheckConstraint("script_count >= 0", name="ck_script_checker_batches_count"),
         CheckConstraint("batch_sequence >= 1", name="ck_script_checker_batches_sequence"),
+        CheckConstraint("num_days IS NULL OR num_days >= 1", name="ck_script_checker_batches_num_days"),
         Index(
             "uq_script_checker_one_active_batch",
             "examination_id",
@@ -1132,6 +1144,53 @@ class ScriptCheckerAssignmentBatch(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+    )
+
+
+class ScriptCheckerBulkAssignment(Base):
+    """One editable exam-wide assignment per checker: P1/P2 totals and days at post."""
+
+    __tablename__ = "script_checker_bulk_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    checker_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("script_checkers.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    paper1_script_count = Column(Integer, nullable=False)
+    paper2_script_count = Column(Integer, nullable=False)
+    num_days = Column(
+        SmallInteger,
+        nullable=False,
+        doc="Days at post — attendance days for T&T and lunch allowances.",
+    )
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    checker = relationship("ScriptChecker", back_populates="bulk_assignment")
+    examination = relationship("Examination", backref="script_checker_bulk_assignments")
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "checker_id",
+            name="uq_script_checker_bulk_assignment_exam_checker",
+        ),
+        CheckConstraint("paper1_script_count >= 0", name="ck_script_checker_bulk_p1"),
+        CheckConstraint("paper2_script_count >= 0", name="ck_script_checker_bulk_p2"),
+        CheckConstraint(
+            "paper1_script_count + paper2_script_count >= 1",
+            name="ck_script_checker_bulk_has_scripts",
+        ),
+        CheckConstraint("num_days >= 1", name="ck_script_checker_bulk_num_days"),
     )
 
 
@@ -1218,6 +1277,11 @@ class DataEntryClerkAssignmentBatch(Base):
     paper_number = Column(Integer, nullable=False)
     clerk_id = Column(UUID(as_uuid=True), ForeignKey("data_entry_clerks.id", ondelete="CASCADE"), nullable=False, index=True)
     script_count = Column(Integer, nullable=False)
+    num_days = Column(
+        SmallInteger,
+        nullable=True,
+        doc="Payable work days for commuting/lunch; null uses legacy completion-date derivation.",
+    )
     status = Column(
         Enum(
             WorkforceAssignmentBatchStatus,
@@ -1246,6 +1310,7 @@ class DataEntryClerkAssignmentBatch(Base):
         CheckConstraint("paper_number >= 1", name="ck_data_entry_clerk_batches_paper"),
         CheckConstraint("script_count >= 0", name="ck_data_entry_clerk_batches_count"),
         CheckConstraint("batch_sequence >= 1", name="ck_data_entry_clerk_batches_sequence"),
+        CheckConstraint("num_days IS NULL OR num_days >= 1", name="ck_data_entry_clerk_batches_num_days"),
         Index(
             "uq_data_entry_clerk_one_active_batch",
             "examination_id",

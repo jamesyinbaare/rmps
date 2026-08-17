@@ -105,6 +105,7 @@ function AssignmentBatchCard({
           </p>
           <p className="text-xs text-muted-foreground">
             Batch {batch.batch_sequence} · {batch.script_count.toLocaleString()} {unit}
+            {batch.num_days != null ? ` · ${batch.num_days} day${batch.num_days === 1 ? "" : "s"}` : ""}
           </p>
           <p className="text-xs text-muted-foreground">
             Assigned {formatDate(batch.assigned_at)}
@@ -259,6 +260,9 @@ export function WorkforcePersonAssignmentsModal({
 
   if (!open || person == null) return null;
 
+  const isBulkChecker = config.kind === "script-checker";
+  const bulk = person.bulk_assignment;
+
   function subjectLabel(subjectId: number): string {
     const subject = subjectById.get(subjectId);
     return subject ? subjectDisplayLabel(subject) : `Subject #${subjectId}`;
@@ -297,10 +301,18 @@ export function WorkforcePersonAssignmentsModal({
         titleId={titleId}
         title={`Assignments — ${person.name}`}
         subtitle={
-          <span className="text-sm text-muted-foreground">
-            {person.assigned_total.toLocaleString()} total · {person.completed_total.toLocaleString()} completed ·{" "}
-            {person.uncompleted_total.toLocaleString()} uncompleted
-          </span>
+          isBulkChecker ? (
+            <span className="text-sm text-muted-foreground">
+              {bulk
+                ? `${(bulk.paper1_script_count + bulk.paper2_script_count).toLocaleString()} scripts · ${bulk.num_days} day${bulk.num_days === 1 ? "" : "s"} at post`
+                : "No bulk assignment yet"}
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {person.assigned_total.toLocaleString()} total · {person.completed_total.toLocaleString()} completed ·{" "}
+              {person.uncompleted_total.toLocaleString()} uncompleted
+            </span>
+          )
         }
         onRequestClose={onClose}
         formError={error}
@@ -313,7 +325,40 @@ export function WorkforcePersonAssignmentsModal({
           </div>
         }
       >
-        {sortedBatches.length === 0 ? (
+        {isBulkChecker ? (
+          bulk == null ? (
+            <p className="text-sm text-muted-foreground">No assignment yet for this checker.</p>
+          ) : (
+            <div className="rounded-xl border border-border bg-card p-3 text-sm shadow-sm">
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">Paper 1</dt>
+                  <dd className="mt-0.5 font-semibold tabular-nums">{bulk.paper1_script_count.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">Paper 2</dt>
+                  <dd className="mt-0.5 font-semibold tabular-nums">{bulk.paper2_script_count.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">Total</dt>
+                  <dd className="mt-0.5 font-semibold tabular-nums">
+                    {(bulk.paper1_script_count + bulk.paper2_script_count).toLocaleString()}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">Days at post</dt>
+                  <dd className="mt-0.5 font-semibold tabular-nums">{bulk.num_days.toLocaleString()}</dd>
+                </div>
+              </dl>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Assigned {formatDate(bulk.assigned_at)}
+                {bulk.updated_at && bulk.updated_at !== bulk.assigned_at
+                  ? ` · Updated ${formatDate(bulk.updated_at)}`
+                  : ""}
+              </p>
+            </div>
+          )
+        ) : sortedBatches.length === 0 ? (
           <p className="text-sm text-muted-foreground">No assignments yet for this person.</p>
         ) : (
           <div className="space-y-4">

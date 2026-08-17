@@ -17,6 +17,8 @@ from app.schemas.workforce import (
     WorkforceBulkInviteSmsRequest,
     WorkforceBulkInviteSmsResponse,
     WorkforceInviteSmsResult,
+    WorkforcePortalLinkRegenerateRequest,
+    WorkforcePortalLinkRegenerateResponse,
     WorkforceRosterCreate,
     WorkforceRosterResponse,
     WorkforceRosterUpdate,
@@ -27,6 +29,7 @@ from app.services.workforce_bulk_upload import (
     bulk_upload_workforce_roster,
     read_workforce_roster_spreadsheet,
 )
+from app.services.workforce_portal import regenerate_script_checker_portal_link
 from app.services.workforce_roster import (
     WorkforceRosterNotFoundError,
     create_script_checker,
@@ -35,7 +38,6 @@ from app.services.workforce_roster import (
     list_script_checkers,
     update_script_checker,
 )
-
 router = APIRouter(
     prefix="/admin/examinations/{examination_id}/script-checkers",
     tags=["admin-script-checkers"],
@@ -212,6 +214,34 @@ async def delete_admin_script_checker(
     except WorkforceRosterNotFoundError as exc:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{checker_id}/regenerate-portal-link",
+    response_model=WorkforcePortalLinkRegenerateResponse,
+)
+async def regenerate_admin_script_checker_portal_link(
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int,
+    checker_id: UUID,
+    body: WorkforcePortalLinkRegenerateRequest,
+) -> WorkforcePortalLinkRegenerateResponse:
+    if not body.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Set confirm to true to regenerate the portal link.",
+        )
+    try:
+        checker = await get_script_checker_or_404(
+            session, examination_id=examination_id, checker_id=checker_id
+        )
+        portal_url = await regenerate_script_checker_portal_link(session, checker)
+        await session.commit()
+    except WorkforceRosterNotFoundError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return WorkforcePortalLinkRegenerateResponse(person_id=checker_id, portal_url=portal_url)
 
 
 @router.post("/{checker_id}/send-invite-sms", response_model=WorkforceInviteSmsResult)

@@ -41,15 +41,19 @@ async def get_data_entry_clerk_assignment_roster(
     session: DBSessionDep,
     _: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
+    cohort_id: UUID | None = Query(None, description="Filter by exercise cohort id"),
 ) -> WorkforceAssignmentRosterResponse:
     try:
-        data = await list_data_entry_clerk_assignment_roster(session, examination_id=examination_id)
+        data = await list_data_entry_clerk_assignment_roster(
+            session,
+            examination_id=examination_id,
+            cohort_id=cohort_id,
+        )
     except ValueError as exc:
         if str(exc) == "Examination not found":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return WorkforceAssignmentRosterResponse(**data)
-
 
 @router.get(
     "/examinations/{examination_id}/subjects/{subject_id}/data-entry-clerk-assignments",
@@ -99,6 +103,7 @@ async def create_data_entry_clerk_assignment(
             paper_number=paper_number,
             clerk_id=body.person_id,
             script_count=body.script_count,
+            num_days=body.num_days,
             assigned_by_user_id=user.id,
         )
         await session.commit()

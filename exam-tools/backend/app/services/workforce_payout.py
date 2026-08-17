@@ -24,6 +24,7 @@ from app.models import (
 from app.services.exam_official_bog_export import BogExportRow, bog_workbook_bytes, exam_bog_export_filename
 from app.services.exam_official_export import examination_label, safe_filename_part
 from app.services.workforce_compensation import (
+    compute_script_checker_bulk_payout,
     compute_workforce_payout,
     rate_config_from_data_entry_clerk_row,
     rate_config_from_script_checker_row,
@@ -132,36 +133,30 @@ async def list_script_checker_payouts(
         .where(ScriptChecker.examination_id == examination_id)
         .options(
             selectinload(ScriptChecker.bank_account).selectinload(ScriptCheckerBankAccount.bank_branch),
-            selectinload(ScriptChecker.assignment_batches),
+            selectinload(ScriptChecker.bulk_assignment),
         )
         .order_by(ScriptChecker.name)
     )
     people = list((await session.execute(stmt)).scalars().all())
-    all_subject_ids: set[int] = set()
-    for person in people:
-        all_subject_ids |= _subjects_for_batches(person.assignment_batches)
-    subjects_map = await _load_subjects_map(session, all_subject_ids)
 
     items = []
     for person in people:
-        breakdown = compute_workforce_payout(
-            person.assignment_batches,
-            rate_config,
-            subjects=subjects_map,
-        )
+        breakdown = compute_script_checker_bulk_payout(person.bulk_assignment, rate_config)
         bank = _bank_fields(person.bank_account)
-        items.append(
-            _payout_item_from_breakdown(
-                person_id=person.id,
-                examination_id=examination_id,
-                examination_label_value=examination_label(exam),
-                full_name=person.name,
-                reference_code=person.reference_code,
-                phone_number=person.phone_number,
-                breakdown=breakdown,
-                bank=bank,
-            )
+        item = _payout_item_from_breakdown(
+            person_id=person.id,
+            examination_id=examination_id,
+            examination_label_value=examination_label(exam),
+            full_name=person.name,
+            reference_code=person.reference_code,
+            phone_number=person.phone_number,
+            breakdown=breakdown,
+            bank=bank,
         )
+        bulk = person.bulk_assignment
+        item["paper1_script_count"] = int(getattr(bulk, "paper1_script_count", 0) or 0) if bulk is not None else 0
+        item["paper2_script_count"] = int(getattr(bulk, "paper2_script_count", 0) or 0) if bulk is not None else 0
+        items.append(item)
     return {"items": items, "total": len(items)}
 
 
@@ -240,6 +235,12 @@ def _bog_rows_from_payout_items(
         sort_code = (item.get("bank_code") or "").strip()
         incomplete = _bank_incomplete(item)
         serial += 1
+        paper_script_counts: tuple[int, ...] = ()
+        if "paper1_script_count" in item or "paper2_script_count" in item:
+            paper_script_counts = (
+                int(item.get("paper1_script_count") or 0),
+                int(item.get("paper2_script_count") or 0),
+            )
         rows.append(
             BogExportRow(
                 serial=f"{serial:06d}",
@@ -252,6 +253,7 @@ def _bog_rows_from_payout_items(
                 incomplete_bank=incomplete,
                 work_units=completed,
                 num_days=int(item.get("num_days") or 0),
+                paper_script_counts=paper_script_counts,
             )
         )
     return rows
@@ -263,6 +265,7 @@ def workforce_bog_workbook_bytes(
     title: str,
     designation: str,
     work_unit_label: str,
+    script_paper_numbers: list[int] | None = None,
 ) -> bytes:
     rows = _bog_rows_from_payout_items(items, designation=designation)
     return bog_workbook_bytes(
@@ -272,6 +275,7 @@ def workforce_bog_workbook_bytes(
         prebuilt_rows=rows,
         include_workforce_detail=True,
         work_unit_label=work_unit_label,
+        script_paper_numbers=script_paper_numbers,
     )
 
 
@@ -285,6 +289,7 @@ def script_checker_bog_workbook_bytes(
         title=title,
         designation=DESIGNATION_SCRIPT_CHECKER,
         work_unit_label="Scripts",
+        script_paper_numbers=[1, 2],
     )
 
 

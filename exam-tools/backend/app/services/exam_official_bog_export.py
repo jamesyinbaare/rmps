@@ -318,6 +318,18 @@ def bog_workbook_bytes(
         reference_col = None
         allocated_col = None
         paper_cols: list[int] = []
+        if script_paper_numbers is not None:
+            work_unit_idx = headers.index(work_unit_label)
+            del headers[work_unit_idx]
+            del widths[work_unit_idx]
+            for i, paper in enumerate(papers):
+                headers.insert(work_unit_idx + i, f"Paper {paper} scripts")
+                widths.insert(work_unit_idx + i, 12)
+            work_units_col = None
+            paper_cols = [work_unit_idx + 1 + i for i in range(len(papers))]
+            days_col = headers.index("Days") + 1
+            designation_col = headers.index("Designation") + 1
+            amount_col = headers.index("Amount (GHS)") + 1
     elif include_phone:
         headers = list(BOG_HEADER_LABELS_WITH_PHONE)
         widths = list(BOG_COLUMN_WIDTHS_WITH_PHONE)

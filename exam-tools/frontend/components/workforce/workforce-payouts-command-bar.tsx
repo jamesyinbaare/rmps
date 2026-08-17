@@ -1,12 +1,14 @@
 "use client";
 
+import type { ReactNode } from "react";
+import { Search } from "lucide-react";
+
 import { OfficialAccountsExportMenu, type ExportMenuOption } from "@/components/official-accounts-export-menu";
 import type { Examination } from "@/lib/api";
 import {
   officialAccountsCommandBarClass,
   officialAccountsCommandBarControlClass,
-  officialAccountsCommandBarRowClass,
-  officialAccountsCommandBarSearchClass,
+  officialAccountsTableSearchClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,8 @@ type Props = {
   busy: boolean;
   total: number;
   clientFilteredCount?: number;
+  aside?: ReactNode;
+  hideRecordMeta?: boolean;
 };
 
 export function WorkforcePayoutsCommandBar({
@@ -50,6 +54,8 @@ export function WorkforcePayoutsCommandBar({
   busy,
   total,
   clientFilteredCount,
+  aside,
+  hideRecordMeta = false,
 }: Props) {
   const recordMeta = busy
     ? "Updating records…"
@@ -58,29 +64,50 @@ export function WorkforcePayoutsCommandBar({
       : `${total.toLocaleString()} record${total === 1 ? "" : "s"}`;
 
   return (
-    <div className={officialAccountsCommandBarClass}>
-      <div className={cn(officialAccountsCommandBarRowClass, "items-end")}>
-        <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor={`${sectionId}-exam`}>
-              Examination
-            </label>
-            <select
-              id={`${sectionId}-exam`}
-              className={cn(officialAccountsCommandBarControlClass, "min-w-48 max-w-xs")}
-              value={examId ?? ""}
-              onChange={(e) => onExamChange(e.target.value ? Number(e.target.value) : null)}
-            >
-              {exams.map((ex) => (
-                <option key={ex.id} value={ex.id}>
-                  {formatExamLabel(ex)}
-                </option>
-              ))}
-            </select>
-          </div>
+    <div className={cn(officialAccountsCommandBarClass, "gap-2 px-3 py-2 sm:px-4")}>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <label className="sr-only" htmlFor={`${sectionId}-exam`}>
+          Examination
+        </label>
+        <select
+          id={`${sectionId}-exam`}
+          className={cn(
+            officialAccountsCommandBarControlClass,
+            "h-8 min-h-8 w-auto min-w-44 max-w-72 py-0 text-[13px]",
+          )}
+          value={examId ?? ""}
+          onChange={(e) => onExamChange(e.target.value ? Number(e.target.value) : null)}
+        >
+          {exams.map((ex) => (
+            <option key={ex.id} value={ex.id}>
+              {formatExamLabel(ex)}
+            </option>
+          ))}
+        </select>
+
+        <div className="relative min-w-48 flex-1 sm:max-w-sm">
+          <label className="sr-only" htmlFor={searchInputId}>
+            Search {personLabelPlural.toLowerCase()}
+          </label>
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            id={searchInputId}
+            type="search"
+            className={cn(officialAccountsTableSearchClass, "w-full max-w-none pl-8")}
+            placeholder={`Search ${personLabelPlural.toLowerCase()}…`}
+            value={searchQuery}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
+            disabled={searchDisabled}
+          />
         </div>
 
-        <div className="flex flex-wrap items-end gap-2 sm:gap-3">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {aside}
+          {hideRecordMeta ? null : (
+            <p className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:block" aria-live="polite">
+              {recordMeta}
+            </p>
+          )}
           <OfficialAccountsExportMenu
             options={exportOptions}
             recordCount={total}
@@ -94,31 +121,12 @@ export function WorkforcePayoutsCommandBar({
             hideSummary
           />
         </div>
-
-        <p className="hidden shrink-0 text-sm tabular-nums text-muted-foreground lg:block" aria-live="polite">
+      </div>
+      {hideRecordMeta ? null : (
+        <p className="text-xs tabular-nums text-muted-foreground sm:hidden" aria-live="polite">
           {recordMeta}
         </p>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <label className="text-xs font-medium text-muted-foreground" htmlFor={searchInputId}>
-            Search {personLabelPlural.toLowerCase()}
-          </label>
-          <p className="text-sm tabular-nums text-muted-foreground lg:hidden" aria-live="polite">
-            {recordMeta}
-          </p>
-        </div>
-        <input
-          id={searchInputId}
-          type="search"
-          className={cn(officialAccountsCommandBarSearchClass, "max-w-none")}
-          placeholder="Name, reference, phone, or account…"
-          value={searchQuery}
-          onChange={(e) => onSearchQueryChange(e.target.value)}
-          disabled={searchDisabled}
-        />
-      </div>
+      )}
     </div>
   );
 }

@@ -26,14 +26,21 @@ const SCRIPT_CHECKER_ROSTER_ITEM: FinanceNavItem = {
 const SCRIPT_CHECKER_ASSIGNMENTS_ITEM: FinanceNavItem = {
   href: SCRIPT_CHECKER_CONFIG.adminAssignmentsPath,
   label: "Checker assignments",
-  description: "Assign script batches",
+  description: "Review checker totals by paper",
+  icon: "allocation",
+};
+
+const SCRIPT_CHECKER_MANUAL_ALLOCATION_ITEM: FinanceNavItem = {
+  href: SCRIPT_CHECKER_CONFIG.adminManualAllocationPath,
+  label: "Checker bulk assignment",
+  description: "Enter scripts and days at post",
   icon: "allocation",
 };
 
 const SCRIPT_CHECKER_PAYOUTS_ITEM: FinanceNavItem = {
   href: SCRIPT_CHECKER_CONFIG.adminPayoutsPath,
   label: "Checker payouts",
-  description: "Completed batches & BoG export",
+  description: "Scripts, days at post & BoG export",
   icon: "bank",
 };
 
@@ -74,6 +81,7 @@ const DATA_ENTRY_CLERK_RATES_ITEM: FinanceNavItem = {
 
 export const SCRIPT_CHECKER_ADMIN_NAV_ITEMS: FinanceNavItem[] = [
   SCRIPT_CHECKER_ROSTER_ITEM,
+  SCRIPT_CHECKER_MANUAL_ALLOCATION_ITEM,
   SCRIPT_CHECKER_ASSIGNMENTS_ITEM,
 ];
 
@@ -84,11 +92,11 @@ export const DATA_ENTRY_CLERK_ADMIN_NAV_ITEMS: FinanceNavItem[] = [
 
 export const SCRIPT_CHECKER_SUPER_ADMIN_NAV_ITEMS: FinanceNavItem[] = [
   SCRIPT_CHECKER_ROSTER_ITEM,
+  SCRIPT_CHECKER_MANUAL_ALLOCATION_ITEM,
   SCRIPT_CHECKER_ASSIGNMENTS_ITEM,
   SCRIPT_CHECKER_PAYOUTS_ITEM,
   SCRIPT_CHECKER_RATES_ITEM,
 ];
-
 export const DATA_ENTRY_CLERK_SUPER_ADMIN_NAV_ITEMS: FinanceNavItem[] = [
   DATA_ENTRY_CLERK_ROSTER_ITEM,
   DATA_ENTRY_CLERK_ASSIGNMENTS_ITEM,
@@ -104,7 +112,7 @@ export const SUBJECT_OFFICER_SCRIPT_CHECKER_NAV_ITEMS: FinanceNavItem[] = [
   {
     href: `${SUBJECT_OFFICER_BASE}/script-checker-assignments`,
     label: "Checker assignments",
-    description: "Assign checker batches",
+    description: "Review checker totals",
     icon: "markedScripts",
   },
 ];
@@ -174,6 +182,7 @@ export function workforceNavSection(items: FinanceNavItem[]): FinanceNavSection 
 const ADMIN_WORKFORCE_SCROLL_SHELL_PATHS = [
   SCRIPT_CHECKER_CONFIG.adminRosterPath,
   SCRIPT_CHECKER_CONFIG.adminAssignmentsPath,
+  SCRIPT_CHECKER_CONFIG.adminManualAllocationPath,
   SCRIPT_CHECKER_CONFIG.adminPayoutsPath,
   DATA_ENTRY_CLERK_CONFIG.adminRosterPath,
   DATA_ENTRY_CLERK_CONFIG.adminAssignmentsPath,
