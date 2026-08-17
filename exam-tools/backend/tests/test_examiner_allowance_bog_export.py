@@ -130,3 +130,103 @@ def test_bog_rows_use_allowances_marking_bucket() -> None:
     rows = bog_rows_from_admin_items([item], ExaminerBogPayoutMode.ALLOWANCES_MARKING)
     assert len(rows) == 1
     assert rows[0].amount == Decimal("150.00")
+
+
+def _row_with_papers(*, name: str = "Alice") -> AdminExaminerAllowanceRow:
+    return _row(name=name).model_copy(
+        update={
+            "total_allocated_scripts": 30,
+            "subject_breakdowns": [
+                SubjectMarkingBreakdownRow(
+                    subject_id=1,
+                    subject_code="MATH",
+                    subject_name="Mathematics",
+                    paper_number=1,
+                    allocated_booklets=10,
+                    marking_allowance_ghs=Decimal("0"),
+                ),
+                SubjectMarkingBreakdownRow(
+                    subject_id=1,
+                    subject_code="MATH",
+                    subject_name="Mathematics",
+                    paper_number=2,
+                    allocated_booklets=20,
+                    marking_allowance_ghs=Decimal("0"),
+                ),
+            ],
+        }
+    )
+
+
+def test_bog_all_and_allowances_include_script_paper_columns() -> None:
+    from app.services.examiner_allowance_bog_export import ExaminerBogPayoutMode, bog_rows_from_admin_items
+
+    item = _row_with_papers()
+    for mode in (ExaminerBogPayoutMode.ALL, ExaminerBogPayoutMode.ALLOWANCES_MARKING):
+        rows = bog_rows_from_admin_items(
+            [item],
+            mode,
+            subject_id=1,
+            paper_numbers=[1, 2],
+        )
+        payload = bog_workbook_bytes(
+            [],
+            {},
+            title="Test",
+            prebuilt_rows=rows,
+            include_phone=True,
+            script_paper_numbers=[1, 2],
+        )
+        wb = load_workbook(BytesIO(payload))
+        ws = wb.active
+        assert ws is not None
+        headers = [ws.cell(row=2, column=c).value for c in range(1, 16) if ws.cell(row=2, column=c).value]
+        assert "Allocated scripts" in headers
+        assert "Paper 1 scripts" in headers
+        assert "Paper 2 scripts" in headers
+        assert headers.index("Designation") < headers.index("Allocated scripts")
+        assert headers.index("Paper 2 scripts") < headers.index("Amount (GHS)")
+        alloc_col = headers.index("Allocated scripts") + 1
+        p1_col = headers.index("Paper 1 scripts") + 1
+        p2_col = headers.index("Paper 2 scripts") + 1
+        assert ws.cell(row=3, column=alloc_col).value == 30
+        assert ws.cell(row=3, column=p1_col).value == 10
+        assert ws.cell(row=3, column=p2_col).value == 20
+
+
+def test_bog_travel_mode_omits_script_paper_columns() -> None:
+    from app.services.examiner_allowance_bog_export import ExaminerBogPayoutMode, bog_rows_from_admin_items
+
+    item = _row_with_papers()
+    rows = bog_rows_from_admin_items(
+        [item],
+        ExaminerBogPayoutMode.TRAVEL_COMMUTING,
+        subject_id=1,
+        paper_numbers=[1, 2],
+    )
+    assert rows[0].allocated_scripts is None
+    assert rows[0].paper_script_counts == ()
+    payload = bog_workbook_bytes(
+        [],
+        {},
+        title="Test",
+        prebuilt_rows=rows,
+        include_phone=True,
+        script_paper_numbers=None,
+    )
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+    assert ws is not None
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 16) if ws.cell(row=2, column=c).value]
+    assert "Allocated scripts" not in headers
+    assert "Paper 1 scripts" not in headers
+    assert headers == [
+        "Serial",
+        "Sort code",
+        "Account number",
+        "Name",
+        "Reference code",
+        "Phone",
+        "Designation",
+        "Amount (GHS)",
+    ]

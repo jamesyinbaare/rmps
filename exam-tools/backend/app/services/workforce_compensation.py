@@ -141,18 +141,32 @@ def _batch_work_date(batch) -> date | None:
 
 
 def work_days_from_batches(batches) -> int:
+    """Payable work days from completed batches.
+
+    Prefer explicit ``num_days`` on each completed batch (summed). Completed batches
+    without ``num_days`` fall back to distinct calendar dates (legacy behaviour).
+    """
+    stored_days = 0
     dates: set[date] = set()
     has_completed = False
+    has_legacy = False
     for batch in batches:
         if _batch_status_value(batch) != WorkforceAssignmentBatchStatus.COMPLETED.value:
             continue
         has_completed = True
+        raw_days = getattr(batch, "num_days", None)
+        if raw_days is not None:
+            stored_days += int(raw_days)
+            continue
+        has_legacy = True
         work_date = _batch_work_date(batch)
         if work_date is not None:
             dates.add(work_date)
     if not has_completed:
         return 0
-    return max(len(dates), 1)
+    legacy_days = max(len(dates), 1) if has_legacy else 0
+    total = stored_days + legacy_days
+    return total if total > 0 else 1
 
 
 def _completed_batch_lines(
@@ -230,4 +244,68 @@ def compute_workforce_payout(
         payable_ghs=payable,
         has_rate=config.has_rate_row,
         completed_batch_lines=_completed_batch_lines(batches, subjects, config),
+    )
+
+
+def compute_script_checker_bulk_payout(bulk, config: WorkforceRateConfig) -> WorkforcePayoutBreakdown:
+    """Payout from one bulk assignment: P1/P2 script totals + days at post for T&T/lunch."""
+    paper1 = int(getattr(bulk, "paper1_script_count", 0) or 0) if bulk is not None else 0
+    paper2 = int(getattr(bulk, "paper2_script_count", 0) or 0) if bulk is not None else 0
+    num_days = int(getattr(bulk, "num_days", 0) or 0) if bulk is not None else 0
+    objective_rate = rate_for_paper(config, 1)
+    subjective_rate = rate_for_paper(config, 2)
+    script_gross = (Decimal(paper1) * objective_rate) + (Decimal(paper2) * subjective_rate)
+    completed_scripts = paper1 + paper2
+    tax_rate = config.withholding_tax_percent / Decimal("100")
+    withholding_tax = (script_gross * tax_rate).quantize(_MONEY_QUANTIZE) if script_gross > 0 else Decimal("0")
+    script_net = script_gross - withholding_tax
+    commuting_payable = config.commuting_allowance_ghs * Decimal(num_days)
+    lunch_payable = config.lunch_allowance_ghs * Decimal(num_days)
+    payable = (script_net + commuting_payable + lunch_payable).quantize(_MONEY_QUANTIZE)
+
+    lines: list[dict] = []
+    if paper1 > 0:
+        lines.append(
+            {
+                "subject_id": None,
+                "subject_code": None,
+                "subject_name": None,
+                "paper_number": 1,
+                "script_count": paper1,
+                "batch_sequence": 1,
+                "rate_per_script_ghs": objective_rate,
+                "line_gross_ghs": (Decimal(paper1) * objective_rate).quantize(_MONEY_QUANTIZE),
+            }
+        )
+    if paper2 > 0:
+        lines.append(
+            {
+                "subject_id": None,
+                "subject_code": None,
+                "subject_name": None,
+                "paper_number": 2,
+                "script_count": paper2,
+                "batch_sequence": 1,
+                "rate_per_script_ghs": subjective_rate,
+                "line_gross_ghs": (Decimal(paper2) * subjective_rate).quantize(_MONEY_QUANTIZE),
+            }
+        )
+
+    return WorkforcePayoutBreakdown(
+        completed_scripts=completed_scripts,
+        num_days=num_days,
+        rate_per_script_ghs=config.rate_per_script_ghs,
+        objective_rate_per_script_ghs=config.objective_rate_per_script_ghs,
+        subjective_rate_per_script_ghs=config.subjective_rate_per_script_ghs,
+        commuting_allowance_ghs=config.commuting_allowance_ghs,
+        lunch_allowance_ghs=config.lunch_allowance_ghs,
+        commuting_payable_ghs=commuting_payable,
+        lunch_payable_ghs=lunch_payable,
+        script_gross_ghs=script_gross.quantize(_MONEY_QUANTIZE),
+        withholding_tax_percent=config.withholding_tax_percent,
+        withholding_tax_ghs=withholding_tax,
+        script_net_ghs=script_net,
+        payable_ghs=payable,
+        has_rate=config.has_rate_row,
+        completed_batch_lines=lines,
     )

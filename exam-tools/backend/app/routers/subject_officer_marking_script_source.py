@@ -1,4 +1,4 @@
-"""Admin API: manual vs allocation marking script source per subject."""
+"""Subject officer API: enter manual allocation script counts for assigned subjects."""
 
 from __future__ import annotations
 
@@ -6,22 +6,20 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 
-from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import SubjectOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.models import MarkingScriptSourceMode
+from app.models import User
 from app.schemas.examination_marking_script_source import (
     ManualMarkedScriptsUploadResponse,
     ManualMarkedScriptsUploadRowError,
     ManualMarkedScriptsUpsertRequest,
     MarkingScriptSourceResponse,
-    MarkingScriptSourceUpdate,
 )
 from app.services.examination_marking_script_source import (
     assert_examination_subject,
     build_marking_script_source_response,
     build_phone_to_examiner_map,
     load_examiners_on_subject,
-    set_subject_source_mode,
     upsert_manual_marked_scripts,
 )
 from app.services.examiner_allocated_booklets import load_manual_marked_scripts_map
@@ -31,40 +29,39 @@ from app.services.manual_marked_scripts_upload import (
     parse_manual_marked_scripts_upload,
     read_manual_marked_scripts_spreadsheet,
 )
+from app.services.subject_officer_scope import assert_subject_officer_access
 
-router = APIRouter(prefix="/admin/examinations", tags=["admin-marking-script-source"])
+router = APIRouter(tags=["subject-officer-marking-script-source"])
 
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 _MAX_UPLOAD_ROWS = 5000
 
 
-def _parse_source_mode(raw: str) -> MarkingScriptSourceMode:
-    value = raw.strip().lower()
-    if value == MarkingScriptSourceMode.ALLOCATION.value:
-        return MarkingScriptSourceMode.ALLOCATION
-    if value == MarkingScriptSourceMode.MANUAL.value:
-        return MarkingScriptSourceMode.MANUAL
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="source_mode must be allocation or manual",
-    )
-
-
-@router.get(
-    "/{examination_id}/subjects/{subject_id}/marking-script-source",
-    response_model=MarkingScriptSourceResponse,
-)
-async def get_marking_script_source(
+async def _assert_so_subject(
+    session: DBSessionDep,
+    user: User,
     examination_id: int,
     subject_id: int,
-    session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
-    paper: int | None = Query(None, ge=1, description="Paper number for per-examiner counts"),
-) -> MarkingScriptSourceResponse:
+) -> None:
     try:
         await assert_examination_subject(session, examination_id, subject_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await assert_subject_officer_access(session, user, examination_id, subject_id)
+
+
+@router.get(
+    "/examinations/{examination_id}/subject-officer/subjects/{subject_id}/marking-script-source",
+    response_model=MarkingScriptSourceResponse,
+)
+async def get_subject_officer_marking_script_source(
+    examination_id: int,
+    subject_id: int,
+    session: DBSessionDep,
+    user: SubjectOfficerDep,
+    paper: int | None = Query(None, ge=1, description="Paper number for per-examiner counts"),
+) -> MarkingScriptSourceResponse:
+    await _assert_so_subject(session, user, examination_id, subject_id)
     return await build_marking_script_source_response(
         session,
         examination_id=examination_id,
@@ -74,53 +71,18 @@ async def get_marking_script_source(
 
 
 @router.put(
-    "/{examination_id}/subjects/{subject_id}/marking-script-source",
+    "/examinations/{examination_id}/subject-officer/subjects/{subject_id}/manual-marked-scripts",
     response_model=MarkingScriptSourceResponse,
 )
-async def update_marking_script_source(
-    examination_id: int,
-    subject_id: int,
-    body: MarkingScriptSourceUpdate,
-    session: DBSessionDep,
-    user: SuperAdminOrTestAdminOfficerDep,
-) -> MarkingScriptSourceResponse:
-    try:
-        await assert_examination_subject(session, examination_id, subject_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-    mode = _parse_source_mode(body.source_mode)
-    await set_subject_source_mode(
-        session,
-        examination_id=examination_id,
-        subject_id=subject_id,
-        source_mode=mode,
-        updated_by_user_id=user.id,
-    )
-    await session.commit()
-    return await build_marking_script_source_response(
-        session,
-        examination_id=examination_id,
-        subject_id=subject_id,
-        paper_number=None,
-    )
-
-
-@router.put(
-    "/{examination_id}/subjects/{subject_id}/manual-marked-scripts",
-    response_model=MarkingScriptSourceResponse,
-)
-async def upsert_manual_marked_scripts_endpoint(
+async def upsert_subject_officer_manual_marked_scripts(
     examination_id: int,
     subject_id: int,
     body: ManualMarkedScriptsUpsertRequest,
     session: DBSessionDep,
-    user: SuperAdminOrTestAdminOfficerDep,
+    user: SubjectOfficerDep,
     paper: int = Query(..., ge=1, description="Paper number for this bulk upsert"),
 ) -> MarkingScriptSourceResponse:
-    try:
-        await assert_examination_subject(session, examination_id, subject_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await _assert_so_subject(session, user, examination_id, subject_id)
 
     subject_examiners = await load_examiners_on_subject(session, examination_id, subject_id)
     allowed_ids = {ex.id for ex in subject_examiners}
@@ -156,19 +118,16 @@ async def upsert_manual_marked_scripts_endpoint(
 
 
 @router.get(
-    "/{examination_id}/subjects/{subject_id}/manual-marked-scripts/upload-template",
+    "/examinations/{examination_id}/subject-officer/subjects/{subject_id}/manual-marked-scripts/upload-template",
 )
-async def download_manual_marked_scripts_template(
+async def download_subject_officer_manual_marked_scripts_template(
     examination_id: int,
     subject_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SubjectOfficerDep,
     paper: int = Query(..., ge=1),
 ) -> Response:
-    try:
-        await assert_examination_subject(session, examination_id, subject_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await _assert_so_subject(session, user, examination_id, subject_id)
     examiners = await load_examiners_on_subject(session, examination_id, subject_id)
     manual_map = await load_manual_marked_scripts_map(session, examination_id)
     template_rows = [
@@ -195,22 +154,19 @@ async def download_manual_marked_scripts_template(
 
 
 @router.post(
-    "/{examination_id}/subjects/{subject_id}/manual-marked-scripts/upload",
+    "/examinations/{examination_id}/subject-officer/subjects/{subject_id}/manual-marked-scripts/upload",
     response_model=ManualMarkedScriptsUploadResponse,
 )
-async def upload_manual_marked_scripts(
+async def upload_subject_officer_manual_marked_scripts(
     examination_id: int,
     subject_id: int,
     session: DBSessionDep,
-    user: SuperAdminOrTestAdminOfficerDep,
+    user: SubjectOfficerDep,
     file: UploadFile = File(...),
     paper: int = Query(..., ge=1),
     validate_only: bool = Query(False),
 ) -> ManualMarkedScriptsUploadResponse:
-    try:
-        await assert_examination_subject(session, examination_id, subject_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await _assert_so_subject(session, user, examination_id, subject_id)
 
     raw = await file.read()
     if len(raw) > _MAX_UPLOAD_BYTES:

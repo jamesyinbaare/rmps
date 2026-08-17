@@ -9,7 +9,7 @@ export const EXAMINER_ACCOUNTS_COLUMN_TOGGLE_OPTIONS = [
   { id: "bank", label: "Bank", defaultVisible: false },
   { id: "branch", label: "Branch", defaultVisible: false },
   { id: "account", label: "Account", defaultVisible: false },
-  { id: "source", label: "Source", defaultVisible: false },
+  { id: "source", label: "Allocation source", defaultVisible: true },
 ] as const;
 
 export type ExaminerAccountsColumnId = (typeof EXAMINER_ACCOUNTS_COLUMN_TOGGLE_OPTIONS)[number]["id"];

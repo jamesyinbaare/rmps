@@ -24,6 +24,8 @@ type CohortModalShellProps = {
   descriptionClassName?: string;
   bodyClassName?: string;
   footerClassName?: string;
+  /** Scroll the body when content exceeds the dialog height (short confirm dialogs). */
+  scrollBody?: boolean;
 };
 
 export function CohortModalShell({
@@ -41,6 +43,7 @@ export function CohortModalShell({
   descriptionClassName,
   bodyClassName,
   footerClassName,
+  scrollBody = false,
 }: CohortModalShellProps) {
   const titleId = useId();
   const requestClose = onCloseAttempt ?? onClose;
@@ -142,7 +145,14 @@ export function CohortModalShell({
         </div>
 
         <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-5 sm:px-6", bodyClassName)}>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col",
+              scrollBody ? "overflow-y-auto overscroll-contain" : "overflow-hidden",
+            )}
+          >
+            {children}
+          </div>
         </div>
 
         {footer ? (

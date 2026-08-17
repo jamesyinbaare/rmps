@@ -16,6 +16,8 @@ from app.schemas.workforce import (
     WorkforceAssignmentBatchRow,
     WorkforceAssignmentGridResponse,
     WorkforceAssignmentRosterResponse,
+    WorkforceBulkAssignmentRow,
+    WorkforceBulkAssignmentUpsert,
 )
 from app.services.subject_officer_scope import assert_subject_officer_access
 from app.services.workforce_assignment_batches import (
@@ -28,6 +30,7 @@ from app.services.workforce_assignment_batches import (
     list_script_checker_assignment_grid,
     list_script_checker_assignment_roster,
 )
+from app.services.workforce_bulk_assignments import upsert_script_checker_bulk_assignment
 from app.services.workforce_roster import WorkforceRosterNotFoundError
 
 router = APIRouter(tags=["workforce-script-checker-assignments"])
@@ -41,15 +44,51 @@ async def get_script_checker_assignment_roster(
     session: DBSessionDep,
     _: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
+    cohort_id: UUID | None = Query(None, description="Filter by exercise cohort id"),
 ) -> WorkforceAssignmentRosterResponse:
     try:
-        data = await list_script_checker_assignment_roster(session, examination_id=examination_id)
+        data = await list_script_checker_assignment_roster(
+            session,
+            examination_id=examination_id,
+            cohort_id=cohort_id,
+        )
     except ValueError as exc:
         if str(exc) == "Examination not found":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return WorkforceAssignmentRosterResponse(**data)
 
+
+@router.put(
+    "/examinations/{examination_id}/script-checker-bulk-assignments",
+    response_model=WorkforceBulkAssignmentRow,
+)
+async def upsert_script_checker_bulk_assignment_route(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int,
+    body: WorkforceBulkAssignmentUpsert,
+) -> WorkforceBulkAssignmentRow:
+    try:
+        row = await upsert_script_checker_bulk_assignment(
+            session,
+            examination_id=examination_id,
+            checker_id=body.person_id,
+            paper1_script_count=body.paper1_script_count,
+            paper2_script_count=body.paper2_script_count,
+            num_days=body.num_days,
+            actor_user_id=user.id,
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        if str(exc) == "Examination not found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except WorkforceRosterNotFoundError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return WorkforceBulkAssignmentRow(**row)
 
 @router.get(
     "/examinations/{examination_id}/subjects/{subject_id}/script-checker-assignments",
@@ -99,6 +138,7 @@ async def create_script_checker_assignment(
             paper_number=paper_number,
             checker_id=body.person_id,
             script_count=body.script_count,
+            num_days=body.num_days,
             assigned_by_user_id=user.id,
         )
         await session.commit()

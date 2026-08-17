@@ -16,16 +16,20 @@ from app.models import (
     Examination,
     ScriptChecker,
     ScriptCheckerAssignmentBatch,
+    ScriptCheckerBulkAssignment,
     Subject,
     WorkforceAssignmentBatchStatus,
     WorkforceAvailabilityStatus,
+    WorkforceExerciseGroup,
+    WorkforceExerciseGroupMember,
+    WorkforceKind,
 )
+from app.services.workforce_bulk_assignments import bulk_assignment_to_dict
 from app.services.workforce_roster import (
     WorkforceRosterNotFoundError,
     get_data_entry_clerk_or_404,
     get_script_checker_or_404,
 )
-
 
 class ActiveBatchConflictError(Exception):
     """Raised when a person already has an active batch for the scope."""
@@ -52,6 +56,7 @@ def batch_to_dict(batch: ScriptCheckerAssignmentBatch | DataEntryClerkAssignment
         "subject_id": int(batch.subject_id),
         "paper_number": int(batch.paper_number),
         "script_count": int(batch.script_count),
+        "num_days": int(batch.num_days) if batch.num_days is not None else None,
         "status": _status_value(batch.status),
         "batch_sequence": int(batch.batch_sequence),
         "assigned_at": batch.assigned_at,
@@ -121,6 +126,7 @@ async def batches_to_public_rows(
             "subject_name": subject.name if subject else None,
             "paper_number": int(batch.paper_number),
             "script_count": int(batch.script_count),
+            "num_days": int(batch.num_days) if batch.num_days is not None else None,
             "status": _status_value(batch.status),
             "batch_sequence": int(batch.batch_sequence),
             "assigned_at": batch.assigned_at,
@@ -183,13 +189,58 @@ def _require_assignable(person: ScriptChecker | DataEntryClerk) -> None:
         raise ValueError("This person must confirm their availability before scripts can be assigned.")
 
 
+async def _cohort_by_person_id(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    kind: WorkforceKind,
+    person_ids: Sequence[UUID],
+) -> dict[UUID, tuple[UUID, str]]:
+    """Map person_id → (cohort_id, cohort_name). Prefers non-default cohort when multiple."""
+    if not person_ids:
+        return {}
+    stmt = (
+        select(
+            WorkforceExerciseGroupMember.person_id,
+            WorkforceExerciseGroup.id,
+            WorkforceExerciseGroup.name,
+            WorkforceExerciseGroup.is_default,
+        )
+        .join(
+            WorkforceExerciseGroup,
+            WorkforceExerciseGroup.id == WorkforceExerciseGroupMember.group_id,
+        )
+        .where(
+            WorkforceExerciseGroupMember.examination_id == examination_id,
+            WorkforceExerciseGroupMember.kind == kind,
+            WorkforceExerciseGroupMember.person_id.in_(list(person_ids)),
+        )
+        .order_by(WorkforceExerciseGroup.is_default.asc(), WorkforceExerciseGroup.name.asc())
+    )
+    out: dict[UUID, tuple[UUID, str]] = {}
+    for person_id, group_id, name, _is_default in (await session.execute(stmt)).all():
+        pid = person_id if isinstance(person_id, UUID) else UUID(str(person_id))
+        if pid not in out:
+            out[pid] = (group_id, str(name))
+    return out
+
+
 def _person_row(
     person: ScriptChecker | DataEntryClerk,
     batches: Sequence[ScriptCheckerAssignmentBatch | DataEntryClerkAssignmentBatch],
+    *,
+    cohort_id: UUID | None = None,
+    cohort_name: str | None = None,
+    bulk_assignment: ScriptCheckerBulkAssignment | None = None,
 ) -> dict:
     scoped = list(batches)
     active = _active_batch(scoped)
     assigned_total, completed_total, uncompleted_total = _assignment_script_totals(scoped)
+    bulk_dict = bulk_assignment_to_dict(bulk_assignment) if bulk_assignment is not None else None
+    if bulk_assignment is not None:
+        assigned_total = int(bulk_assignment.paper1_script_count) + int(bulk_assignment.paper2_script_count)
+        completed_total = assigned_total
+        uncompleted_total = 0
     return {
         "id": person.id,
         "name": person.name,
@@ -197,11 +248,14 @@ def _person_row(
         "phone_number": person.phone_number,
         "availability_status": _availability_value(person),
         "has_bank_account": person.bank_account is not None,
+        "cohort_id": cohort_id,
+        "cohort_name": cohort_name,
         "active_batch": batch_to_dict(active) if active is not None else None,
         "assigned_total": assigned_total,
         "completed_total": completed_total,
         "uncompleted_total": uncompleted_total,
         "batches": [batch_to_dict(b) for b in sorted(scoped, key=lambda b: int(b.batch_sequence), reverse=True)],
+        "bulk_assignment": bulk_dict,
     }
 
 
@@ -224,6 +278,12 @@ async def list_script_checker_assignment_grid(
         .order_by(ScriptChecker.name)
     )
     people = list((await session.execute(stmt)).scalars().all())
+    cohorts = await _cohort_by_person_id(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.SCRIPT_CHECKER,
+        person_ids=[p.id for p in people],
+    )
     items = []
     for person in people:
         scoped = [
@@ -231,7 +291,15 @@ async def list_script_checker_assignment_grid(
             for b in person.assignment_batches
             if int(b.subject_id) == subject_id and int(b.paper_number) == paper_number
         ]
-        items.append(_person_row(person, scoped))
+        cohort = cohorts.get(person.id)
+        items.append(
+            _person_row(
+                person,
+                scoped,
+                cohort_id=cohort[0] if cohort else None,
+                cohort_name=cohort[1] if cohort else None,
+            )
+        )
     return {
         "examination_id": examination_id,
         "subject_id": subject_id,
@@ -259,6 +327,12 @@ async def list_data_entry_clerk_assignment_grid(
         .order_by(DataEntryClerk.name)
     )
     people = list((await session.execute(stmt)).scalars().all())
+    cohorts = await _cohort_by_person_id(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.DATA_ENTRY_CLERK,
+        person_ids=[p.id for p in people],
+    )
     items = []
     for person in people:
         scoped = [
@@ -266,7 +340,15 @@ async def list_data_entry_clerk_assignment_grid(
             for b in person.assignment_batches
             if int(b.subject_id) == subject_id and int(b.paper_number) == paper_number
         ]
-        items.append(_person_row(person, scoped))
+        cohort = cohorts.get(person.id)
+        items.append(
+            _person_row(
+                person,
+                scoped,
+                cohort_id=cohort[0] if cohort else None,
+                cohort_name=cohort[1] if cohort else None,
+            )
+        )
     return {
         "examination_id": examination_id,
         "subject_id": subject_id,
@@ -274,11 +356,11 @@ async def list_data_entry_clerk_assignment_grid(
         "items": items,
     }
 
-
 async def list_script_checker_assignment_roster(
     session: AsyncSession,
     *,
     examination_id: int,
+    cohort_id: UUID | None = None,
 ) -> dict:
     await _load_examination_or_error(session, examination_id)
     stmt = (
@@ -290,11 +372,39 @@ async def list_script_checker_assignment_roster(
         .options(
             selectinload(ScriptChecker.bank_account),
             selectinload(ScriptChecker.assignment_batches),
+            selectinload(ScriptChecker.bulk_assignment),
         )
         .order_by(ScriptChecker.name)
     )
+    if cohort_id is not None:
+        stmt = stmt.where(
+            ScriptChecker.id.in_(
+                select(WorkforceExerciseGroupMember.person_id).where(
+                    WorkforceExerciseGroupMember.group_id == cohort_id,
+                    WorkforceExerciseGroupMember.examination_id == examination_id,
+                    WorkforceExerciseGroupMember.kind == WorkforceKind.SCRIPT_CHECKER,
+                )
+            )
+        )
     people = list((await session.execute(stmt)).scalars().all())
-    items = [_person_row(person, person.assignment_batches) for person in people]
+    cohorts = await _cohort_by_person_id(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.SCRIPT_CHECKER,
+        person_ids=[p.id for p in people],
+    )
+    items = []
+    for person in people:
+        cohort = cohorts.get(person.id)
+        items.append(
+            _person_row(
+                person,
+                person.assignment_batches,
+                cohort_id=cohort[0] if cohort else None,
+                cohort_name=cohort[1] if cohort else None,
+                bulk_assignment=person.bulk_assignment,
+            )
+        )
     return {
         "examination_id": examination_id,
         "items": items,
@@ -305,6 +415,7 @@ async def list_data_entry_clerk_assignment_roster(
     session: AsyncSession,
     *,
     examination_id: int,
+    cohort_id: UUID | None = None,
 ) -> dict:
     await _load_examination_or_error(session, examination_id)
     stmt = (
@@ -319,13 +430,38 @@ async def list_data_entry_clerk_assignment_roster(
         )
         .order_by(DataEntryClerk.name)
     )
+    if cohort_id is not None:
+        stmt = stmt.where(
+            DataEntryClerk.id.in_(
+                select(WorkforceExerciseGroupMember.person_id).where(
+                    WorkforceExerciseGroupMember.group_id == cohort_id,
+                    WorkforceExerciseGroupMember.examination_id == examination_id,
+                    WorkforceExerciseGroupMember.kind == WorkforceKind.DATA_ENTRY_CLERK,
+                )
+            )
+        )
     people = list((await session.execute(stmt)).scalars().all())
-    items = [_person_row(person, person.assignment_batches) for person in people]
+    cohorts = await _cohort_by_person_id(
+        session,
+        examination_id=examination_id,
+        kind=WorkforceKind.DATA_ENTRY_CLERK,
+        person_ids=[p.id for p in people],
+    )
+    items = []
+    for person in people:
+        cohort = cohorts.get(person.id)
+        items.append(
+            _person_row(
+                person,
+                person.assignment_batches,
+                cohort_id=cohort[0] if cohort else None,
+                cohort_name=cohort[1] if cohort else None,
+            )
+        )
     return {
         "examination_id": examination_id,
         "items": items,
     }
-
 
 async def create_script_checker_assignment_batch(
     session: AsyncSession,
@@ -336,11 +472,14 @@ async def create_script_checker_assignment_batch(
     checker_id: UUID,
     script_count: int,
     assigned_by_user_id: UUID | None,
+    num_days: int | None = None,
 ) -> dict:
     await _load_examination_or_error(session, examination_id)
     await _load_subject_or_error(session, subject_id)
     checker = await get_script_checker_or_404(session, examination_id=examination_id, checker_id=checker_id)
     _require_assignable(checker)
+    if num_days is not None and num_days < 1:
+        raise ValueError("num_days must be at least 1.")
     if await _has_active_batch(
         session,
         model=ScriptCheckerAssignmentBatch,
@@ -367,6 +506,7 @@ async def create_script_checker_assignment_batch(
         paper_number=paper_number,
         checker_id=checker_id,
         script_count=script_count,
+        num_days=num_days,
         status=WorkforceAssignmentBatchStatus.ACTIVE,
         batch_sequence=sequence,
         assigned_by_user_id=assigned_by_user_id,
@@ -385,11 +525,14 @@ async def create_data_entry_clerk_assignment_batch(
     clerk_id: UUID,
     script_count: int,
     assigned_by_user_id: UUID | None,
+    num_days: int | None = None,
 ) -> dict:
     await _load_examination_or_error(session, examination_id)
     await _load_subject_or_error(session, subject_id)
     clerk = await get_data_entry_clerk_or_404(session, examination_id=examination_id, clerk_id=clerk_id)
     _require_assignable(clerk)
+    if num_days is not None and num_days < 1:
+        raise ValueError("num_days must be at least 1.")
     if await _has_active_batch(
         session,
         model=DataEntryClerkAssignmentBatch,
@@ -416,6 +559,7 @@ async def create_data_entry_clerk_assignment_batch(
         paper_number=paper_number,
         clerk_id=clerk_id,
         script_count=script_count,
+        num_days=num_days,
         status=WorkforceAssignmentBatchStatus.ACTIVE,
         batch_sequence=sequence,
         assigned_by_user_id=assigned_by_user_id,
@@ -423,7 +567,6 @@ async def create_data_entry_clerk_assignment_batch(
     session.add(batch)
     await session.flush()
     return batch_to_dict(batch)
-
 
 async def _complete_batch(
     session: AsyncSession,

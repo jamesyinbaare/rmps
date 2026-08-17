@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,6 +27,37 @@ def script_checker_portal_url(token: str) -> str:
 def data_entry_clerk_portal_url(token: str) -> str:
     base = settings.examiner_invitation_base_url.rstrip("/")
     return f"{base}/de/{token}"
+
+
+async def _portal_token_in_use(session: AsyncSession, token: str) -> bool:
+    checker_stmt = select(ScriptChecker.id).where(ScriptChecker.portal_token == token).limit(1)
+    if (await session.execute(checker_stmt)).first() is not None:
+        return True
+    clerk_stmt = select(DataEntryClerk.id).where(DataEntryClerk.portal_token == token).limit(1)
+    return (await session.execute(clerk_stmt)).first() is not None
+
+
+async def generate_unique_workforce_portal_token(session: AsyncSession) -> str:
+    for _ in range(32):
+        token = generate_portal_token()
+        if not await _portal_token_in_use(session, token):
+            return token
+    raise RuntimeError("Could not allocate a unique portal token.")
+
+
+async def regenerate_script_checker_portal_link(session: AsyncSession, checker: ScriptChecker) -> str:
+    """Rotate portal token; refresh availability deadline when still pending."""
+    from app.services.workforce_availability import workforce_availability_deadline_from_now
+
+    token = await generate_unique_workforce_portal_token(session)
+    checker.portal_token = token
+    checker.updated_at = datetime.utcnow()
+    status = checker.availability_status
+    status_value = status.value if hasattr(status, "value") else str(status)
+    if status_value == WorkforceAvailabilityStatus.PENDING.value:
+        checker.availability_deadline = workforce_availability_deadline_from_now()
+    await session.flush()
+    return script_checker_portal_url(token)
 
 
 async def resolve_script_checker_by_token(session: AsyncSession, token: str) -> ScriptChecker | None:

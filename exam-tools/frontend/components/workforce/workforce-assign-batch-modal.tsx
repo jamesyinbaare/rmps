@@ -33,6 +33,8 @@ type Props = {
   examId: number;
   subjects: Subject[];
   lockedSubjectIds?: number[];
+  preferredSubjectId?: number | null;
+  preferredPaperNumber?: number | null;
   person: WorkforceAssignmentPersonRow | null;
   onAssigned: () => void | Promise<void>;
 };
@@ -48,6 +50,8 @@ export function WorkforceAssignBatchModal({
   examId,
   subjects,
   lockedSubjectIds,
+  preferredSubjectId = null,
+  preferredPaperNumber = null,
   person,
   onAssigned,
 }: Props) {
@@ -58,6 +62,7 @@ export function WorkforceAssignBatchModal({
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [paperNumber, setPaperNumber] = useState<number>(1);
   const [quantity, setQuantity] = useState("");
+  const [numDays, setNumDays] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,10 +85,14 @@ export function WorkforceAssignBatchModal({
   useEffect(() => {
     if (!open) return;
     setSubjectTypeFilter("all");
-    setPaperNumber(1);
+    setPaperNumber(preferredPaperNumber === 1 || preferredPaperNumber === 2 ? preferredPaperNumber : 1);
     setQuantity("");
+    setNumDays("");
     setError(null);
-  }, [open, person?.id]);
+    if (preferredSubjectId != null) {
+      setSubjectId(preferredSubjectId);
+    }
+  }, [open, person?.id, preferredPaperNumber, preferredSubjectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,10 +100,16 @@ export function WorkforceAssignBatchModal({
       setSubjectId(null);
       return;
     }
+    const preferredOk =
+      preferredSubjectId != null && subjectOptions.some((opt) => opt.value === String(preferredSubjectId));
+    if (preferredOk) {
+      setSubjectId(preferredSubjectId);
+      return;
+    }
     if (subjectId == null || !subjectOptions.some((opt) => opt.value === String(subjectId))) {
       setSubjectId(Number(subjectOptions[0]!.value));
     }
-  }, [open, subjectId, subjectOptions]);
+  }, [open, preferredSubjectId, subjectId, subjectOptions]);
 
   if (!open || person == null) return null;
 
@@ -110,10 +125,30 @@ export function WorkforceAssignBatchModal({
       setError(`Enter a valid ${unit} count (at least 1).`);
       return;
     }
+    const daysRaw = numDays.trim();
+    let days: number | null = null;
+    if (daysRaw) {
+      days = Number.parseInt(daysRaw, 10);
+      if (!Number.isFinite(days) || days < 1) {
+        setError("Enter a valid number of days (at least 1), or leave blank.");
+        return;
+      }
+    } else if (config.kind === "script-checker") {
+      setError("Enter the number of days for this assignment.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await createWorkforceAssignmentBatch(config.kind, examId, subjectId, paperNumber, person!.id, count);
+      await createWorkforceAssignmentBatch(
+        config.kind,
+        examId,
+        subjectId,
+        paperNumber,
+        person!.id,
+        count,
+        days,
+      );
       await onAssigned();
       onClose();
     } catch (e) {
@@ -235,6 +270,28 @@ export function WorkforceAssignBatchModal({
             }}
             placeholder="Enter quantity"
           />
+        </div>
+
+        <div>
+          <label className={formLabelClass} htmlFor="assign-days">
+            Days{config.kind === "script-checker" ? "" : " (optional)"}
+          </label>
+          <input
+            id="assign-days"
+            type="number"
+            min={1}
+            className={quantityInputClass}
+            value={numDays}
+            disabled={!canAssign || busy}
+            onChange={(e) => setNumDays(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canAssign) void handleSubmit();
+            }}
+            placeholder="Payable work days"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Used for commuting and lunch allowances when this batch is completed.
+          </p>
         </div>
       </div>
     </OfficialModal>

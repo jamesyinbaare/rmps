@@ -145,6 +145,62 @@ def bank_account_incomplete(item: AdminExaminerAllowanceRow) -> bool:
     )
 
 
+def paper_numbers_for_export(
+    items: list[AdminExaminerAllowanceRow],
+    *,
+    subject_id: int | None = None,
+) -> list[int]:
+    """Sorted distinct paper numbers present in breakdowns (optionally for one subject)."""
+    papers: set[int] = set()
+    for item in items:
+        for b in item.subject_breakdowns:
+            if subject_id is not None and b.subject_id != subject_id:
+                continue
+            if b.allocated_booklets > 0 or subject_id is not None:
+                papers.add(int(b.paper_number))
+    # When subject-scoped, include papers that appear even with 0 booklets so columns are stable.
+    if subject_id is not None and not papers:
+        for item in items:
+            for b in item.subject_breakdowns:
+                if b.subject_id == subject_id:
+                    papers.add(int(b.paper_number))
+    return sorted(papers)
+
+
+def allocated_scripts_for_scope(
+    item: AdminExaminerAllowanceRow,
+    *,
+    subject_id: int | None = None,
+) -> int:
+    if subject_id is None:
+        return int(item.total_allocated_scripts)
+    return sum(
+        int(b.allocated_booklets)
+        for b in item.subject_breakdowns
+        if b.subject_id == subject_id
+    )
+
+
+def scripts_for_paper(
+    item: AdminExaminerAllowanceRow,
+    paper_number: int,
+    *,
+    subject_id: int | None = None,
+) -> int:
+    total = 0
+    for b in item.subject_breakdowns:
+        if int(b.paper_number) != paper_number:
+            continue
+        if subject_id is not None and b.subject_id != subject_id:
+            continue
+        total += int(b.allocated_booklets)
+    return total
+
+
+def paper_script_header(paper_number: int) -> str:
+    return f"Paper {paper_number} scripts"
+
+
 def _grid_border(*, header_bottom: bool = False) -> Border:
     bottom = _SIDE_HEADER_BOTTOM if header_bottom else _SIDE_THIN
     return Border(left=_SIDE_THIN, right=_SIDE_THIN, top=_SIDE_THIN, bottom=bottom)
@@ -160,7 +216,11 @@ def _write_amount(ws: object, row: int, col: int, value: Decimal) -> None:
     cell.number_format = AMOUNT_NUMBER_FORMAT
 
 
-def _build_headers(include_fields: frozenset[str]) -> tuple[list[str], list[int]]:
+def _build_headers(
+    include_fields: frozenset[str],
+    *,
+    paper_numbers: list[int] | None = None,
+) -> tuple[list[str], list[int]]:
     headers = list(CORE_HEADER_LABELS)
     widths = list(CORE_COLUMN_WIDTHS)
     # Insert subject names immediately after Subjects (index 4).
@@ -168,6 +228,13 @@ def _build_headers(include_fields: frozenset[str]) -> tuple[list[str], list[int]
         label, width = OPTIONAL_EXPORT_FIELDS["subject_names"]
         headers.insert(5, label)
         widths.insert(5, width)
+    # Insert per-paper script columns immediately after Allocated scripts.
+    papers = paper_numbers or []
+    if papers:
+        alloc_idx = headers.index("Allocated scripts")
+        for offset, paper in enumerate(papers):
+            headers.insert(alloc_idx + 1 + offset, paper_script_header(paper))
+            widths.insert(alloc_idx + 1 + offset, 12)
     # Insert travel zone immediately before T & T (GHS).
     if "travel_zone" in include_fields:
         label, width = OPTIONAL_EXPORT_FIELDS["travel_zone"]
@@ -177,8 +244,15 @@ def _build_headers(include_fields: frozenset[str]) -> tuple[list[str], list[int]
     return headers, widths
 
 
-def _row_values(item: AdminExaminerAllowanceRow, include_fields: frozenset[str]) -> list[object]:
+def _row_values(
+    item: AdminExaminerAllowanceRow,
+    include_fields: frozenset[str],
+    *,
+    paper_numbers: list[int] | None = None,
+    subject_id: int | None = None,
+) -> list[object]:
     incomplete = bank_account_incomplete(item)
+    papers = paper_numbers or []
     values: list[object] = [
         item.reference_code or "",
         item.full_name,
@@ -206,9 +280,11 @@ def _row_values(item: AdminExaminerAllowanceRow, include_fields: frozenset[str])
             item.marking_allowance_ghs,
             item.marking_withholding_tax_ghs,
             item.marking_net_ghs,
-            item.total_allocated_scripts,
+            allocated_scripts_for_scope(item, subject_id=subject_id),
         ]
     )
+    for paper in papers:
+        values.append(scripts_for_paper(item, paper, subject_id=subject_id))
     if "travel_zone" in include_fields:
         values.append(item.travel_zone_name or "")
     values.extend(
@@ -227,9 +303,11 @@ def detail_workbook_bytes(
     *,
     title: str,
     include_fields: frozenset[str] | None = None,
+    subject_id: int | None = None,
 ) -> bytes:
     fields = include_fields or frozenset()
-    headers, widths = _build_headers(fields)
+    papers = paper_numbers_for_export(items, subject_id=subject_id)
+    headers, widths = _build_headers(fields, paper_numbers=papers)
     wb = Workbook()
     ws = wb.active
     assert ws is not None
@@ -253,7 +331,10 @@ def detail_workbook_bytes(
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[header_row].height = 36
 
-    scripts_col = headers.index("Allocated scripts") + 1
+    scripts_cols = {
+        headers.index("Allocated scripts") + 1,
+        *[headers.index(paper_script_header(p)) + 1 for p in papers],
+    }
     bank_code_col = headers.index("Bank code") + 1
     account_col = headers.index("Account") + 1
     phone_col = headers.index("Phone") + 1
@@ -272,14 +353,14 @@ def detail_workbook_bytes(
     data_row = header_row + 1
     for idx, item in enumerate(items):
         r = data_row + idx
-        values = _row_values(item, fields)
+        values = _row_values(item, fields, paper_numbers=papers, subject_id=subject_id)
         if bank_account_incomplete(item):
             fill = _FILL_INCOMPLETE
         else:
             fill = _FILL_ZEBRA_ALT if idx % 2 == 1 else _FILL_ZEBRA_BASE
         row_border = _grid_border()
         for col, value in enumerate(values, start=1):
-            if col == scripts_col:
+            if col in scripts_cols:
                 ws.cell(row=r, column=col, value=int(value))
             elif col in amount_cols:
                 _write_amount(ws, r, col, Decimal(str(value)))
@@ -322,6 +403,7 @@ def examiner_detail_workbook_bytes(
     source_modes: MarkingScriptSourceModes | None = None,
     *,
     include_fields: frozenset[str] | None = None,
+    subject_id: int | None = None,
 ) -> bytes:
     items = examiners_to_admin_rows(
         examiners,
@@ -336,4 +418,9 @@ def examiner_detail_workbook_bytes(
         source_modes,
     )
     title = f"Examiner allowances — {examination_label(examination)}"
-    return detail_workbook_bytes(items, title=title, include_fields=include_fields)
+    return detail_workbook_bytes(
+        items,
+        title=title,
+        include_fields=include_fields,
+        subject_id=subject_id,
+    )

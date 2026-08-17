@@ -33,7 +33,7 @@ export default function SubjectOfficerScriptCheckerAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={SCRIPT_CHECKER_CONFIG}
-          description="See checker progress for your exam. Use Assign to choose the subject, paper, and number of scripts for your subjects."
+          description="Review checker totals for Paper 1, Paper 2, and days at post. Assignments are entered by admin as a bulk total, not by subject."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
         />
@@ -50,6 +50,7 @@ export default function SubjectOfficerScriptCheckerAssignmentsPage() {
             onExamChange={() => {}}
             lockedSubjectIds={lockedSubjectIds}
             hideExamFilter
+            canAssign={false}
             formatExamLabel={formatWorkforceExamLabel}
           />
         )}

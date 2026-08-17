@@ -73,6 +73,7 @@ from app.routers import (
     subject_officer_examiner_attendance,
     subject_officer_examiner_attendance_sheets,
     subject_officer_lunch_verify,
+    subject_officer_marking_script_source,
     workforce_data_entry_clerk_assignments,
     workforce_script_checker_assignments,
     subject_officers,
@@ -268,6 +269,7 @@ app.include_router(examiner_quota_assessment.router)
 app.include_router(examiner_quota_status.router)
 app.include_router(subject_officer_examiner_attendance.router)
 app.include_router(subject_officer_examiner_attendance_sheets.router)
+app.include_router(subject_officer_marking_script_source.router)
 app.include_router(admin_examiner_attendance_sheets.router)
 app.include_router(admin_examination_marking_script_source.router)
 app.include_router(admin_examiner_allowances.router)

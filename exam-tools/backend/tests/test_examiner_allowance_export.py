@@ -162,3 +162,62 @@ def test_examiner_bog_workbook_includes_phone_and_highlights_incomplete() -> Non
     assert ws.cell(row=3, column=5).value == "MATH-AE9"
     assert ws.cell(row=3, column=6).value == "0550000000"
     assert ws.cell(row=3, column=1).fill.fgColor.rgb in ("00FDE68A", "FDE68A")
+
+
+def test_paper_script_helpers_and_detail_columns() -> None:
+    from app.services.examiner_allowance_export import (
+        allocated_scripts_for_scope,
+        paper_numbers_for_export,
+        scripts_for_paper,
+    )
+
+    item = _row().model_copy(
+        update={
+            "total_allocated_scripts": 45,
+            "subject_breakdowns": [
+                SubjectMarkingBreakdownRow(
+                    subject_id=1,
+                    subject_code="MATH",
+                    subject_name="Mathematics",
+                    paper_number=1,
+                    allocated_booklets=20,
+                    marking_allowance_ghs=Decimal("0"),
+                ),
+                SubjectMarkingBreakdownRow(
+                    subject_id=1,
+                    subject_code="MATH",
+                    subject_name="Mathematics",
+                    paper_number=2,
+                    allocated_booklets=25,
+                    marking_allowance_ghs=Decimal("0"),
+                ),
+                SubjectMarkingBreakdownRow(
+                    subject_id=2,
+                    subject_code="ENG",
+                    subject_name="English",
+                    paper_number=1,
+                    allocated_booklets=10,
+                    marking_allowance_ghs=Decimal("0"),
+                ),
+            ],
+        }
+    )
+    assert paper_numbers_for_export([item]) == [1, 2]
+    assert paper_numbers_for_export([item], subject_id=1) == [1, 2]
+    assert allocated_scripts_for_scope(item) == 45
+    assert allocated_scripts_for_scope(item, subject_id=1) == 45
+    assert scripts_for_paper(item, 1, subject_id=1) == 20
+    assert scripts_for_paper(item, 2, subject_id=1) == 25
+    assert scripts_for_paper(item, 1, subject_id=2) == 10
+
+    payload = detail_workbook_bytes([item], title="Test", subject_id=1)
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+    assert ws is not None
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 40) if ws.cell(row=2, column=c).value]
+    alloc_idx = headers.index("Allocated scripts")
+    assert headers[alloc_idx + 1] == "Paper 1 scripts"
+    assert headers[alloc_idx + 2] == "Paper 2 scripts"
+    assert ws.cell(row=3, column=alloc_idx + 1).value == 45
+    assert ws.cell(row=3, column=alloc_idx + 2).value == 20
+    assert ws.cell(row=3, column=alloc_idx + 3).value == 25

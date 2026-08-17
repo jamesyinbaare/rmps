@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ExaminerAccountsColumnsPopover } from "@/components/examiner-accounts/examiner-accounts-columns-popover";
+import { ExaminerAllowanceDownloadConfirmDialog } from "@/components/examiner-accounts/examiner-allowance-download-confirm-dialog";
 import { ExaminerAllowanceExportFieldsDialog } from "@/components/examiner-accounts/examiner-allowance-export-fields-dialog";
 import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
@@ -23,6 +24,11 @@ import {
   sumPayoutViewOnPage,
   type ExaminerPayoutView,
 } from "@/lib/examiner-payout-view";
+import {
+  parseExaminerAllowanceDownloadKind,
+  payoutModeFromBogDownloadKind,
+  type ExaminerAllowanceDownloadKind,
+} from "@/lib/examiner-allowance-download-copy";
 import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
 import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
 import { formatGhsAmount } from "@/lib/format-ghs";
@@ -83,6 +89,9 @@ function ExaminerPayoutsContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [excelExportOpen, setExcelExportOpen] = useState(false);
+  const [downloadConfirmKind, setDownloadConfirmKind] = useState<ExaminerAllowanceDownloadKind | null>(
+    null,
+  );
   const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
@@ -237,40 +246,44 @@ function ExaminerPayoutsContent() {
   const exportDisabledReason =
     examId == null ? "Select an examination" : total === 0 ? "No records to export" : undefined;
 
-  async function onExport(key: string) {
+  const downloadScope = useMemo(() => {
+    if (!selectedExam) return null;
+    const regionLabel =
+      REGION_OPTIONS.find((r) => r.value === regionFilter)?.label ?? (regionFilter || null);
+    return {
+      examinationLabel: formatExamLabel(selectedExam),
+      regionLabel,
+      examinerCount: total,
+    };
+  }, [selectedExam, regionFilter, total]);
+
+  function onExport(key: string) {
     if (examId == null || !selectedExam) return;
-    if (key === "excel") {
+    const kind = parseExaminerAllowanceDownloadKind(key);
+    if (!kind) return;
+    if (kind === "excel") {
       setExcelExportOpen(true);
       return;
     }
-    setExportBusy(`${SECTION_ID}:${key}`);
+    setDownloadConfirmKind(kind);
+  }
+
+  async function runBogDownload(kind: ExaminerAllowanceDownloadKind) {
+    if (examId == null || !selectedExam) return;
+    const mode = payoutModeFromBogDownloadKind(kind);
+    if (!mode) return;
+    setExportBusy(`${SECTION_ID}:${kind}`);
     try {
       const base = exportFilenameBase(selectedExam);
-      const exportParams = {
+      await downloadAdminExaminerAllowancesBogExport({
         examination_id: examId,
         role: roleFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
-      };
-      if (key === "bog_all") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "all",
-          filename: `${base}_${bogExportFilenameSuffix("all")}.xlsx`,
-        });
-      } else if (key === "bog_travel_commuting") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "travel_commuting",
-          filename: `${base}_${bogExportFilenameSuffix("travel_commuting")}.xlsx`,
-        });
-      } else if (key === "bog_allowances_marking") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "allowances_marking",
-          filename: `${base}_${bogExportFilenameSuffix("allowances_marking")}.xlsx`,
-        });
-      }
+        payout_mode: mode,
+        filename: `${base}_${bogExportFilenameSuffix(mode)}.xlsx`,
+      });
+      setDownloadConfirmKind(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Export failed.");
     } finally {
@@ -434,7 +447,22 @@ function ExaminerPayoutsContent() {
           if (!exportBusy) setExcelExportOpen(false);
         }}
         busy={exportBusy === `${SECTION_ID}:excel`}
+        scope={downloadScope}
         onConfirm={(fields) => void onConfirmExcelExport(fields)}
+      />
+      <ExaminerAllowanceDownloadConfirmDialog
+        open={downloadConfirmKind != null}
+        kind={downloadConfirmKind}
+        scope={downloadScope}
+        busy={
+          downloadConfirmKind != null && exportBusy === `${SECTION_ID}:${downloadConfirmKind}`
+        }
+        onClose={() => {
+          if (!exportBusy) setDownloadConfirmKind(null);
+        }}
+        onConfirm={() => {
+          if (downloadConfirmKind) void runBogDownload(downloadConfirmKind);
+        }}
       />
     </div>
   );

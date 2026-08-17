@@ -45,7 +45,7 @@ const MARKING_ITEMS: FinanceNavItem[] = [
   {
     href: `${SUBJECT_OFFICER_BASE}/allocations`,
     label: "Allocation",
-    description: "Script allocations",
+    description: "Script counts & envelopes",
     icon: "allocations",
   },
   {

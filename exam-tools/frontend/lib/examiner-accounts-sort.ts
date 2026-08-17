@@ -1,18 +1,73 @@
-import type { AdminExaminerAllowanceRow } from "@/lib/api";
+import type { AdminExaminerAllowanceRow, SubjectMarkingBreakdownRow } from "@/lib/api";
+import { formatGhsAmount } from "@/lib/format-ghs";
 import { payoutAmountForView, type ExaminerPayoutView } from "@/lib/examiner-payout-view";
 
 export type ExaminerAccountsSortKey = "full_name" | "bank_name" | "scripts" | "payout";
 export type ExaminerAccountsSortDir = "asc" | "desc";
+
+export type ExaminerPaperScriptLine = {
+  paperNumber: number;
+  booklets: number;
+  ratePerScriptGhs: string | null;
+  rateLabel: string | null;
+};
+
+/** Breakdowns for a subject, optionally narrowed to one paper. Only rows with scripts. */
+export function paperBreakdownsForSubject(
+  row: AdminExaminerAllowanceRow,
+  subjectId: number | null,
+  paperNumber: number | null,
+): SubjectMarkingBreakdownRow[] {
+  let rows = row.subject_breakdowns.filter((b) => b.allocated_booklets > 0);
+  if (subjectId != null) {
+    rows = rows.filter((b) => b.subject_id === subjectId);
+  }
+  if (paperNumber != null) {
+    rows = rows.filter((b) => b.paper_number === paperNumber);
+  }
+  return [...rows].sort((a, b) => a.paper_number - b.paper_number);
+}
+
+export function formatCompactRateGhs(rate: string | null | undefined): string | null {
+  if (rate == null || rate === "") return null;
+  const formatted = formatGhsAmount(rate);
+  return formatted === "—" ? null : formatted;
+}
+
+export function paperScriptLinesForRow(
+  row: AdminExaminerAllowanceRow,
+  subjectId: number | null,
+  paperNumber: number | null,
+): ExaminerPaperScriptLine[] {
+  return paperBreakdownsForSubject(row, subjectId, paperNumber).map((b) => ({
+    paperNumber: b.paper_number,
+    booklets: b.allocated_booklets,
+    ratePerScriptGhs: b.rate_per_script_ghs ?? null,
+    rateLabel: formatCompactRateGhs(b.rate_per_script_ghs),
+  }));
+}
 
 export function scriptsCountForRow(
   row: AdminExaminerAllowanceRow,
   subjectId: number | null,
   paperNumber: number | null,
 ): number {
-  if (subjectId == null) return row.total_allocated_scripts;
-  return row.subject_breakdowns
-    .filter((b) => b.subject_id === subjectId && (paperNumber == null || b.paper_number === paperNumber))
-    .reduce((sum, b) => sum + b.allocated_booklets, 0);
+  if (subjectId == null && paperNumber == null) return row.total_allocated_scripts;
+  return paperBreakdownsForSubject(row, subjectId, paperNumber).reduce(
+    (sum, b) => sum + b.allocated_booklets,
+    0,
+  );
+}
+
+export function scriptsCellTitle(lines: ExaminerPaperScriptLine[], total: number): string {
+  if (total <= 0) return "No scripts";
+  if (lines.length === 0) return `${total.toLocaleString()} scripts`;
+  return lines
+    .map((line) => {
+      const rate = line.rateLabel ? ` × ${line.rateLabel}` : "";
+      return `P${line.paperNumber} · ${line.booklets.toLocaleString()}${rate}`;
+    })
+    .join("\n");
 }
 
 export function sortExaminerAccountRows(

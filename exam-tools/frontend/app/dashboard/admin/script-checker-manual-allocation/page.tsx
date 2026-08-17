@@ -11,7 +11,7 @@ import { getMe, type UserMe } from "@/lib/auth";
 import { formatWorkforceExamLabel } from "@/lib/workforce-exam-utils";
 import { SCRIPT_CHECKER_CONFIG } from "@/lib/workforce-kind";
 
-export default function AdminScriptCheckerAssignmentsPage() {
+export default function AdminScriptCheckerManualAllocationPage() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [me, setMe] = useState<UserMe | null>(null);
@@ -30,12 +30,12 @@ export default function AdminScriptCheckerAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={SCRIPT_CHECKER_CONFIG}
-          description="Review checker totals for Paper 1, Paper 2, and days at post. To enter or change them, open Bulk assignment."
+          description="Enter the total scripts each checker marked (Paper 1 and Paper 2 separately) and the days they were at post. You can edit later."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
           showAdminLinks
           showRatesLink={me?.role === "SUPER_ADMIN"}
-          showManualAllocationLink
+          showAssignmentsOverviewLink
         />
         <WorkforceBatchAssignmentPanel
           config={SCRIPT_CHECKER_CONFIG}
@@ -44,7 +44,7 @@ export default function AdminScriptCheckerAssignmentsPage() {
           examId={examId}
           onExamChange={setExamId}
           canCancelBatch
-          canAssign={false}
+          canAssign
           showRosterLinks
           formatExamLabel={formatWorkforceExamLabel}
         />

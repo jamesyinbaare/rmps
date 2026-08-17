@@ -2778,6 +2778,13 @@ export type AdminExaminerAllowanceListResponse = {
   total: number;
 };
 
+export type AdminExaminerMarkingSubjectPaperSummary = {
+  paper_number: number;
+  registered_candidates: number;
+  allocated_scripts: number;
+  variance: number;
+};
+
 export type AdminExaminerMarkingSubjectSummaryRow = {
   subject_id: number;
   subject_code: string;
@@ -2786,6 +2793,7 @@ export type AdminExaminerMarkingSubjectSummaryRow = {
   total_allocated_scripts: number;
   examiner_count: number;
   variance: number;
+  papers: AdminExaminerMarkingSubjectPaperSummary[];
 };
 
 export type AdminExaminerMarkingSubjectSummaryResponse = {
@@ -7168,6 +7176,67 @@ export async function uploadManualMarkedScripts(
   );
 }
 
+function subjectOfficerMarkingScriptSourceBase(examinationId: number, subjectId: number): string {
+  return `/examinations/${examinationId}/subject-officer/subjects/${subjectId}`;
+}
+
+export async function getSubjectOfficerMarkingScriptSource(
+  examinationId: number,
+  subjectId: number,
+  paper?: number | null,
+): Promise<MarkingScriptSourceResponse> {
+  const params = new URLSearchParams();
+  if (paper != null && paper > 0) params.set("paper", String(Math.floor(paper)));
+  const qs = params.toString();
+  return apiJson<MarkingScriptSourceResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/marking-script-source${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function upsertSubjectOfficerManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  items: ManualMarkedScriptItem[],
+): Promise<MarkingScriptSourceResponse> {
+  return apiJson<MarkingScriptSourceResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts?paper=${paper}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function downloadSubjectOfficerManualMarkedScriptsTemplate(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+): Promise<void> {
+  await downloadApiFile(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts/upload-template?paper=${paper}`,
+    `manual_marked_scripts_ex${examinationId}_sub${subjectId}_p${paper}.xlsx`,
+  );
+}
+
+export async function uploadSubjectOfficerManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  file: File,
+  options?: { validateOnly?: boolean },
+): Promise<ManualMarkedScriptsUploadResponse> {
+  const params = new URLSearchParams({ paper: String(paper) });
+  if (options?.validateOnly) params.set("validate_only", "true");
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiJson<ManualMarkedScriptsUploadResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts/upload?${params.toString()}`,
+    { method: "POST", body: formData },
+  );
+}
+
 // --- Script checkers & data entry clerks ---
 
 export type WorkforceAssignmentBatchStatus = "active" | "completed" | "cancelled";
@@ -7218,12 +7287,26 @@ export type WorkforceAssignmentBatchRow = {
   subject_id: number;
   paper_number: number;
   script_count: number;
+  num_days: number | null;
   status: WorkforceAssignmentBatchStatus;
   batch_sequence: number;
   assigned_at: string;
   assigned_by_user_id: string | null;
   completed_at: string | null;
   completed_by_user_id: string | null;
+};
+
+export type WorkforceBulkAssignmentRow = {
+  id: string;
+  examination_id: number;
+  checker_id: string;
+  paper1_script_count: number;
+  paper2_script_count: number;
+  num_days: number;
+  assigned_at: string;
+  assigned_by_user_id: string | null;
+  updated_at: string;
+  updated_by_user_id: string | null;
 };
 
 export type WorkforceAssignmentPersonRow = {
@@ -7233,11 +7316,14 @@ export type WorkforceAssignmentPersonRow = {
   phone_number: string | null;
   availability_status: WorkforceAvailabilityStatus;
   has_bank_account: boolean;
+  cohort_id: string | null;
+  cohort_name: string | null;
   active_batch: WorkforceAssignmentBatchRow | null;
   assigned_total: number;
   completed_total: number;
   uncompleted_total: number;
   batches: WorkforceAssignmentBatchRow[];
+  bulk_assignment?: WorkforceBulkAssignmentRow | null;
 };
 
 export type WorkforceAssignmentGridResponse = {
@@ -7274,7 +7360,7 @@ export type WorkforceRatesPutPayload = {
 };
 
 export type WorkforcePayoutCompletedBatchLine = {
-  subject_id: number;
+  subject_id: number | null;
   subject_code: string | null;
   subject_name: string | null;
   paper_number: number;
@@ -7292,6 +7378,8 @@ export type WorkforcePayoutRow = {
   reference_code: string | null;
   phone_number: string | null;
   completed_scripts: number;
+  paper1_script_count?: number | null;
+  paper2_script_count?: number | null;
   num_days: number;
   rate_per_script_ghs: string;
   objective_rate_per_script_ghs?: string | null;
@@ -7327,6 +7415,7 @@ export type WorkforcePublicBatchRow = {
   subject_name: string | null;
   paper_number: number;
   script_count: number;
+  num_days: number | null;
   status: WorkforceAssignmentBatchStatus;
   batch_sequence: number;
   assigned_at: string;
@@ -7542,6 +7631,16 @@ export async function updateAdminWorkforceRosterMember(
   return apiJson<WorkforceRosterRow>(
     `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}`,
     { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function regenerateScriptCheckerPortalLink(
+  examinationId: number,
+  checkerId: string,
+): Promise<{ person_id: string; portal_url: string }> {
+  return apiJson<{ person_id: string; portal_url: string }>(
+    `/admin/examinations/${examinationId}/script-checkers/${checkerId}/regenerate-portal-link`,
+    { method: "POST", body: JSON.stringify({ confirm: true }) },
   );
 }
 
@@ -7879,9 +7978,34 @@ export async function getWorkforceAssignmentGrid(
 export async function getWorkforceAssignmentRoster(
   kind: "script-checker" | "data-entry-clerk",
   examinationId: number,
+  opts?: { cohortId?: string | null },
 ): Promise<WorkforceAssignmentRosterResponse> {
+  const q = new URLSearchParams();
+  if (opts?.cohortId) q.set("cohort_id", opts.cohortId);
+  const qs = q.toString();
   return apiJson<WorkforceAssignmentRosterResponse>(
-    `/examinations/${examinationId}/${workforceAssignmentSegment(kind)}/roster`,
+    `/examinations/${examinationId}/${workforceAssignmentSegment(kind)}/roster${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function upsertScriptCheckerBulkAssignment(
+  examinationId: number,
+  personId: string,
+  paper1ScriptCount: number,
+  paper2ScriptCount: number,
+  numDays: number,
+): Promise<WorkforceBulkAssignmentRow> {
+  return apiJson<WorkforceBulkAssignmentRow>(
+    `/examinations/${examinationId}/script-checker-bulk-assignments`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        person_id: personId,
+        paper1_script_count: paper1ScriptCount,
+        paper2_script_count: paper2ScriptCount,
+        num_days: numDays,
+      }),
+    },
   );
 }
 
@@ -7892,13 +8016,18 @@ export async function createWorkforceAssignmentBatch(
   paperNumber: number,
   personId: string,
   scriptCount: number,
+  numDays?: number | null,
 ): Promise<WorkforceAssignmentBatchRow> {
+  const body: { person_id: string; script_count: number; num_days?: number } = {
+    person_id: personId,
+    script_count: scriptCount,
+  };
+  if (numDays != null) body.num_days = numDays;
   return apiJson<WorkforceAssignmentBatchRow>(
     `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}?paper_number=${paperNumber}`,
-    { method: "POST", body: JSON.stringify({ person_id: personId, script_count: scriptCount }) },
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
-
 export async function completeWorkforceAssignmentBatch(
   kind: "script-checker" | "data-entry-clerk",
   examinationId: number,

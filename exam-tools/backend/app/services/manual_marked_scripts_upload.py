@@ -9,9 +9,16 @@ from typing import Any
 from uuid import UUID
 
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, Protection
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.protection import SheetProtection
 
 from app.services.examiner_roster import normalize_header_key, read_examiners_spreadsheet
 from app.services.school_bulk_upload import inspector_phone_lookup_candidates, parse_inspector_phone_number
+
+TEMPLATE_HEADERS = ("phone_number", "name", "ref_code", "paper", "total_allocation")
+_TOTAL_ALLOCATION_COL = 5  # 1-based
 
 
 def _canonical_column_map() -> dict[str, str]:
@@ -20,6 +27,7 @@ def _canonical_column_map() -> dict[str, str]:
         "mobile": "phone_number",
         "phone_number": "phone_number",
         "total": "total",
+        "total_allocation": "total",
         "scripts": "total",
         "count": "total",
         "allocated_scripts": "total",
@@ -74,6 +82,15 @@ class ManualMarkedScriptsUploadResult:
     items: list[tuple[UUID, int]] = field(default_factory=list)
 
 
+@dataclass
+class ManualMarkedScriptsTemplateRow:
+    phone_number: str
+    name: str
+    ref_code: str
+    paper: int
+    total_allocation: int | str = ""
+
+
 def parse_manual_marked_scripts_upload(
     df: pd.DataFrame,
     *,
@@ -83,7 +100,10 @@ def parse_manual_marked_scripts_upload(
     if "phone_number" not in df.columns:
         raise ValueError("Missing required column: phone_number (aliases: phone, mobile)")
     if "total" not in df.columns:
-        raise ValueError("Missing required column: total (aliases: scripts, count, allocated_scripts)")
+        raise ValueError(
+            "Missing required column: total "
+            "(aliases: total_allocation, scripts, count, allocated_scripts)"
+        )
 
     result = ManualMarkedScriptsUploadResult()
     seen_phones: dict[str, int] = {}
@@ -140,11 +160,71 @@ def parse_manual_marked_scripts_upload(
 
 def generate_manual_marked_scripts_template_bytes(
     *,
-    examiner_names: list[tuple[str, str | None]],
+    rows: list[ManualMarkedScriptsTemplateRow],
 ) -> bytes:
-    """Build XLSX template with phone_number and empty total column."""
-    rows = [{"phone_number": phone or "", "total": ""} for _name, phone in examiner_names]
-    df = pd.DataFrame(rows)
+    """Build protected XLSX: identity columns locked; only total_allocation editable."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Manual allocation"
+
+    header_font = Font(bold=True)
+    for col_idx, header in enumerate(TEMPLATE_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.protection = Protection(locked=True)
+
+    for row_idx, row in enumerate(rows, start=2):
+        values = (
+            row.phone_number,
+            row.name,
+            row.ref_code,
+            row.paper,
+            row.total_allocation if row.total_allocation != "" else "",
+        )
+        for col_idx, value in enumerate(values, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            if col_idx == _TOTAL_ALLOCATION_COL:
+                # Set alignment before protection — assigning styles later can reset lock flags.
+                cell.alignment = Alignment(horizontal="right")
+                cell.protection = Protection(locked=False)
+            else:
+                cell.protection = Protection(locked=True)
+
+    # Extra blank editable rows so users can still type if they insert past the roster.
+    extra_end = max(len(rows) + 50, 100)
+    for row_idx in range(len(rows) + 2, extra_end + 1):
+        for col_idx in range(1, len(TEMPLATE_HEADERS) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value="")
+            if col_idx == _TOTAL_ALLOCATION_COL:
+                cell.alignment = Alignment(horizontal="right")
+                cell.protection = Protection(locked=False)
+            else:
+                cell.protection = Protection(locked=True)
+
+    for col_idx, header in enumerate(TEMPLATE_HEADERS, start=1):
+        max_len = len(header)
+        for row_idx in range(2, len(rows) + 2):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 2, 12), 40)
+
+    ws.protection = SheetProtection(
+        sheet=True,
+        # True = action is blocked. Leave select* False so unlocked total_allocation is editable.
+        selectLockedCells=False,
+        selectUnlockedCells=False,
+        autoFilter=True,
+        formatCells=True,
+        formatColumns=True,
+        formatRows=True,
+        insertColumns=True,
+        insertRows=True,
+        deleteColumns=True,
+        deleteRows=True,
+        sort=True,
+    )
+
     bio = io.BytesIO()
-    df.to_excel(bio, index=False, engine="openpyxl")
+    wb.save(bio)
     return bio.getvalue()

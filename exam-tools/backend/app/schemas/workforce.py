@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.bank_branch import normalize_bank_code_for_api
 
@@ -113,12 +113,39 @@ class WorkforceAssignmentBatchRow(BaseModel):
     subject_id: int
     paper_number: int
     script_count: int
+    num_days: int | None = None
     status: WorkforceAssignmentBatchStatusSchema
     batch_sequence: int
     assigned_at: datetime
     assigned_by_user_id: UUID | None
     completed_at: datetime | None
     completed_by_user_id: UUID | None
+
+
+class WorkforceBulkAssignmentRow(BaseModel):
+    id: UUID
+    examination_id: int
+    checker_id: UUID
+    paper1_script_count: int
+    paper2_script_count: int
+    num_days: int
+    assigned_at: datetime
+    assigned_by_user_id: UUID | None
+    updated_at: datetime
+    updated_by_user_id: UUID | None
+
+
+class WorkforceBulkAssignmentUpsert(BaseModel):
+    person_id: UUID
+    paper1_script_count: int = Field(ge=0)
+    paper2_script_count: int = Field(ge=0)
+    num_days: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def require_at_least_one_paper(self) -> Self:
+        if self.paper1_script_count + self.paper2_script_count < 1:
+            raise ValueError("Enter at least one script for Paper 1 or Paper 2.")
+        return self
 
 
 class WorkforceAssignmentPersonRow(BaseModel):
@@ -128,11 +155,14 @@ class WorkforceAssignmentPersonRow(BaseModel):
     phone_number: str | None
     availability_status: WorkforceAvailabilityStatusSchema
     has_bank_account: bool
+    cohort_id: UUID | None = None
+    cohort_name: str | None = None
     active_batch: WorkforceAssignmentBatchRow | None
     assigned_total: int
     completed_total: int
     uncompleted_total: int
     batches: list[WorkforceAssignmentBatchRow]
+    bulk_assignment: WorkforceBulkAssignmentRow | None = None
 
 
 class WorkforceAssignmentGridResponse(BaseModel):
@@ -150,6 +180,16 @@ class WorkforceAssignmentRosterResponse(BaseModel):
 class WorkforceAssignmentBatchCreate(BaseModel):
     person_id: UUID
     script_count: int = Field(ge=1)
+    num_days: int | None = Field(default=None, ge=1)
+
+
+class WorkforcePortalLinkRegenerateRequest(BaseModel):
+    confirm: bool = False
+
+
+class WorkforcePortalLinkRegenerateResponse(BaseModel):
+    person_id: UUID
+    portal_url: str
 
 
 class WorkforceRatesPut(BaseModel):
@@ -189,9 +229,9 @@ class WorkforceRatesResponse(BaseModel):
 
 
 class WorkforcePayoutCompletedBatchLine(BaseModel):
-    subject_id: int
-    subject_code: str | None
-    subject_name: str | None
+    subject_id: int | None = None
+    subject_code: str | None = None
+    subject_name: str | None = None
     paper_number: int
     script_count: int
     batch_sequence: int
@@ -207,6 +247,8 @@ class WorkforcePayoutRow(BaseModel):
     reference_code: str | None
     phone_number: str | None
     completed_scripts: int
+    paper1_script_count: int | None = None
+    paper2_script_count: int | None = None
     num_days: int
     rate_per_script_ghs: Decimal
     objective_rate_per_script_ghs: Decimal | None = None
@@ -249,6 +291,7 @@ class WorkforcePublicBatchRow(BaseModel):
     subject_name: str | None
     paper_number: int
     script_count: int
+    num_days: int | None = None
     status: WorkforceAssignmentBatchStatusSchema
     batch_sequence: int
     assigned_at: datetime
