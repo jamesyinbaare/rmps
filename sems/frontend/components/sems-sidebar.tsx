@@ -128,6 +128,7 @@ const getNavMain = (
       items: [
         { title: "Digital", url: "/scores/data-entry/digital" },
         { title: "Score Extraction", url: "/scores/data-entry/extraction" },
+        { title: "Extraction Activity", url: "/scores/data-entry/activity" },
         { title: "Apply Scores", url: "/scores/data-entry/apply-scores" },
         { title: "Manual", url: "/scores/data-entry/manual" },
         { title: "Export Results", url: "/scores/export" },
@@ -321,12 +322,24 @@ export function SemsSidebar({
                   {leaves.map((leaf) => {
                     const LeafIcon = leaf.icon ?? Icon;
                     const active = isLinkActive(pathname, search, leaf.url);
+                    const [leafPath, leafQuery = ""] = leaf.url.split("?");
+                    const leafParams = new URLSearchParams(leafQuery);
+                    const clearsDocumentsExam =
+                      leafPath === "/icm-studio/documents" && !leafParams.has("exam_id");
                     return (
                       <SidebarLink
                         key={leaf.url + leaf.title}
                         to={leaf.url}
                         active={active}
                         icon={<LeafIcon size={18} strokeWidth={1.5} />}
+                        onClick={(event) => {
+                          if (!clearsDocumentsExam) return;
+                          if (pathname !== "/icm-studio/documents") return;
+                          if (!search.includes("exam_id=")) return;
+                          // Same-path Link often keeps searchParams; force a bare documents URL.
+                          event.preventDefault();
+                          router.replace(leaf.url);
+                        }}
                       >
                         {leaf.title}
                       </SidebarLink>

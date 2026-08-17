@@ -23,6 +23,8 @@ interface IdExtractionStatusPillsProps {
   selected?: string;
   onSelect: (status: IdStatusFilter | undefined) => void;
   loading?: boolean;
+  /** Tighter height/padding for dense toolbars. */
+  dense?: boolean;
 }
 
 export function IdExtractionStatusPills({
@@ -30,12 +32,16 @@ export function IdExtractionStatusPills({
   selected,
   onSelect,
   loading,
+  dense = false,
 }: IdExtractionStatusPillsProps) {
   if (loading) {
     return (
       <div className="flex flex-wrap items-center gap-1.5" aria-busy="true" aria-label="Loading status counts">
         {PILLS.map((pill) => (
-          <Skeleton key={pill.key} className="h-8 w-[88px] rounded-full" />
+          <Skeleton
+            key={pill.key}
+            className={cn("rounded-full", dense ? "h-7 w-[76px]" : "h-8 w-[88px]")}
+          />
         ))}
       </div>
     );
@@ -52,7 +58,8 @@ export function IdExtractionStatusPills({
             type="button"
             onClick={() => onSelect(pill.filter)}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors",
+              "inline-flex items-center gap-1.5 rounded-full border text-xs font-medium transition-colors",
+              dense ? "h-7 px-2" : "h-8 px-2.5",
               active
                 ? "border-foreground/20 bg-background text-foreground shadow-sm"
                 : "border-transparent bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"

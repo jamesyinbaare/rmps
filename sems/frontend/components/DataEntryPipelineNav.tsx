@@ -8,8 +8,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  appendScopeToHref,
+  type ExtractionScopeParams,
+} from "@/lib/extraction-scope";
 
-export type DataEntryPipelineStep = "extract" | "review" | "apply";
+export type DataEntryPipelineStep = "extract" | "activity" | "review" | "apply";
 
 const STEPS: Array<{
   id: DataEntryPipelineStep;
@@ -22,6 +26,12 @@ const STEPS: Array<{
     label: "Extract",
     href: "/scores/data-entry/extraction",
     description: "Queue extraction",
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    href: "/scores/data-entry/activity",
+    description: "Watch the queue",
   },
   {
     id: "review",
@@ -39,10 +49,15 @@ const STEPS: Array<{
 
 interface DataEntryPipelineNavProps {
   current: DataEntryPipelineStep;
+  scope?: ExtractionScopeParams | null;
   className?: string;
 }
 
-export function DataEntryPipelineNav({ current, className }: DataEntryPipelineNavProps) {
+export function DataEntryPipelineNav({
+  current,
+  scope,
+  className,
+}: DataEntryPipelineNavProps) {
   const currentIndex = STEPS.findIndex((step) => step.id === current);
 
   return (
@@ -56,6 +71,7 @@ export function DataEntryPipelineNav({ current, className }: DataEntryPipelineNa
       {STEPS.map((step, index) => {
         const isCurrent = step.id === current;
         const isPast = index < currentIndex;
+        const href = appendScopeToHref(step.href, scope);
 
         const content = (
           <Tooltip>
@@ -104,7 +120,7 @@ export function DataEntryPipelineNav({ current, className }: DataEntryPipelineNa
         return (
           <Link
             key={step.id}
-            href={step.href}
+            href={href}
             className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {content}

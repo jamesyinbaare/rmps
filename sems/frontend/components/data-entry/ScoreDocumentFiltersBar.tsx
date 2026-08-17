@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ChevronDown, RefreshCw, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +40,20 @@ interface ScoreDocumentFiltersBarProps {
   showProviderFilter?: boolean;
   /** Apply Scores: provider is a required write target, not an optional More filter. */
   requireProvider?: boolean;
+  /** Extraction: exam must be chosen before documents load. */
+  requireExam?: boolean;
+  /** Extraction: subject must be chosen before documents load. */
+  requireSubject?: boolean;
+  /** Disable subject select until an exam is chosen (used with requireSubject). */
+  subjectDisabled?: boolean;
+  /** Show prev/next subject buttons (extraction workflow). */
+  showSubjectNav?: boolean;
+  onPrevSubject?: () => void;
+  onNextSubject?: () => void;
+  canPrevSubject?: boolean;
+  canNextSubject?: boolean;
+  /** Hide exam/subject selects when shown elsewhere (e.g. empty state or context strip). */
+  hideExamSubject?: boolean;
   loading?: boolean;
   onRefresh: () => void;
   refreshing?: boolean;
@@ -63,6 +77,15 @@ export function ScoreDocumentFiltersBar({
   onExtractionProviderChange,
   showProviderFilter = false,
   requireProvider = false,
+  requireExam = false,
+  requireSubject = false,
+  subjectDisabled = false,
+  showSubjectNav = false,
+  onPrevSubject,
+  onNextSubject,
+  canPrevSubject = false,
+  canNextSubject = false,
+  hideExamSubject = false,
   loading,
   onRefresh,
   refreshing,
@@ -74,7 +97,7 @@ export function ScoreDocumentFiltersBar({
     (!requireProvider && showProviderFilter && extractionProvider ? 1 : 0);
 
   const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
-  if (selectedExamId) {
+  if (!hideExamSubject && selectedExamId) {
     const exam = examOptions.find((e) => e.value === selectedExamId);
     chips.push({
       key: "exam",
@@ -90,7 +113,7 @@ export function ScoreDocumentFiltersBar({
       onRemove: () => onSchoolChange("all"),
     });
   }
-  if (subjectId) {
+  if (!hideExamSubject && subjectId) {
     const subject = subjects.find((s) => s.id === subjectId);
     chips.push({
       key: "subject",
@@ -101,7 +124,7 @@ export function ScoreDocumentFiltersBar({
   if (testType) {
     chips.push({
       key: "paper",
-      label: `Paper: ${testType}`,
+      label: `Paper: ${testType === "1" ? "Objectives" : testType === "2" ? "Essay" : testType === "3" ? "Practicals" : testType}`,
       onRemove: () => onTestTypeChange(undefined),
     });
   }
@@ -122,20 +145,82 @@ export function ScoreDocumentFiltersBar({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="w-[280px]">
-          <SearchableSelect
-            options={examOptions}
-            value={selectedExamId || ""}
-            onValueChange={onExamChange}
-            placeholder="Examination"
-            disabled={loading}
-            allowAll
-            allLabel="All examinations"
-            searchPlaceholder="Search examinations..."
-            emptyMessage="No examinations found"
-            triggerClassName="h-8"
-          />
-        </div>
+        {!hideExamSubject && (
+          <>
+            <div className="w-[280px]">
+              <SearchableSelect
+                options={examOptions}
+                value={selectedExamId || ""}
+                onValueChange={onExamChange}
+                placeholder={requireExam ? "Select examination…" : "Examination"}
+                disabled={loading}
+                allowAll={!requireExam}
+                allLabel="All examinations"
+                searchPlaceholder="Search examinations..."
+                emptyMessage="No examinations found"
+                triggerClassName="h-8"
+              />
+            </div>
+
+            <div className="flex items-center gap-1">
+              <div className="w-[240px]">
+                <SearchableSelect
+                  options={subjects.map((subject) => ({
+                    value: subject.id,
+                    label: `${subject.code} - ${subject.name}`,
+                  }))}
+                  value={subjectId || ""}
+                  onValueChange={onSubjectChange}
+                  placeholder={
+                    requireSubject
+                      ? selectedExamId
+                        ? "Select subject…"
+                        : "Select examination first"
+                      : "Subject"
+                  }
+                  disabled={loading || subjectDisabled || (requireSubject && !selectedExamId)}
+                  allowAll={!requireSubject}
+                  allLabel="All subjects"
+                  searchPlaceholder="Search subject code or name..."
+                  emptyMessage={
+                    requireSubject && !selectedExamId
+                      ? "Select an examination first"
+                      : "No subjects found"
+                  }
+                  triggerClassName="h-8"
+                />
+              </div>
+              {showSubjectNav && (
+                <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={!canPrevSubject || loading || subjectDisabled}
+                    onClick={onPrevSubject}
+                    aria-label="Previous subject"
+                    title="Previous subject"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={!canNextSubject || loading || subjectDisabled}
+                    onClick={onNextSubject}
+                    aria-label="Next subject"
+                    title="Next subject"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <div className="w-[240px]">
           <SearchableSelect
@@ -151,24 +236,6 @@ export function ScoreDocumentFiltersBar({
             allLabel="All schools"
             searchPlaceholder="Search schools..."
             emptyMessage="No schools found"
-            triggerClassName="h-8"
-          />
-        </div>
-
-        <div className="w-[240px]">
-          <SearchableSelect
-            options={subjects.map((subject) => ({
-              value: subject.id,
-              label: `${subject.code} - ${subject.name}`,
-            }))}
-            value={subjectId || ""}
-            onValueChange={onSubjectChange}
-            placeholder="Subject"
-            disabled={loading}
-            allowAll
-            allLabel="All subjects"
-            searchPlaceholder="Search subject code or name..."
-            emptyMessage="No subjects found"
             triggerClassName="h-8"
           />
         </div>
@@ -198,8 +265,9 @@ export function ScoreDocumentFiltersBar({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All papers</SelectItem>
-                  <SelectItem value="1">Paper 1</SelectItem>
-                  <SelectItem value="2">Paper 2</SelectItem>
+                  <SelectItem value="1">Objectives</SelectItem>
+                  <SelectItem value="2">Essay</SelectItem>
+                  <SelectItem value="3">Practicals</SelectItem>
                 </SelectContent>
               </Select>
             </div>
