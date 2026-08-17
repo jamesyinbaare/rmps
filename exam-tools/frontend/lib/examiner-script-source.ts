@@ -3,12 +3,12 @@ import type { SubjectMarkingBreakdownRow } from "@/lib/api";
 export type MarkingScriptSource = "allocation" | "manual";
 
 export function scriptSourceLabel(source: MarkingScriptSource | "mixed"): string {
-  if (source === "manual") return "Manual";
+  if (source === "manual") return "Manual allocation";
   if (source === "mixed") return "Mixed";
-  return "Automatic";
+  return "System allocation";
 }
 
-/** Table column display: Automatic, Manual, Mixed, or em dash when no scripts. */
+/** Table column display: System allocation, Manual allocation, Mixed, or em dash when no scripts. */
 export function scriptSourceColumnValue(source: MarkingScriptSource | "mixed" | null): string {
   if (!source) return "—";
   return scriptSourceLabel(source);

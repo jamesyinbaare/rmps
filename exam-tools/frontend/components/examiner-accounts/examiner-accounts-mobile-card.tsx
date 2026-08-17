@@ -4,18 +4,21 @@ import { useState } from "react";
 
 import { ExaminerAllowanceBreakdownCell } from "@/components/examiner-allowance-breakdown";
 import {
+  ExaminerScriptsCell,
   isBankAccountIncomplete,
 } from "@/components/examiner-accounts/examiner-accounts-table-cells";
 import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { displayBankCode, type AdminExaminerAllowanceRow, type ExaminerTypeApi } from "@/lib/api";
 import { scriptSourceColumnValue, scriptSourceSummary } from "@/lib/examiner-script-source";
 import type { ExaminerPayoutView } from "@/lib/examiner-payout-view";
-import { scriptsCountForRow } from "@/lib/examiner-accounts-sort";
+import {
+  paperScriptLinesForRow,
+  scriptsCountForRow,
+} from "@/lib/examiner-accounts-sort";
 import { cn } from "@/lib/utils";
 
 type Props = {
   row: AdminExaminerAllowanceRow;
-  scriptCount: number;
   subjectId: number | null;
   paperNumber: number | null;
   payoutView: ExaminerPayoutView;
@@ -27,7 +30,6 @@ type Props = {
 
 export function ExaminerAccountsMobileCard({
   row,
-  scriptCount,
   subjectId,
   paperNumber,
   payoutView,
@@ -39,6 +41,8 @@ export function ExaminerAccountsMobileCard({
   const [expanded, setExpanded] = useState(false);
   const roleAbbrev = EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const roleFull = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
+  const scriptCount = scriptsCountForRow(row, subjectId, paperNumber);
+  const paperLines = paperScriptLinesForRow(row, subjectId, paperNumber);
   const scriptSource = scriptSourceSummary(row.subject_breakdowns, { subjectId, paperNumber });
   const incomplete = isBankAccountIncomplete(row);
   const phone = row.phone_number?.trim() || null;
@@ -71,9 +75,9 @@ export function ExaminerAccountsMobileCard({
             </p>
           ) : null}
         </div>
-        <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-          {scriptCount.toLocaleString()} scripts
-        </span>
+        <div className="shrink-0">
+          <ExaminerScriptsCell scriptCount={scriptCount} paperLines={paperLines} />
+        </div>
       </div>
 
       <div className="mt-2">
@@ -111,7 +115,7 @@ export function ExaminerAccountsMobileCard({
           <dd className="font-mono">{displayBankCode(row.bank_code)}</dd>
           <dt className="text-muted-foreground">Account</dt>
           <dd className="font-mono tabular-nums">{row.account_number || "—"}</dd>
-          <dt className="text-muted-foreground">Source</dt>
+          <dt className="text-muted-foreground">Allocation source</dt>
           <dd>{scriptCount > 0 && scriptSource ? scriptSourceColumnValue(scriptSource) : "—"}</dd>
         </dl>
       ) : null}

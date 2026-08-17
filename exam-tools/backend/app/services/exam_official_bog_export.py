@@ -76,6 +76,9 @@ class BogExportRow:
     reference_code: str = ""
     work_units: int | None = None
     num_days: int | None = None
+    allocated_scripts: int | None = None
+    # Counts aligned to script_paper_numbers passed into bog_workbook_bytes.
+    paper_script_counts: tuple[int, ...] = ()
 
 
 _FILL_INCOMPLETE = PatternFill(fill_type="solid", fgColor="FDE68A")
@@ -292,9 +295,11 @@ def bog_workbook_bytes(
     include_phone: bool = False,
     include_workforce_detail: bool = False,
     work_unit_label: str = "Scripts",
+    script_paper_numbers: list[int] | None = None,
 ) -> bytes:
     rows = prebuilt_rows if prebuilt_rows is not None else bog_export_rows(pairs, rates_by_designation)
     total = bog_grand_total(rows)
+    papers = list(script_paper_numbers or [])
 
     wb = Workbook()
     ws = wb.active
@@ -303,7 +308,7 @@ def bog_workbook_bytes(
     if include_workforce_detail:
         headers = list(BOG_HEADER_LABELS_WORKFORCE)
         headers[5] = work_unit_label
-        widths = BOG_COLUMN_WIDTHS_WORKFORCE
+        widths = list(BOG_COLUMN_WIDTHS_WORKFORCE)
         name_col = 4
         phone_col = 5
         work_units_col = 6
@@ -311,9 +316,11 @@ def bog_workbook_bytes(
         designation_col = 8
         amount_col = 9
         reference_col = None
+        allocated_col = None
+        paper_cols: list[int] = []
     elif include_phone:
-        headers = BOG_HEADER_LABELS_WITH_PHONE
-        widths = BOG_COLUMN_WIDTHS_WITH_PHONE
+        headers = list(BOG_HEADER_LABELS_WITH_PHONE)
+        widths = list(BOG_COLUMN_WIDTHS_WITH_PHONE)
         name_col = 4
         reference_col = 5
         phone_col = 6
@@ -321,9 +328,23 @@ def bog_workbook_bytes(
         days_col = None
         designation_col = 7
         amount_col = 8
+        allocated_col = None
+        paper_cols: list[int] = []
+        # None = omit (e.g. T&T BoG); list (even empty) = Allocated scripts + Paper N columns.
+        if script_paper_numbers is not None:
+            insert_at = headers.index("Amount (GHS)")
+            headers.insert(insert_at, "Allocated scripts")
+            widths.insert(insert_at, 12)
+            allocated_col = insert_at + 1
+            for i, paper in enumerate(papers):
+                headers.insert(insert_at + 1 + i, f"Paper {paper} scripts")
+                widths.insert(insert_at + 1 + i, 12)
+            paper_cols = [allocated_col + 1 + i for i in range(len(papers))]
+            amount_col = headers.index("Amount (GHS)") + 1
+            designation_col = headers.index("Designation") + 1
     else:
-        headers = BOG_HEADER_LABELS
-        widths = BOG_COLUMN_WIDTHS
+        headers = list(BOG_HEADER_LABELS)
+        widths = list(BOG_COLUMN_WIDTHS)
         name_col = NAME_COLUMN
         reference_col = None
         phone_col = None
@@ -331,6 +352,8 @@ def bog_workbook_bytes(
         days_col = None
         designation_col = DESIGNATION_COLUMN
         amount_col = AMOUNT_COLUMN
+        allocated_col = None
+        paper_cols = []
     ncols = len(headers)
     start_row = 1
 
@@ -359,6 +382,11 @@ def bog_workbook_bytes(
         if days_col is not None:
             _write_int_cell(ws, r, days_col, int(row.num_days or 0))
         _write_text_cell(ws, r, designation_col, row.designation)
+        if allocated_col is not None:
+            _write_int_cell(ws, r, allocated_col, int(row.allocated_scripts or 0))
+        for col_i, paper_col in enumerate(paper_cols):
+            count = row.paper_script_counts[col_i] if col_i < len(row.paper_script_counts) else 0
+            _write_int_cell(ws, r, paper_col, int(count))
         _write_amount_cell(ws, r, amount_col, row.amount)
         _style_data_row(
             ws,

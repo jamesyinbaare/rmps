@@ -1,10 +1,10 @@
-"""Super-admin / finance: read-only subject marking groups (cohorts)."""
+"""Super-admin / finance / test-admin: read-only subject marking groups (cohorts)."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import SuperAdminOrFinanceOfficerOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import Examination
 from app.schemas.subject_marking_groups import SubjectMarkingGroupResponse
@@ -27,7 +27,7 @@ async def _load_examination(session: DBSessionDep, exam_id: int) -> Examination:
 async def admin_list_subject_marking_groups(
     examination_id: int,
     session: DBSessionDep,
-    _admin: SuperAdminOrTestAdminOfficerDep,
+    _admin: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     subject_id: int = Query(..., description="Subject id"),
 ) -> list[SubjectMarkingGroupResponse]:
     await _load_examination(session, examination_id)

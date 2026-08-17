@@ -2778,6 +2778,13 @@ export type AdminExaminerAllowanceListResponse = {
   total: number;
 };
 
+export type AdminExaminerMarkingSubjectPaperSummary = {
+  paper_number: number;
+  registered_candidates: number;
+  allocated_scripts: number;
+  variance: number;
+};
+
 export type AdminExaminerMarkingSubjectSummaryRow = {
   subject_id: number;
   subject_code: string;
@@ -2786,6 +2793,7 @@ export type AdminExaminerMarkingSubjectSummaryRow = {
   total_allocated_scripts: number;
   examiner_count: number;
   variance: number;
+  papers: AdminExaminerMarkingSubjectPaperSummary[];
 };
 
 export type AdminExaminerMarkingSubjectSummaryResponse = {
@@ -7164,6 +7172,67 @@ export async function uploadManualMarkedScripts(
   formData.append("file", file);
   return apiJson<ManualMarkedScriptsUploadResponse>(
     `/admin/examinations/${examinationId}/subjects/${subjectId}/manual-marked-scripts/upload?${params.toString()}`,
+    { method: "POST", body: formData },
+  );
+}
+
+function subjectOfficerMarkingScriptSourceBase(examinationId: number, subjectId: number): string {
+  return `/examinations/${examinationId}/subject-officer/subjects/${subjectId}`;
+}
+
+export async function getSubjectOfficerMarkingScriptSource(
+  examinationId: number,
+  subjectId: number,
+  paper?: number | null,
+): Promise<MarkingScriptSourceResponse> {
+  const params = new URLSearchParams();
+  if (paper != null && paper > 0) params.set("paper", String(Math.floor(paper)));
+  const qs = params.toString();
+  return apiJson<MarkingScriptSourceResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/marking-script-source${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function upsertSubjectOfficerManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  items: ManualMarkedScriptItem[],
+): Promise<MarkingScriptSourceResponse> {
+  return apiJson<MarkingScriptSourceResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts?paper=${paper}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function downloadSubjectOfficerManualMarkedScriptsTemplate(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+): Promise<void> {
+  await downloadApiFile(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts/upload-template?paper=${paper}`,
+    `manual_marked_scripts_ex${examinationId}_sub${subjectId}_p${paper}.xlsx`,
+  );
+}
+
+export async function uploadSubjectOfficerManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  file: File,
+  options?: { validateOnly?: boolean },
+): Promise<ManualMarkedScriptsUploadResponse> {
+  const params = new URLSearchParams({ paper: String(paper) });
+  if (options?.validateOnly) params.set("validate_only", "true");
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiJson<ManualMarkedScriptsUploadResponse>(
+    `${subjectOfficerMarkingScriptSourceBase(examinationId, subjectId)}/manual-marked-scripts/upload?${params.toString()}`,
     { method: "POST", body: formData },
   );
 }

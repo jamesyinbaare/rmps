@@ -22,6 +22,7 @@ import {
   usesSplitBankColumns,
 } from "@/lib/examiner-accounts-table-columns";
 import {
+  paperScriptLinesForRow,
   scriptsCountForRow,
   sortExaminerAccountRows,
   toggleExaminerAccountsSort,
@@ -154,7 +155,7 @@ export function ExaminerAccountsTable({
     showSubjectScripts && paperNumber != null
       ? `Scripts (P${paperNumber})`
       : showSubjectScripts
-        ? "Scripts (subject)"
+        ? "Scripts"
         : "Scripts";
 
   function handleSort(nextKey: ExaminerAccountsSortKey) {
@@ -164,10 +165,15 @@ export function ExaminerAccountsTable({
   }
 
   function renderCompositeRow(row: AdminExaminerAllowanceRow, index: number) {
-    const scriptCount = scriptsCountForRow(row, subjectId, paperNumber);
+    const scriptSubjectId = showSubjectScripts ? subjectId : null;
+    const scriptPaper = showSubjectScripts ? paperNumber : null;
+    const scriptCount = scriptsCountForRow(row, scriptSubjectId, scriptPaper);
+    const paperLines = showSubjectScripts
+      ? paperScriptLinesForRow(row, scriptSubjectId, scriptPaper)
+      : [];
     const scriptSource = scriptSourceSummary(row.subject_breakdowns, {
-      subjectId: showSubjectScripts ? subjectId : null,
-      paperNumber: showSubjectScripts ? paperNumber : null,
+      subjectId: scriptSubjectId,
+      paperNumber: scriptPaper,
     });
     const incomplete = isBankAccountIncomplete(row);
     const rowStickyBg = incomplete ? stickyBgIncomplete : stickyBg;
@@ -225,7 +231,7 @@ export function ExaminerAccountsTable({
           </td>
         ) : null}
         <td className={cn(cellPad, "text-right")}>
-          <ExaminerScriptsCell scriptCount={scriptCount} />
+          <ExaminerScriptsCell scriptCount={scriptCount} paperLines={paperLines} />
         </td>
         {showSource ? (
           <td className={cn(cellPad, "text-muted-foreground")}>
@@ -240,10 +246,15 @@ export function ExaminerAccountsTable({
   }
 
   function renderClassicRow(row: AdminExaminerAllowanceRow, index: number) {
-    const scriptCount = scriptsCountForRow(row, subjectId, paperNumber);
+    const scriptSubjectId = showSubjectScripts ? subjectId : null;
+    const scriptPaper = showSubjectScripts ? paperNumber : null;
+    const scriptCount = scriptsCountForRow(row, scriptSubjectId, scriptPaper);
+    const paperLines = showSubjectScripts
+      ? paperScriptLinesForRow(row, scriptSubjectId, scriptPaper)
+      : [];
     const scriptSource = scriptSourceSummary(row.subject_breakdowns, {
-      subjectId: showSubjectScripts ? subjectId : null,
-      paperNumber: showSubjectScripts ? paperNumber : null,
+      subjectId: scriptSubjectId,
+      paperNumber: scriptPaper,
     });
     const incomplete = isBankAccountIncomplete(row);
     const rowStickyBg = incomplete ? stickyBgIncomplete : stickyBg;
@@ -294,7 +305,9 @@ export function ExaminerAccountsTable({
         {showAccount ? (
           <td className={cn(cellPad, "font-mono text-xs tabular-nums")}>{row.account_number ?? "—"}</td>
         ) : null}
-        <td className={cn(cellPad, "text-right tabular-nums")}>{scriptCount}</td>
+        <td className={cn(cellPad, "text-right")}>
+          <ExaminerScriptsCell scriptCount={scriptCount} paperLines={paperLines} />
+        </td>
         {showSource ? (
           <td className={cn(cellPad, "text-muted-foreground")}>
             {scriptCount > 0 ? scriptSourceColumnValue(scriptSource) : "—"}
@@ -371,7 +384,9 @@ export function ExaminerAccountsTable({
                         className="ml-auto"
                       />
                     </th>
-                    {showSource ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Source</th> : null}
+                    {showSource ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Allocation source</th>
+                    ) : null}
                     <th className="px-3 py-1.5 text-right font-medium text-muted-foreground">
                       <SortableHeader
                         label={payoutColumnLabel(payoutView)}
@@ -408,7 +423,9 @@ export function ExaminerAccountsTable({
                     {showBranch ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Branch</th> : null}
                     {showAccount ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Account</th> : null}
                     <th className="px-3 py-1.5 text-right font-medium text-muted-foreground">{scriptsHeader}</th>
-                    {showSource ? <th className="px-3 py-1.5 font-medium text-muted-foreground">Source</th> : null}
+                    {showSource ? (
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Allocation source</th>
+                    ) : null}
                     <th className="px-3 py-1.5 text-right font-medium text-muted-foreground">
                       {payoutColumnLabel(payoutView)}
                     </th>
@@ -450,7 +467,6 @@ export function ExaminerAccountsTable({
                 <ExaminerAccountsMobileCard
                   key={row.id}
                   row={row}
-                  scriptCount={scriptsCountForRow(row, subjectId, paperNumber)}
                   subjectId={showSubjectScripts ? subjectId : null}
                   paperNumber={showSubjectScripts ? paperNumber : null}
                   payoutView={payoutView}

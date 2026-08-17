@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen } from "lucide-react";
 
 import { ExaminerAccountsColumnsPopover } from "@/components/examiner-accounts/examiner-accounts-columns-popover";
+import { ExaminerAllowanceDownloadConfirmDialog } from "@/components/examiner-accounts/examiner-allowance-download-confirm-dialog";
 import { ExaminerAllowanceExportFieldsDialog } from "@/components/examiner-accounts/examiner-allowance-export-fields-dialog";
 import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
@@ -49,6 +50,11 @@ import {
   sumPayoutViewOnPage,
   type ExaminerPayoutView,
 } from "@/lib/examiner-payout-view";
+import {
+  parseExaminerAllowanceDownloadKind,
+  payoutModeFromBogDownloadKind,
+  type ExaminerAllowanceDownloadKind,
+} from "@/lib/examiner-allowance-download-copy";
 import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
 import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
 import { formatGhsAmount } from "@/lib/format-ghs";
@@ -72,9 +78,9 @@ function exportFilenameBase(exam: Examination | null, subjectCode?: string, pape
 }
 
 function parsePaperNumber(raw: string | null, allowed: number[]): number | null {
-  if (!raw?.trim() || allowed.length === 0) return allowed[0] ?? null;
+  if (!raw?.trim() || allowed.length === 0) return null;
   const n = Number.parseInt(raw, 10);
-  return !Number.isNaN(n) && allowed.includes(n) ? n : allowed[0] ?? null;
+  return !Number.isNaN(n) && allowed.includes(n) ? n : null;
 }
 
 function ExaminerAccountsBySubjectContent() {
@@ -103,6 +109,9 @@ function ExaminerAccountsBySubjectContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [excelExportOpen, setExcelExportOpen] = useState(false);
+  const [downloadConfirmKind, setDownloadConfirmKind] = useState<ExaminerAllowanceDownloadKind | null>(
+    null,
+  );
   const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
@@ -324,7 +333,7 @@ function ExaminerAccountsBySubjectContent() {
         return parsePaperNumber(pendingRaw, papers);
       }
       if (prev != null && papers.includes(prev)) return prev;
-      return papers[0] ?? null;
+      return null;
     });
   }, [subjectId, subjectRefById]);
 
@@ -463,6 +472,38 @@ function ExaminerAccountsBySubjectContent() {
     [summaries, subjectId],
   );
 
+  const subjectPaperKpis = useMemo(() => {
+    if (!selectedSummary) return [];
+    const byPaper = new Map(
+      (selectedSummary.papers ?? []).map((p) => [
+        p.paper_number,
+        {
+          paperNumber: p.paper_number,
+          registered: p.registered_candidates,
+          allocated: p.allocated_scripts,
+          variance: p.variance,
+        },
+      ]),
+    );
+    const numbers =
+      paperNumbers.length > 0
+        ? paperNumbers
+        : byPaper.size > 0
+          ? [...byPaper.keys()].sort((a, b) => a - b)
+          : [1];
+    const registered = selectedSummary.registered_candidates;
+    return numbers.map((n) => {
+      const existing = byPaper.get(n);
+      if (existing) return existing;
+      return {
+        paperNumber: n,
+        registered,
+        allocated: 0,
+        variance: -registered,
+      };
+    });
+  }, [selectedSummary, paperNumbers]);
+
   const selectedExam = exams.find((e) => e.id === examId) ?? null;
 
   const allAccountsHref = useMemo(() => {
@@ -500,41 +541,52 @@ function ExaminerAccountsBySubjectContent() {
       ? "No records to export"
       : undefined;
 
-  async function onExport(key: string) {
+  const downloadScope = useMemo(() => {
+    if (!selectedExam) return null;
+    const subjectLabel = selectedSummary
+      ? `${selectedSummary.subject_code} — ${selectedSummary.subject_name}`
+      : null;
+    const cohortLabel = selectedCohort?.name ?? null;
+    const regionLabel =
+      REGION_OPTIONS.find((r) => r.value === regionFilter)?.label ?? (regionFilter || null);
+    return {
+      examinationLabel: formatExamLabel(selectedExam),
+      subjectLabel,
+      paperNumber,
+      cohortLabel,
+      regionLabel,
+      examinerCount: total,
+    };
+  }, [selectedExam, selectedSummary, selectedCohort, regionFilter, paperNumber, total]);
+
+  function onExport(key: string) {
     if (examId == null || !selectedExam || !subjectId.trim()) return;
-    if (key === "excel") {
+    const kind = parseExaminerAllowanceDownloadKind(key);
+    if (!kind) return;
+    if (kind === "excel") {
       setExcelExportOpen(true);
       return;
     }
-    setExportBusy(`${SECTION_ID}:${key}`);
+    setDownloadConfirmKind(kind);
+  }
+
+  async function runBogDownload(kind: ExaminerAllowanceDownloadKind) {
+    if (examId == null || !selectedExam || !subjectId.trim()) return;
+    const mode = payoutModeFromBogDownloadKind(kind);
+    if (!mode) return;
+    setExportBusy(`${SECTION_ID}:${kind}`);
     try {
       const base = exportFilenameBase(selectedExam, selectedSummary?.subject_code, paperNumber);
-      const exportParams = {
+      await downloadAdminExaminerAllowancesBogExport({
         examination_id: examId,
         subject_id: Number.parseInt(subjectId, 10),
         group_id: cohortFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
-      };
-      if (key === "bog_all") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "all",
-          filename: `${base}_${bogExportFilenameSuffix("all")}.xlsx`,
-        });
-      } else if (key === "bog_travel_commuting") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "travel_commuting",
-          filename: `${base}_${bogExportFilenameSuffix("travel_commuting")}.xlsx`,
-        });
-      } else if (key === "bog_allowances_marking") {
-        await downloadAdminExaminerAllowancesBogExport({
-          ...exportParams,
-          payout_mode: "allowances_marking",
-          filename: `${base}_${bogExportFilenameSuffix("allowances_marking")}.xlsx`,
-        });
-      }
+        payout_mode: mode,
+        filename: `${base}_${bogExportFilenameSuffix(mode)}.xlsx`,
+      });
+      setDownloadConfirmKind(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Export failed.");
     } finally {
@@ -723,9 +775,7 @@ function ExaminerAccountsBySubjectContent() {
             subjectName={selectedSummary.subject_name}
             subjectType={selectedSubjectRef.subject_type}
             paperNumber={paperNumber}
-            registered={selectedSummary.registered_candidates}
-            allocated={selectedSummary.total_allocated_scripts}
-            variance={selectedSummary.variance}
+            papers={subjectPaperKpis}
             examinerCount={cohortFilter ? total : selectedSummary.examiner_count}
             refreshing={summaryBusy && summaries.length > 0}
           />
@@ -802,7 +852,22 @@ function ExaminerAccountsBySubjectContent() {
           if (!exportBusy) setExcelExportOpen(false);
         }}
         busy={exportBusy === `${SECTION_ID}:excel`}
+        scope={downloadScope}
         onConfirm={(fields) => void onConfirmExcelExport(fields)}
+      />
+      <ExaminerAllowanceDownloadConfirmDialog
+        open={downloadConfirmKind != null}
+        kind={downloadConfirmKind}
+        scope={downloadScope}
+        busy={
+          downloadConfirmKind != null && exportBusy === `${SECTION_ID}:${downloadConfirmKind}`
+        }
+        onClose={() => {
+          if (!exportBusy) setDownloadConfirmKind(null);
+        }}
+        onConfirm={() => {
+          if (downloadConfirmKind) void runBogDownload(downloadConfirmKind);
+        }}
       />
     </div>
   );

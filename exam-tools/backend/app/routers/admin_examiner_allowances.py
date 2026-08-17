@@ -260,6 +260,7 @@ async def admin_export_examiner_allowances(
         allocated_booklets,
         source_modes,
         include_fields=extra_fields,
+        subject_id=subject_id,
     )
     filename = examiner_export_filename(ex)
     return Response(
@@ -337,6 +338,7 @@ async def admin_bog_export_examiner_allowances(
         source_modes,
         title=title,
         mode=mode,
+        subject_id=subject_id,
     )
     filename = examiner_bog_export_filename(exam_part, mode)
     return Response(

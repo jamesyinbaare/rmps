@@ -195,7 +195,7 @@ export function ExaminerSubjectSummaryCommandBar({
                 aria-label="Paper"
                 className={cn(
                   inputGroupSelectClass,
-                  "w-[16%] min-w-20 max-w-28 shrink-0 border-l border-input-border",
+                  "w-[18%] min-w-24 max-w-32 shrink-0 border-l border-input-border",
                 )}
                 value={paperNumber != null ? String(paperNumber) : ""}
                 disabled={paperDisabled}
@@ -203,7 +203,7 @@ export function ExaminerSubjectSummaryCommandBar({
                   onPaperNumberChange(e.target.value ? Number.parseInt(e.target.value, 10) : null)
                 }
               >
-                <option value="">{paperDisabled ? "—" : "Paper"}</option>
+                <option value="">{paperDisabled ? "—" : "All papers"}</option>
                 {paperNumbers.map((paper) => (
                   <option key={paper} value={paper}>
                     P{paper}

@@ -17,11 +17,30 @@ from app.models import (
     ExaminationSubjectMarkingScriptSource,
     Examiner,
     ExaminerSubject,
+    ExaminerType,
     MarkingScriptSourceMode,
     Subject,
 )
-from app.services.examiner_allocated_booklets import _marking_source_mode_value
+from app.schemas.examination_marking_script_source import (
+    MarkingScriptSourceExaminerRow,
+    MarkingScriptSourceResponse,
+)
+from app.services.examiner_allocated_booklets import (
+    _marking_source_mode_value,
+    load_allocated_booklets_map,
+    load_effective_allocated_booklets_map,
+    load_manual_marked_scripts_map,
+)
 from app.services.school_bulk_upload import inspector_phone_lookup_candidates
+
+
+def examiner_type_api_label(t: ExaminerType) -> str:
+    return {
+        ExaminerType.CHIEF: "chief_examiner",
+        ExaminerType.ASSISTANT_CHIEF: "assistant_chief_examiner",
+        ExaminerType.ASSISTANT: "assistant_examiner",
+        ExaminerType.TEAM_LEADER: "team_leader",
+    }[t]
 
 
 async def get_subject_source_mode(
@@ -181,3 +200,49 @@ async def assert_examination_subject(
     if subject is None:
         raise ValueError("Subject not found")
     return exam, subject
+
+
+async def build_marking_script_source_response(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    paper_number: int | None,
+) -> MarkingScriptSourceResponse:
+    source_mode = await get_subject_source_mode(session, examination_id, subject_id)
+    available_papers = await list_papers_for_subject(session, examination_id, subject_id)
+    allocation_map = await load_allocated_booklets_map(session, examination_id)
+    manual_map = await load_manual_marked_scripts_map(session, examination_id)
+    effective_map = await load_effective_allocated_booklets_map(session, examination_id)
+    examiners = await load_examiners_on_subject(session, examination_id, subject_id)
+
+    rows: list[MarkingScriptSourceExaminerRow] = []
+    for ex in examiners:
+        alloc_count = 0
+        manual_count = 0
+        effective_count = 0
+        if paper_number is not None:
+            key = (ex.id, subject_id, paper_number)
+            alloc_count = allocation_map.get(key, 0)
+            manual_count = manual_map.get(key, 0)
+            effective_count = effective_map.get(key, 0)
+        rows.append(
+            MarkingScriptSourceExaminerRow(
+                examiner_id=ex.id,
+                name=ex.name,
+                examiner_type=examiner_type_api_label(ex.examiner_type),
+                phone_number=ex.phone_number,
+                allocation_count=alloc_count,
+                manual_count=manual_count,
+                effective_count=effective_count,
+            )
+        )
+
+    return MarkingScriptSourceResponse(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        source_mode=source_mode.value,
+        available_papers=available_papers,
+        paper_number=paper_number,
+        examiners=rows,
+    )

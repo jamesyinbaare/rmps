@@ -5,6 +5,10 @@ import { Check, Copy } from "lucide-react";
 
 import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import type { AdminExaminerAllowanceRow, ExaminerTypeApi } from "@/lib/api";
+import {
+  scriptsCellTitle,
+  type ExaminerPaperScriptLine,
+} from "@/lib/examiner-accounts-sort";
 import { cn } from "@/lib/utils";
 
 export function isBankAccountIncomplete(row: AdminExaminerAllowanceRow): boolean {
@@ -124,12 +128,15 @@ export function ExaminerBankAccountCell({ row }: BankProps) {
 
 type ScriptsProps = {
   scriptCount: number;
+  paperLines?: ExaminerPaperScriptLine[];
 };
 
-export function ExaminerScriptsCell({ scriptCount }: ScriptsProps) {
+export function ExaminerScriptsCell({ scriptCount, paperLines = [] }: ScriptsProps) {
+  const title = scriptsCellTitle(paperLines, scriptCount);
+
   return (
-    <div className="text-right tabular-nums">
-      <span>{scriptCount.toLocaleString()}</span>
+    <div className="text-right tabular-nums" title={title}>
+      <span className="text-sm font-medium text-foreground">{scriptCount.toLocaleString()}</span>
     </div>
   );
 }
