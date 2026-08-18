@@ -17,8 +17,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import type { ExtractionProvider, School, Subject } from "@/types/document";
-import { DEFAULT_EXTRACTION_PROVIDER, extractionProviderLabel } from "@/types/document";
+import type { ExtractionProviderFilter, School, Subject } from "@/types/document";
+import { DEFAULT_EXTRACTION_PROVIDER, extractionProviderFilterLabel } from "@/types/document";
 import { cn } from "@/lib/utils";
 
 type ExamOption = { value: number; label: string };
@@ -32,11 +32,11 @@ interface ScoreDocumentFiltersBarProps {
   schoolId?: number;
   subjectId?: number;
   testType?: string;
-  extractionProvider?: ExtractionProvider;
+  extractionProvider?: ExtractionProviderFilter;
   onSchoolChange: (value: string | number | "all" | "") => void;
   onSubjectChange: (value: string | number | "all" | "") => void;
   onTestTypeChange: (value: string | undefined) => void;
-  onExtractionProviderChange?: (value: ExtractionProvider | undefined) => void;
+  onExtractionProviderChange?: (value: ExtractionProviderFilter | undefined) => void;
   showProviderFilter?: boolean;
   /** Apply Scores: provider is a required write target, not an optional More filter. */
   requireProvider?: boolean;
@@ -131,7 +131,7 @@ export function ScoreDocumentFiltersBar({
   if (!requireProvider && showProviderFilter && extractionProvider) {
     chips.push({
       key: "provider",
-      label: `Has extraction from: ${extractionProviderLabel(extractionProvider)}`,
+      label: `Has extraction from: ${extractionProviderFilterLabel(extractionProvider)}`,
       onRemove: () => onExtractionProviderChange?.(undefined),
     });
   }
@@ -278,7 +278,7 @@ export function ScoreDocumentFiltersBar({
                   value={extractionProvider || "all"}
                   onValueChange={(value) =>
                     onExtractionProviderChange(
-                      value === "all" ? undefined : (value as ExtractionProvider)
+                      value === "all" ? undefined : (value as ExtractionProviderFilter)
                     )
                   }
                   disabled={loading}
@@ -288,8 +288,9 @@ export function ScoreDocumentFiltersBar({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All providers</SelectItem>
-                    <SelectItem value="llama">Llama Extract</SelectItem>
-                    <SelectItem value="reducto">Reducto</SelectItem>
+                    <SelectItem value="llama_only">Llama Extract only</SelectItem>
+                    <SelectItem value="reducto_only">Reducto only</SelectItem>
+                    <SelectItem value="both">Both providers</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

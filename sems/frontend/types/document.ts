@@ -521,6 +521,9 @@ export interface BatchScoreUpdateResponse {
 
 export type ExtractionProvider = "reducto" | "llama";
 
+/** Extraction list filter: one provider only, or documents that have both. */
+export type ExtractionProviderFilter = ExtractionProvider | "llama_only" | "reducto_only" | "both";
+
 export const DEFAULT_EXTRACTION_PROVIDER: ExtractionProvider = "llama";
 
 export interface DocumentScoreExtraction {
@@ -584,6 +587,21 @@ export function extractionProviderLabel(provider: string | null | undefined): st
   }
 }
 
+export function extractionProviderFilterLabel(value: string | null | undefined): string {
+  switch ((value || "").toLowerCase()) {
+    case "llama":
+    case "llama_only":
+      return "Llama Extract only";
+    case "reducto":
+    case "reducto_only":
+      return "Reducto only";
+    case "both":
+      return "Both providers";
+    default:
+      return extractionProviderLabel(value);
+  }
+}
+
 /** Compact name for table cells so two providers fit on one row. */
 export function extractionProviderShortLabel(provider: string | null | undefined): string {
   switch ((provider || "").toLowerCase()) {
@@ -624,7 +642,7 @@ export interface ScoreDocumentFilters {
   test_type?: string;
   extraction_status?: string; // Single or comma-separated: pending,queued,processing,success,error
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
-  extraction_provider?: ExtractionProvider; // Filter by Reducto vs Llama Extract
+  extraction_provider?: ExtractionProviderFilter; // llama_only / reducto_only / both / llama / reducto
   scores_applied?: boolean; // true=applied, false=not applied
   id_ready?: boolean; // true=usable extracted ID, false=ID failures / missing IDs
   page?: number;

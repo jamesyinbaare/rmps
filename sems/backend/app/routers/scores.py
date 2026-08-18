@@ -80,7 +80,9 @@ from app.services.document_score_extraction import (
     is_current_applied,
     list_extractions_by_document_ids,
     normalize_provider,
+    parse_extraction_provider_filter,
     payload_for_apply,
+    status_count_join_provider,
     sync_document_snapshot,
     DEFAULT_PROVIDER,
 )
@@ -88,6 +90,8 @@ from app.services.document_score_extraction import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
+
+ExtractionProviderListFilter = Literal["reducto", "llama", "both", "llama_only", "reducto_only"]
 
 
 def _id_ready_clause():
@@ -206,9 +210,13 @@ async def get_filtered_documents(
         ),
     ),
     extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
-    extraction_provider: Literal["reducto", "llama"] | None = Query(
+    extraction_provider: ExtractionProviderListFilter | None = Query(
         None,
-        description="Filter by per-provider extraction row (reducto or llama)",
+        description=(
+            "Filter by extraction provider: reducto or llama (has that provider), "
+            "llama_only / reducto_only (that provider and not the other), "
+            "or both (llama and reducto)."
+        ),
     ),
     scores_applied: bool | None = Query(
         None,
@@ -351,8 +359,9 @@ async def get_filtered_documents(
         ext_rows = extractions_by_doc.get(document.id, [])
         doc_dict["extractions"] = [extraction_to_item(row) for row in ext_rows]
         overlay = None
-        if extraction_provider:
-            overlay = next((row for row in ext_rows if row.provider == extraction_provider), None)
+        overlay_provider = status_count_join_provider(extraction_provider)
+        if overlay_provider:
+            overlay = next((row for row in ext_rows if row.provider == overlay_provider), None)
         if overlay is None and ext_rows:
             overlay = next(
                 (row for row in ext_rows if row.provider == _provider_from_extraction_data(document.scores_extraction_data)),
@@ -397,9 +406,13 @@ async def get_scores_extraction_status_counts(
     extraction_method: DataExtractionMethod | None = Query(
         None, description="Filter by extraction method in scores_extraction_methods array"
     ),
-    extraction_provider: Literal["reducto", "llama"] | None = Query(
+    extraction_provider: ExtractionProviderListFilter | None = Query(
         None,
-        description="Filter by per-provider extraction row (reducto or llama)",
+        description=(
+            "Filter by extraction provider: reducto or llama (has that provider), "
+            "llama_only / reducto_only (that provider and not the other), "
+            "or both (llama and reducto)."
+        ),
     ),
     scores_applied: bool | None = Query(
         None,
@@ -420,7 +433,8 @@ async def get_scores_extraction_status_counts(
 
     stmt = select(Document.scores_extraction_status, func.count(Document.id)).select_from(Document)
     status_col = Document.scores_extraction_status
-    if extraction_provider:
+    join_provider = status_count_join_provider(extraction_provider)
+    if join_provider:
         stmt = (
             select(DocumentScoreExtraction.status, func.count(Document.id))
             .select_from(Document)
@@ -428,7 +442,7 @@ async def get_scores_extraction_status_counts(
                 DocumentScoreExtraction,
                 and_(
                     DocumentScoreExtraction.document_id == Document.id,
-                    DocumentScoreExtraction.provider == extraction_provider,
+                    DocumentScoreExtraction.provider == join_provider,
                 ),
             )
         )
@@ -458,9 +472,14 @@ async def get_scores_extraction_status_counts(
             Document.scores_extraction_methods.isnot(None)
             & Document.scores_extraction_methods.op("@>")([extraction_method])
         )
+    _, provider_mode = parse_extraction_provider_filter(extraction_provider)
     stmt = apply_extraction_list_filters(
         stmt,
-        extraction_provider=extraction_provider if scores_applied is not None else None,
+        extraction_provider=(
+            extraction_provider
+            if scores_applied is not None or provider_mode in ("only", "both")
+            else None
+        ),
         extraction_status=None,
         scores_applied=scores_applied,
     )

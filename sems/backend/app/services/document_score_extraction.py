@@ -14,6 +14,7 @@ from app.models import Document, DocumentScoreExtraction
 DEFAULT_PROVIDER = "llama"
 LEGACY_DEFAULT_PROVIDER = "reducto"
 KNOWN_PROVIDERS = ("reducto", "llama", "ocr")
+STRUCTURED_PROVIDERS = ("llama", "reducto")
 
 
 def normalize_provider(provider: str | None) -> str:
@@ -222,6 +223,71 @@ def apply_extract_result(
         row.data = parsed_content
 
 
+def other_structured_provider(provider: str) -> str:
+    return "reducto" if provider == "llama" else "llama"
+
+
+def parse_extraction_provider_filter(value: str | None) -> tuple[str | None, str]:
+    """Return (provider, mode) for list filters.
+
+    mode is 'any' (has this provider), 'only' (this provider and not the other),
+    or 'both' (has llama and reducto).
+    """
+    if not value:
+        return None, "any"
+    raw = value.strip().lower()
+    if raw == "both":
+        return None, "both"
+    if raw in ("llama_only", "reducto_only"):
+        return raw.removesuffix("_only"), "only"
+    return normalize_provider(raw), "any"
+
+
+def status_count_join_provider(extraction_provider: str | None) -> str | None:
+    """Provider whose row status drives status-count chips, if any."""
+    provider, mode = parse_extraction_provider_filter(extraction_provider)
+    if mode == "both" or not provider:
+        return None
+    return provider
+
+
+def _match_provider_extraction(
+    stmt: Any,
+    provider: str,
+    *,
+    statuses: list[str],
+    scores_applied: bool | None,
+) -> Any:
+    ext = DocumentScoreExtraction
+    has_row = exists().where(ext.document_id == Document.id, ext.provider == provider)
+    if scores_applied is True:
+        return stmt.where(
+            exists().where(
+                ext.document_id == Document.id,
+                ext.provider == provider,
+                applied_current_clause(ext),
+            )
+        )
+    if scores_applied is False:
+        return stmt.where(
+            exists().where(
+                ext.document_id == Document.id,
+                ext.provider == provider,
+                ready_clause(ext),
+            )
+        )
+    if statuses:
+        status_match = exists().where(
+            ext.document_id == Document.id,
+            ext.provider == provider,
+            ext.status.in_(statuses),
+        )
+        if "pending" in statuses:
+            return stmt.where(or_(status_match, ~has_row))
+        return stmt.where(status_match)
+    return stmt.where(has_row)
+
+
 def apply_extraction_list_filters(
     stmt: Any,
     *,
@@ -232,43 +298,31 @@ def apply_extraction_list_filters(
     """Filter documents by per-provider extraction rows.
 
     A missing row for the selected provider counts as pending.
+    `llama_only` / `reducto_only` exclude documents that also have the other provider.
+    `both` requires a row for llama and reducto.
     """
     ext = DocumentScoreExtraction
     statuses: list[str] = []
     if extraction_status:
         statuses = [s.strip() for s in extraction_status.split(",") if s.strip()]
 
-    if extraction_provider:
-        provider = normalize_provider(extraction_provider)
-        has_row = exists().where(ext.document_id == Document.id, ext.provider == provider)
-        if scores_applied is True:
+    provider, mode = parse_extraction_provider_filter(extraction_provider)
+    if mode == "both":
+        stmt = _match_provider_extraction(
+            stmt, "llama", statuses=statuses, scores_applied=scores_applied
+        )
+        return _match_provider_extraction(
+            stmt, "reducto", statuses=statuses, scores_applied=scores_applied
+        )
+    if provider:
+        stmt = _match_provider_extraction(
+            stmt, provider, statuses=statuses, scores_applied=scores_applied
+        )
+        if mode == "only":
+            other = other_structured_provider(provider)
             stmt = stmt.where(
-                exists().where(
-                    ext.document_id == Document.id,
-                    ext.provider == provider,
-                    applied_current_clause(ext),
-                )
+                ~exists().where(ext.document_id == Document.id, ext.provider == other)
             )
-        elif scores_applied is False:
-            stmt = stmt.where(
-                exists().where(
-                    ext.document_id == Document.id,
-                    ext.provider == provider,
-                    ready_clause(ext),
-                )
-            )
-        elif statuses:
-            status_match = exists().where(
-                ext.document_id == Document.id,
-                ext.provider == provider,
-                ext.status.in_(statuses),
-            )
-            if "pending" in statuses:
-                stmt = stmt.where(or_(status_match, ~has_row))
-            else:
-                stmt = stmt.where(status_match)
-        else:
-            stmt = stmt.where(has_row)
         return stmt
 
     if scores_applied is True:
