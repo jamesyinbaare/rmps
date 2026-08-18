@@ -44,11 +44,15 @@ import {
   downloadDocument,
   getDocumentDownloadFilename,
   getDocument,
+  getDocumentIdExtractionConflicts,
+  extractDocumentId,
   updateDocumentId,
   bulkDeleteDocuments,
   bulkExtractDocumentIds,
   getAllExams,
 } from "@/lib/api";
+import { parseDuplicateConflictDocumentId } from "@/lib/id-extraction-errors";
+import { nextIndexAfterRemoval } from "@/lib/resolution-queue";
 import type {
   Document,
   DocumentFilters as DocumentFiltersType,
@@ -136,6 +140,9 @@ export default function DocumentsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
   const [conflictRefreshKey, setConflictRefreshKey] = useState(0);
+  const [deleteResolutionRole, setDeleteResolutionRole] = useState<
+    "current" | "conflict" | null
+  >(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkMode, setBulkMode] = useState(false);
@@ -796,6 +803,104 @@ export default function DocumentsPage() {
     setSelectedIndex(-1);
   }, []);
 
+  const advanceAfterResolved = useCallback(
+    async (resolvedDocumentId: number, options?: { queueEmptyMessage?: string }) => {
+      void loadStatusCounts();
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(resolvedDocumentId);
+        return next;
+      });
+
+      const idx = documents.findIndex((d) => d.id === resolvedDocumentId);
+      const remaining = documents.filter((d) => d.id !== resolvedDocumentId);
+
+      if (remaining.length > 0) {
+        setDocuments(remaining);
+        setTotal((t) => Math.max(0, t - 1));
+        const nextIdx = nextIndexAfterRemoval(idx, remaining.length);
+        if (viewerOpen && nextIdx >= 0) {
+          setSelectedIndex(nextIdx);
+          setSelectedDocument(remaining[nextIdx]);
+          setFocusedRowIndex(nextIdx);
+        }
+        return;
+      }
+
+      let page = filters.page ?? 1;
+      let response = await listDocuments({ ...filters, page });
+      if (response.items.length === 0 && page > 1) {
+        page -= 1;
+        response = await listDocuments({ ...filters, page });
+        setFilters((prev) => ({ ...prev, page }));
+      }
+      setDocuments(response.items);
+      setTotal(response.total);
+      setTotalPages(response.total_pages);
+      setCurrentPage(response.page);
+
+      if (viewerOpen && response.items.length > 0) {
+        setSelectedIndex(0);
+        setSelectedDocument(response.items[0]);
+        setFocusedRowIndex(0);
+      } else if (viewerOpen) {
+        handleCloseViewer();
+        toast.success(options?.queueEmptyMessage ?? "All errors resolved");
+      }
+    },
+    [documents, viewerOpen, filters, handleCloseViewer, loadStatusCounts]
+  );
+
+  const handleConflictSideResolved = useCallback(async () => {
+    if (!selectedDocument) return;
+    const currentId = selectedDocument.id;
+
+    const conflictIds: number[] = [];
+    try {
+      const response = await getDocumentIdExtractionConflicts(currentId);
+      conflictIds.push(...response.items.map((item) => item.id));
+    } catch (error) {
+      console.error("Failed to load duplicate conflicts:", error);
+    }
+    const fallback =
+      selectedDocument.id_extraction_conflict_document_id ??
+      parseDuplicateConflictDocumentId(selectedDocument.id_extraction_error);
+    if (fallback) {
+      conflictIds.push(fallback);
+    }
+    const uniqueConflictIds = [...new Set(conflictIds.filter((id) => id !== currentId))];
+
+    setConflictRefreshKey((n) => n + 1);
+
+    if (uniqueConflictIds.length > 0) {
+      toast.message(
+        `${uniqueConflictIds.length} conflicting document${uniqueConflictIds.length === 1 ? "" : "s"} remain`
+      );
+      return;
+    }
+
+    try {
+      const result = await extractDocumentId(currentId);
+      if (result.is_valid && result.extracted_id) {
+        await updateDocumentId(currentId, result.extracted_id);
+        toast.success(`Resolved: ${result.extracted_id}`);
+        await advanceAfterResolved(currentId, {
+          queueEmptyMessage: "All duplicates resolved",
+        });
+        return;
+      }
+      toast.message(
+        result.error_message || "Still duplicate — change this upload's ID or delete it"
+      );
+      const updated = await getDocument(currentId);
+      setSelectedDocument(updated);
+      setDocuments((prev) => prev.map((d) => (d.id === currentId ? updated : d)));
+      setConflictRefreshKey((n) => n + 1);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Auto-retry failed");
+    }
+  }, [selectedDocument, advanceAfterResolved]);
+
   const handleUpdateId = async (
     documentId: number,
     extractedId: string,
@@ -809,42 +914,9 @@ export default function DocumentsPage() {
       void loadStatusCounts();
 
       if (isErrorsView && options?.advance !== false) {
-        const idx = documents.findIndex((d) => d.id === documentId);
-        const remaining = documents.filter((d) => d.id !== documentId);
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(documentId);
-          return next;
+        await advanceAfterResolved(documentId, {
+          queueEmptyMessage: "All errors resolved",
         });
-        if (remaining.length > 0) {
-          setDocuments(remaining);
-          setTotal((t) => Math.max(0, t - 1));
-          const nextIdx = Math.min(Math.max(idx, 0), remaining.length - 1);
-          if (viewerOpen) {
-            setSelectedIndex(nextIdx);
-            setSelectedDocument(remaining[nextIdx]);
-            setFocusedRowIndex(nextIdx);
-          }
-          return;
-        }
-        let page = filters.page ?? 1;
-        let response = await listDocuments({ ...filters, page });
-        if (response.items.length === 0 && page > 1) {
-          page -= 1;
-          response = await listDocuments({ ...filters, page });
-          setFilters((prev) => ({ ...prev, page }));
-        }
-        setDocuments(response.items);
-        setTotal(response.total);
-        setTotalPages(response.total_pages);
-        setCurrentPage(response.page);
-        if (viewerOpen && response.items.length > 0) {
-          setSelectedIndex(0);
-          setSelectedDocument(response.items[0]);
-          setFocusedRowIndex(0);
-        } else if (viewerOpen) {
-          handleCloseViewer();
-        }
         return;
       }
 
@@ -878,39 +950,68 @@ export default function DocumentsPage() {
     }
   }, [documents]);
 
-  const handleDeleteClick = (doc: Document) => {
+  const handleDeleteClick = (doc: Document, role?: "current" | "conflict") => {
+    setDeleteResolutionRole(role ?? null);
     setDocumentToDelete(doc);
     setDeleteDialogOpen(true);
   };
 
   const handleDeleteFromViewer = async (documentId: number) => {
+    const isCurrent = selectedDocument?.id === documentId;
+    const role: "current" | "conflict" = isCurrent ? "current" : "conflict";
     const local =
       documents.find((d) => d.id === documentId) ||
       (selectedDocument?.id === documentId ? selectedDocument : null);
     if (local) {
-      handleDeleteClick(local);
+      handleDeleteClick(local, role);
       return;
     }
     try {
       const fetched = await getDocument(documentId);
-      handleDeleteClick(fetched);
+      handleDeleteClick(fetched, role);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Document not found");
     }
   };
 
-  const handleDeleteConfirm = () => {
-    if (documentToDelete) {
-      if (selectedDocument && selectedDocument.id === documentToDelete.id) {
-        handleCloseViewer();
-      } else if (viewerOpen) {
-        setConflictRefreshKey((n) => n + 1);
-        toast.message("Conflicting document deleted — you can retry extraction or change the ID");
-      }
-      loadDocuments();
-      void loadStatusCounts();
+  const handleDeleteConfirm = async () => {
+    if (!documentToDelete) return;
+
+    const deletedId = documentToDelete.id;
+    const role = deleteResolutionRole;
+    setDeleteResolutionRole(null);
+
+    if (isErrorsView && viewerOpen && role === "current" && selectedDocument?.id === deletedId) {
+      await advanceAfterResolved(deletedId, { queueEmptyMessage: "All duplicates resolved" });
+      return;
+    }
+
+    if (isErrorsView && viewerOpen && role === "conflict") {
+      await handleConflictSideResolved();
+      return;
+    }
+
+    if (selectedDocument && selectedDocument.id === deletedId) {
+      handleCloseViewer();
+    } else if (viewerOpen) {
+      setConflictRefreshKey((n) => n + 1);
+    }
+    loadDocuments();
+    void loadStatusCounts();
+  };
+
+  const handleStartResolveDuplicates = () => {
+    const idx =
+      focusedRowIndex >= 0 && focusedRowIndex < documents.length ? focusedRowIndex : 0;
+    const doc = documents[idx] ?? documents[0];
+    if (doc) {
+      handleDocumentSelect(doc);
     }
   };
+
+  const duplicateCount =
+    statusCounts.error_codes.find((c) => c.code === "duplicate")?.count ?? 0;
+  const isDuplicateFilter = filters.id_extraction_error_code === "duplicate";
 
   const handleDownload = async (doc: Document) => {
     try {
@@ -1187,6 +1288,17 @@ export default function DocumentsPage() {
               {isErrorsView && (
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 px-4 py-1.5">
                   <span className="mr-1 text-xs text-muted-foreground">Error type:</span>
+                  {isDuplicateFilter && duplicateCount > 0 && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="mr-1 h-7 text-xs"
+                      onClick={handleStartResolveDuplicates}
+                      disabled={documents.length === 0}
+                    >
+                      Resolve duplicates ({duplicateCount.toLocaleString()})
+                    </Button>
+                  )}
                   {ID_EXTRACTION_ERROR_FILTERS.map((opt) => {
                     const count =
                       opt.value === ""
@@ -1436,6 +1548,14 @@ export default function DocumentsPage() {
               onUpdateId={handleUpdateId}
               onDelete={handleDeleteFromViewer}
               conflictRefreshKey={conflictRefreshKey}
+              resolutionQueueMode={isErrorsView}
+              queueTotal={total}
+              queueLabel={
+                isDuplicateFilter || selectedDocument.id_extraction_error_code === "duplicate"
+                  ? "Duplicate"
+                  : "Error"
+              }
+              onConflictSideResolved={handleConflictSideResolved}
             />
           )}
 
@@ -1445,6 +1565,13 @@ export default function DocumentsPage() {
             open={deleteDialogOpen}
             onOpenChange={setDeleteDialogOpen}
             onSuccess={handleDeleteConfirm}
+            confirmDescription={
+              deleteResolutionRole === "current"
+                ? "Delete this duplicate upload and go to the next error."
+                : deleteResolutionRole === "conflict"
+                  ? `Delete existing sheet #${documentToDelete?.id ?? ""} and retry this upload.`
+                  : undefined
+            }
           />
 
           {/* Backfill Dialog */}
