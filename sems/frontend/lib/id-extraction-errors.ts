@@ -67,3 +67,15 @@ export function getIdExtractionErrorTitle(
       return "ID extraction failed";
   }
 }
+
+const CONFLICT_DOCUMENT_ID_RE = /document #(\d+)/i;
+
+export function parseDuplicateConflictDocumentId(
+  errorMessage: string | null | undefined
+): number | null {
+  if (!errorMessage) return null;
+  const match = errorMessage.match(CONFLICT_DOCUMENT_ID_RE);
+  if (!match) return null;
+  const id = Number.parseInt(match[1], 10);
+  return Number.isFinite(id) ? id : null;
+}

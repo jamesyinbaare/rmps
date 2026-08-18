@@ -33,16 +33,19 @@ import {
 } from "@/types/document";
 import { ExtractionApplyBadge } from "@/components/data-entry/ExtractionAppliedBadge";
 import { formatFileSize } from "@/lib/utils";
-import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import {
   getIdExtractionErrorBadgeLabel,
   getIdExtractionErrorTitle,
+  parseDuplicateConflictDocumentId,
 } from "@/lib/id-extraction-errors";
+import { validateDocumentId } from "@/lib/document-id";
 import {
   API_BASE_URL,
   downloadDocument,
   extractDocumentId,
+  getDocument,
   getDocumentDownloadFilename,
+  getDocumentIdExtractionConflicts,
   getExam,
   getReductoData,
   listSchools,
@@ -50,6 +53,7 @@ import {
   updateDocumentId,
 } from "@/lib/api";
 import { toast } from "sonner";
+import { DuplicateConflictPanel } from "./DuplicateConflictPanel";
 
 interface DocumentViewerProps {
   document: Document;
@@ -75,6 +79,8 @@ interface DocumentViewerProps {
   preferredProvider?: ExtractionProvider;
   onUpdateScores?: (document: Document, provider?: ExtractionProvider) => void;
   updatingScores?: boolean;
+  /** Increment to reload duplicate conflict documents (e.g. after deleting one). */
+  conflictRefreshKey?: number;
 }
 
 function parseCandidatesFromData(data: Record<string, any>): any[] {
@@ -153,6 +159,7 @@ export function DocumentViewer({
   preferredProvider,
   onUpdateScores,
   updatingScores,
+  conflictRefreshKey = 0,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -171,6 +178,9 @@ export function DocumentViewer({
   const [extractionData, setExtractionData] = useState<ReductoDataResponse | null>(null);
   const [extractionViewMode, setExtractionViewMode] = useState<"table" | "json">("table");
   const [previewProvider, setPreviewProvider] = useState<ExtractionProvider | undefined>();
+  const [conflictDocs, setConflictDocs] = useState<Document[]>([]);
+  const [loadingConflicts, setLoadingConflicts] = useState(false);
+  const [conflictReloadToken, setConflictReloadToken] = useState(0);
 
   useEffect(() => {
     if (open !== false && initialShowExtractionPanel) {
@@ -187,11 +197,12 @@ export function DocumentViewer({
   const displayText = document.extracted_id || document.file_name;
   // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
   const isPendingExtraction = document.id_extraction_status === "pending";
+  const isDuplicateError = document.id_extraction_error_code === "duplicate";
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
   const canEditExtractedId = !isPendingExtraction && !needsManualId && !!document.extracted_id;
-  const showIdForm = needsManualId || editingId;
+  const showIdForm = (needsManualId || editingId) && !isDuplicateError;
   const idUnchanged =
     canEditExtractedId && manualId.trim() === (document.extracted_id || "");
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
@@ -284,6 +295,56 @@ export function DocumentViewer({
     setExtractionData(null);
     setPreviewProvider(undefined);
   }, [document.id, document.extracted_id]);
+
+  useEffect(() => {
+    if (open === false || document.id_extraction_error_code !== "duplicate") {
+      setConflictDocs([]);
+      setLoadingConflicts(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingConflicts(true);
+
+    const loadConflicts = async () => {
+      const ids: number[] = [];
+      try {
+        const response = await getDocumentIdExtractionConflicts(document.id);
+        ids.push(...response.items.map((item) => item.id));
+      } catch (error) {
+        console.error("Failed to load duplicate conflicts:", error);
+      }
+
+      const fallback =
+        document.id_extraction_conflict_document_id ??
+        parseDuplicateConflictDocumentId(document.id_extraction_error);
+      if (fallback) {
+        ids.push(fallback);
+      }
+
+      const uniqueIds = [...new Set(ids.filter((id) => id !== document.id))];
+      const loaded = await Promise.all(
+        uniqueIds.map((id) => getDocument(id).catch(() => null))
+      );
+      if (!cancelled) {
+        setConflictDocs(loaded.filter((item): item is Document => item != null));
+        setLoadingConflicts(false);
+      }
+    };
+
+    void loadConflicts();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    document.id,
+    document.id_extraction_error_code,
+    document.id_extraction_conflict_document_id,
+    document.id_extraction_error,
+    conflictRefreshKey,
+    conflictReloadToken,
+  ]);
 
   // Close preview only when the dialog itself closes
   useEffect(() => {
@@ -465,60 +526,7 @@ export function DocumentViewer({
   };
 
   const validateId = (id: string): { error: string | null; schoolId?: number; subjectId?: number } => {
-    // Check if empty
-    if (!id.trim()) {
-      return { error: "Please enter a document ID" };
-    }
-
-    const trimmedId = id.trim();
-
-    // Check length
-    if (trimmedId.length !== 13) {
-      return { error: "ID must be exactly 13 characters" };
-    }
-
-    // Check if only digits
-    if (!/^\d+$/.test(trimmedId)) {
-      return { error: "ID must contain only digits" };
-    }
-
-    // Parse ID components: SCHOOL_NUMERIC_PREFIX(6) + SUBJECT_CODE(3) + SUBJECT_SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
-    const schoolCode = trimmedId.substring(0, 6);
-    const subjectCode = trimmedId.substring(6, 9);
-    const subjectSeries = trimmedId.substring(9, 10);
-    const testType = trimmedId.substring(10, 11);
-    const sheetNumber = trimmedId.substring(11, 13);
-
-    // Validate subject series (1-9)
-    const seriesNum = parseInt(subjectSeries, 10);
-    if (isNaN(seriesNum) || seriesNum < 1 || seriesNum > 9) {
-      return { error: "Subject series must be between 1 and 9" };
-    }
-
-    // Validate test type (1 or 2)
-    if (testType !== "1" && testType !== "2") {
-      return { error: "Test type must be 1 (Objectives) or 2 (Essay)" };
-    }
-
-    // Validate sheet number (01-99)
-    const sheetNum = parseInt(sheetNumber, 10);
-    if (isNaN(sheetNum) || sheetNum < 1 || sheetNum > 99) {
-      return { error: "Sheet number must be between 01 and 99" };
-    }
-
-    // Match sheet ID school segment to `School.s_code` (same padding as backend `generate_sheet_id`)
-    const school = schools.find((s) => schoolPrefixForSheetId(s.s_code) === schoolCode);
-    if (!school) {
-      return { error: `School numeric prefix ${schoolCode} not found` };
-    }
-
-    // Validate subject code exists and get subject ID
-    const subject = subjects.find((s) => s.code === subjectCode);
-    if (!subject) {
-      return { error: `Subject code ${subjectCode} not found` };
-    }
-
-    return { error: null, schoolId: school.id, subjectId: subject.id };
+    return validateDocumentId(id, schools, subjects);
   };
 
   const handleIdChange = (value: string) => {
@@ -602,12 +610,15 @@ export function DocumentViewer({
       toast.error(error instanceof Error ? error.message : "Retry extraction failed");
     } finally {
       setRetryingExtract(false);
+      if (document.id_extraction_error_code === "duplicate") {
+        setConflictReloadToken((n) => n + 1);
+      }
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = (documentId: number = document.id) => {
     if (onDelete) {
-      onDelete(document.id);
+      onDelete(documentId);
     }
   };
 
@@ -678,7 +689,7 @@ export function DocumentViewer({
                 </span>
               )}
             </div>
-            {document.id_extraction_status === "error" && (
+            {document.id_extraction_status === "error" && !isDuplicateError && (
               <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -706,11 +717,33 @@ export function DocumentViewer({
                 </div>
               </div>
             )}
+            {isDuplicateError && (
+              <div className="mt-1 flex items-center gap-3">
+                <p className="min-w-0 truncate text-xs text-muted-foreground">
+                  {document.id_extraction_error || "Duplicate sheet ID"}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 gap-1.5"
+                  onClick={handleRetryExtract}
+                  disabled={retryingExtract}
+                >
+                  {retryingExtract ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  Retry
+                </Button>
+              </div>
+            )}
             {isPendingExtraction && (
               <div className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 ID extraction is still processing. Manual entry is available after it finishes or fails.
               </div>
             )}
+            {!isDuplicateError && (
             <div className="flex items-center gap-4 mt-1 flex-wrap">
               {schoolName && (
                 <span className="text-xs text-muted-foreground">School: {schoolName}</span>
@@ -732,6 +765,7 @@ export function DocumentViewer({
                 </>
               )}
             </div>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {activeExtraction && <ExtractionApplyBadge row={activeExtraction} />}
@@ -792,11 +826,11 @@ export function DocumentViewer({
                     )}
               </Button>
             )}
-            {onDelete && (
+            {onDelete && !isDuplicateError && (
               <Button
                 variant="outline"
                 size="icon-sm"
-                onClick={handleDelete}
+                onClick={() => handleDelete()}
                 className="h-8 w-8"
               >
                 <Trash2 className="h-4 w-4" />
@@ -891,6 +925,27 @@ export function DocumentViewer({
         )}
 
         {/* Document Content Area */}
+        {isDuplicateError ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <DuplicateConflictPanel
+              current={document}
+              conflicts={conflictDocs}
+              loading={loadingConflicts}
+              schools={schools}
+              subjects={subjects}
+              onDelete={onDelete ? handleDelete : undefined}
+              onUpdateId={
+                onUpdateId ??
+                (async (documentId, extractedId, schoolId, subjectId) => {
+                  await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+                  toast.success("Document ID updated successfully");
+                  setConflictReloadToken((n) => n + 1);
+                })
+              }
+              onAfterConflictChange={() => setConflictReloadToken((n) => n + 1)}
+            />
+          </div>
+        ) : (
         <div className={`flex-1 min-h-0 overflow-hidden bg-muted/30 relative flex ${showExtractionPanel ? "flex-row" : "flex-col"}`}>
           <div className={`relative overflow-auto p-6 ${showExtractionPanel ? "flex-1 border-r border-border" : "flex-1"}`}>
             {/* Navigation Buttons */}
@@ -1147,6 +1202,7 @@ export function DocumentViewer({
             </div>
           )}
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

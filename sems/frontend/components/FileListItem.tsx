@@ -7,7 +7,7 @@ import { Checkbox } from "./ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize, formatDate } from "@/lib/utils";
-import { getIdExtractionErrorBadgeLabel } from "@/lib/id-extraction-errors";
+import { getIdExtractionErrorBadgeLabel, parseDuplicateConflictDocumentId } from "@/lib/id-extraction-errors";
 
 interface FileListItemProps {
   document: Document;
@@ -52,6 +52,11 @@ export function FileListItem({
 
   const Icon = getFileIcon(document.mime_type);
   const isFailed = document.id_extraction_status === "error";
+  const conflictDocumentId =
+    document.id_extraction_error_code === "duplicate"
+      ? document.id_extraction_conflict_document_id ??
+        parseDuplicateConflictDocumentId(document.id_extraction_error)
+      : null;
   const selectionOn = enableSelection ?? bulkMode;
 
   const isLarge = size === "large-list";
@@ -130,6 +135,11 @@ export function FileListItem({
         {isFailed && document.id_extraction_error && (
           <p className={cn("text-destructive truncate", metadataSize)} title={document.id_extraction_error}>
             {document.id_extraction_error}
+          </p>
+        )}
+        {conflictDocumentId && (
+          <p className={cn("text-muted-foreground", metadataSize)}>
+            Conflicts with #{conflictDocumentId}
           </p>
         )}
       </div>

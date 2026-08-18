@@ -22,6 +22,7 @@ export interface Document {
   id_extraction_status: string; // Status: pending, success, error
   id_extraction_error?: string | null; // Human-readable failure reason
   id_extraction_error_code?: string | null; // no_id, duplicate, invalid_format, etc.
+  id_extraction_conflict_document_id?: number | null;
   id_extracted_at: string | null; // When the ID was extracted
   scores_extraction_data?: Record<string, any> | null; // Omitted from list responses for scale
   scores_extraction_provider?: string | null; // reducto | llama | ocr
@@ -219,6 +220,20 @@ export interface IdExtractionStatusCounts {
   success: number;
   error: number;
   error_codes: IdExtractionErrorCodeCount[];
+}
+
+export interface IdExtractionConflictItem {
+  id: number;
+  extracted_id: string | null;
+  file_name: string;
+  uploaded_at: string;
+  id_extraction_status: string;
+  mime_type?: string | null;
+  file_size?: number | null;
+}
+
+export interface IdExtractionConflictsResponse {
+  items: IdExtractionConflictItem[];
 }
 
 export interface ApiError {

@@ -43,6 +43,7 @@ import {
   getIdExtractionStatusCounts,
   downloadDocument,
   getDocumentDownloadFilename,
+  getDocument,
   updateDocumentId,
   bulkDeleteDocuments,
   bulkExtractDocumentIds,
@@ -134,6 +135,7 @@ export default function DocumentsPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+  const [conflictRefreshKey, setConflictRefreshKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkMode, setBulkMode] = useState(false);
@@ -882,19 +884,29 @@ export default function DocumentsPage() {
   };
 
   const handleDeleteFromViewer = async (documentId: number) => {
-    const doc = documents.find((d) => d.id === documentId);
-    if (doc) {
-      handleDeleteClick(doc);
+    const local =
+      documents.find((d) => d.id === documentId) ||
+      (selectedDocument?.id === documentId ? selectedDocument : null);
+    if (local) {
+      handleDeleteClick(local);
+      return;
+    }
+    try {
+      const fetched = await getDocument(documentId);
+      handleDeleteClick(fetched);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Document not found");
     }
   };
 
   const handleDeleteConfirm = () => {
     if (documentToDelete) {
-      // If the deleted document is currently being viewed, close the viewer
       if (selectedDocument && selectedDocument.id === documentToDelete.id) {
         handleCloseViewer();
+      } else if (viewerOpen) {
+        setConflictRefreshKey((n) => n + 1);
+        toast.message("Conflicting document deleted — you can retry extraction or change the ID");
       }
-      // Reload documents
       loadDocuments();
       void loadStatusCounts();
     }
@@ -1423,6 +1435,7 @@ export default function DocumentsPage() {
               onDownload={handleDownload}
               onUpdateId={handleUpdateId}
               onDelete={handleDeleteFromViewer}
+              conflictRefreshKey={conflictRefreshKey}
             />
           )}
 

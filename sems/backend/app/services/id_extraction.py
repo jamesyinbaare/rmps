@@ -1,4 +1,5 @@
 import io
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -50,16 +51,28 @@ def apply_id_extraction_result(document: Document, extraction_result: dict[str, 
         document.id_extracted_at = datetime.utcnow()
         document.id_extraction_error = None
         document.id_extraction_error_code = None
+        document.id_extraction_conflict_document_id = None
         return
 
     # Persist candidate ID when barcode/OCR returned something that failed checks
     candidate_id = extraction_result.get("extracted_id")
     if candidate_id:
         document.extracted_id = candidate_id
+    if extraction_result.get("school_id") is not None:
+        document.school_id = extraction_result["school_id"]
+    if extraction_result.get("subject_id") is not None:
+        document.subject_id = extraction_result["subject_id"]
+    if extraction_result.get("test_type") is not None:
+        document.test_type = extraction_result["test_type"]
+    if extraction_result.get("subject_series") is not None:
+        document.subject_series = extraction_result["subject_series"]
+    if extraction_result.get("sheet_number") is not None:
+        document.sheet_number = extraction_result["sheet_number"]
 
     document.id_extraction_status = "error"
     document.id_extraction_error = extraction_result.get("error_message")
     document.id_extraction_error_code = extraction_result.get("error_code") or IDExtractionErrorCode.EXCEPTION.value
+    document.id_extraction_conflict_document_id = extraction_result.get("conflict_document_id")
 
 
 def mark_id_extraction_failure(
@@ -72,12 +85,106 @@ def mark_id_extraction_failure(
     document.id_extraction_status = "error"
     document.id_extraction_error_code = error_code
     document.id_extraction_error = error_message
+    if error_code != IDExtractionErrorCode.DUPLICATE.value:
+        document.id_extraction_conflict_document_id = None
 
 
 def clear_id_extraction_error(document: Document) -> None:
     """Clear structured extraction error fields (e.g. after manual fix)."""
     document.id_extraction_error = None
     document.id_extraction_error_code = None
+    document.id_extraction_conflict_document_id = None
+
+
+_CONFLICT_DOCUMENT_ID_RE = re.compile(r"document #(\d+)")
+
+
+def parse_conflict_document_id(error_message: str | None) -> int | None:
+    """Parse `document #<id>` from a duplicate extraction error message."""
+    if not error_message:
+        return None
+    match = _CONFLICT_DOCUMENT_ID_RE.search(error_message)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+async def resolve_id_extraction_conflicts(
+    session: AsyncSession, document: Document
+) -> list[Document]:
+    """
+    Return documents that conflict with this sheet ID.
+
+    Prefers the stored conflict id, then a live sheet-key lookup, then the
+    error-message document id as a last resort for legacy rows.
+    """
+    seen: set[int] = set()
+    conflicts: list[Document] = []
+
+    async def _add(doc_id: int | None) -> None:
+        if not doc_id or doc_id == document.id or doc_id in seen:
+            return
+        stmt = select(Document).where(Document.id == doc_id)
+        result = await session.execute(stmt)
+        found = result.scalar_one_or_none()
+        if found:
+            seen.add(found.id)
+            conflicts.append(found)
+
+    await _add(document.id_extraction_conflict_document_id)
+
+    school_id = document.school_id
+    subject_id = document.subject_id
+    subject_series = document.subject_series
+    test_type = document.test_type
+    sheet_number = document.sheet_number
+
+    if document.extracted_id and (
+        school_id is None or subject_id is None or not subject_series or not test_type or not sheet_number
+    ):
+        parsed = IDValidator.parse_id(document.extracted_id)
+        if parsed.is_valid:
+            subject_series = subject_series or parsed.subject_series
+            test_type = test_type or parsed.test_type
+            sheet_number = sheet_number or parsed.sheet_number
+            if school_id is None and parsed.school_code:
+                school_stmt = select(School).where(School.code == parsed.school_code)
+                school_result = await session.execute(school_stmt)
+                school = school_result.scalar_one_or_none()
+                if school:
+                    school_id = school.id
+            if subject_id is None and parsed.subject_code:
+                subject_stmt = select(Subject).where(Subject.code == parsed.subject_code)
+                subject_result = await session.execute(subject_stmt)
+                subject = subject_result.scalar_one_or_none()
+                if subject:
+                    subject_id = subject.id
+
+    if (
+        school_id is not None
+        and subject_id is not None
+        and subject_series
+        and test_type
+        and sheet_number
+        and document.exam_id is not None
+    ):
+        matches = await IDValidator.find_duplicate_sheets(
+            session,
+            school_id,
+            subject_id,
+            subject_series,
+            test_type,
+            sheet_number,
+            document.exam_id,
+            document.id,
+        )
+        for match in matches:
+            if match.id not in seen:
+                seen.add(match.id)
+                conflicts.append(match)
+
+    await _add(parse_conflict_document_id(document.id_extraction_error))
+    return conflicts
 
 
 class IDValidationResult:
@@ -297,11 +404,43 @@ class IDValidator:
         sheet_number: str,
         exam_id: int,
         exclude_document_id: int | None = None,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, int | None]:
         """
         Check for duplicate sheet number within same school+subject+subject_series+test_type+exam.
-        Returns (is_duplicate, error_message).
+        Returns (is_duplicate, error_message, conflict_document_id).
         """
+        conflicts = await IDValidator.find_duplicate_sheets(
+            session,
+            school_id,
+            subject_id,
+            subject_series,
+            test_type,
+            sheet_number,
+            exam_id,
+            exclude_document_id,
+        )
+        if conflicts:
+            existing = conflicts[0]
+            identity = existing.extracted_id or existing.file_name or "unknown"
+            return (
+                True,
+                f"Duplicate sheet {sheet_number}: already on document #{existing.id} ({identity})",
+                existing.id,
+            )
+        return False, None, None
+
+    @staticmethod
+    async def find_duplicate_sheets(
+        session: AsyncSession,
+        school_id: int,
+        subject_id: int,
+        subject_series: str,
+        test_type: str,
+        sheet_number: str,
+        exam_id: int,
+        exclude_document_id: int | None = None,
+    ) -> list[Document]:
+        """Return documents that already claim this sheet key."""
         stmt = select(Document).where(
             Document.school_id == school_id,
             Document.subject_id == subject_id,
@@ -312,16 +451,10 @@ class IDValidator:
         )
         if exclude_document_id:
             stmt = stmt.where(Document.id != exclude_document_id)
+        stmt = stmt.order_by(Document.id.asc())
 
         result = await session.execute(stmt)
-        existing = result.scalar_one_or_none()
-        if existing:
-            identity = existing.extracted_id or existing.file_name or "unknown"
-            return (
-                True,
-                f"Duplicate sheet {sheet_number}: already on document #{existing.id} ({identity})",
-            )
-        return False, None
+        return list(result.scalars().all())
 
 
 class IDExtractionService:
@@ -413,7 +546,7 @@ class IDExtractionService:
             pass
         else:
             # Check for duplicate sheet number
-            is_duplicate, dup_error = await self.validator.check_duplicate_sheet(
+            is_duplicate, dup_error, conflict_document_id = await self.validator.check_duplicate_sheet(
                 session,
                 school.id,
                 subject.id,
@@ -431,6 +564,12 @@ class IDExtractionService:
                     "is_valid": False,
                     "error_code": IDExtractionErrorCode.DUPLICATE.value,
                     "error_message": dup_error,
+                    "conflict_document_id": conflict_document_id,
+                    "school_id": school.id,
+                    "subject_id": subject.id,
+                    "subject_series": validation_result.subject_series,
+                    "test_type": validation_result.test_type,
+                    "sheet_number": validation_result.sheet_number,
                 }
 
         # Check confidence threshold
