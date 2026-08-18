@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { File, FileText, Image as ImageIcon, Loader2, Pencil, Save, Trash2, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  File,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Pencil,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -36,7 +47,8 @@ interface DuplicateConflictPanelProps {
     subjectId?: number,
     options?: { advance?: boolean }
   ) => Promise<void>;
-  onAfterConflictChange?: () => void;
+  /** After conflict-side ID fix; parent may auto-retry when no conflicts remain. */
+  onConflictSideResolved?: () => void | Promise<void>;
 }
 
 function statusLabel(status: string): string {
@@ -281,10 +293,22 @@ export function DuplicateConflictPanel({
   subjects,
   onDelete,
   onUpdateId,
-  onAfterConflictChange,
+  onConflictSideResolved,
 }: DuplicateConflictPanelProps) {
-  const conflict = conflicts[0] ?? null;
-  const extraCount = Math.max(0, conflicts.length - 1);
+  const [conflictIndex, setConflictIndex] = useState(0);
+
+  useEffect(() => {
+    setConflictIndex(0);
+  }, [current.id, conflicts.length]);
+
+  useEffect(() => {
+    if (conflictIndex >= conflicts.length && conflicts.length > 0) {
+      setConflictIndex(conflicts.length - 1);
+    }
+  }, [conflictIndex, conflicts.length]);
+
+  const conflict = conflicts[conflictIndex] ?? null;
+  const hasMultipleConflicts = conflicts.length > 1;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -307,7 +331,45 @@ export function DuplicateConflictPanel({
             />
           </div>
 
-          <div className="relative h-full min-h-0 overflow-hidden">
+          <div
+            className={cn(
+              "relative h-full min-h-0 overflow-hidden",
+              hasMultipleConflicts && "pt-9"
+            )}
+          >
+            {hasMultipleConflicts && (
+              <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-1.5 backdrop-blur-sm">
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  Conflict {conflictIndex + 1} of {conflicts.length}
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={conflictIndex <= 0}
+                    onClick={() => setConflictIndex((i) => Math.max(0, i - 1))}
+                    aria-label="Previous conflict"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={conflictIndex >= conflicts.length - 1}
+                    onClick={() =>
+                      setConflictIndex((i) => Math.min(conflicts.length - 1, i + 1))
+                    }
+                    aria-label="Next conflict"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
             {conflict ? (
               <DuplicateComparePane
                 doc={conflict}
@@ -318,7 +380,7 @@ export function DuplicateConflictPanel({
                 onDelete={onDelete}
                 onUpdateId={onUpdateId}
                 stayAfterSave
-                onSaved={onAfterConflictChange}
+                onSaved={() => void onConflictSideResolved?.()}
               />
             ) : (
               <div className="flex h-full min-h-0 flex-col items-center justify-center bg-muted/20 px-8 text-center">
@@ -327,11 +389,6 @@ export function DuplicateConflictPanel({
                   Retry extraction or change this ID.
                 </p>
               </div>
-            )}
-            {extraCount > 0 && (
-              <p className="absolute bottom-14 left-4 text-xs text-muted-foreground">
-                +{extraCount} more conflicting document{extraCount === 1 ? "" : "s"}
-              </p>
             )}
           </div>
 

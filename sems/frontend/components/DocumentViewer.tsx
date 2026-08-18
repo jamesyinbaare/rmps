@@ -81,6 +81,14 @@ interface DocumentViewerProps {
   updatingScores?: boolean;
   /** Increment to reload duplicate conflict documents (e.g. after deleting one). */
   conflictRefreshKey?: number;
+  /** Errors-view resolution queue: show progress and advance after fixes. */
+  resolutionQueueMode?: boolean;
+  /** Total items in the filtered error queue (from list API). */
+  queueTotal?: number;
+  /** Label for queue progress, e.g. Duplicate or Error. */
+  queueLabel?: string;
+  /** After conflict-side delete or ID fix; parent may auto-retry and advance. */
+  onConflictSideResolved?: () => Promise<void>;
 }
 
 function parseCandidatesFromData(data: Record<string, any>): any[] {
@@ -160,6 +168,10 @@ export function DocumentViewer({
   onUpdateScores,
   updatingScores,
   conflictRefreshKey = 0,
+  resolutionQueueMode = false,
+  queueTotal,
+  queueLabel = "Error",
+  onConflictSideResolved,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -181,6 +193,7 @@ export function DocumentViewer({
   const [conflictDocs, setConflictDocs] = useState<Document[]>([]);
   const [loadingConflicts, setLoadingConflicts] = useState(false);
   const [conflictReloadToken, setConflictReloadToken] = useState(0);
+  const [retryStillDuplicate, setRetryStillDuplicate] = useState(false);
 
   useEffect(() => {
     if (open !== false && initialShowExtractionPanel) {
@@ -294,6 +307,7 @@ export function DocumentViewer({
     setIdError(null);
     setExtractionData(null);
     setPreviewProvider(undefined);
+    setRetryStillDuplicate(false);
   }, [document.id, document.extracted_id]);
 
   useEffect(() => {
@@ -471,11 +485,25 @@ export function DocumentViewer({
     if (!documents || !onNavigate || currentIndex === undefined) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle navigation if we have valid documents and index
-      if (e.key === "ArrowLeft" && currentIndex > 0 && currentIndex < documents.length) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+        return;
+      }
+
+      const goPrev =
+        (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") &&
+        currentIndex > 0 &&
+        currentIndex < documents.length;
+      const goNext =
+        (e.key === "ArrowRight" || e.key === "j" || e.key === "J") &&
+        currentIndex >= 0 &&
+        currentIndex < documents.length - 1;
+
+      if (goPrev) {
         e.preventDefault();
         onNavigate(currentIndex - 1);
-      } else if (e.key === "ArrowRight" && currentIndex >= 0 && currentIndex < documents.length - 1) {
+      } else if (goNext) {
         e.preventDefault();
         onNavigate(currentIndex + 1);
       } else if (e.key === "Escape") {
@@ -591,19 +619,22 @@ export function DocumentViewer({
     }
   };
 
-  const handleRetryExtract = async () => {
+  const handleRetryExtract = async (options?: { advance?: boolean }) => {
     setRetryingExtract(true);
+    setRetryStillDuplicate(false);
     try {
       const result = await extractDocumentId(document.id);
       if (result.is_valid) {
         toast.success(`Extracted ID: ${result.extracted_id}`);
         if (onUpdateId && result.extracted_id) {
-          // Stay on this sheet after retry; parent still refreshes list state.
+          const shouldAdvance =
+            options?.advance ?? (resolutionQueueMode ? true : false);
           await onUpdateId(document.id, result.extracted_id, undefined, undefined, {
-            advance: false,
+            advance: shouldAdvance,
           });
         }
       } else {
+        setRetryStillDuplicate(isDuplicateError);
         toast.error(result.error_message || "Extraction failed again");
       }
     } catch (error) {
@@ -614,6 +645,14 @@ export function DocumentViewer({
         setConflictReloadToken((n) => n + 1);
       }
     }
+  };
+
+  const handleConflictSideResolved = async () => {
+    if (onConflictSideResolved) {
+      await onConflictSideResolved();
+      return;
+    }
+    setConflictReloadToken((n) => n + 1);
   };
 
   const handleDelete = (documentId: number = document.id) => {
@@ -647,6 +686,18 @@ export function DocumentViewer({
       onNavigate(currentIndex + 1);
     }
   };
+
+  const showQueueChrome =
+    resolutionQueueMode &&
+    documents &&
+    documents.length > 0 &&
+    currentIndex !== undefined &&
+    currentIndex >= 0;
+  const queuePosition = showQueueChrome ? currentIndex + 1 : 0;
+  const queueSize = queueTotal ?? documents?.length ?? 0;
+  const canQueuePrev = showQueueChrome && currentIndex > 0;
+  const canQueueNext =
+    showQueueChrome && currentIndex >= 0 && currentIndex < (documents?.length ?? 0) - 1;
 
   return (
     <Dialog open={open !== false} onOpenChange={onClose}>
@@ -704,7 +755,7 @@ export function DocumentViewer({
                     variant="outline"
                     size="sm"
                     className="h-7 shrink-0 gap-1.5"
-                    onClick={handleRetryExtract}
+                    onClick={() => void handleRetryExtract()}
                     disabled={retryingExtract}
                   >
                     {retryingExtract ? (
@@ -718,24 +769,34 @@ export function DocumentViewer({
               </div>
             )}
             {isDuplicateError && (
-              <div className="mt-1 flex items-center gap-3">
-                <p className="min-w-0 truncate text-xs text-muted-foreground">
-                  {document.id_extraction_error || "Duplicate sheet ID"}
+              <div className="mt-1 space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  Delete this upload, change an ID, or remove the existing sheet.
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 gap-1.5"
-                  onClick={handleRetryExtract}
-                  disabled={retryingExtract}
-                >
-                  {retryingExtract ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  Retry
-                </Button>
+                <div className="flex items-center gap-3">
+                  <p className="min-w-0 truncate text-xs text-muted-foreground">
+                    {document.id_extraction_error || "Duplicate sheet ID"}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5"
+                    onClick={() => void handleRetryExtract()}
+                    disabled={retryingExtract}
+                  >
+                    {retryingExtract ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Retry
+                  </Button>
+                </div>
+                {retryStillDuplicate && (
+                  <p className="text-xs text-destructive">
+                    Still duplicate — change this upload&apos;s ID or delete it.
+                  </p>
+                )}
               </div>
             )}
             {isPendingExtraction && (
@@ -855,6 +916,43 @@ export function DocumentViewer({
           </div>
         </div>
 
+        {showQueueChrome && (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs font-medium tabular-nums">
+                {queueLabel} {queuePosition} of {queueSize.toLocaleString()}
+              </span>
+              {isDuplicateError && (
+                <span className="hidden text-xs text-muted-foreground sm:inline">
+                  · J/K or arrows to skip
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1"
+                onClick={handlePrevious}
+                disabled={!canQueuePrev}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1"
+                onClick={handleNext}
+                disabled={!canQueueNext}
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Manual ID Entry Section */}
         {showIdForm && (
           <div className="border-b border-border px-6 py-4 bg-muted/30 shrink-0">
@@ -942,7 +1040,7 @@ export function DocumentViewer({
                   setConflictReloadToken((n) => n + 1);
                 })
               }
-              onAfterConflictChange={() => setConflictReloadToken((n) => n + 1)}
+              onConflictSideResolved={() => void handleConflictSideResolved()}
             />
           </div>
         ) : (

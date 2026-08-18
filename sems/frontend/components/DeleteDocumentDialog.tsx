@@ -20,6 +20,8 @@ interface DeleteDocumentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /** Optional context for duplicate-resolution queue deletes. */
+  confirmDescription?: string;
 }
 
 export function DeleteDocumentDialog({
@@ -27,6 +29,7 @@ export function DeleteDocumentDialog({
   open,
   onOpenChange,
   onSuccess,
+  confirmDescription,
 }: DeleteDocumentDialogProps) {
   const [loading, setLoading] = useState(false);
 
@@ -62,7 +65,8 @@ export function DeleteDocumentDialog({
             <div>
               <DialogTitle>Delete Document</DialogTitle>
               <DialogDescription className="mt-1">
-                Are you sure you want to delete this document? This action cannot be undone.
+                {confirmDescription ??
+                  "Are you sure you want to delete this document? This action cannot be undone."}
               </DialogDescription>
             </div>
           </div>
