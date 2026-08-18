@@ -58,6 +58,10 @@ import type {
   RunValidationRequest,
   RunValidationResponse,
   ValidationIssuesFilters,
+  AbsentReviewFilters,
+  AbsentReviewListResponse,
+  ConfirmAbsentReviewRequest,
+  ConfirmAbsentReviewResponse,
   MyValidationStats,
   ClerkValidationStatsResponse,
   IssueBatchListResponse,
@@ -2889,6 +2893,37 @@ export async function getValidationIssues(
     `${API_BASE_URL}/api/v1/validation/issues?${params.toString()}`
   );
   return handleResponse<ValidationIssueListResponse>(response);
+}
+
+export async function getAbsentReviewCandidates(
+  filters: AbsentReviewFilters
+): Promise<AbsentReviewListResponse> {
+  const params = new URLSearchParams();
+  params.append("exam_id", filters.exam_id.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.test_type) params.append("test_type", filters.test_type.toString());
+  if (filters.absent_marker) params.append("absent_marker", filters.absent_marker);
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/absent-review?${params.toString()}`
+  );
+  return handleResponse<AbsentReviewListResponse>(response);
+}
+
+export async function confirmAbsentReview(
+  data: ConfirmAbsentReviewRequest
+): Promise<ConfirmAbsentReviewResponse> {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/scores/absent-review/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ConfirmAbsentReviewResponse>(response);
 }
 
 export async function getValidationIssue(issueId: number): Promise<ValidationIssueDetailResponse> {

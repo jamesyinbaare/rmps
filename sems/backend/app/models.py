@@ -640,6 +640,30 @@ class SubjectScoreValidationIssue(Base):
     )
 
 
+class SubjectScoreAbsentConfirmation(Base):
+    """QA confirmation that an absent mark (A/AA/AAA) is correct for a paper field."""
+
+    __tablename__ = "subject_score_absent_confirmations"
+    id = Column(Integer, primary_key=True)
+    subject_score_id = Column(
+        Integer, ForeignKey("subject_scores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    field_name = Column(String(20), nullable=False)  # obj_raw_score, essay_raw_score, pract_raw_score
+    test_type = Column(Integer, nullable=False)  # 1 = Objectives, 2 = Essay, 3 = Practical
+    confirmed_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    confirmed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    subject_score = relationship("SubjectScore")
+    confirmed_by = relationship("User", foreign_keys=[confirmed_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("subject_score_id", "field_name", name="uq_absent_confirmation_score_field"),
+    )
+
+
 class CandidatePhoto(Base):
     """Model for candidate passport photographs."""
 
