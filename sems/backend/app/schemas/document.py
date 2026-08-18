@@ -75,6 +75,7 @@ class DocumentResponse(DocumentBase):
     id_extraction_status: str
     id_extraction_error: str | None = None
     id_extraction_error_code: str | None = None
+    id_extraction_conflict_document_id: int | None = None
     id_extracted_at: datetime | None = None
     scores_extraction_data: dict[str, Any] | None = None
     scores_extraction_provider: str | None = None
@@ -114,6 +115,7 @@ class DocumentListItem(DocumentBase):
     id_extraction_status: str
     id_extraction_error: str | None = None
     id_extraction_error_code: str | None = None
+    id_extraction_conflict_document_id: int | None = None
     id_extracted_at: datetime | None = None
     scores_extraction_status: str | None = None
     scores_extraction_provider: str | None = None
@@ -398,3 +400,22 @@ class BackfillTestTypeResponse(BaseModel):
     failed: int  # Documents that failed to update
     skipped: int  # Documents skipped (invalid extracted_id, validation failed, etc.)
     errors: list[dict[str, str]]  # List of errors with document_id and error message
+
+
+class IdExtractionConflictItem(BaseModel):
+    """Slim conflicting document for duplicate ID resolution."""
+
+    id: int
+    extracted_id: str | None = None
+    file_name: str
+    uploaded_at: datetime
+    id_extraction_status: str
+    mime_type: str | None = None
+    file_size: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class IdExtractionConflictsResponse(BaseModel):
+    items: list[IdExtractionConflictItem]

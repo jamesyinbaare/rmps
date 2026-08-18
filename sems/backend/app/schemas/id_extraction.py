@@ -23,6 +23,7 @@ class IDExtractionResponse(BaseModel):
     sheet_number: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    conflict_document_id: int | None = None
 
 
 class IDValidationResult(BaseModel):

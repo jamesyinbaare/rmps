@@ -28,6 +28,8 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentQueueStatus,
     DocumentResponse,
+    IdExtractionConflictItem,
+    IdExtractionConflictsResponse,
     IdExtractionErrorCodeCount,
     IdExtractionStatusCounts,
     ReductoQueueStatusResponse,
@@ -62,6 +64,7 @@ from app.services.id_extraction import (
     clear_id_extraction_error,
     id_extraction_service,
     mark_id_extraction_failure,
+    resolve_id_extraction_conflicts,
 )
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import (
@@ -1254,6 +1257,24 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
         sheet_number=extraction_result.get("sheet_number"),
         error_code=extraction_result.get("error_code"),
         error_message=extraction_result.get("error_message"),
+        conflict_document_id=extraction_result.get("conflict_document_id"),
+    )
+
+
+@router.get("/{document_id}/id-extraction-conflicts", response_model=IdExtractionConflictsResponse)
+async def get_id_extraction_conflicts(
+    document_id: int, session: DBSessionDep
+) -> IdExtractionConflictsResponse:
+    """Return documents that share this sheet ID (duplicate extraction conflicts)."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    conflicts = await resolve_id_extraction_conflicts(session, document)
+    return IdExtractionConflictsResponse(
+        items=[IdExtractionConflictItem.model_validate(item) for item in conflicts]
     )
 
 

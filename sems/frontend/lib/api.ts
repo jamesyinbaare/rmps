@@ -3,6 +3,7 @@ import type {
   DocumentFilters,
   DocumentListResponse,
   IdExtractionStatusCounts,
+  IdExtractionConflictsResponse,
   BulkUploadResponse,
   UploadInitiateFile,
   UploadInitiateResponse,
@@ -492,6 +493,15 @@ export async function putFileToUploadUrl(
 export async function getDocument(documentId: number): Promise<Document> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`);
   return handleResponse<Document>(response);
+}
+
+export async function getDocumentIdExtractionConflicts(
+  documentId: number
+): Promise<IdExtractionConflictsResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/${documentId}/id-extraction-conflicts`
+  );
+  return handleResponse<IdExtractionConflictsResponse>(response);
 }
 
 /** Absolute download URL for a document file. */
