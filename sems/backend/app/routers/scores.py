@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, case
 
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
@@ -27,6 +27,7 @@ from app.models import (
     Subject,
     SubjectRegistration,
     SubjectScore,
+    SubjectScoreAbsentConfirmation,
     SubjectType,
     DataExtractionMethod,
     UnmatchedExtractionRecord,
@@ -36,10 +37,14 @@ from app.models import (
 )
 from app.schemas.document import DocumentListResponse, DocumentResponse, ScoresExtractionStatusCounts
 from app.schemas.score import (
+    AbsentReviewEntry,
+    AbsentReviewListResponse,
     BatchScoreUpdate,
     BatchScoreUpdateResponse,
     CandidateScoreEntry,
     CandidateScoreListResponse,
+    ConfirmAbsentReviewRequest,
+    ConfirmAbsentReviewResponse,
     DocumentScoresResponse,
     ReductoDataResponse,
     ResolveUnmatchedRecordRequest,
@@ -53,6 +58,14 @@ from app.schemas.score import (
     UpdateScoresFromReductoResponse,
 )
 from app.utils.score_utils import add_extraction_method_to_document, is_absent, parse_score_value, parse_score_value_safe
+from app.services.absent_review import (
+    PAPER_FIELDS,
+    absent_field_sql,
+    filter_unconfirmed_rows,
+    flatten_absent_papers,
+    paginate_rows,
+    sort_absent_papers,
+)
 from app.services.results_export import generate_export_filename, generate_results_export, process_results_export_job
 from app.services.issue_batch_service import (
     assigned_document_extracted_ids,
@@ -964,6 +977,229 @@ async def batch_update_scores(
     await session.commit()
 
     return BatchScoreUpdateResponse(successful=successful, failed=failed, errors=errors)
+
+
+def _absent_review_base_stmt(
+    exam_id: int,
+    school_id: int | None,
+    subject_id: int | None,
+):
+    stmt = (
+        select(SubjectScore, Candidate, School, Exam, ExamSubject, Subject)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .outerjoin(School, Candidate.school_id == School.id)
+        .where(Exam.id == exam_id)
+    )
+    if school_id is not None:
+        stmt = stmt.where(Candidate.school_id == school_id)
+    if subject_id is not None:
+        stmt = stmt.where(Subject.id == subject_id)
+    return stmt
+
+
+def _absent_field_conditions(
+    test_type: int | None,
+    absent_marker: str | None,
+) -> list:
+    conditions = []
+    for field_name, _, paper_test_type, _ in PAPER_FIELDS:
+        if test_type is not None and paper_test_type != test_type:
+            continue
+        col = getattr(SubjectScore, field_name)
+        conditions.append(absent_field_sql(col, absent_marker))
+    return conditions
+
+
+@router.get("/absent-review", response_model=AbsentReviewListResponse)
+async def get_absent_review(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int = Query(..., description="Exam ID (required)"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    subject_id: int | None = Query(None, description="Filter by subject ID"),
+    test_type: int | None = Query(None, ge=1, le=3, description="Filter by test type (1=Objectives, 2=Essay, 3=Practical)"),
+    absent_marker: Literal["A", "AA", "AAA"] | None = Query(None, description="Filter by absent marker"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=1000),
+) -> AbsentReviewListResponse:
+    """List absent paper rows (A/AA/AAA) for QA review, one row per absent paper."""
+    _ = current_user
+    field_conditions = _absent_field_conditions(test_type, absent_marker)
+    if not field_conditions:
+        return AbsentReviewListResponse(
+            items=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+            total_pages=0,
+        )
+
+    base_stmt = _absent_review_base_stmt(exam_id, school_id, subject_id)
+    stmt = base_stmt.where(or_(*field_conditions))
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    if not rows:
+        return AbsentReviewListResponse(
+            items=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+            total_pages=0,
+        )
+
+    score_ids = [subject_score.id for subject_score, *_rest in rows]
+    confirmed_result = await session.execute(
+        select(SubjectScoreAbsentConfirmation).where(
+            SubjectScoreAbsentConfirmation.subject_score_id.in_(score_ids)
+        )
+    )
+    confirmed_keys = {
+        (c.subject_score_id, c.field_name) for c in confirmed_result.scalars().all()
+    }
+
+    doc_ids: set[str] = set()
+    for subject_score, *_rest in rows:
+        for _field_name, doc_field, _paper_test_type, _max_field in PAPER_FIELDS:
+            doc_id = getattr(subject_score, doc_field)
+            if doc_id:
+                doc_ids.add(doc_id)
+
+    documents_by_extracted_id: dict[str, Document] = {}
+    if doc_ids:
+        docs_stmt = select(Document).where(Document.extracted_id.in_(doc_ids))
+        docs_result = await session.execute(docs_stmt)
+        for doc in docs_result.scalars().all():
+            if doc.extracted_id:
+                documents_by_extracted_id[doc.extracted_id] = doc
+
+    flattened = []
+    for subject_score, candidate, school, exam, exam_subject, subject in rows:
+        flattened.extend(
+            flatten_absent_papers(
+                subject_score,
+                candidate=candidate,
+                school=school,
+                exam=exam,
+                exam_subject=exam_subject,
+                subject=subject,
+                documents_by_extracted_id=documents_by_extracted_id,
+                test_type_filter=test_type,
+                absent_marker_filter=absent_marker,
+            )
+        )
+
+    sorted_rows = sort_absent_papers(filter_unconfirmed_rows(flattened, confirmed_keys))
+    total = len(sorted_rows)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    page_rows = paginate_rows(sorted_rows, page, page_size)
+
+    items = [
+        AbsentReviewEntry(
+            score_id=row.score_id,
+            candidate_id=row.candidate_id,
+            candidate_name=row.candidate_name,
+            candidate_index_number=row.candidate_index_number,
+            school_id=row.school_id,
+            school_name=row.school_name,
+            school_code=row.school_code,
+            subject_id=row.subject_id,
+            subject_code=row.subject_code,
+            subject_name=row.subject_name,
+            exam_id=row.exam_id,
+            test_type=row.test_type,
+            field_name=row.field_name,
+            absent_marker=row.absent_marker,
+            obj_raw_score=row.obj_raw_score,
+            essay_raw_score=row.essay_raw_score,
+            pract_raw_score=row.pract_raw_score,
+            total_score=row.total_score,
+            grade=row.grade,
+            max_score=row.max_score,
+            document_id=row.document_id,
+            document_file_name=row.document_file_name,
+            document_numeric_id=row.document_numeric_id,
+            document_mime_type=row.document_mime_type,
+        )
+        for row in page_rows
+    ]
+
+    return AbsentReviewListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+_VALID_ABSENT_FIELDS = {field_name for field_name, _, _, _ in PAPER_FIELDS}
+_FIELD_TO_TEST_TYPE = {field_name: paper_test_type for field_name, _, paper_test_type, _ in PAPER_FIELDS}
+
+
+@router.post("/absent-review/confirm", response_model=ConfirmAbsentReviewResponse)
+async def confirm_absent_review(
+    body: ConfirmAbsentReviewRequest,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> ConfirmAbsentReviewResponse:
+    """Confirm an absent mark is correct; removes it from the absent-review queue."""
+    if body.field_name not in _VALID_ABSENT_FIELDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="field_name must be obj_raw_score, essay_raw_score, or pract_raw_score",
+        )
+
+    stmt = select(SubjectScore).where(SubjectScore.id == body.score_id)
+    result = await session.execute(stmt)
+    subject_score = result.scalar_one_or_none()
+    if not subject_score:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score not found")
+
+    score_value = getattr(subject_score, body.field_name)
+    if not is_absent(score_value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Score is not marked absent for this field",
+        )
+
+    existing_stmt = select(SubjectScoreAbsentConfirmation).where(
+        SubjectScoreAbsentConfirmation.subject_score_id == body.score_id,
+        SubjectScoreAbsentConfirmation.field_name == body.field_name,
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        return ConfirmAbsentReviewResponse(
+            score_id=existing.subject_score_id,
+            field_name=existing.field_name,
+            test_type=existing.test_type,
+            confirmed_at=existing.confirmed_at,
+        )
+
+    confirmed_at = datetime.utcnow()
+    confirmation = SubjectScoreAbsentConfirmation(
+        subject_score_id=body.score_id,
+        field_name=body.field_name,
+        test_type=_FIELD_TO_TEST_TYPE[body.field_name],
+        confirmed_by_user_id=current_user.id,
+        confirmed_at=confirmed_at,
+    )
+    session.add(confirmation)
+    await session.commit()
+    await session.refresh(confirmation)
+
+    return ConfirmAbsentReviewResponse(
+        score_id=confirmation.subject_score_id,
+        field_name=confirmation.field_name,
+        test_type=confirmation.test_type,
+        confirmed_at=confirmation.confirmed_at,
+    )
 
 
 @router.get("/candidates", response_model=CandidateScoreListResponse)

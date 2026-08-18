@@ -145,6 +145,61 @@ class CandidateScoreListResponse(BaseModel):
     total_pages: int
 
 
+class AbsentReviewEntry(BaseModel):
+    """One absent paper row for QA review (flattened from SubjectScore)."""
+
+    score_id: int
+    candidate_id: int
+    candidate_name: str
+    candidate_index_number: str
+    school_id: int | None = None
+    school_name: str | None = None
+    school_code: str | None = None
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    exam_id: int
+    test_type: int
+    field_name: str
+    absent_marker: str
+    obj_raw_score: str | None = None
+    essay_raw_score: str | None = None
+    pract_raw_score: str | None = None
+    total_score: float
+    grade: Grade | None = None
+    max_score: float | None = None
+    document_id: str | None = None
+    document_file_name: str | None = None
+    document_numeric_id: int | None = None
+    document_mime_type: str | None = None
+
+
+class AbsentReviewListResponse(BaseModel):
+    """Paginated absent-review rows."""
+
+    items: list[AbsentReviewEntry]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class ConfirmAbsentReviewRequest(BaseModel):
+    """Confirm that an absent mark is correct for a paper field."""
+
+    score_id: int
+    field_name: str = Field(..., description="obj_raw_score, essay_raw_score, or pract_raw_score")
+
+
+class ConfirmAbsentReviewResponse(BaseModel):
+    """Response after confirming an absent mark."""
+
+    score_id: int
+    field_name: str
+    test_type: int
+    confirmed_at: datetime
+
+
 class ReductoDataResponse(BaseModel):
     """Response for extraction data preview."""
 

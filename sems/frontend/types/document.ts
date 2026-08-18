@@ -851,6 +851,65 @@ export interface ValidationIssuesFilters {
   page_size?: number;
 }
 
+export type AbsentMarker = "A" | "AA" | "AAA";
+
+export interface AbsentReviewEntry {
+  score_id: number;
+  candidate_id: number;
+  candidate_name: string;
+  candidate_index_number: string;
+  school_id: number | null;
+  school_name: string | null;
+  school_code: string | null;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  exam_id: number;
+  test_type: number;
+  field_name: string;
+  absent_marker: string;
+  obj_raw_score: string | null;
+  essay_raw_score: string | null;
+  pract_raw_score: string | null;
+  total_score: number;
+  grade: string | null;
+  max_score: number | null;
+  document_id: string | null;
+  document_file_name: string | null;
+  document_numeric_id: number | null;
+  document_mime_type: string | null;
+}
+
+export interface AbsentReviewListResponse {
+  items: AbsentReviewEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface AbsentReviewFilters {
+  exam_id: number;
+  school_id?: number;
+  subject_id?: number;
+  test_type?: number;
+  absent_marker?: AbsentMarker;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ConfirmAbsentReviewRequest {
+  score_id: number;
+  field_name: string;
+}
+
+export interface ConfirmAbsentReviewResponse {
+  score_id: number;
+  field_name: string;
+  test_type: number;
+  confirmed_at: string;
+}
+
 export interface ValidationIssueDetailResponse {
   id: number;
   subject_score_id: number;

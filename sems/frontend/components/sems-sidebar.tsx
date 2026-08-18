@@ -134,6 +134,7 @@ const getNavMain = (
         { title: "Export Results", url: "/scores/export" },
         { title: "Unmatched Records", url: "/scores/unmatched-records" },
         { title: "Issues", url: "/scores/issues" },
+        { title: "Absent Review", url: "/scores/absent-review" },
       ],
     },
     {
