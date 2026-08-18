@@ -10,9 +10,11 @@ from app.services.document_score_extraction import (
     is_ready,
     legacy_extraction_provider,
     normalize_provider,
+    parse_extraction_provider_filter,
     payload_for_apply,
     reset_stale_extraction_row,
     sync_document_snapshot,
+    status_count_join_provider,
 )
 
 
@@ -256,3 +258,40 @@ def test_ready_filter_sql_uses_extracted_after_applied() -> None:
     assert "extracted_at" in sql
     assert "applied_at" in sql
     assert "success" in sql
+
+
+def test_parse_extraction_provider_filter_modes() -> None:
+    assert parse_extraction_provider_filter(None) == (None, "any")
+    assert parse_extraction_provider_filter("llama") == ("llama", "any")
+    assert parse_extraction_provider_filter("reducto") == ("reducto", "any")
+    assert parse_extraction_provider_filter("llama_only") == ("llama", "only")
+    assert parse_extraction_provider_filter("reducto_only") == ("reducto", "only")
+    assert parse_extraction_provider_filter("both") == (None, "both")
+    assert status_count_join_provider("llama_only") == "llama"
+    assert status_count_join_provider("both") is None
+
+
+def test_llama_only_filter_excludes_other_provider() -> None:
+    stmt = apply_extraction_list_filters(
+        select(Document.id),
+        extraction_provider="llama_only",
+        extraction_status=None,
+        scores_applied=None,
+    )
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "llama" in sql
+    assert "reducto" in sql
+    assert "not exists" in sql
+
+
+def test_both_providers_filter_requires_llama_and_reducto() -> None:
+    stmt = apply_extraction_list_filters(
+        select(Document.id),
+        extraction_provider="both",
+        extraction_status=None,
+        scores_applied=None,
+    )
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert sql.count("exists") >= 2
+    assert "llama" in sql
+    assert "reducto" in sql
