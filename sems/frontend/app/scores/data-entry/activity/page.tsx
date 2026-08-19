@@ -119,7 +119,7 @@ export default function ExtractionActivityPage() {
   const recentMoveTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const scopeReady = !!selectedExamId && !!subjectId;
+  const scopeReady = !!selectedExamId;
 
   const examOptions = useMemo(
     () =>
@@ -246,7 +246,7 @@ export default function ExtractionActivityPage() {
 
   const pipelineScope = useMemo(
     () =>
-      selectedExamId && subjectId
+      selectedExamId
         ? {
             exam_id: selectedExamId,
             subject_id: subjectId,
@@ -256,9 +256,26 @@ export default function ExtractionActivityPage() {
     [selectedExamId, subjectId, extractionProvider]
   );
 
+  const scopeFilters = useCallback((): Pick<
+    ScoreDocumentFilters,
+    "exam_id" | "subject_id" | "extraction_provider"
+  > => {
+    const filters: Pick<
+      ScoreDocumentFilters,
+      "exam_id" | "subject_id" | "extraction_provider"
+    > = {
+      exam_id: selectedExamId!,
+      extraction_provider: extractionProvider,
+    };
+    if (subjectId != null) {
+      filters.subject_id = subjectId;
+    }
+    return filters;
+  }, [selectedExamId, subjectId, extractionProvider]);
+
   const loadDocuments = useCallback(
     async (isPollingUpdate = false) => {
-      if (!selectedExamId || !subjectId) {
+      if (!selectedExamId) {
         setDocuments([]);
         setHasLiveWork(false);
         setLiveStatusCountsOverride(null);
@@ -269,11 +286,7 @@ export default function ExtractionActivityPage() {
         setError(null);
       }
       try {
-        const counts = await getScoresExtractionStatusCounts({
-          exam_id: selectedExamId,
-          subject_id: subjectId,
-          extraction_provider: extractionProvider,
-        }).catch(() => null);
+        const counts = await getScoresExtractionStatusCounts(scopeFilters()).catch(() => null);
 
         const mergeUniqueById = (docs: Document[]) => {
           const map = new Map<number, Document>();
@@ -292,10 +305,8 @@ export default function ExtractionActivityPage() {
 
           while (collected.length < total && collected.length < maxDocs) {
             const response = await getFilteredDocuments({
-              exam_id: selectedExamId,
-              subject_id: subjectId,
+              ...scopeFilters(),
               extraction_status,
-              extraction_provider: extractionProvider,
               page,
               page_size: pageSize,
             });
@@ -383,7 +394,7 @@ export default function ExtractionActivityPage() {
         if (!isPollingUpdate) setLoading(false);
       }
     },
-    [selectedExamId, subjectId, extractionProvider]
+    [scopeFilters, extractionProvider]
   );
 
   useEffect(() => {
@@ -564,10 +575,14 @@ export default function ExtractionActivityPage() {
               <div className="w-[260px]">
                 <SearchableSelect
                   options={subjectOptions}
-                  value={subjectId || ""}
+                  value={subjectId ?? "all"}
                   onValueChange={handleSubjectChange}
-                  placeholder="Subject"
+                  placeholder="All subjects"
                   disabled={loadingSubjects || !selectedExamId}
+                  allowAll
+                  allLabel="All subjects"
+                  searchPlaceholder="Search subject code or name..."
+                  emptyMessage="No subjects found"
                   triggerClassName="h-8"
                 />
               </div>
@@ -626,13 +641,11 @@ export default function ExtractionActivityPage() {
                 Queue · In progress · Done
               </div>
               <p className="mt-3 text-lg font-semibold tracking-tight">
-                {!selectedExamId
-                  ? "Choose an examination to begin"
-                  : "Choose a subject to watch the queue"}
+                Choose an examination to begin
               </p>
               <p className="mt-1.5 max-w-md text-center text-sm text-muted-foreground">
-                Activity is scoped per subject so you can follow submitted sheets through the
-                pipeline.
+                Select an exam to watch queued sheets across all subjects, or narrow to one
+                subject to focus the pipeline view.
               </p>
               <div className="mt-8 flex w-full max-w-xl flex-col gap-3 sm:flex-row">
                 <div className="min-w-0 flex-1 space-y-1.5">
@@ -659,12 +672,18 @@ export default function ExtractionActivityPage() {
                   </label>
                   <SearchableSelect
                     options={subjectOptions}
-                    value={subjectId || ""}
+                    value={subjectId ?? "all"}
                     onValueChange={handleSubjectChange}
                     placeholder={
-                      selectedExamId ? "Select subject…" : "Select examination first"
+                      selectedExamId ? "All subjects" : "Select examination first"
                     }
                     disabled={loadingFilters || loadingSubjects || !selectedExamId}
+                    allowAll
+                    allLabel="All subjects"
+                    searchPlaceholder="Search subject code or name..."
+                    emptyMessage={
+                      !selectedExamId ? "Select an examination first" : "No subjects found"
+                    }
                     triggerClassName="h-11"
                   />
                 </div>

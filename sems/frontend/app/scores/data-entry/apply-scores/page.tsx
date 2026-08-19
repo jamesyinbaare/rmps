@@ -234,7 +234,7 @@ export default function ApplyScoresPage() {
 
   const pipelineScope = useMemo(
     () =>
-      filters.exam_id && filters.subject_id
+      filters.exam_id
         ? {
             exam_id: filters.exam_id,
             subject_id: filters.subject_id,

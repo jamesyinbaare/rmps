@@ -53,6 +53,7 @@ interface ExtractionContextStripProps {
   queueDisabled?: boolean;
   onQueueAllReady: () => void;
   subjectsLoading?: boolean;
+  allowAllSubjects?: boolean;
   className?: string;
 }
 
@@ -111,6 +112,7 @@ export function ExtractionContextStrip({
   queueDisabled,
   onQueueAllReady,
   subjectsLoading,
+  allowAllSubjects = false,
   className,
 }: ExtractionContextStripProps) {
   const pct =
@@ -171,10 +173,18 @@ export function ExtractionContextStrip({
                 <PopoverContent align="start" className="w-80 p-2">
                   <SearchableSelect
                     options={subjectOptions}
-                    value={selectedSubjectId || ""}
+                    value={
+                      selectedSubjectId != null
+                        ? selectedSubjectId
+                        : allowAllSubjects
+                          ? "all"
+                          : ""
+                    }
                     onValueChange={onSubjectChange}
                     placeholder="Select subject…"
                     disabled={subjectsLoading}
+                    allowAll={allowAllSubjects}
+                    allLabel="All subjects"
                     searchPlaceholder="Search subject code or name..."
                     emptyMessage="No subjects found"
                     triggerClassName="h-8"
@@ -182,32 +192,34 @@ export function ExtractionContextStrip({
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="flex items-center gap-0.5 rounded-md border border-border/70 bg-background/60 p-0.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 transition-transform active:scale-90"
-                disabled={!canPrevSubject}
-                onClick={onPrevSubject}
-                aria-label="Previous subject"
-                title="Previous subject"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 transition-transform active:scale-90"
-                disabled={!canNextSubject}
-                onClick={onNextSubject}
-                aria-label="Next subject"
-                title="Next subject"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+            {selectedSubjectId != null ? (
+              <div className="flex items-center gap-0.5 rounded-md border border-border/70 bg-background/60 p-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 transition-transform active:scale-90"
+                  disabled={!canPrevSubject}
+                  onClick={onPrevSubject}
+                  aria-label="Previous subject"
+                  title="Previous subject"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 transition-transform active:scale-90"
+                  disabled={!canNextSubject}
+                  onClick={onNextSubject}
+                  aria-label="Next subject"
+                  title="Next subject"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : null}
             {schoolLabel ? (
               <span className="truncate rounded-full bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground animate-in fade-in-0 duration-200">
                 {schoolLabel}
