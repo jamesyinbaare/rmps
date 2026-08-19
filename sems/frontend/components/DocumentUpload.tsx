@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -21,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   confirmDocumentUploads,
   getAllExams,
@@ -34,13 +32,19 @@ import {
   Upload,
   FileImage,
   X,
-  CheckCircle2,
   AlertCircle,
-  Download,
   Loader2,
   Images,
   Trash2,
+  Check,
 } from "lucide-react";
+import {
+  DocumentUploadAnimationStyles,
+  DocumentUploadProgressPanel,
+  DocumentUploadSummary,
+  formatUploadBytes,
+  type UploadPhase,
+} from "@/components/DocumentUploadProgress";
 
 interface DocumentUploadProps {
   open: boolean;
@@ -68,12 +72,6 @@ function skipReasonLabel(reason: string): string {
     default:
       return reason;
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function sha256Hex(file: File): Promise<string> {
@@ -104,6 +102,16 @@ async function mapPool<T, R>(
   return results;
 }
 
+const INITIAL_UPLOAD_METRICS = {
+  phase: "idle" as UploadPhase,
+  currentWave: 0,
+  totalWaves: 0,
+  filesProcessed: 0,
+  filesTotal: 0,
+  bytesUploaded: 0,
+  bytesTotal: 0,
+};
+
 export function DocumentUpload({
   open,
   onOpenChange,
@@ -128,7 +136,9 @@ export function DocumentUpload({
     failed: number;
     alreadyUploaded: number;
   } | null>(null);
+  const [uploadMetrics, setUploadMetrics] = useState(INITIAL_UPLOAD_METRICS);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const putsCompletedRef = useRef(0);
 
   const totalBytes = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
@@ -161,6 +171,7 @@ export function DocumentUpload({
       setAlreadyUploaded([]);
       setSummary(null);
       setIsDragging(false);
+      setUploadMetrics(INITIAL_UPLOAD_METRICS);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } else if (initialExamId != null) {
       setSelectedExamId(String(initialExamId));
@@ -246,6 +257,8 @@ export function DocumentUpload({
       return;
     }
 
+    const bytesTotal = files.reduce((sum, f) => sum + f.size, 0);
+
     setUploading(true);
     setError(null);
     setSuccess(null);
@@ -254,6 +267,16 @@ export function DocumentUpload({
     setSummary(null);
     setUploadProgress(0);
     setStatusLabel("Preparing files…");
+    putsCompletedRef.current = 0;
+    setUploadMetrics({
+      phase: "hashing",
+      currentWave: 0,
+      totalWaves: Math.max(1, Math.ceil(files.length / BATCH_SIZE)),
+      filesProcessed: 0,
+      filesTotal: files.length,
+      bytesUploaded: 0,
+      bytesTotal,
+    });
 
     const examId = parseInt(selectedExamId, 10);
     const allFailures: FailureRow[] = [];
@@ -276,14 +299,29 @@ export function DocumentUpload({
             error: err instanceof Error ? err.message : "checksum_failed",
           });
         }
-        setUploadProgress(Math.round(((i + 1) / files.length) * 20));
-        setStatusLabel(`Checking file integrity… ${i + 1} of ${files.length}`);
+        const hashedCount = i + 1;
+        setUploadProgress(Math.round((hashedCount / files.length) * 15));
+        setStatusLabel(`Checking file integrity… ${hashedCount} of ${files.length}`);
+        setUploadMetrics((prev) => ({
+          ...prev,
+          phase: "hashing",
+          filesProcessed: hashedCount,
+        }));
       }
 
       const totalWaves = Math.max(1, Math.ceil(hashed.length / BATCH_SIZE));
+      const totalPutTargets = hashed.length;
+
       for (let wave = 0; wave < hashed.length; wave += BATCH_SIZE) {
         const waveIndex = Math.floor(wave / BATCH_SIZE) + 1;
         const batch = hashed.slice(wave, wave + BATCH_SIZE);
+
+        setUploadMetrics((prev) => ({
+          ...prev,
+          phase: "reserving",
+          currentWave: waveIndex,
+          totalWaves,
+        }));
         setStatusLabel(`Reserving upload slots… batch ${waveIndex} of ${totalWaves}`);
 
         const initiate = await initiateDocumentUploads(
@@ -318,7 +356,13 @@ export function DocumentUpload({
           fileByChecksum.has(slot.checksum)
         );
 
+        setUploadMetrics((prev) => ({
+          ...prev,
+          phase: "uploading",
+          currentWave: waveIndex,
+        }));
         setStatusLabel(`Uploading to storage… batch ${waveIndex} of ${totalWaves}`);
+
         const putResults = await mapPool(putTargets, PUT_CONCURRENCY, async (slot) => {
           const file = fileByChecksum.get(slot.checksum);
           if (!file) {
@@ -326,8 +370,24 @@ export function DocumentUpload({
           }
           try {
             await putFileToUploadUrl(slot.upload_url, file, slot.headers);
+            putsCompletedRef.current += 1;
+            const putsDone = putsCompletedRef.current;
+            setUploadMetrics((prev) => ({
+              ...prev,
+              phase: "uploading",
+              filesProcessed: putsDone,
+              bytesUploaded: prev.bytesUploaded + file.size,
+            }));
+            setUploadProgress(
+              Math.round(15 + (75 * putsDone) / Math.max(totalPutTargets, 1))
+            );
             return { document_id: slot.document_id, ok: true as const };
           } catch (err) {
+            putsCompletedRef.current += 1;
+            const putsDone = putsCompletedRef.current;
+            setUploadProgress(
+              Math.round(15 + (75 * putsDone) / Math.max(totalPutTargets, 1))
+            );
             return {
               document_id: slot.document_id,
               ok: false as const,
@@ -354,7 +414,14 @@ export function DocumentUpload({
         }
 
         if (succeededIds.length > 0) {
+          setUploadMetrics((prev) => ({
+            ...prev,
+            phase: "confirming",
+            currentWave: waveIndex,
+          }));
           setStatusLabel(`Confirming uploads… batch ${waveIndex} of ${totalWaves}`);
+          setUploadProgress(Math.round(90 + (10 * waveIndex) / totalWaves));
+
           const confirm = await confirmDocumentUploads(succeededIds);
           for (const item of confirm.results) {
             if (item.status === "confirmed" || item.status === "already_uploaded") {
@@ -368,16 +435,6 @@ export function DocumentUpload({
             }
           }
         }
-
-        const progressBase = 20;
-        const progressSpan = 80;
-        setUploadProgress(
-          Math.round(
-            progressBase +
-              (progressSpan * Math.min(wave + BATCH_SIZE, hashed.length)) /
-                Math.max(hashed.length, 1)
-          )
-        );
       }
 
       setFailures(allFailures);
@@ -394,6 +451,11 @@ export function DocumentUpload({
       );
       setUploadProgress(100);
       setStatusLabel("Done");
+      setUploadMetrics((prev) => ({
+        ...prev,
+        phase: "complete",
+        filesProcessed: prev.filesTotal,
+      }));
 
       if (confirmedCount > 0) {
         setFiles([]);
@@ -405,15 +467,18 @@ export function DocumentUpload({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload files");
       setFailures(allFailures);
+      setUploadMetrics((prev) => ({ ...prev, phase: "error" }));
     } finally {
       setUploading(false);
     }
   };
 
-  const canUpload = !uploading && files.length > 0 && !!selectedExamId;
+  const canUpload = !uploading && files.length > 0 && !!selectedExamId && !summary;
+  const showProgress = uploading;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
+      {open ? <DocumentUploadAnimationStyles /> : null}
       <DialogContent
         className="flex max-h-[90vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
         showCloseButton={!uploading}
@@ -456,92 +521,94 @@ export function DocumentUpload({
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-sm font-medium">Files</Label>
-              {files.length > 0 && !uploading && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1.5 text-muted-foreground"
-                  onClick={clearFiles}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Clear all
-                </Button>
-              )}
-            </div>
-
-            <div
-              role="button"
-              tabIndex={0}
-              aria-label="Select files to upload"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  if (!uploading) fileInputRef.current?.click();
-                }
-              }}
-              className={cn(
-                "group relative rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all outline-none",
-                uploading
-                  ? "cursor-not-allowed opacity-60"
-                  : "cursor-pointer",
-                isDragging
-                  ? "border-primary bg-primary/5 shadow-[inset_0_0_0_1px] shadow-primary/20"
-                  : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/40 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
-              )}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => {
-                if (!uploading) fileInputRef.current?.click();
-              }}
-            >
-              <div
-                className={cn(
-                  "mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl transition-colors",
-                  isDragging ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
+          {!uploading && (
+            <div className="animate-in fade-in-0 space-y-2 duration-200">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-sm font-medium">Files</Label>
+                {files.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 text-muted-foreground"
+                    onClick={clearFiles}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Clear all
+                  </Button>
                 )}
-              >
-                <Upload className="h-6 w-6" />
               </div>
-              <p className="text-sm font-medium text-foreground">
-                {isDragging ? "Drop images to add them" : "Drag and drop images here"}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                or{" "}
-                <span className="font-medium text-primary underline-offset-2 group-hover:underline">
-                  browse files
-                </span>
-              </p>
-              <p className="mt-3 text-xs text-muted-foreground">
-                JPEG and PNG · large folders supported · up to {formatBytes(50 * 1024 * 1024)} per
-                file
-              </p>
+
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Select files to upload"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                className={cn(
+                  "group relative rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all duration-300 outline-none",
+                  "cursor-pointer",
+                  isDragging
+                    ? "scale-[1.01] border-primary bg-primary/5 shadow-[inset_0_0_0_1px] shadow-primary/25"
+                    : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/40 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+                )}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <div
+                  className={cn(
+                    "mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl transition-all duration-300",
+                    isDragging
+                      ? "bg-primary text-primary-foreground motion-safe:animate-[upload-pulse_2s_ease-in-out_infinite]"
+                      : "bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
+                  )}
+                >
+                  <Upload className="h-6 w-6" />
+                </div>
+                <p className="text-sm font-medium text-foreground">
+                  {isDragging ? "Drop images to add them" : "Drag and drop images here"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  or{" "}
+                  <span className="font-medium text-primary underline-offset-2 group-hover:underline">
+                    browse files
+                  </span>
+                </p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  JPEG and PNG · large folders supported · up to{" "}
+                  {formatUploadBytes(50 * 1024 * 1024)} per file
+                </p>
+              </div>
+
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
             </div>
+          )}
 
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-              disabled={uploading}
-            />
-          </div>
-
-          {files.length > 0 && (
-            <div className="overflow-hidden rounded-xl border bg-card">
+          {files.length > 0 && !uploading && (
+            <div className="animate-in fade-in-0 slide-in-from-bottom-1 overflow-hidden rounded-xl border bg-card duration-300">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="rounded-md px-2.5 py-1">
+                  <Badge
+                    variant="secondary"
+                    className="animate-in fade-in-0 zoom-in-95 rounded-md px-2.5 py-1 duration-200"
+                  >
                     {files.length.toLocaleString()} file{files.length === 1 ? "" : "s"}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {formatBytes(totalBytes)} total
+                    {formatUploadBytes(totalBytes)} total
                   </span>
                 </div>
                 <span className="text-xs text-muted-foreground">
@@ -553,27 +620,30 @@ export function DocumentUpload({
                 {files.slice(0, 80).map((file, index) => (
                   <div
                     key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm"
+                    style={{ "--i": index } as React.CSSProperties}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-2.5 text-sm",
+                      index < 12 &&
+                        "animate-in fade-in-0 slide-in-from-bottom-1 duration-300 fill-mode-both [animation-delay:calc(var(--i)*30ms)]"
+                    )}
                   >
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-700 dark:text-sky-300">
                       <FileImage className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{file.name}</p>
-                      <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                      <p className="text-xs text-muted-foreground">{formatUploadBytes(file.size)}</p>
                     </div>
-                    {!uploading && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeFile(index)}
-                        aria-label={`Remove ${file.name}`}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeFile(index)}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -585,130 +655,45 @@ export function DocumentUpload({
             </div>
           )}
 
-          {uploading && (
-            <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  Uploading
-                </div>
-                <span className="tabular-nums text-sm text-muted-foreground">
-                  {uploadProgress}%
-                </span>
-              </div>
-              <Progress value={uploadProgress} className="h-2" />
-              <p className="text-xs text-muted-foreground">{statusLabel}</p>
-            </div>
+          {showProgress && uploadMetrics.phase !== "idle" && (
+            <DocumentUploadProgressPanel
+              phase={uploadMetrics.phase}
+              progress={uploadProgress}
+              statusLabel={statusLabel}
+              filesProcessed={uploadMetrics.filesProcessed}
+              filesTotal={uploadMetrics.filesTotal}
+              currentWave={uploadMetrics.currentWave}
+              totalWaves={uploadMetrics.totalWaves}
+              bytesUploaded={uploadMetrics.bytesUploaded}
+              bytesTotal={uploadMetrics.bytesTotal}
+            />
           )}
 
           {error && (
-            <div className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <div className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive animate-in fade-in-0 duration-200">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>{error}</p>
             </div>
           )}
 
           {summary && (
-            <div className="space-y-3 rounded-xl border bg-card p-4">
-              <div className="flex items-start gap-3">
-                {summary.failed === 0 ? (
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-                ) : (
-                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-                )}
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-medium">{success}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Confirmed files are queued for ID extraction.
-                  </p>
-                </div>
-              </div>
-              <Separator />
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-lg bg-emerald-500/10 px-3 py-2.5 text-center">
-                  <p className="text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                    {summary.confirmed.toLocaleString()}
-                  </p>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Confirmed
-                  </p>
-                </div>
-                <div className="rounded-lg bg-sky-500/10 px-3 py-2.5 text-center">
-                  <p className="text-lg font-semibold tabular-nums text-sky-700 dark:text-sky-400">
-                    {summary.alreadyUploaded.toLocaleString()}
-                  </p>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Already there
-                  </p>
-                </div>
-                <div className="rounded-lg bg-destructive/10 px-3 py-2.5 text-center">
-                  <p className="text-lg font-semibold tabular-nums text-destructive">
-                    {summary.failed.toLocaleString()}
-                  </p>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Failed
-                  </p>
-                </div>
-              </div>
-
-              {alreadyUploaded.length > 0 && (
-                <details className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
-                  <summary className="cursor-pointer font-medium text-muted-foreground">
-                    {alreadyUploaded.length.toLocaleString()} already uploaded
-                  </summary>
-                  <div className="mt-2 max-h-24 space-y-1 overflow-y-auto text-muted-foreground">
-                    {alreadyUploaded.slice(0, 20).map((name, i) => (
-                      <div key={`${name}-${i}`} className="truncate">
-                        {name}
-                      </div>
-                    ))}
-                    {alreadyUploaded.length > 20 && (
-                      <div>…and {(alreadyUploaded.length - 20).toLocaleString()} more</div>
-                    )}
-                  </div>
-                </details>
-              )}
-
-              {failures.length > 0 && (
-                <div className="space-y-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-destructive">
-                      {failures.length.toLocaleString()} file(s) need attention
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 gap-1.5 text-xs"
-                      onClick={downloadFailures}
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      CSV
-                    </Button>
-                  </div>
-                  <div className="max-h-28 space-y-1 overflow-y-auto text-xs text-muted-foreground">
-                    {failures.slice(0, 12).map((f, i) => (
-                      <div key={`${f.file_name}-${i}`} className="truncate">
-                        <span className="font-medium text-foreground/80">{f.file_name}</span>
-                        {" — "}
-                        {f.error}
-                      </div>
-                    ))}
-                    {failures.length > 12 && (
-                      <div>…and {(failures.length - 12).toLocaleString()} more in the CSV</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            <DocumentUploadSummary
+              success={success}
+              summary={summary}
+              alreadyUploaded={alreadyUploaded}
+              failures={failures}
+              onDownloadFailures={downloadFailures}
+            />
           )}
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-6 py-4 sm:justify-between">
           <p className="hidden text-xs text-muted-foreground sm:block sm:max-w-[46%]">
-            {files.length > 0
-              ? `${files.length.toLocaleString()} ready · ${formatBytes(totalBytes)}`
-              : "Select an examination, then add images to begin."}
+            {uploading
+              ? statusLabel
+              : files.length > 0
+                ? `${files.length.toLocaleString()} ready · ${formatUploadBytes(totalBytes)}`
+                : "Select an examination, then add images to begin."}
           </p>
           <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
             <Button
@@ -723,9 +708,18 @@ export function DocumentUpload({
               type="button"
               onClick={handleUpload}
               disabled={!canUpload}
-              className="min-w-40 gap-2"
+              className={cn(
+                "min-w-40 gap-2",
+                uploading &&
+                  "bg-gradient-to-r from-primary to-primary/80 motion-safe:animate-[upload-pulse_2s_ease-in-out_infinite]"
+              )}
             >
-              {uploading ? (
+              {summary ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  Done
+                </>
+              ) : uploading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Uploading…
