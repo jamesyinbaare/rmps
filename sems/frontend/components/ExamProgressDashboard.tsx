@@ -543,7 +543,7 @@ export function ExamProgressDashboard() {
             />
             <PhaseCard
               title="Results Processing"
-              description="Score interpretation, documents, scoring, validation, and processing"
+              description="Documents, score entry, validation, and normalization"
               icon={<CheckCircle2 className="h-5 w-5" />}
               progress={progress.results_processing.overall_completion_percentage}
               status={progress.results_processing.status}
@@ -551,12 +551,10 @@ export function ExamProgressDashboard() {
                 { label: "Documents Processed", value: `${progress.results_processing.document_processing.documents_scores_extracted_success}/${progress.results_processing.document_processing.total_documents}` },
                 {
                   label: "Scores Entered",
-                  value: scoreBreakdowns?.hasBreakdown
-                    ? `${formatScoreEntryPair(progress.results_processing.scoring_data_entry.total_actual_score_entries, progress.results_processing.scoring_data_entry.total_expected_score_entries)} · Core ${formatScoreEntryPair(scoreBreakdowns.core.actual, scoreBreakdowns.core.expected)} · Elective ${formatScoreEntryPair(scoreBreakdowns.elective.actual, scoreBreakdowns.elective.expected)}`
-                    : formatScoreEntryPair(
-                        progress.results_processing.scoring_data_entry.total_actual_score_entries,
-                        progress.results_processing.scoring_data_entry.total_expected_score_entries
-                      ),
+                  value: `${formatScoreEntryPair(
+                    progress.results_processing.scoring_data_entry.total_actual_score_entries,
+                    progress.results_processing.scoring_data_entry.total_expected_score_entries
+                  )} (${progress.results_processing.scoring_data_entry.completion_percentage.toFixed(1)}%)`,
                 },
                 { label: "Results Processed", value: `${progress.results_processing.results_processing.registrations_processed}/${progress.results_processing.results_processing.total_subject_registrations}` },
               ]}
