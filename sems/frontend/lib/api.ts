@@ -52,7 +52,9 @@ import type {
   UpdateScoresFromReductoResponse,
   UnmatchedExtractionRecord,
   UnmatchedRecordsListResponse,
+  UnmatchedIndexSuggestion,
   ResolveUnmatchedRecordRequest,
+  BulkUnmatchedActionResponse,
   SubjectScoreValidationIssue,
   ValidationIssueListResponse,
   ValidationIssueDetailResponse,
@@ -2378,6 +2380,7 @@ export interface UnmatchedRecordsFilters {
   extraction_method?: string;
   page?: number;
   page_size?: number;
+  include_suggestions?: boolean;
 }
 
 export async function getUnmatchedRecords(
@@ -2389,6 +2392,7 @@ export async function getUnmatchedRecords(
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters.include_suggestions) params.append("include_suggestions", "true");
 
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records?${params.toString()}`);
   return handleResponse<UnmatchedRecordsListResponse>(response);
@@ -2397,6 +2401,19 @@ export async function getUnmatchedRecords(
 export async function getUnmatchedRecord(recordId: number): Promise<UnmatchedExtractionRecord> {
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}`);
   return handleResponse<UnmatchedExtractionRecord>(response);
+}
+
+export async function getUnmatchedRecordSuggestions(
+  recordId: number,
+  query?: string
+): Promise<UnmatchedIndexSuggestion> {
+  const params = new URLSearchParams();
+  if (query?.trim()) params.append("q", query.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}/suggestions${suffix}`
+  );
+  return handleResponse<UnmatchedIndexSuggestion>(response);
 }
 
 export async function resolveUnmatchedRecord(
@@ -2431,6 +2448,70 @@ export async function ignoreUnmatchedRecord(recordId: number): Promise<void> {
     },
   });
   await handleResponse(response);
+}
+
+export interface UnmatchedOcrCandidatesFilters {
+  document_id?: number;
+  extraction_method?: string;
+  record_ids?: number[];
+  limit?: number;
+}
+
+export async function getUnmatchedOcrCandidates(
+  filters: UnmatchedOcrCandidatesFilters = {}
+): Promise<UnmatchedRecordsListResponse> {
+  const params = new URLSearchParams();
+  if (filters.document_id) params.append("document_id", filters.document_id.toString());
+  if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.limit) params.append("limit", filters.limit.toString());
+  for (const id of filters.record_ids ?? []) {
+    params.append("record_ids", id.toString());
+  }
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/unmatched-records/ocr-candidates?${params.toString()}`
+  );
+  return handleResponse<UnmatchedRecordsListResponse>(response);
+}
+
+export async function bulkResolveUnmatchedOcr(data: {
+  record_ids?: number[];
+  document_id?: number;
+  extraction_method?: string;
+}): Promise<BulkUnmatchedActionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/bulk-resolve-ocr`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<BulkUnmatchedActionResponse>(response);
+}
+
+export async function bulkIgnoreUnmatchedRecords(
+  recordIds: number[]
+): Promise<BulkUnmatchedActionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/bulk-ignore`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ record_ids: recordIds }),
+  });
+  return handleResponse<BulkUnmatchedActionResponse>(response);
+}
+
+export async function bulkMarkUnmatchedRecordsResolved(
+  recordIds: number[]
+): Promise<BulkUnmatchedActionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/bulk-mark-resolved`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ record_ids: recordIds }),
+  });
+  return handleResponse<BulkUnmatchedActionResponse>(response);
 }
 
 // Manual Entry API Functions

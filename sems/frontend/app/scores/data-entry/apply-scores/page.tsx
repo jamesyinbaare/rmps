@@ -10,6 +10,7 @@ import { ApplyScoresDataTable, type AppliedView } from "@/components/ApplyScores
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
 import { ScoreDocumentFiltersBar } from "@/components/data-entry/ScoreDocumentFiltersBar";
+import { OcrBulkFixDialog } from "@/components/OcrBulkFixDialog";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -100,6 +101,8 @@ export default function ApplyScoresPage() {
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [showUnmatchedAlert, setShowUnmatchedAlert] = useState(false);
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
+  const [ocrDialogOpen, setOcrDialogOpen] = useState(false);
+  const [ocrDocumentId, setOcrDocumentId] = useState<number | undefined>();
 
   const view: AppliedView = filters.scores_applied === true ? "applied" : "ready";
   const applyProvider: ExtractionProvider =
@@ -311,6 +314,21 @@ export default function ApplyScoresPage() {
   const otherAppliedInSelection = selectedDocs.filter((d) =>
     extractionFor(d, otherProvider)?.current_applied
   ).length;
+  const sheetDocumentId = useMemo(() => {
+    if (selectedDocuments.size === 1) {
+      return Array.from(selectedDocuments)[0];
+    }
+    if (selectedDocument?.id) {
+      return selectedDocument.id;
+    }
+    if (documents.length === 1) {
+      return documents[0].id;
+    }
+    if (selectedDocuments.size === 0 && documents[focusedRowIndex]) {
+      return documents[focusedRowIndex].id;
+    }
+    return undefined;
+  }, [selectedDocuments, selectedDocument, documents, focusedRowIndex]);
 
   const runBulkApply = async () => {
     const ids = Array.from(selectedDocuments);
@@ -570,9 +588,26 @@ export default function ApplyScoresPage() {
                   <AlertTitle className="m-0 min-h-0">
                     {unmatchedCount.toLocaleString()} unmatched
                   </AlertTitle>
-                  <AlertDescription className="mt-0">
+                  <AlertDescription className="mt-0 flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" className="h-7" asChild>
                       <Link href="/scores/unmatched-records">Review unmatched</Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                      disabled={!sheetDocumentId}
+                      title={
+                        sheetDocumentId
+                          ? "Preview unique OCR matches on this sheet"
+                          : "Select one document to fix OCR on this sheet"
+                      }
+                      onClick={() => {
+                        setOcrDocumentId(sheetDocumentId);
+                        setOcrDialogOpen(true);
+                      }}
+                    >
+                      Fix OCR on this sheet
                     </Button>
                   </AlertDescription>
                   <button
@@ -755,6 +790,16 @@ export default function ApplyScoresPage() {
           updatingScores={updatingScores === selectedDocument.id}
         />
       )}
+
+      <OcrBulkFixDialog
+        open={ocrDialogOpen}
+        onOpenChange={setOcrDialogOpen}
+        documentId={ocrDocumentId}
+        onApplied={() => {
+          void loadUnmatchedRecords();
+          void loadDocuments();
+        }}
+      />
     </DashboardLayout>
   );
 }

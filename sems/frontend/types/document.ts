@@ -794,6 +794,25 @@ export interface UpdateScoresFromReductoResponse {
   scores_unmatched_count?: number | null;
 }
 
+export interface UnmatchedIndexMatch {
+  subject_registration_id: number;
+  index_number: string;
+  candidate_name: string;
+  school_name: string | null;
+  current_score?: string | null;
+}
+
+export interface UnmatchedIndexSuggestion {
+  raw_index_number: string | null;
+  cleaned_index_number: string | null;
+  noise_chars: string;
+  highlight: Array<[string, boolean]>;
+  matches: UnmatchedIndexMatch[];
+  unique: boolean;
+  likely_ocr_noise: boolean;
+  score_field: "obj" | "essay" | "pract" | null;
+}
+
 export interface UnmatchedExtractionRecord {
   id: number;
   document_id: number;
@@ -807,9 +826,12 @@ export interface UnmatchedExtractionRecord {
   raw_data: Record<string, any> | null;
   status: string;
   extraction_method: string;
+  extraction_provider?: string | null;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  suggestion?: UnmatchedIndexSuggestion | null;
+  resolved_subject_registration_id?: number | null;
 }
 
 export interface UnmatchedRecordsListResponse {
@@ -824,6 +846,18 @@ export interface ResolveUnmatchedRecordRequest {
   subject_registration_id: number;
   score_field: "obj" | "essay" | "pract";
   score_value: string | null;
+}
+
+export interface BulkUnmatchedActionError {
+  record_id: number;
+  reason: string;
+}
+
+export interface BulkUnmatchedActionResponse {
+  applied: number;
+  skipped: number;
+  failed: number;
+  errors: BulkUnmatchedActionError[];
 }
 
 export type ValidationIssueType = "missing_score" | "invalid_score";

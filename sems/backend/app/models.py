@@ -494,6 +494,12 @@ class UnmatchedExtractionRecord(Base):
     status = Column(Enum(UnmatchedRecordStatus), default=UnmatchedRecordStatus.PENDING, nullable=False, index=True)
     extraction_method = Column(Enum(DataExtractionMethod), nullable=False)
     extraction_provider = Column(String(20), nullable=True, index=True)
+    resolved_subject_registration_id = Column(
+        Integer,
+        ForeignKey("subject_registrations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
