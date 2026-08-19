@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -30,12 +30,39 @@ import {
   Award,
 } from "lucide-react";
 import { getExamProgress, getAllExams, type Exam, type ExamProgressResponse } from "@/lib/api";
+import type { ScoreEntryBreakdown, ScoringDataEntryProgress } from "@/types/document";
 import { toast } from "sonner";
 
-const PROGRESS_CACHE_PREFIX = "exam-progress-cache:";
+const PROGRESS_CACHE_PREFIX = "exam-progress-cache:v2:";
 
 function progressCacheKey(examId: number): string {
   return `${PROGRESS_CACHE_PREFIX}${examId}`;
+}
+
+function hasScoreEntryBreakdown(scoring: ScoringDataEntryProgress): boolean {
+  return scoring.core != null && scoring.elective != null;
+}
+
+function resolveScoreEntryBreakdowns(scoring: ScoringDataEntryProgress): {
+  core: ScoreEntryBreakdown;
+  elective: ScoreEntryBreakdown;
+  hasBreakdown: boolean;
+} {
+  const fallback: ScoreEntryBreakdown = {
+    expected: 0,
+    actual: 0,
+    completion_percentage: 0,
+  };
+  const hasBreakdown = hasScoreEntryBreakdown(scoring);
+  return {
+    core: scoring.core ?? fallback,
+    elective: scoring.elective ?? fallback,
+    hasBreakdown,
+  };
+}
+
+function formatScoreEntryPair(actual: number, expected: number): string {
+  return `${actual.toLocaleString()} / ${expected.toLocaleString()}`;
 }
 
 function readCachedProgress(examId: number): ExamProgressResponse | null {
@@ -43,7 +70,12 @@ function readCachedProgress(examId: number): ExamProgressResponse | null {
   try {
     const raw = sessionStorage.getItem(progressCacheKey(examId));
     if (!raw) return null;
-    return JSON.parse(raw) as ExamProgressResponse;
+    const parsed = JSON.parse(raw) as ExamProgressResponse;
+    const scoring = parsed.results_processing?.scoring_data_entry;
+    if (!scoring || !hasScoreEntryBreakdown(scoring)) {
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -261,6 +293,12 @@ export function ExamProgressDashboard() {
     }
   };
 
+  const scoringEntry = progress?.results_processing.scoring_data_entry;
+  const scoreBreakdowns = useMemo(
+    () => (scoringEntry ? resolveScoreEntryBreakdowns(scoringEntry) : null),
+    [scoringEntry]
+  );
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -410,11 +448,11 @@ export function ExamProgressDashboard() {
               </CardHeader>
               <CardContent className="relative z-10">
                 <div className="text-3xl font-bold text-amber-600 dark:text-amber-400">
-                  {progress.results_processing.scoring_data_entry.total_actual_score_entries} / {progress.results_processing.scoring_data_entry.total_expected_score_entries}
+                  {progress.results_processing.scoring_data_entry.total_actual_score_entries.toLocaleString()} / {progress.results_processing.scoring_data_entry.total_expected_score_entries.toLocaleString()}
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 space-y-2">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">Completion</span>
+                    <span className="text-muted-foreground">All subjects</span>
                     <span className="font-semibold text-amber-600 dark:text-amber-400">
                       {progress.results_processing.scoring_data_entry.completion_percentage.toFixed(1)}%
                     </span>
@@ -424,6 +462,26 @@ export function ExamProgressDashboard() {
                       className="h-full bg-amber-500 rounded-full transition-all duration-500"
                       style={{ width: `${Math.min(progress.results_processing.scoring_data_entry.completion_percentage, 100)}%` }}
                     />
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground pt-1">
+                    {scoreBreakdowns?.hasBreakdown ? (
+                      <>
+                        <span>
+                          Core:{" "}
+                          <span className="font-medium text-foreground tabular-nums">
+                            {formatScoreEntryPair(scoreBreakdowns.core.actual, scoreBreakdowns.core.expected)}
+                          </span>
+                        </span>
+                        <span>
+                          Elective:{" "}
+                          <span className="font-medium text-foreground tabular-nums">
+                            {formatScoreEntryPair(scoreBreakdowns.elective.actual, scoreBreakdowns.elective.expected)}
+                          </span>
+                        </span>
+                      </>
+                    ) : (
+                      <span>Core / Elective breakdown unavailable — refresh progress</span>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -485,13 +543,19 @@ export function ExamProgressDashboard() {
             />
             <PhaseCard
               title="Results Processing"
-              description="Score interpretation, documents, scoring, validation, and processing"
+              description="Documents, score entry, validation, and normalization"
               icon={<CheckCircle2 className="h-5 w-5" />}
               progress={progress.results_processing.overall_completion_percentage}
               status={progress.results_processing.status}
               metrics={[
                 { label: "Documents Processed", value: `${progress.results_processing.document_processing.documents_scores_extracted_success}/${progress.results_processing.document_processing.total_documents}` },
-                { label: "Scores Entered", value: `${progress.results_processing.scoring_data_entry.total_actual_score_entries}/${progress.results_processing.scoring_data_entry.total_expected_score_entries}` },
+                {
+                  label: "Scores Entered",
+                  value: `${formatScoreEntryPair(
+                    progress.results_processing.scoring_data_entry.total_actual_score_entries,
+                    progress.results_processing.scoring_data_entry.total_expected_score_entries
+                  )} (${progress.results_processing.scoring_data_entry.completion_percentage.toFixed(1)}%)`,
+                },
                 { label: "Results Processed", value: `${progress.results_processing.results_processing.registrations_processed}/${progress.results_processing.results_processing.total_subject_registrations}` },
               ]}
               onClick={() => router.push("/icm-studio/documents")}

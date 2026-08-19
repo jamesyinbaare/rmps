@@ -1257,6 +1257,12 @@ export interface DocumentProcessingProgress {
   status: "complete" | "in_progress" | "pending";
 }
 
+export interface ScoreEntryBreakdown {
+  expected: number;
+  actual: number;
+  completion_percentage: number;
+}
+
 export interface ScoringDataEntryProgress {
   total_subject_registrations: number;
   registrations_with_scores: number;
@@ -1267,6 +1273,8 @@ export interface ScoringDataEntryProgress {
   registrations_automated_extraction: number;
   completion_percentage: number;
   status: "complete" | "in_progress" | "pending";
+  core?: ScoreEntryBreakdown;
+  elective?: ScoreEntryBreakdown;
 }
 
 export interface ValidationIssuesProgress {

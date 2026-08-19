@@ -164,7 +164,7 @@ export default function ReductoExtractionPage() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [openPreviewPanel, setOpenPreviewPanel] = useState(false);
 
-  const scopeReady = !!filters.exam_id && !!filters.subject_id;
+  const scopeReady = !!filters.exam_id;
 
   // Resume last exam+subject from localStorage when URL has no scope
   useEffect(() => {
@@ -311,7 +311,7 @@ export default function ReductoExtractionPage() {
   };
 
   const loadStatusCounts = useCallback(async () => {
-    if (!filters.exam_id || !filters.subject_id) {
+    if (!filters.exam_id) {
       setStatusCounts(EMPTY_COUNTS);
       setCountsLoaded(false);
       return;
@@ -329,7 +329,7 @@ export default function ReductoExtractionPage() {
 
   const loadDocuments = useCallback(
     async (isPollingUpdate = false) => {
-      if (!filters.exam_id || !filters.subject_id) {
+      if (!filters.exam_id) {
         setDocuments([]);
         setTotal(0);
         setTotalPages(1);
@@ -984,7 +984,9 @@ export default function ReductoExtractionPage() {
     : examOptions.find((o) => o.value === selectedExamId)?.label ?? "Examination";
   const subjectLabel = selectedSubject
     ? `${selectedSubject.code} - ${selectedSubject.name}`
-    : subjectOptions.find((o) => o.value === filters.subject_id)?.label ?? "Subject";
+    : filters.subject_id != null
+      ? (subjectOptions.find((o) => o.value === filters.subject_id)?.label ?? "Subject")
+      : "All subjects";
 
   return (
     <DashboardLayout>
@@ -1007,7 +1009,7 @@ export default function ReductoExtractionPage() {
                     : "extract"
                 }
                 scope={
-                  filters.exam_id && filters.subject_id
+                  filters.exam_id
                     ? {
                         exam_id: filters.exam_id,
                         subject_id: filters.subject_id,
@@ -1047,8 +1049,9 @@ export default function ReductoExtractionPage() {
                 ? `${selectedSchool.code} - ${selectedSchool.name}`
                 : null
             }
-            canPrevSubject={canPrevSubject}
-            canNextSubject={canNextSubject}
+            allowAllSubjects
+            canPrevSubject={filters.subject_id != null && canPrevSubject}
+            canNextSubject={filters.subject_id != null && canNextSubject}
             onPrevSubject={() => goToSubjectOffset(-1)}
             onNextSubject={() => goToSubjectOffset(1)}
             coverage={coverageStats}
@@ -1140,7 +1143,6 @@ export default function ReductoExtractionPage() {
                 }
                 showProviderFilter
                 requireExam
-                requireSubject
                 hideExamSubject
                 subjectDisabled={loadingSubjects}
                 loading={loadingFilters || loadingSubjects}
@@ -1170,16 +1172,14 @@ export default function ReductoExtractionPage() {
               </div>
               <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground backdrop-blur-sm animate-in fade-in-0 duration-500 fill-mode-both [animation-delay:80ms]">
                 <Sparkles className="h-3 w-3 text-[color:var(--primary,#00853F)]" />
-                Subject-first extraction
+                Score extraction
               </div>
               <p className="mt-3 text-lg font-semibold tracking-tight animate-in fade-in-0 slide-in-from-bottom-1 duration-500 fill-mode-both [animation-delay:120ms]">
-                {!selectedExamId
-                  ? "Choose an examination to begin"
-                  : "Choose a subject to load sheets"}
+                Choose an examination to begin
               </p>
               <p className="mt-1.5 max-w-md text-center text-sm text-muted-foreground animate-in fade-in-0 duration-500 fill-mode-both [animation-delay:160ms]">
-                Pick a subject to load its sheets, queue extraction, and check what’s still
-                missing—all in one place.
+                Select an exam to load sheets across all subjects. Narrow to one subject
+                anytime to check coverage and missing uploads.
               </p>
               <div className="mt-8 flex w-full max-w-xl flex-col gap-3 sm:flex-row animate-in fade-in-0 slide-in-from-bottom-2 duration-500 fill-mode-both [animation-delay:220ms]">
                 <div className="min-w-0 flex-1 space-y-1.5">
@@ -1208,14 +1208,16 @@ export default function ReductoExtractionPage() {
                   </label>
                   <SearchableSelect
                     options={subjectOptions}
-                    value={filters.subject_id || ""}
+                    value={filters.subject_id ?? "all"}
                     onValueChange={(value) =>
                       handleFilterChange("subject_id", parseNumericFilter(value))
                     }
                     placeholder={
-                      selectedExamId ? "Select subject…" : "Select examination first"
+                      selectedExamId ? "All subjects" : "Select examination first"
                     }
                     disabled={loadingFilters || loadingSubjects || !selectedExamId}
+                    allowAll
+                    allLabel="All subjects"
                     searchPlaceholder="Search subject code or name..."
                     emptyMessage={
                       !selectedExamId ? "Select an examination first" : "No subjects found"
@@ -1228,7 +1230,7 @@ export default function ReductoExtractionPage() {
           </div>
         ) : (
           <div
-            key={`${filters.exam_id}-${filters.subject_id}`}
+            key={`${filters.exam_id}-${filters.subject_id ?? "all"}`}
             className="mx-4 mb-4 mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_1px_0_rgba(0,0,0,0.03)] animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
           >
             <ReductoDocumentsDataTable

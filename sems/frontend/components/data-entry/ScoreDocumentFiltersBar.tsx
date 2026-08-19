@@ -169,7 +169,7 @@ export function ScoreDocumentFiltersBar({
                     value: subject.id,
                     label: `${subject.code} - ${subject.name}`,
                   }))}
-                  value={subjectId || ""}
+                  value={subjectId != null ? subjectId : !requireSubject ? "all" : ""}
                   onValueChange={onSubjectChange}
                   placeholder={
                     requireSubject

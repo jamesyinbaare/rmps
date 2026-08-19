@@ -56,6 +56,7 @@ from app.schemas.exam import (
     ResultsProcessingProgress,
     ResultsReleaseProgress,
     ScoreInterpretationProgress,
+    ScoreEntryBreakdown,
     ScoreSheetGenerationJobCreateResponse,
     ScoreSheetGenerationJobStatusResponse,
     ScoreSheetGenerationResponse,
@@ -67,6 +68,7 @@ from app.schemas.exam import (
     SheetIdComparisonResponse,
     ValidationIssuesProgress,
 )
+from app.services.exam_progress_scoring import score_entry_breakdown
 from app.services.document_id_tracker import compare_sheet_ids
 from app.services.exam_subject_upload import (
     SubjectUploadParseError,
@@ -1208,9 +1210,8 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
     )
 
     # 3. Scoring/Data Entry — one aggregate JOIN (no per-registration SubjectScore SELECT)
-    obj_expected = ExamSubject.obj_max_score.isnot(None)
-    essay_expected = ExamSubject.essay_max_score.isnot(None)
     pract_expected = ExamSubject.pract_max_score.isnot(None)
+    expected_slots = 2 + case((pract_expected, 1), else_=0)
 
     def _raw_score_entered(column):
         return and_(
@@ -1218,29 +1219,28 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
             func.trim(column) != "",
         )
 
+    actual_obj = case((_raw_score_entered(SubjectScore.obj_raw_score), 1), else_=0)
+    actual_essay = case((_raw_score_entered(SubjectScore.essay_raw_score), 1), else_=0)
+    actual_pract = case((and_(pract_expected, _raw_score_entered(SubjectScore.pract_raw_score)), 1), else_=0)
+    actual_slots = actual_obj + actual_essay + actual_pract
+
+    is_core = Subject.subject_type == SubjectType.CORE
+    is_elective = Subject.subject_type == SubjectType.ELECTIVE
+
     scoring_agg_stmt = (
         select(
             func.count(SubjectRegistration.id).label("total_regs"),
-            func.coalesce(
-                func.sum(
-                    case((obj_expected, 1), else_=0)
-                    + case((essay_expected, 1), else_=0)
-                    + case((pract_expected, 1), else_=0)
-                ),
-                0,
-            ).label("expected_entries"),
-            func.coalesce(
-                func.sum(
-                    case((and_(obj_expected, _raw_score_entered(SubjectScore.obj_raw_score)), 1), else_=0)
-                    + case((and_(essay_expected, _raw_score_entered(SubjectScore.essay_raw_score)), 1), else_=0)
-                    + case((and_(pract_expected, _raw_score_entered(SubjectScore.pract_raw_score)), 1), else_=0)
-                ),
-                0,
-            ).label("actual_entries"),
+            func.coalesce(func.sum(expected_slots), 0).label("expected_entries"),
+            func.coalesce(func.sum(actual_slots), 0).label("actual_entries"),
+            func.coalesce(func.sum(case((is_core, expected_slots), else_=0)), 0).label("core_expected"),
+            func.coalesce(func.sum(case((is_core, actual_slots), else_=0)), 0).label("core_actual"),
+            func.coalesce(func.sum(case((is_elective, expected_slots), else_=0)), 0).label("elective_expected"),
+            func.coalesce(func.sum(case((is_elective, actual_slots), else_=0)), 0).label("elective_actual"),
         )
         .select_from(SubjectRegistration)
         .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
         .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
         .outerjoin(SubjectScore, SubjectScore.subject_registration_id == SubjectRegistration.id)
         .where(ExamRegistration.exam_id == exam_id)
     )
@@ -1248,6 +1248,10 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
     total_subject_registrations = int(scoring_agg.total_regs or 0)
     total_expected_score_entries = int(scoring_agg.expected_entries or 0)
     total_actual_score_entries = int(scoring_agg.actual_entries or 0)
+    core_expected = int(scoring_agg.core_expected or 0)
+    core_actual = int(scoring_agg.core_actual or 0)
+    elective_expected = int(scoring_agg.elective_expected or 0)
+    elective_actual = int(scoring_agg.elective_actual or 0)
 
     # Count registrations with at least one score (has SubjectScore record)
     scores_stmt = (
@@ -1389,6 +1393,8 @@ async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgress
         registrations_automated_extraction=registrations_automated_extraction,
         completion_percentage=round(score_entry_completion, 2),
         status=score_entry_status,
+        core=ScoreEntryBreakdown(**score_entry_breakdown(core_expected, core_actual)),
+        elective=ScoreEntryBreakdown(**score_entry_breakdown(elective_expected, elective_actual)),
     )
 
     # 4. Validation Issues

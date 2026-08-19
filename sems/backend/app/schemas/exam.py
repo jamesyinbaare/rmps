@@ -452,18 +452,28 @@ class DocumentProcessingProgress(BaseModel):
     status: str  # "complete", "in_progress", "pending"
 
 
+class ScoreEntryBreakdown(BaseModel):
+    """Expected vs actual score entry counts for a subject-type bucket."""
+
+    expected: int
+    actual: int
+    completion_percentage: float
+
+
 class ScoringDataEntryProgress(BaseModel):
     """Schema for scoring/data entry progress."""
 
     total_subject_registrations: int
     registrations_with_scores: int
-    total_expected_score_entries: int  # Total expected entries based on max_scores set
-    total_actual_score_entries: int  # Total actual entries (raw scores entered)
+    total_expected_score_entries: int  # ALL: obj + essay (+ pract when configured) per registration
+    total_actual_score_entries: int  # ALL: raw scores entered
     registrations_manual_entry: int
     registrations_digital_transcription: int
     registrations_automated_extraction: int
     completion_percentage: float
     status: str  # "complete", "in_progress", "pending"
+    core: ScoreEntryBreakdown
+    elective: ScoreEntryBreakdown
 
 
 class ValidationIssuesProgress(BaseModel):

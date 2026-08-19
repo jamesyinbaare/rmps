@@ -523,7 +523,7 @@ export default function ScoreDataEntryPage() {
                   value: subject.id,
                   label: `${subject.code} - ${subject.name}`,
                 }))}
-                value={filters.subject_id || ""}
+                value={filters.subject_id ?? "all"}
                 onValueChange={(value) => {
                   if (value === "all" || value === "") {
                     handleFilterChange("subject_id", undefined);
