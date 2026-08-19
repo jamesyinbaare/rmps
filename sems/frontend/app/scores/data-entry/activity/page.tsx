@@ -59,7 +59,13 @@ import {
   type CompletedWindow,
 } from "@/lib/extraction-scope";
 
-const ACTIVITY_STATUSES = "queued,processing,success,error";
+const LIVE_STATUSES = "queued,processing";
+const COMPLETED_STATUSES = "success,error";
+
+const LIVE_PAGE_SIZE = 1000;
+const COMPLETED_PAGE_SIZE = 1000;
+const MAX_DOCS_INITIAL = 5000;
+const MAX_DOCS_POLLING = 2000;
 
 function formatExamLabel(exam: Exam) {
   const typeLabel =
@@ -96,6 +102,10 @@ export default function ExtractionActivityPage() {
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [hasLiveWork, setHasLiveWork] = useState(false);
+  const [liveStatusCountsOverride, setLiveStatusCountsOverride] = useState<{
+    queued: number;
+    processing: number;
+  } | null>(null);
   const [recentlyMovedIds, setRecentlyMovedIds] = useState<Set<number>>(new Set());
   const [requeueingDocumentId, setRequeueingDocumentId] = useState<number | null>(null);
 
@@ -251,6 +261,7 @@ export default function ExtractionActivityPage() {
       if (!selectedExamId || !subjectId) {
         setDocuments([]);
         setHasLiveWork(false);
+        setLiveStatusCountsOverride(null);
         return;
       }
       if (!isPollingUpdate) {
@@ -258,30 +269,80 @@ export default function ExtractionActivityPage() {
         setError(null);
       }
       try {
-        const filters: ScoreDocumentFilters = {
+        const counts = await getScoresExtractionStatusCounts({
           exam_id: selectedExamId,
           subject_id: subjectId,
-          extraction_status: ACTIVITY_STATUSES,
           extraction_provider: extractionProvider,
-          page: 1,
-          page_size: 500,
-        };
-        const [response, counts] = await Promise.all([
-          getFilteredDocuments(filters),
-          getScoresExtractionStatusCounts({
-            exam_id: selectedExamId,
-            subject_id: subjectId,
-            extraction_provider: extractionProvider,
-          }).catch(() => null),
-        ]);
-        const items = response.items;
+        }).catch(() => null);
 
-        const liveFromDocs = items.some((d) => {
+        const mergeUniqueById = (docs: Document[]) => {
+          const map = new Map<number, Document>();
+          for (const d of docs) map.set(d.id, d);
+          return [...map.values()];
+        };
+
+        const fetchAllPages = async (
+          extraction_status: string,
+          pageSize: number,
+          maxDocs: number
+        ) => {
+          let page = 1;
+          const collected: Document[] = [];
+          let total = Infinity;
+
+          while (collected.length < total && collected.length < maxDocs) {
+            const response = await getFilteredDocuments({
+              exam_id: selectedExamId,
+              subject_id: subjectId,
+              extraction_status,
+              extraction_provider: extractionProvider,
+              page,
+              page_size: pageSize,
+            });
+
+            total = response.total ?? collected.length;
+            collected.push(...response.items);
+
+            if (response.items.length === 0) break;
+            if (page >= response.total_pages) break;
+            page += 1;
+          }
+
+          return collected;
+        };
+
+        const requiredLiveDocs = counts ? counts.queued + counts.processing : 0;
+        const liveMaxDocs = requiredLiveDocs > 0 ? Math.min(requiredLiveDocs, MAX_DOCS_POLLING) : MAX_DOCS_POLLING;
+        const liveItems = isPollingUpdate
+          ? await fetchAllPages(LIVE_STATUSES, LIVE_PAGE_SIZE, liveMaxDocs)
+          : await fetchAllPages(LIVE_STATUSES, LIVE_PAGE_SIZE, MAX_DOCS_INITIAL);
+
+        const completedItems = isPollingUpdate
+          ? await fetchAllPages(COMPLETED_STATUSES, COMPLETED_PAGE_SIZE, MAX_DOCS_POLLING)
+          : await fetchAllPages(
+              COMPLETED_STATUSES,
+              COMPLETED_PAGE_SIZE,
+              MAX_DOCS_INITIAL
+            );
+
+        const items = mergeUniqueById([...liveItems, ...completedItems]).sort((a, b) =>
+          b.uploaded_at.localeCompare(a.uploaded_at)
+        );
+
+        const liveFromDocs = liveItems.some((d) => {
           const s = activityStatusFor(d, extractionProvider);
           return s === "queued" || s === "processing";
         });
         const liveFromCounts = !!counts && (counts.queued > 0 || counts.processing > 0);
-        setHasLiveWork(liveFromDocs || liveFromCounts);
+        setHasLiveWork(liveFromCounts || liveFromDocs);
+        setLiveStatusCountsOverride(
+          counts
+            ? {
+                queued: counts.queued,
+                processing: counts.processing,
+              }
+            : null
+        );
 
         // Detect transitions
         const moved: number[] = [];
@@ -629,6 +690,7 @@ export default function ExtractionActivityPage() {
                 completedWindow={completedWindow}
                 recentlyMovedIds={recentlyMovedIds}
                 isPolling={isPolling}
+                statusCountsOverride={liveStatusCountsOverride ?? undefined}
                 requeueingDocumentId={requeueingDocumentId}
                 onOpenDocument={handleOpenDocument}
                 onRequeue={handleRequeue}
