@@ -7,6 +7,13 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { ApplyScoresDataTable, type AppliedView } from "@/components/ApplyScoresDataTable";
+import {
+  ApplyScoresResultDialog,
+  applyResultFromBulk,
+  applyResultFromSingle,
+  sheetMetaFromDocument,
+  type ApplyScoresResult,
+} from "@/components/ApplyScoresResultDialog";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DataEntryPipelineNav } from "@/components/DataEntryPipelineNav";
 import { ScoreDocumentFiltersBar } from "@/components/data-entry/ScoreDocumentFiltersBar";
@@ -92,6 +99,7 @@ export default function ApplyScoresPage() {
   const [applying, setApplying] = useState(false);
   const [applyProgress, setApplyProgress] = useState<{ done: number; total: number } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [applyResult, setApplyResult] = useState<ApplyScoresResult | null>(null);
 
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -347,43 +355,13 @@ export default function ApplyScoresPage() {
         }
       );
 
-      const parts = [
-        `${applyProviderLabel} · ${result.updated_count} score(s) updated`,
-        `${result.documents_succeeded}/${result.documents_processed} document(s)`,
-      ];
-      if (result.skipped_count > 0) {
-        const cleared = result.cleared_count ?? 0;
-        parts.push(
-          cleared > 0
-            ? `${result.skipped_count} skipped (verify mismatch, ${cleared} cleared)`
-            : `${result.skipped_count} skipped (verify mismatch)`
-        );
-        const details = result.skipped_records
-          .slice(0, 3)
-          .map(
-            (r) =>
-              `${r.index_number ?? "?"}: ${r.score ?? "—"} ≠ ${r.verify ?? "—"}`
-          );
-        if (details.length > 0) {
-          const more =
-            result.skipped_records.length > details.length
-              ? ` (+${result.skipped_records.length - details.length} more)`
-              : "";
-          parts.push(details.join(", ") + more);
-        }
-      }
-      if (result.unmatched_count > 0) {
-        parts.push(`${result.unmatched_count} unmatched`);
-      }
-      if (result.documents_failed > 0) {
-        parts.push(`${result.documents_failed} failed`);
-      }
-
-      if (result.documents_failed > 0 && result.updated_count === 0) {
-        toast.error(parts.join(" · "));
-      } else {
-        toast.success(parts.join(" · "));
-      }
+      setApplyResult(
+        applyResultFromBulk(result, {
+          providerLabel: applyProviderLabel,
+          verifyEnabled,
+          sheets: selectedDocs.map(sheetMetaFromDocument),
+        })
+      );
 
       setSelectedDocuments(new Set());
       // Stay on Ready view after apply
@@ -415,33 +393,13 @@ export default function ApplyScoresPage() {
         verifyEnabled,
         appliedProvider
       );
-      const parts = [
-        `${extractionProviderLabel(appliedProvider)} · ${response.updated_count} score(s) updated`,
-      ];
-      if (response.skipped_count) {
-        const cleared = response.cleared_count ?? 0;
-        parts.push(
-          cleared > 0
-            ? `${response.skipped_count} skipped (verify mismatch, ${cleared} cleared)`
-            : `${response.skipped_count} skipped (verify mismatch)`
-        );
-        const skipped = response.skipped_records ?? [];
-        const details = skipped
-          .slice(0, 3)
-          .map(
-            (r) =>
-              `${r.index_number ?? "?"}: ${r.score ?? "—"} ≠ ${r.verify ?? "—"}`
-          );
-        if (details.length > 0) {
-          const more =
-            skipped.length > details.length
-              ? ` (+${skipped.length - details.length} more)`
-              : "";
-          parts.push(details.join(", ") + more);
-        }
-      }
-      parts.push(`${response.unmatched_count} unmatched`);
-      toast.success(parts.join(" · "));
+      setApplyResult(
+        applyResultFromSingle(response, document.id, {
+          providerLabel: extractionProviderLabel(appliedProvider),
+          verifyEnabled,
+          sheets: [sheetMetaFromDocument(document)],
+        })
+      );
 
       const refreshed = await getFilteredDocuments(filters);
       setDocuments(refreshed.items);
@@ -505,7 +463,7 @@ export default function ApplyScoresPage() {
       if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
         return;
       }
-      if (viewerOpen || confirmOpen) return;
+      if (viewerOpen || confirmOpen || applyResult) return;
 
       if (e.key === "Escape") {
         setSelectedDocuments(new Set());
@@ -544,7 +502,7 @@ export default function ApplyScoresPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen, confirmOpen]);
+  }, [documents, focusedRowIndex, selectedDocuments, viewerOpen, confirmOpen, applyResult]);
 
   const parseNumericFilter = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") return undefined;
@@ -798,6 +756,14 @@ export default function ApplyScoresPage() {
         onApplied={() => {
           void loadUnmatchedRecords();
           void loadDocuments();
+        }}
+      />
+
+      <ApplyScoresResultDialog
+        result={applyResult}
+        open={applyResult != null}
+        onOpenChange={(open) => {
+          if (!open) setApplyResult(null);
         }}
       />
     </DashboardLayout>

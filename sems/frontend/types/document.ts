@@ -774,6 +774,15 @@ export interface SkippedVerifyRecord {
   score: string | number | null;
   verify: string | number | null;
   cleared?: boolean;
+  document_id?: number;
+}
+
+export interface UnmatchedApplyRecord {
+  index_number: string | null;
+  candidate_name: string | null;
+  score: string | null;
+  error?: string;
+  document_id?: number;
 }
 
 export interface UpdateScoresFromReductoResponse {
@@ -782,12 +791,7 @@ export interface UpdateScoresFromReductoResponse {
   skipped_count?: number;
   skipped_records?: SkippedVerifyRecord[];
   cleared_count?: number;
-  unmatched_records: Array<{
-    index_number: string | null;
-    candidate_name: string | null;
-    score: string | null;
-    error?: string;
-  }>;
+  unmatched_records: UnmatchedApplyRecord[];
   errors: Array<{ [key: string]: string }>;
   scores_applied_at?: string | null;
   scores_applied_count?: number | null;

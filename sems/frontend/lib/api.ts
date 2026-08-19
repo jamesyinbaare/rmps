@@ -49,6 +49,8 @@ import type {
   ManualEntryFilters,
   CandidateScoreListResponse,
   ReductoDataResponse,
+  SkippedVerifyRecord,
+  UnmatchedApplyRecord,
   UpdateScoresFromReductoResponse,
   UnmatchedExtractionRecord,
   UnmatchedRecordsListResponse,
@@ -2320,13 +2322,8 @@ export interface BulkUpdateScoresFromReductoResult {
   unmatched_count: number;
   skipped_count: number;
   cleared_count: number;
-  skipped_records: Array<{
-    index_number: string | null;
-    candidate_name: string | null;
-    score: string | number | null;
-    verify: string | number | null;
-    cleared?: boolean;
-  }>;
+  skipped_records: SkippedVerifyRecord[];
+  unmatched_records: UnmatchedApplyRecord[];
   errors: Array<{ document_id: number; error: string }>;
 }
 
@@ -2345,6 +2342,7 @@ export async function bulkUpdateScoresFromReducto(
     skipped_count: 0,
     cleared_count: 0,
     skipped_records: [],
+    unmatched_records: [],
     errors: [],
   };
 
@@ -2358,7 +2356,14 @@ export async function bulkUpdateScoresFromReducto(
       result.skipped_count += response.skipped_count ?? 0;
       result.cleared_count += response.cleared_count ?? 0;
       if (response.skipped_records?.length) {
-        result.skipped_records.push(...response.skipped_records);
+        result.skipped_records.push(
+          ...response.skipped_records.map((row) => ({ ...row, document_id: documentId }))
+        );
+      }
+      if (response.unmatched_records?.length) {
+        result.unmatched_records.push(
+          ...response.unmatched_records.map((row) => ({ ...row, document_id: documentId }))
+        );
       }
     } catch (err) {
       result.documents_failed += 1;
