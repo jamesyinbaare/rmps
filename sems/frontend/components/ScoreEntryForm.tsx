@@ -17,9 +17,10 @@ import type { Document, ScoreResponse, ScoreUpdate, BatchScoreUpdateItem } from 
 
 interface ScoreEntryFormProps {
   document: Document;
+  compact?: boolean;
 }
 
-export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
+export function ScoreEntryForm({ document, compact = false }: ScoreEntryFormProps) {
   const [scores, setScores] = useState<ScoreResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -198,9 +199,11 @@ export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
   if (loading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="border-b border-border px-4 py-3">
-          <h2 className="text-lg font-semibold">Score Entry</h2>
-        </div>
+        {!compact && (
+          <div className="border-b border-border px-4 py-3">
+            <h2 className="text-lg font-semibold">Score Entry</h2>
+          </div>
+        )}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-sm text-muted-foreground">Loading scores...</div>
         </div>
@@ -210,13 +213,14 @@ export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header — close is owned by the parent modal */}
-      <div className="shrink-0 border-b border-border px-4 py-2">
-        <h2 className="text-base font-semibold">Score Entry</h2>
-        <p className="text-xs text-muted-foreground">
-          Document: {document.extracted_id || document.file_name}
-        </p>
-      </div>
+      {!compact && (
+        <div className="shrink-0 border-b border-border px-4 py-2">
+          <h2 className="text-base font-semibold">Score Entry</h2>
+          <p className="text-xs text-muted-foreground">
+            Document: {document.extracted_id || document.file_name}
+          </p>
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (
@@ -226,7 +230,7 @@ export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
       )}
 
       {/* Scores Table */}
-      <div className="flex-1 flex flex-col overflow-hidden px-4 py-2 min-h-0">
+      <div className={`flex-1 flex flex-col overflow-hidden min-h-0 ${compact ? "px-2 py-1" : "px-4 py-2"}`}>
         {scores.length === 0 ? (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
             No scores found for this document
@@ -334,7 +338,7 @@ export function ScoreEntryForm({ document }: ScoreEntryFormProps) {
 
       {/* Footer with Batch Save */}
       {scores.length > 0 && (
-        <div className="border-t border-border px-4 py-2 shrink-0">
+        <div className={`border-t border-border shrink-0 ${compact ? "px-2 py-1.5" : "px-4 py-2"}`}>
           <Button
             onClick={handleBatchSave}
             disabled={!hasChanges || saving}

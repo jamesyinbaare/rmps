@@ -240,6 +240,25 @@ class UpdateScoresFromReductoResponse(BaseModel):
     scores_unmatched_count: int | None = None
 
 
+class UnmatchedIndexMatch(BaseModel):
+    subject_registration_id: int
+    index_number: str
+    candidate_name: str
+    school_name: str | None = None
+    current_score: str | None = None
+
+
+class UnmatchedIndexSuggestion(BaseModel):
+    raw_index_number: str | None = None
+    cleaned_index_number: str | None = None
+    noise_chars: str = ""
+    highlight: list[tuple[str, bool]] = Field(default_factory=list)
+    matches: list[UnmatchedIndexMatch] = Field(default_factory=list)
+    unique: bool = False
+    likely_ocr_noise: bool = False
+    score_field: str | None = None
+
+
 class UnmatchedExtractionRecordResponse(BaseModel):
     """Response for unmatched extraction record."""
 
@@ -259,6 +278,8 @@ class UnmatchedExtractionRecordResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     resolved_at: datetime | None
+    suggestion: UnmatchedIndexSuggestion | None = None
+    resolved_subject_registration_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -280,6 +301,28 @@ class ResolveUnmatchedRecordRequest(BaseModel):
     subject_registration_id: int
     score_field: str = Field(..., description="'obj', 'essay', or 'pract'")
     score_value: str | None = Field(None, description="Score value to apply")
+
+
+class BulkUnmatchedIdsRequest(BaseModel):
+    record_ids: list[int] = Field(..., min_length=1)
+
+
+class BulkUnmatchedOcrResolveRequest(BaseModel):
+    record_ids: list[int] | None = None
+    document_id: int | None = None
+    extraction_method: str | None = None
+
+
+class BulkUnmatchedActionError(BaseModel):
+    record_id: int
+    reason: str
+
+
+class BulkUnmatchedActionResponse(BaseModel):
+    applied: int = 0
+    skipped: int = 0
+    failed: int = 0
+    errors: list[BulkUnmatchedActionError] = Field(default_factory=list)
 
 
 class ResultsExportJobCreateResponse(BaseModel):

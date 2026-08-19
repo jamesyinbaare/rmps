@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import and_, func, or_, select, case
+from sqlalchemy import and_, delete, func, or_, select, case
 
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
@@ -41,6 +41,10 @@ from app.schemas.score import (
     AbsentReviewListResponse,
     BatchScoreUpdate,
     BatchScoreUpdateResponse,
+    BulkUnmatchedActionError,
+    BulkUnmatchedActionResponse,
+    BulkUnmatchedIdsRequest,
+    BulkUnmatchedOcrResolveRequest,
     CandidateScoreEntry,
     CandidateScoreListResponse,
     ConfirmAbsentReviewRequest,
@@ -53,6 +57,7 @@ from app.schemas.score import (
     ScoreResponse,
     ScoreUpdate,
     UnmatchedExtractionRecordResponse,
+    UnmatchedIndexSuggestion,
     UnmatchedRecordsListResponse,
     UpdateScoresFromReductoRequest,
     UpdateScoresFromReductoResponse,
@@ -73,6 +78,17 @@ from app.services.issue_batch_service import (
     clerk_may_access_score,
 )
 from app.services.app_settings_service import is_clerk_digital_entry_enabled
+from app.services.unmatched_apply_reuse import (
+    build_unmatched_reuse_index,
+    lookup_unmatched_reuse,
+    reuse_action,
+)
+from app.services.unmatched_index_suggestions import (
+    list_unique_ocr_candidates,
+    load_scoped_candidate_rows,
+    suggestion_from_candidate_rows,
+    suggest_for_unmatched,
+)
 from app.services.document_score_extraction import (
     apply_extraction_list_filters,
     extraction_to_item,
@@ -1667,6 +1683,32 @@ def scores_match(score: str | float | None, verify: str | float | None) -> bool:
         return False
 
 
+async def _get_or_create_subject_score(
+    session: DBSessionDep, document: Document, subject_registration_id: int
+) -> SubjectScore | None:
+    """Load SubjectScore for a registration, creating an empty one if needed."""
+    reg_stmt = select(SubjectRegistration).where(SubjectRegistration.id == subject_registration_id)
+    if (await session.execute(reg_stmt)).scalar_one_or_none() is None:
+        return None
+    score_stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == subject_registration_id)
+    subject_score = (await session.execute(score_stmt)).scalar_one_or_none()
+    if subject_score:
+        return subject_score
+    subject_score = SubjectScore(
+        subject_registration_id=subject_registration_id,
+        obj_raw_score=None,
+        essay_raw_score=None,
+        pract_raw_score=None,
+        obj_normalized=None,
+        essay_normalized=None,
+        pract_normalized=None,
+        total_score=0.0,
+    )
+    session.add(subject_score)
+    await session.flush()
+    return subject_score
+
+
 @router.post("/documents/{document_id}/apply-extraction", response_model=UpdateScoresFromReductoResponse)
 @router.post("/documents/{document_id}/update-from-reducto", response_model=UpdateScoresFromReductoResponse)
 async def update_scores_from_reducto(
@@ -1846,6 +1888,30 @@ async def update_scores_from_reducto(
     errors: list[dict[str, str]] = []
     verify_enabled = request.verify
 
+    await session.execute(
+        delete(UnmatchedExtractionRecord).where(
+            UnmatchedExtractionRecord.document_id == document.id,
+            UnmatchedExtractionRecord.status == UnmatchedRecordStatus.PENDING,
+            or_(
+                UnmatchedExtractionRecord.extraction_provider == applied_provider,
+                UnmatchedExtractionRecord.extraction_provider.is_(None),
+            ),
+        )
+    )
+    kept_result = await session.execute(
+        select(UnmatchedExtractionRecord).where(
+            UnmatchedExtractionRecord.document_id == document.id,
+            UnmatchedExtractionRecord.status.in_(
+                [UnmatchedRecordStatus.RESOLVED, UnmatchedRecordStatus.IGNORED]
+            ),
+            or_(
+                UnmatchedExtractionRecord.extraction_provider == applied_provider,
+                UnmatchedExtractionRecord.extraction_provider.is_(None),
+            ),
+        )
+    )
+    reuse_index = build_unmatched_reuse_index(list(kept_result.scalars().all()))
+
     # Process each candidate from reducto data
     logger.info(f"Processing {len(candidates)} candidates from reducto data (verify={verify_enabled})")
     for idx, candidate_data in enumerate(candidates):
@@ -1918,38 +1984,71 @@ async def update_scores_from_reducto(
             row = result.first()
 
             if not row:
-                # No match found - create unmatched record
-                logger.warning(f"No matching SubjectScore found for index_number={index_number}, exam_id={document.exam_id}, subject_id={document.subject_id}")
-                unmatched_count += 1
-                parsed_score = None
-                try:
-                    parsed_score = parse_score_value(score_value) if score_value is not None else None
-                except ValueError as e:
-                    logger.debug(f"Failed to parse score value '{score_value}' for index_number={index_number}: {e}")
-
-                unmatched_record = UnmatchedExtractionRecord(
-                    document_id=document.id,
-                    index_number=index_number,
-                    candidate_name=candidate_name,
-                    score=parsed_score,
-                    sn=sn,
-                    raw_data=candidate_data,
-                    status=UnmatchedRecordStatus.PENDING,
-                    extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
-                    extraction_provider=applied_provider,
+                prior = lookup_unmatched_reuse(reuse_index, sn=sn, index_number=index_number)
+                action = reuse_action(
+                    prior.status if prior is not None else None,
+                    prior.resolved_subject_registration_id if prior is not None else None,
                 )
-                session.add(unmatched_record)
-                unmatched_records.append(
-                    {
-                        "index_number": index_number,
-                        "candidate_name": candidate_name,
-                        "score": parsed_score,
-                    }
-                )
-                continue
+                if action == "skip":
+                    logger.debug(
+                        f"Not recreating unmatched for index_number={index_number} sn={sn} "
+                        f"(prior status={getattr(prior, 'status', None)})"
+                    )
+                    continue
+                if action == "write":
+                    subject_score = await _get_or_create_subject_score(
+                        session, document, prior.resolved_subject_registration_id
+                    )
+                    if subject_score is None:
+                        logger.warning(
+                            f"Resolved unmatched mapping registration missing for "
+                            f"index_number={index_number} registration_id={prior.resolved_subject_registration_id}"
+                        )
+                        continue
+                    logger.info(
+                        f"Reusing resolved unmatched mapping for index_number={index_number} "
+                        f"subject_registration_id={prior.resolved_subject_registration_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"No matching SubjectScore found for index_number={index_number}, "
+                        f"exam_id={document.exam_id}, subject_id={document.subject_id}"
+                    )
+                    unmatched_count += 1
+                    parsed_score = None
+                    try:
+                        parsed_score = parse_score_value(score_value) if score_value is not None else None
+                    except ValueError as e:
+                        logger.debug(
+                            f"Failed to parse score value '{score_value}' for index_number={index_number}: {e}"
+                        )
 
-            subject_score, candidate, _subject_reg, _exam_reg = row
-            logger.debug(f"Found matching SubjectScore: id={subject_score.id}, candidate_id={candidate.id}, subject_registration_id={subject_score.subject_registration_id}")
+                    unmatched_record = UnmatchedExtractionRecord(
+                        document_id=document.id,
+                        index_number=index_number,
+                        candidate_name=candidate_name,
+                        score=parsed_score,
+                        sn=sn,
+                        raw_data=candidate_data,
+                        status=UnmatchedRecordStatus.PENDING,
+                        extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
+                        extraction_provider=applied_provider,
+                    )
+                    session.add(unmatched_record)
+                    unmatched_records.append(
+                        {
+                            "index_number": index_number,
+                            "candidate_name": candidate_name,
+                            "score": parsed_score,
+                        }
+                    )
+                    continue
+            else:
+                subject_score, candidate, _subject_reg, _exam_reg = row
+                logger.debug(
+                    f"Found matching SubjectScore: id={subject_score.id}, candidate_id={candidate.id}, "
+                    f"subject_registration_id={subject_score.subject_registration_id}"
+                )
 
             # Parse score value
             try:
@@ -2061,6 +2160,10 @@ async def get_unmatched_records(
     extraction_method: DataExtractionMethod | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    include_suggestions: bool = Query(
+        False,
+        description="Attach OCR index suggestions (extra lookups). Use for the visible page only.",
+    ),
 ) -> UnmatchedRecordsListResponse:
     """Get list of unmatched extraction records."""
     offset = (page - 1) * page_size
@@ -2100,23 +2203,14 @@ async def get_unmatched_records(
 
     items = []
     for unmatched_record, document, school_name, subject_name in rows:
+        suggestion = None
+        if include_suggestions:
+            suggestion = UnmatchedIndexSuggestion.model_validate(
+                await suggest_for_unmatched(session, document, unmatched_record.index_number)
+            )
         items.append(
-            UnmatchedExtractionRecordResponse(
-                id=unmatched_record.id,
-                document_id=unmatched_record.document_id,
-                document_extracted_id=document.extracted_id,
-                document_school_name=school_name,
-                document_subject_name=subject_name,
-                index_number=unmatched_record.index_number,
-                candidate_name=unmatched_record.candidate_name,
-                score=unmatched_record.score,
-                sn=unmatched_record.sn,
-                raw_data=unmatched_record.raw_data,
-                status=unmatched_record.status.value,
-                extraction_method=unmatched_record.extraction_method.value,
-                created_at=unmatched_record.created_at,
-                updated_at=unmatched_record.updated_at,
-                resolved_at=unmatched_record.resolved_at,
+            _unmatched_record_response(
+                unmatched_record, document, school_name, subject_name, suggestion
             )
         )
 
@@ -2129,6 +2223,341 @@ async def get_unmatched_records(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+def _unmatched_record_response(
+    unmatched_record: UnmatchedExtractionRecord,
+    document: Document,
+    school_name: str | None,
+    subject_name: str | None,
+    suggestion: UnmatchedIndexSuggestion | None = None,
+) -> UnmatchedExtractionRecordResponse:
+    return UnmatchedExtractionRecordResponse(
+        id=unmatched_record.id,
+        document_id=unmatched_record.document_id,
+        document_extracted_id=document.extracted_id,
+        document_school_name=school_name,
+        document_subject_name=subject_name,
+        index_number=unmatched_record.index_number,
+        candidate_name=unmatched_record.candidate_name,
+        score=unmatched_record.score,
+        sn=unmatched_record.sn,
+        raw_data=unmatched_record.raw_data,
+        status=unmatched_record.status.value,
+        extraction_method=unmatched_record.extraction_method.value,
+        extraction_provider=unmatched_record.extraction_provider,
+        created_at=unmatched_record.created_at,
+        updated_at=unmatched_record.updated_at,
+        resolved_at=unmatched_record.resolved_at,
+        suggestion=suggestion,
+        resolved_subject_registration_id=unmatched_record.resolved_subject_registration_id,
+    )
+
+
+async def _apply_unmatched_score(
+    session: DBSessionDep,
+    unmatched_record: UnmatchedExtractionRecord,
+    document: Document,
+    *,
+    subject_registration_id: int,
+    score_field: str,
+    score_value: str | None,
+) -> None:
+    """Apply extracted score to SubjectScore and mark the unmatched row resolved. Caller commits."""
+    if score_field not in ("obj", "essay", "pract"):
+        raise ValueError("score_field must be 'obj', 'essay', or 'pract'")
+
+    parsed_score = None
+    if score_value is not None:
+        try:
+            parsed_score = parse_score_value(score_value)
+        except ValueError as e:
+            raise ValueError(f"Invalid score format: {e}") from e
+
+    score_stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == subject_registration_id)
+    score_result = await session.execute(score_stmt)
+    subject_score = score_result.scalar_one_or_none()
+
+    document_identifier = document.extracted_id if document.extracted_id else str(document.id)
+
+    if not subject_score:
+        subject_score = SubjectScore(
+            subject_registration_id=subject_registration_id,
+            obj_raw_score=parsed_score if score_field == "obj" else None,
+            essay_raw_score=parsed_score if score_field == "essay" else None,
+            pract_raw_score=parsed_score if score_field == "pract" else None,
+            obj_normalized=None,
+            essay_normalized=None,
+            pract_normalized=None,
+            total_score=0.0,
+            obj_document_id=document_identifier if score_field == "obj" else None,
+            essay_document_id=document_identifier if score_field == "essay" else None,
+            pract_document_id=document_identifier if score_field == "pract" else None,
+            obj_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION if score_field == "obj" else None,
+            essay_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION if score_field == "essay" else None,
+            pract_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION if score_field == "pract" else None,
+        )
+        session.add(subject_score)
+    else:
+        if score_field == "obj":
+            subject_score.obj_raw_score = parsed_score
+            subject_score.obj_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.obj_document_id = document_identifier
+        elif score_field == "essay":
+            subject_score.essay_raw_score = parsed_score
+            subject_score.essay_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.essay_document_id = document_identifier
+        elif score_field == "pract":
+            subject_score.pract_raw_score = parsed_score
+            subject_score.pract_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.pract_document_id = document_identifier
+
+    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
+    unmatched_record.status = UnmatchedRecordStatus.RESOLVED
+    unmatched_record.resolved_at = datetime.utcnow()
+    unmatched_record.resolved_subject_registration_id = subject_registration_id
+
+
+@router.get("/unmatched-records/ocr-candidates", response_model=UnmatchedRecordsListResponse)
+async def get_unmatched_ocr_candidates(
+    session: DBSessionDep,
+    document_id: int | None = Query(None),
+    extraction_method: DataExtractionMethod | None = Query(None),
+    record_ids: list[int] | None = Query(None),
+    limit: int = Query(500, ge=1, le=500),
+) -> UnmatchedRecordsListResponse:
+    """Pending unmatched rows whose cleaned index uniquely matches one registered candidate."""
+    items_raw, total = await list_unique_ocr_candidates(
+        session,
+        document_id=document_id,
+        extraction_method=extraction_method,
+        record_ids=record_ids,
+        limit=limit,
+    )
+    items = [
+        _unmatched_record_response(
+            item["record"],
+            item["document"],
+            item["school_name"],
+            item["subject_name"],
+            UnmatchedIndexSuggestion.model_validate(item["suggestion"]),
+        )
+        for item in items_raw
+    ]
+    return UnmatchedRecordsListResponse(
+        items=items,
+        total=total,
+        page=1,
+        page_size=limit,
+        total_pages=1 if total == 0 else (total + limit - 1) // limit,
+    )
+
+
+@router.post("/unmatched-records/bulk-resolve-ocr", response_model=BulkUnmatchedActionResponse)
+async def bulk_resolve_unmatched_ocr(
+    request: BulkUnmatchedOcrResolveRequest,
+    session: DBSessionDep,
+) -> BulkUnmatchedActionResponse:
+    """Apply scores for unique OCR-cleaned index matches. Re-validates uniqueness at apply time."""
+    extraction_method = None
+    if request.extraction_method:
+        try:
+            extraction_method = DataExtractionMethod(request.extraction_method)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid extraction_method",
+            )
+
+    candidates, _total = await list_unique_ocr_candidates(
+        session,
+        document_id=request.document_id,
+        extraction_method=extraction_method,
+        record_ids=request.record_ids,
+        limit=5000,
+    )
+
+    requested_ids = set(request.record_ids) if request.record_ids is not None else None
+    unique_ids = {item["record"].id for item in candidates}
+
+    applied = 0
+    skipped = 0
+    failed = 0
+    errors: list[BulkUnmatchedActionError] = []
+
+    # Skip ids the client asked for that are not unique OCR (or no longer pending).
+    if requested_ids is not None:
+        for record_id in requested_ids:
+            if record_id not in unique_ids:
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(record_id=record_id, reason="not a unique OCR match")
+                )
+
+    scoped_cache: dict[tuple[int | None, int | None], list] = {}
+
+    for item in candidates:
+        unmatched_record: UnmatchedExtractionRecord = item["record"]
+        document: Document = item["document"]
+        try:
+            if unmatched_record.status != UnmatchedRecordStatus.PENDING:
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(record_id=unmatched_record.id, reason="not pending")
+                )
+                continue
+
+            cache_key = (document.exam_id, document.subject_id)
+            if cache_key not in scoped_cache:
+                scoped_cache[cache_key] = await load_scoped_candidate_rows(session, document)
+            suggestion = suggestion_from_candidate_rows(
+                unmatched_record.index_number,
+                scoped_cache[cache_key],
+                document.test_type,
+            )
+            if not suggestion.get("likely_ocr_noise") or not suggestion.get("unique"):
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(
+                        record_id=unmatched_record.id, reason="not a unique OCR match"
+                    )
+                )
+                continue
+
+            score_field = suggestion.get("score_field")
+            if score_field not in ("obj", "essay", "pract"):
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(
+                        record_id=unmatched_record.id, reason="no score field for document test type"
+                    )
+                )
+                continue
+
+            matches = suggestion.get("matches") or []
+            if len(matches) != 1:
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(
+                        record_id=unmatched_record.id, reason="not a unique OCR match"
+                    )
+                )
+                continue
+
+            subject_registration_id = matches[0]["subject_registration_id"]
+            reg_stmt = select(SubjectRegistration).where(
+                SubjectRegistration.id == subject_registration_id
+            )
+            subject_reg = (await session.execute(reg_stmt)).scalar_one_or_none()
+            if not subject_reg:
+                skipped += 1
+                errors.append(
+                    BulkUnmatchedActionError(
+                        record_id=unmatched_record.id, reason="subject registration not found"
+                    )
+                )
+                continue
+
+            async with session.begin_nested():
+                await _apply_unmatched_score(
+                    session,
+                    unmatched_record,
+                    document,
+                    subject_registration_id=subject_registration_id,
+                    score_field=score_field,
+                    score_value=unmatched_record.score,
+                )
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(BulkUnmatchedActionError(record_id=unmatched_record.id, reason=str(exc)))
+
+    await session.commit()
+    return BulkUnmatchedActionResponse(
+        applied=applied,
+        skipped=skipped,
+        failed=failed,
+        errors=errors,
+    )
+
+
+@router.post("/unmatched-records/bulk-ignore", response_model=BulkUnmatchedActionResponse)
+async def bulk_ignore_unmatched_records(
+    request: BulkUnmatchedIdsRequest,
+    session: DBSessionDep,
+) -> BulkUnmatchedActionResponse:
+    stmt = select(UnmatchedExtractionRecord).where(UnmatchedExtractionRecord.id.in_(request.record_ids))
+    records = list((await session.execute(stmt)).scalars().all())
+    found_ids = {record.id for record in records}
+
+    applied = 0
+    skipped = 0
+    failed = 0
+    errors: list[BulkUnmatchedActionError] = []
+
+    for record_id in request.record_ids:
+        if record_id not in found_ids:
+            skipped += 1
+            errors.append(BulkUnmatchedActionError(record_id=record_id, reason="not found"))
+
+    for record in records:
+        if record.status != UnmatchedRecordStatus.PENDING:
+            skipped += 1
+            errors.append(
+                BulkUnmatchedActionError(
+                    record_id=record.id, reason=f"already {record.status.value}"
+                )
+            )
+            continue
+        try:
+            record.status = UnmatchedRecordStatus.IGNORED
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(BulkUnmatchedActionError(record_id=record.id, reason=str(exc)))
+
+    await session.commit()
+    return BulkUnmatchedActionResponse(applied=applied, skipped=skipped, failed=failed, errors=errors)
+
+
+@router.post("/unmatched-records/bulk-mark-resolved", response_model=BulkUnmatchedActionResponse)
+async def bulk_mark_unmatched_records_resolved(
+    request: BulkUnmatchedIdsRequest,
+    session: DBSessionDep,
+) -> BulkUnmatchedActionResponse:
+    stmt = select(UnmatchedExtractionRecord).where(UnmatchedExtractionRecord.id.in_(request.record_ids))
+    records = list((await session.execute(stmt)).scalars().all())
+    found_ids = {record.id for record in records}
+
+    applied = 0
+    skipped = 0
+    failed = 0
+    errors: list[BulkUnmatchedActionError] = []
+
+    for record_id in request.record_ids:
+        if record_id not in found_ids:
+            skipped += 1
+            errors.append(BulkUnmatchedActionError(record_id=record_id, reason="not found"))
+
+    for record in records:
+        if record.status != UnmatchedRecordStatus.PENDING:
+            skipped += 1
+            errors.append(
+                BulkUnmatchedActionError(
+                    record_id=record.id, reason=f"already {record.status.value}"
+                )
+            )
+            continue
+        try:
+            record.status = UnmatchedRecordStatus.RESOLVED
+            record.resolved_at = datetime.utcnow()
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(BulkUnmatchedActionError(record_id=record.id, reason=str(exc)))
+
+    await session.commit()
+    return BulkUnmatchedActionResponse(applied=applied, skipped=skipped, failed=failed, errors=errors)
 
 
 @router.get("/unmatched-records/{record_id}", response_model=UnmatchedExtractionRecordResponse)
@@ -2149,24 +2578,38 @@ async def get_unmatched_record(record_id: int, session: DBSessionDep) -> Unmatch
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
 
     unmatched_record, document, school_name, subject_name = row
+    suggestion = await suggest_for_unmatched(session, document, unmatched_record.index_number)
 
-    return UnmatchedExtractionRecordResponse(
-        id=unmatched_record.id,
-        document_id=unmatched_record.document_id,
-        document_extracted_id=document.extracted_id,
-        document_school_name=school_name,
-        document_subject_name=subject_name,
-        index_number=unmatched_record.index_number,
-        candidate_name=unmatched_record.candidate_name,
-        score=unmatched_record.score,
-        sn=unmatched_record.sn,
-        raw_data=unmatched_record.raw_data,
-        status=unmatched_record.status.value,
-        extraction_method=unmatched_record.extraction_method.value,
-        created_at=unmatched_record.created_at,
-        updated_at=unmatched_record.updated_at,
-        resolved_at=unmatched_record.resolved_at,
+    return _unmatched_record_response(
+        unmatched_record,
+        document,
+        school_name,
+        subject_name,
+        UnmatchedIndexSuggestion.model_validate(suggestion),
     )
+
+
+@router.get("/unmatched-records/{record_id}/suggestions", response_model=UnmatchedIndexSuggestion)
+async def get_unmatched_record_suggestions(
+    record_id: int,
+    session: DBSessionDep,
+    q: str | None = Query(None, description="Optional cleaned index or candidate name search"),
+) -> UnmatchedIndexSuggestion:
+    """Suggest registered candidates for an unmatched extracted index (OCR cleanup)."""
+    stmt = (
+        select(UnmatchedExtractionRecord, Document)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .where(UnmatchedExtractionRecord.id == record_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
+    unmatched_record, document = row
+    suggestion = await suggest_for_unmatched(
+        session, document, unmatched_record.index_number, search=q
+    )
+    return UnmatchedIndexSuggestion.model_validate(suggestion)
 
 
 @router.put("/unmatched-records/{record_id}/resolve")
@@ -2203,73 +2646,22 @@ async def resolve_unmatched_record(
             status_code=status.HTTP_404_NOT_FOUND, detail="Subject registration not found"
         )
 
-    # Validate score_field
     if request.score_field not in ("obj", "essay", "pract"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="score_field must be 'obj', 'essay', or 'pract'"
         )
 
-    # Parse score value
-    parsed_score = None
-    if request.score_value is not None:
-        try:
-            parsed_score = parse_score_value(request.score_value)
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid score format: {e}")
-
-    # Get or create SubjectScore
-    score_stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == request.subject_registration_id)
-    score_result = await session.execute(score_stmt)
-    subject_score = score_result.scalar_one_or_none()
-
-    document_identifier = document.extracted_id if document.extracted_id else str(document.id)
-
-    if not subject_score:
-        # Create new SubjectScore
-        subject_score = SubjectScore(
+    try:
+        await _apply_unmatched_score(
+            session,
+            unmatched_record,
+            document,
             subject_registration_id=request.subject_registration_id,
-            obj_raw_score=parsed_score if request.score_field == "obj" else None,
-            essay_raw_score=parsed_score if request.score_field == "essay" else None,
-            pract_raw_score=parsed_score if request.score_field == "pract" else None,
-            obj_normalized=None,
-            essay_normalized=None,
-            pract_normalized=None,
-            total_score=0.0,
-            obj_document_id=document_identifier if request.score_field == "obj" else None,
-            essay_document_id=document_identifier if request.score_field == "essay" else None,
-            pract_document_id=document_identifier if request.score_field == "pract" else None,
-            obj_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
-            if request.score_field == "obj"
-            else None,
-            essay_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
-            if request.score_field == "essay"
-            else None,
-            pract_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
-            if request.score_field == "pract"
-            else None,
+            score_field=request.score_field,
+            score_value=request.score_value,
         )
-        session.add(subject_score)
-    else:
-        # Update existing SubjectScore
-        if request.score_field == "obj":
-            subject_score.obj_raw_score = parsed_score
-            subject_score.obj_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
-            subject_score.obj_document_id = document_identifier
-        elif request.score_field == "essay":
-            subject_score.essay_raw_score = parsed_score
-            subject_score.essay_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
-            subject_score.essay_document_id = document_identifier
-        elif request.score_field == "pract":
-            subject_score.pract_raw_score = parsed_score
-            subject_score.pract_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
-            subject_score.pract_document_id = document_identifier
-
-    # Update document's extraction methods array
-    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
-
-    # Mark unmatched record as resolved
-    unmatched_record.status = UnmatchedRecordStatus.RESOLVED
-    unmatched_record.resolved_at = datetime.utcnow()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     await session.commit()
 
