@@ -441,15 +441,30 @@ export function UnmatchedRecordModal({
           <div className="flex items-center justify-between gap-4 pr-8">
             <div className="min-w-0">
               <DialogTitle className="text-xl font-bold tracking-tight">
-                <HighlightedIndex
-                  highlight={suggestion?.highlight}
-                  fallback={record.index_number || "No index"}
-                  className="text-xl font-bold tabular-nums tracking-tight"
-                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <HighlightedIndex
+                    highlight={suggestion?.highlight}
+                    fallback={record.index_number || "No index"}
+                    className="text-xl font-bold tabular-nums tracking-tight"
+                  />
+                  {record.sn != null ? (
+                    <Badge
+                      variant="outline"
+                      className="h-7 px-2.5 text-[11px] font-semibold tabular-nums"
+                    >
+                      Row {record.sn}
+                    </Badge>
+                  ) : null}
+                </div>
               </DialogTitle>
               <DialogDescription className="mt-0.5 truncate text-xs">
-                {record.sn != null ? `Row ${record.sn}` : "Sheet"}
-                {headerContext ? ` · ${headerContext}` : ""}
+                {record.sn != null
+                  ? headerContext
+                    ? headerContext
+                    : `Row ${record.sn}`
+                  : headerContext
+                    ? `Sheet · ${headerContext}`
+                    : "Sheet"}
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -550,8 +565,17 @@ export function UnmatchedRecordModal({
                       />
                       <p className="text-xs text-muted-foreground">
                         Score {record.score ?? "—"}
-                        {record.sn != null ? ` · Row ${record.sn}` : ""}
                       </p>
+                      {record.sn != null ? (
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="secondary"
+                            className="h-6 px-2 text-[11px] font-semibold tabular-nums"
+                          >
+                            Row {record.sn}
+                          </Badge>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="min-w-0 space-y-1.5 px-3 py-2.5">
                       <FieldLabel>Register</FieldLabel>
