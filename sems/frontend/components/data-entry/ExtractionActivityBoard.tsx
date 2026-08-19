@@ -247,6 +247,10 @@ interface ExtractionActivityBoardProps {
   completedWindow?: CompletedWindow;
   recentlyMovedIds: Set<number>;
   isPolling?: boolean;
+  statusCountsOverride?: {
+    queued: number;
+    processing: number;
+  };
   requeueingDocumentId?: number | null;
   onOpenDocument: (document: Document) => void;
   onRequeue: (document: Document) => void;
@@ -269,6 +273,7 @@ export function ExtractionActivityBoard({
   completedWindow = "1h",
   recentlyMovedIds,
   isPolling,
+  statusCountsOverride,
   requeueingDocumentId,
   onOpenDocument,
   onRequeue,
@@ -303,7 +308,11 @@ export function ExtractionActivityBoard({
     success: columns.completed.filter((c) => c.lane === "success").length,
     error: columns.completed.filter((c) => c.lane === "error").length,
   };
-  const total = counts.queued + counts.processing + counts.success + counts.error;
+
+  const queuedCount = statusCountsOverride?.queued ?? counts.queued;
+  const processingCount = statusCountsOverride?.processing ?? counts.processing;
+
+  const total = queuedCount + processingCount + counts.success + counts.error;
   const finished = counts.success + counts.error;
   const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
 
@@ -321,8 +330,13 @@ export function ExtractionActivityBoard({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          <CountPill label="Q" value={counts.queued} tone="muted" />
-          <CountPill label="P" value={counts.processing} tone="primary" live={isPolling && counts.processing > 0} />
+          <CountPill label="Q" value={queuedCount} tone="muted" />
+          <CountPill
+            label="P"
+            value={processingCount}
+            tone="primary"
+            live={isPolling && processingCount > 0}
+          />
           <CountPill label="Done" value={counts.success} tone="muted" />
           <CountPill label="Fail" value={counts.error} tone="danger" />
         </div>
@@ -364,9 +378,9 @@ export function ExtractionActivityBoard({
                     {items.length}
                   </span>
                 </div>
-                {col.key === "queued" && counts.queued >= 100 ? (
+                {col.key === "queued" && queuedCount >= 100 ? (
                   <p className="text-[10px] tabular-nums text-muted-foreground">
-                    {counts.queued.toLocaleString()} in queue
+                    {queuedCount.toLocaleString()} in queue
                   </p>
                 ) : null}
               </header>
