@@ -21,6 +21,9 @@ from app.schemas.document import (
     BulkDeleteResponse,
     BulkDocumentIdsRequest,
     BulkExtractIdResponse,
+    BulkReclassifyPaperItem,
+    BulkReclassifyPaperRequest,
+    BulkReclassifyPaperResponse,
     BulkUploadResponse,
     ContentExtractionResponse,
     DocumentExamFacet,
@@ -75,6 +78,7 @@ from app.services.document_score_extraction import (
     reset_stale_extraction_row,
     sync_document_snapshot,
 )
+from app.services.paper_reclassify import reclassify_document_paper
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import add_extraction_method_to_document
@@ -844,6 +848,73 @@ async def bulk_extract_id(
     return BulkExtractIdResponse(queued=len(ids), document_ids=ids)
 
 
+@router.post("/bulk-reclassify-paper", response_model=BulkReclassifyPaperResponse)
+async def bulk_reclassify_paper(
+    body: BulkReclassifyPaperRequest,
+    session: DBSessionDep,
+) -> BulkReclassifyPaperResponse:
+    """Bulk change document paper (test_type) and migrate applied scores."""
+    updated = 0
+    failed = 0
+    scores_moved_total = 0
+    results: list[BulkReclassifyPaperItem] = []
+
+    for document_id in body.document_ids:
+        stmt = select(Document).where(Document.id == document_id)
+        result = await session.execute(stmt)
+        document = result.scalar_one_or_none()
+        if not document:
+            failed += 1
+            results.append(
+                BulkReclassifyPaperItem(
+                    document_id=document_id,
+                    new_test_type=body.target_test_type,
+                    error="Not found",
+                )
+            )
+            continue
+
+        try:
+            outcome = await reclassify_document_paper(
+                session, document, body.target_test_type
+            )
+            item = BulkReclassifyPaperItem(
+                document_id=outcome.document_id,
+                old_extracted_id=outcome.old_extracted_id,
+                new_extracted_id=outcome.new_extracted_id,
+                old_test_type=outcome.old_test_type,
+                new_test_type=outcome.new_test_type,
+                scores_moved=outcome.scores_moved,
+                error=outcome.error,
+            )
+            results.append(item)
+            if outcome.error:
+                failed += 1
+                await session.rollback()
+                # Re-open work for remaining docs after rollback clears session state
+                continue
+            updated += 1
+            scores_moved_total += outcome.scores_moved
+            await session.commit()
+        except Exception as exc:
+            failed += 1
+            await session.rollback()
+            results.append(
+                BulkReclassifyPaperItem(
+                    document_id=document_id,
+                    new_test_type=body.target_test_type,
+                    error=str(exc),
+                )
+            )
+
+    return BulkReclassifyPaperResponse(
+        updated=updated,
+        failed=failed,
+        scores_moved=scores_moved_total,
+        results=results,
+    )
+
+
 def _apply_document_scope_filters(
     stmt: Any,
     *,
@@ -1072,6 +1143,13 @@ async def list_documents(
         description="Filter by ID extraction error code (comma-separated): no_id, duplicate, invalid_format, validation, low_confidence, file_missing, exception",
     ),
     q: str | None = Query(None, description="Search file_name or extracted_id (case-insensitive)"),
+    test_type: str | None = Query(
+        None, description="Filter by paper/test type: 1=Objectives, 2=Essay"
+    ),
+    test_type_changed: bool | None = Query(
+        None,
+        description="When true, only documents whose paper was reclassified via Advanced Edit",
+    ),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
@@ -1101,6 +1179,10 @@ async def list_documents(
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
+    if test_type is not None:
+        base_stmt = base_stmt.where(Document.test_type == test_type)
+    if test_type_changed is True:
+        base_stmt = base_stmt.where(Document.test_type_changed_at.isnot(None))
 
     error_codes: list[str] = []
     if id_extraction_error_code:
@@ -1144,6 +1226,10 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
+    if test_type is not None:
+        count_stmt = count_stmt.where(Document.test_type == test_type)
+    if test_type_changed is True:
+        count_stmt = count_stmt.where(Document.test_type_changed_at.isnot(None))
     if error_codes:
         count_stmt = count_stmt.where(Document.id_extraction_error_code.in_(error_codes))
         if id_extraction_status is None:

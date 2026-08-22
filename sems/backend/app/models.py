@@ -266,6 +266,10 @@ class Document(Base):
     scores_applied_at = Column(DateTime, nullable=True)
     scores_applied_count = Column(Integer, nullable=True)
     scores_unmatched_count = Column(Integer, nullable=True)
+    # Set when Advanced Edit changes paper (test_type) / extracted_id digit
+    test_type_changed_at = Column(DateTime, nullable=True)
+    # Previous paper digit before last Advanced Edit reclassify (1 or 2)
+    test_type_changed_from = Column(String(1), nullable=True)
 
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")

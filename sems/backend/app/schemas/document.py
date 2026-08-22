@@ -86,6 +86,8 @@ class DocumentResponse(DocumentBase):
     scores_applied_at: datetime | None = None
     scores_applied_count: int | None = None
     scores_unmatched_count: int | None = None
+    test_type_changed_at: datetime | None = None
+    test_type_changed_from: str | None = None
     extractions: list[ScoreExtractionItem] = Field(default_factory=list)
 
     class Config:
@@ -125,6 +127,8 @@ class DocumentListItem(DocumentBase):
     scores_applied_at: datetime | None = None
     scores_applied_count: int | None = None
     scores_unmatched_count: int | None = None
+    test_type_changed_at: datetime | None = None
+    test_type_changed_from: str | None = None
     extractions: list[ScoreExtractionItem] = Field(default_factory=list)
 
     class Config:
@@ -180,6 +184,30 @@ class BulkDeleteResponse(BaseModel):
     deleted: int
     failed: int
     errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class BulkReclassifyPaperRequest(BaseModel):
+    """Request body for bulk paper (test_type) reclassify."""
+
+    document_ids: list[int] = Field(..., min_length=1)
+    target_test_type: str = Field(..., pattern="^[12]$", description="1=Objectives, 2=Essay")
+
+
+class BulkReclassifyPaperItem(BaseModel):
+    document_id: int
+    old_extracted_id: str | None = None
+    new_extracted_id: str | None = None
+    old_test_type: str | None = None
+    new_test_type: str | None = None
+    scores_moved: int = 0
+    error: str | None = None
+
+
+class BulkReclassifyPaperResponse(BaseModel):
+    updated: int
+    failed: int
+    scores_moved: int = 0
+    results: list[BulkReclassifyPaperItem] = Field(default_factory=list)
 
 
 class BulkExtractIdResponse(BaseModel):

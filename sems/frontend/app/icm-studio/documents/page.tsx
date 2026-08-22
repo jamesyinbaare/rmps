@@ -6,11 +6,19 @@ import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
+import { BulkReclassifyPaperDialog } from "@/components/BulkReclassifyPaperDialog";
 import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +45,8 @@ import {
   Keyboard,
   BookOpen,
   Sparkles,
+  Pencil,
+  RotateCcw,
 } from "lucide-react";
 import {
   listDocuments,
@@ -96,6 +106,8 @@ export default function DocumentsPage() {
   const examIdParam = searchParams.get("exam_id");
   const extractionStatusParam = searchParams.get("id_extraction_status");
   const errorParam = searchParams.get("error") || "";
+  const testTypeParam = searchParams.get("test_type");
+  const testTypeChangedParam = searchParams.get("test_type_changed");
   const examIdFromUrl = parseOptionalInt(examIdParam);
 
   const [exams, setExams] = useState<Exam[]>([]);
@@ -122,8 +134,15 @@ export default function DocumentsPage() {
       initial.id_extraction_error_code = errorParam;
       initial.id_extraction_status = initial.id_extraction_status || "error";
     }
+    if (testTypeParam === "1" || testTypeParam === "2") {
+      initial.test_type = testTypeParam;
+    }
+    if (testTypeChangedParam === "1" || testTypeChangedParam === "true") {
+      initial.test_type_changed = true;
+    }
     return initial;
   });
+  const [reclassifyDialogOpen, setReclassifyDialogOpen] = useState(false);
   const lastUrlQueryRef = useRef<string | null>(null);
   /** Allow writing exam_id into the URL only after an explicit exam pick (not soft-nav). */
   const allowExamUrlWriteRef = useRef(false);
@@ -404,6 +423,12 @@ export default function DocumentsPage() {
     if (filters.id_extraction_error_code) {
       params.set("error", filters.id_extraction_error_code);
     }
+    if (filters.test_type) {
+      params.set("test_type", filters.test_type);
+    }
+    if (filters.test_type_changed) {
+      params.set("test_type_changed", "1");
+    }
     const next = params.toString();
     if (lastUrlQueryRef.current === next) return;
     lastUrlQueryRef.current = next;
@@ -412,6 +437,8 @@ export default function DocumentsPage() {
     filters.exam_id,
     filters.id_extraction_status,
     filters.id_extraction_error_code,
+    filters.test_type,
+    filters.test_type_changed,
     filterParam,
     examIdFromUrl,
     router,
@@ -1183,6 +1210,51 @@ export default function DocumentsPage() {
                     onFiltersChange={handleFiltersChange}
                     hideExam
                   />
+                  <Select
+                    value={filters.test_type ?? "all"}
+                    onValueChange={(value) => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (value === "all") {
+                          delete next.test_type;
+                        } else {
+                          next.test_type = value;
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    <SelectTrigger size="sm" className="h-8 w-[140px]">
+                      <SelectValue placeholder="Paper" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All papers</SelectItem>
+                      <SelectItem value="1">Objectives</SelectItem>
+                      <SelectItem value="2">Essay</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant={filters.test_type_changed ? "secondary" : "outline"}
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={() => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (prev.test_type_changed) {
+                          delete next.test_type_changed;
+                        } else {
+                          next.test_type_changed = true;
+                        }
+                        return next;
+                      });
+                    }}
+                    title="Show only sheets whose paper was changed via Advanced Edit"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Changed
+                  </Button>
                   <IdExtractionStatusPills
                     counts={statusCounts}
                     selected={filters.id_extraction_status}
@@ -1375,6 +1447,15 @@ export default function DocumentsPage() {
                     Retry ID extract ({selectedIds.size})
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setReclassifyDialogOpen(true)}
+                    className="gap-2"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Advanced Edit ({selectedIds.size})
+                  </Button>
+                  <Button
                     variant="destructive"
                     size="sm"
                     onClick={handleBulkDelete}
@@ -1433,28 +1514,52 @@ export default function DocumentsPage() {
               hasMore={hasMore}
               hideEmptyState={!loading && total === 0}
               emptyTitle={
-                searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
-                  ? "No matching documents"
-                  : "No documents yet"
+                filters.test_type_changed
+                  ? "No sheets with a paper change"
+                  : searchQuery.trim() ||
+                      filters.school_id ||
+                      filters.subject_id ||
+                      filters.id_extraction_status ||
+                      filters.test_type
+                    ? "No matching documents"
+                    : "No documents yet"
               }
               emptyDescription={
-                searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
-                  ? "Try clearing search or filters."
-                  : "Upload scanned ICMs to get started."
+                filters.test_type_changed
+                  ? "No sheets in this exam have been reclassified via Advanced Edit."
+                  : searchQuery.trim() ||
+                      filters.school_id ||
+                      filters.subject_id ||
+                      filters.id_extraction_status ||
+                      filters.test_type
+                    ? "Try clearing search or filters."
+                    : "Upload scanned ICMs to get started."
               }
             />
 
             {!loading && total === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <p className="text-lg font-medium mb-2">
-                  {searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
-                    ? "No matching documents"
-                    : "No documents yet"}
+                  {filters.test_type_changed
+                    ? "No sheets with a paper change"
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "No matching documents"
+                      : "No documents yet"}
                 </p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  {searchQuery.trim() || filters.school_id || filters.subject_id || filters.id_extraction_status
-                    ? "Try clearing search or filters to see more results."
-                    : "Upload scanned ICMs to populate this exam."}
+                  {filters.test_type_changed
+                    ? "No sheets in this exam have been reclassified via Advanced Edit."
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "Try clearing search or filters to see more results."
+                      : "Upload scanned ICMs to populate this exam."}
                 </p>
                 {(searchQuery.trim() || filters.id_extraction_status || filters.id_extraction_error_code) && (
                   <Button
@@ -1522,6 +1627,15 @@ export default function DocumentsPage() {
                     Retry ID extract ({selectedIds.size})
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setReclassifyDialogOpen(true)}
+                    className="h-9 gap-2"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Advanced Edit ({selectedIds.size})
+                  </Button>
+                  <Button
                     variant="destructive"
                     size="sm"
                     onClick={handleBulkDelete}
@@ -1572,6 +1686,18 @@ export default function DocumentsPage() {
                   ? `Delete existing sheet #${documentToDelete?.id ?? ""} and retry this upload.`
                   : undefined
             }
+          />
+
+          <BulkReclassifyPaperDialog
+            documents={documents.filter((d) => selectedIds.has(d.id))}
+            open={reclassifyDialogOpen}
+            onOpenChange={setReclassifyDialogOpen}
+            onSuccess={async () => {
+              setSelectedIds(new Set());
+              setBulkMode(false);
+              await loadDocuments(false);
+              void loadStatusCounts();
+            }}
           />
 
           {/* Backfill Dialog */}

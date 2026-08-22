@@ -1,13 +1,17 @@
 "use client";
 
-import { File, Image, FileText, Download, Trash2, AlertCircle } from "lucide-react";
+import { File, Image, FileText, Download, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize, formatDate } from "@/lib/utils";
-import { getIdExtractionErrorBadgeLabel, parseDuplicateConflictDocumentId } from "@/lib/id-extraction-errors";
+import { parseDuplicateConflictDocumentId } from "@/lib/id-extraction-errors";
+import {
+  DocumentPaperIdentity,
+  DocumentPriorityStatus,
+  documentPaperLabel,
+} from "@/components/DocumentStatusMeta";
 
 interface FileListItemProps {
   document: Document;
@@ -58,6 +62,9 @@ export function FileListItem({
         parseDuplicateConflictDocumentId(document.id_extraction_error)
       : null;
   const selectionOn = enableSelection ?? bulkMode;
+  const hasPaperMeta =
+    Boolean(documentPaperLabel(document.test_type)) ||
+    Boolean(document.test_type_changed_at);
 
   const isLarge = size === "large-list";
   const paddingClass = isLarge ? "py-4" : "py-3";
@@ -118,16 +125,20 @@ export function FileListItem({
 
       {/* File Info */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           <p className={cn("truncate font-medium", textSize)}>
             {document.extracted_id || document.file_name}
           </p>
-          {isFailed && (
-            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 shrink-0">
-              <AlertCircle className={cn("mr-1", isLarge ? "h-3 w-3" : "h-2.5 w-2.5")} />
-              {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
-            </Badge>
+          {hasPaperMeta && (
+            <>
+              <span className={cn("text-muted-foreground shrink-0", metadataSize)}>·</span>
+              <DocumentPaperIdentity
+                document={document}
+                textClassName={metadataSize}
+              />
+            </>
           )}
+          <DocumentPriorityStatus document={document} compact />
         </div>
         <p className={cn("text-muted-foreground", metadataSize)}>
           {formatFileSize(document.file_size)} • {formatDate(document.uploaded_at)}

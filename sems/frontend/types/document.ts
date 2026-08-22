@@ -33,6 +33,8 @@ export interface Document {
   scores_applied_at: string | null; // When extracted scores were applied to SubjectScore
   scores_applied_count: number | null;
   scores_unmatched_count: number | null;
+  test_type_changed_at?: string | null; // When paper/test_type was reclassified via Advanced Edit
+  test_type_changed_from?: string | null; // Previous paper digit before last reclassify
   extractions?: DocumentScoreExtraction[];
 }
 
@@ -204,6 +206,9 @@ export interface DocumentFilters {
   subject_id?: number;
   id_extraction_status?: string;
   id_extraction_error_code?: string;
+  test_type?: string;
+  /** When true, only documents whose paper was reclassified */
+  test_type_changed?: boolean;
   q?: string;
   page?: number;
   page_size?: number;
