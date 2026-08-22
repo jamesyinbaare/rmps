@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -19,6 +19,7 @@ import { Badge } from "./ui/badge";
 import type { Document, School, Subject } from "@/types/document";
 import { formatDate } from "@/lib/utils";
 import { getDocumentDownloadUrl } from "@/lib/api";
+import { DocumentIdBreakdown } from "@/components/DocumentIdBreakdown";
 import { validateDocumentId } from "@/lib/document-id";
 import { cn } from "@/lib/utils";
 
@@ -91,6 +92,7 @@ function DuplicateComparePane({
   const [saving, setSaving] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
+  const manualIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setManualId(doc.extracted_id || "");
@@ -202,23 +204,45 @@ function DuplicateComparePane({
       <div className="shrink-0 border-t border-border bg-background px-4 py-3">
         {editing ? (
           <div className="space-y-2">
-            <Input
-              type="text"
-              inputMode="numeric"
-              value={manualId}
-              onChange={(e) => handleIdChange(e.target.value)}
-              placeholder="Enter 13-digit document ID"
-              maxLength={13}
-              className="font-mono"
-              aria-invalid={!!idError}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void handleSave();
-                }
+            <div className="relative">
+              <Input
+                ref={manualIdInputRef}
+                type="text"
+                inputMode="numeric"
+                value={manualId}
+                onChange={(e) => handleIdChange(e.target.value)}
+                placeholder="Enter 13-digit document ID"
+                maxLength={13}
+                className="font-mono tracking-widest pr-14"
+                aria-invalid={!!idError}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleSave();
+                  }
+                }}
+              />
+              <span
+                className="pointer-events-none absolute inset-y-0 right-3 flex items-center font-mono text-xs tabular-nums text-muted-foreground"
+                aria-hidden
+              >
+                {manualId.length}/13
+              </span>
+            </div>
+            {idError && <p className="text-xs text-destructive">{idError}</p>}
+            <DocumentIdBreakdown
+              id={manualId}
+              schools={schools}
+              subjects={subjects}
+              onSegmentClick={(start, end) => {
+                const input = manualIdInputRef.current;
+                if (!input) return;
+                input.focus();
+                const safeEnd = Math.min(end, manualId.length);
+                const safeStart = Math.min(start, safeEnd);
+                input.setSelectionRange(safeStart, safeEnd || safeStart);
               }}
             />
-            {idError && <p className="text-xs text-destructive">{idError}</p>}
             <div className="flex gap-2">
               <Button
                 size="sm"
