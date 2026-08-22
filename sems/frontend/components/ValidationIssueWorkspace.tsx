@@ -11,9 +11,11 @@ import {
   FileText,
   Loader2,
   Minus,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Rows2,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -23,10 +25,16 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   API_BASE_URL,
@@ -57,14 +65,14 @@ const PREFETCH_DETAIL_CONCURRENCY = 2;
 const PREFETCH_BLOB_CONCURRENCY = 2;
 
 function readStoredLayout(): WorkspaceLayout {
-  if (typeof window === "undefined") return "horizontal";
+  if (typeof window === "undefined") return "vertical";
   try {
     const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
     if (stored === "vertical" || stored === "horizontal") return stored;
   } catch {
     /* ignore */
   }
-  return "horizontal";
+  return "vertical";
 }
 
 function getIssueTypeBadge(issueType: ValidationIssueType) {
@@ -100,7 +108,7 @@ function getFieldNameLabel(fieldName: string) {
 }
 
 function getTaskLine(fieldName: string) {
-  return `Enter ${getFieldNameLabel(fieldName)} from the sheet`;
+  return getFieldNameLabel(fieldName);
 }
 
 function documentUrl(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id">) {
@@ -108,7 +116,9 @@ function documentUrl(detail: Pick<ValidationIssueDetailResponse, "document_id" |
 }
 
 /** Stable identity for the score sheet — shared across issues on the same document. */
-function documentKey(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null): string | null {
+function documentKey(
+  detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null
+): string | null {
   if (!detail?.document_id || detail.exam_id == null) return null;
   return `${detail.document_id}:${detail.exam_id}`;
 }
@@ -153,7 +163,8 @@ export function ValidationIssueWorkspace({
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const [layout, setLayout] = useState<WorkspaceLayout>("horizontal");
+  const [layout, setLayout] = useState<WorkspaceLayout>("vertical");
+  const [sheetOpaque, setSheetOpaque] = useState(true);
   /** Bumps when prefetch cache gains/loses blob URLs so the viewer can switch src. */
   const [prefetchEpoch, setPrefetchEpoch] = useState(0);
   const correctedScoreInputRef = useRef<HTMLInputElement>(null);
@@ -258,7 +269,6 @@ export function ValidationIssueWorkspace({
         currentIndex + 1 + PREFETCH_ISSUE_SCAN_LIMIT
       );
 
-      // Resolve details for upcoming issues (bounded concurrency)
       await mapPool(upcoming, PREFETCH_DETAIL_CONCURRENCY, async (issue) => {
         if (cancelled) return;
         if (detailCacheRef.current.has(issue.id)) return;
@@ -291,7 +301,6 @@ export function ValidationIssueWorkspace({
         uniqueKeys.push(key);
       }
 
-      // Window = current + next unique docs (uniqueKeys already ordered that way)
       prefetchCache.retain(uniqueKeys);
 
       const toFetch = uniqueKeys.filter((key) => !prefetchCache.get(key));
@@ -338,6 +347,10 @@ export function ValidationIssueWorkspace({
     },
     [currentIndex, issues.length, onCurrentIndexChange]
   );
+
+  const canSkipNext =
+    currentIndex !== null && currentIndex < issues.length - 1 && !loadingIssueDetail;
+  const canGoPrev = currentIndex !== null && currentIndex > 0 && !loadingIssueDetail;
 
   const finishHandle = useCallback(
     (issueId: number, action: "resolved" | "ignored") => {
@@ -407,6 +420,11 @@ export function ValidationIssueWorkspace({
     }
   }, [allowIgnore, issueDetail, finishHandle]);
 
+  const handleSkip = useCallback(() => {
+    if (!canSkipNext || resolvingIssue || ignoringIssue) return;
+    handleNavigateIssue("next");
+  }, [canSkipNext, resolvingIssue, ignoringIssue, handleNavigateIssue]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -420,12 +438,14 @@ export function ValidationIssueWorkspace({
         return;
       }
 
-      if (
-        (e.key === "Enter" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) &&
-        !e.shiftKey &&
-        issueDetail?.status === "pending"
-      ) {
-        if (isInputFocused || e.target === document.body || e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+Enter → Skip (leave unresolved); Enter alone → Resolve
+      if (e.key === "Enter" && !e.shiftKey && issueDetail?.status === "pending") {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          handleSkip();
+          return;
+        }
+        if (isInputFocused || e.target === document.body) {
           e.preventDefault();
           if (!resolvingIssue && !ignoringIssue) {
             void handleResolveIssue();
@@ -476,6 +496,7 @@ export function ValidationIssueWorkspace({
     handleResolveIssue,
     handleIgnoreIssue,
     handleNavigateIssue,
+    handleSkip,
   ]);
 
   const hasPdf =
@@ -496,14 +517,22 @@ export function ValidationIssueWorkspace({
   const hasDocument = hasImage || hasPdf;
 
   const currentDocKey = documentKey(issueDetail);
-  // Read cache after prefetchEpoch changes so React re-renders with the new blob URL
   const prefetchedSheet =
     prefetchEpoch > -1 && currentDocKey ? prefetchCache.get(currentDocKey) : undefined;
   const sheetSrc =
     prefetchedSheet?.blobUrl ??
     (issueDetail && isPrefetchableDocument(issueDetail) ? documentUrl(issueDetail) : "");
 
-  // Always release blobs if the workspace unmounts
+  useEffect(() => {
+    if (!currentDocKey) {
+      setSheetOpaque(true);
+      return;
+    }
+    setSheetOpaque(false);
+    const id = window.setTimeout(() => setSheetOpaque(true), 20);
+    return () => window.clearTimeout(id);
+  }, [currentDocKey]);
+
   useEffect(() => {
     return () => {
       prefetchCache.clear();
@@ -519,8 +548,458 @@ export function ValidationIssueWorkspace({
     }
   };
 
-  const issuePosition =
-    currentIndex !== null ? `Issue ${currentIndex + 1} of ${issues.length}` : "";
+  const sideBySide = layout === "horizontal" && hasDocument;
+  const queueLabel =
+    currentIndex !== null && issues.length > 0
+      ? `${currentIndex + 1}/${issues.length}`
+      : "";
+
+  const metaLine = issueDetail
+    ? [
+        issueDetail.subject_code && issueDetail.subject_name
+          ? `${issueDetail.subject_code} · ${issueDetail.subject_name}`
+          : issueDetail.subject_name,
+        issueDetail.school_name,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
+  const floatingActions = (
+    <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/80 p-0.5 shadow-sm backdrop-blur-md">
+      {issues.length > 1 && (
+        <>
+          <span className="hidden px-1.5 text-[11px] tabular-nums text-muted-foreground sm:inline">
+            {queueLabel}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={() => handleNavigateIssue("prev")}
+            disabled={!canGoPrev}
+            aria-label="Previous issue"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={() => handleNavigateIssue("next")}
+            disabled={!canSkipNext}
+            aria-label="Next issue"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+          <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
+        </>
+      )}
+      {hasDocument && (
+        <div
+          className="inline-flex rounded-md p-0.5"
+          role="group"
+          aria-label="Workspace layout"
+        >
+          <Button
+            type="button"
+            variant={layout === "horizontal" ? "secondary" : "ghost"}
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={() => setLayoutPreference("horizontal")}
+            aria-pressed={layout === "horizontal"}
+            aria-label="Side by side"
+            title="Side by side — sheet left, entry right"
+          >
+            <Columns2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant={layout === "vertical" ? "secondary" : "ghost"}
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={() => setLayoutPreference("vertical")}
+            aria-pressed={layout === "vertical"}
+            aria-label="Stacked"
+            title="Stacked — sheet above, entry below"
+          >
+            <Rows2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+      {hasImage && (
+        <>
+          <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-[11px] tabular-nums text-muted-foreground"
+                aria-label={`Zoom ${Math.round(zoom * 100)} percent`}
+              >
+                {Math.round(zoom * 100)}%
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto p-1.5" sideOffset={6}>
+              <div className="flex items-center gap-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7"
+                  onClick={() =>
+                    setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))
+                  }
+                  aria-label="Zoom out"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+                <span className="w-10 text-center text-[11px] tabular-nums text-muted-foreground">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7"
+                  onClick={() =>
+                    setZoom((z) => Math.min(4, Math.round((z + 0.25) * 100) / 100))
+                  }
+                  aria-label="Zoom in"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7"
+                  onClick={() => {
+                    setZoom(1);
+                    if (viewerRef.current) {
+                      viewerRef.current.scrollTop = 0;
+                      viewerRef.current.scrollLeft = 0;
+                    }
+                  }}
+                  aria-label="Fit"
+                  title="Fit"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </>
+      )}
+      {allowIgnore && issueDetail?.status === "pending" && (
+        <>
+          <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7"
+                aria-label="More actions"
+                disabled={resolvingIssue || ignoringIssue}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => void handleIgnoreIssue()}
+                disabled={resolvingIssue || ignoringIssue}
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Ignore issue
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )}
+      <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="h-7 w-7"
+        onClick={handleClose}
+        disabled={resolvingIssue || ignoringIssue}
+        aria-label="Close"
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+
+  const skipTitle = "Skip leaves unresolved · Ctrl+Enter";
+
+  const scoreEntryPending =
+    issueDetail?.status === "pending" ? (
+      <>
+        <div
+          className={`inline-flex shrink-0 flex-col gap-0.5 ${
+            sideBySide ? "w-full" : "items-center"
+          }`}
+        >
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Current
+          </span>
+          <span
+            className={`inline-flex items-center justify-center rounded-md bg-muted/70 px-2.5 font-mono tabular-nums text-muted-foreground ${
+              sideBySide ? "h-9 text-base" : "h-8 min-w-12 text-sm"
+            }`}
+          >
+            {issueDetail.current_score_value ?? <span className="italic">—</span>}
+          </span>
+        </div>
+        <div className={sideBySide ? "w-full" : "min-w-0 flex-1 sm:max-w-xs"}>
+          <label
+            htmlFor="corrected-score"
+            className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            Corrected
+            {issueDetail.max_score != null && issueDetail.max_score > 0
+              ? ` (max ${issueDetail.max_score})`
+              : ""}
+          </label>
+          <Input
+            ref={correctedScoreInputRef}
+            id="corrected-score"
+            value={correctedScore}
+            onChange={(e) => setCorrectedScore(e.target.value)}
+            placeholder={
+              issueDetail.max_score != null && issueDetail.max_score > 0
+                ? `0–${issueDetail.max_score} or A`
+                : "e.g. 85"
+            }
+            className={`mt-0.5 font-mono focus-visible:ring-2 focus-visible:ring-ring ${
+              sideBySide ? "h-11 text-lg" : "h-10 text-base"
+            }`}
+            autoComplete="off"
+          />
+        </div>
+        <Button
+          onClick={() => void handleResolveIssue()}
+          disabled={resolvingIssue || ignoringIssue}
+          className={`shrink-0 gap-1.5 transition-colors ${
+            sideBySide ? "h-11 w-full" : "h-10"
+          }`}
+          size="sm"
+        >
+          {resolvingIssue ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          )}
+          Resolve
+        </Button>
+        {issues.length > 1 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={`shrink-0 gap-1 transition-colors ${
+              sideBySide ? "h-10 w-full" : "h-10"
+            }`}
+            onClick={handleSkip}
+            disabled={!canSkipNext || resolvingIssue || ignoringIssue}
+            title={skipTitle}
+            aria-label={skipTitle}
+          >
+            Skip
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </>
+    ) : issueDetail ? (
+      <div className="flex flex-wrap items-center gap-3 py-1">
+        <div className="flex items-center gap-2 text-sm">
+          {issueDetail.status === "resolved" ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          ) : (
+            <XCircle className="h-4 w-4 text-muted-foreground" />
+          )}
+          <span className="font-medium capitalize">{issueDetail.status}</span>
+        </div>
+        <p className="font-mono text-base tabular-nums">
+          {issueDetail.current_score_value ?? "—"}
+        </p>
+        {issues.length > 1 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 shrink-0 gap-1 transition-colors"
+            onClick={handleSkip}
+            disabled={!canSkipNext}
+            title={skipTitle}
+            aria-label={skipTitle}
+          >
+            Skip
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    ) : null;
+
+  const documentStage = issueDetail ? (
+    <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
+      <div className="absolute right-2 top-2 z-20">{floatingActions}</div>
+
+      {hasDocument ? (
+        <div
+          ref={viewerRef}
+          className={`relative h-full min-h-0 overscroll-contain transition-opacity duration-150 ease-out ${
+            zoom > 1 ? "overflow-auto" : "overflow-hidden"
+          } ${sheetOpaque ? "opacity-100" : "opacity-0"}`}
+          onWheel={handleWheel}
+        >
+          {hasImage ? (
+            <>
+              {imageError ? (
+                <div className="flex h-full min-h-48 items-center justify-center text-zinc-400">
+                  <p>Unable to load document image</p>
+                </div>
+              ) : (
+                <>
+                  {imageLoading && (
+                    <Skeleton className="absolute inset-0 z-10 rounded-none bg-zinc-800" />
+                  )}
+                  {zoom <= 1 ? (
+                    <div className="absolute inset-0 flex items-center justify-center p-2">
+                      <img
+                        key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                        src={sheetSrc}
+                        alt={issueDetail.document_file_name || "Score sheet"}
+                        className="max-h-full max-w-full select-none object-contain"
+                        style={{
+                          transform: zoom < 1 ? `scale(${zoom})` : undefined,
+                          transformOrigin: "center center",
+                          opacity: imageLoading ? 0 : 1,
+                          transition: "opacity 0.2s ease-in-out",
+                        }}
+                        draggable={false}
+                        onLoad={() => setImageLoading(false)}
+                        onError={() => {
+                          setImageLoading(false);
+                          setImageError(true);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="flex items-center justify-center p-2"
+                      style={{
+                        width: `${zoom * 100}%`,
+                        height: `${zoom * 100}%`,
+                        minWidth: "100%",
+                        minHeight: "100%",
+                      }}
+                    >
+                      <img
+                        key={`doc-zoom-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+                        src={sheetSrc}
+                        alt={issueDetail.document_file_name || "Score sheet"}
+                        className="max-h-full max-w-full select-none object-contain"
+                        style={{
+                          opacity: imageLoading ? 0 : 1,
+                          transition: "opacity 0.2s ease-in-out",
+                        }}
+                        draggable={false}
+                        onLoad={() => setImageLoading(false)}
+                        onError={() => {
+                          setImageLoading(false);
+                          setImageError(true);
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <iframe
+              key={`pdf-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
+              src={sheetSrc}
+              title={issueDetail.document_file_name || "Score sheet PDF"}
+              className="absolute inset-0 h-full w-full border-0 bg-white"
+            />
+          )}
+        </div>
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-zinc-400">
+          <FileText className="h-12 w-12" />
+          <p className="text-sm font-medium text-zinc-300">No score sheet</p>
+          <p className="max-w-xs text-xs text-zinc-500">
+            Enter the corrected score from your paper source
+            {issueDetail.max_score != null && issueDetail.max_score > 0
+              ? ` (0–${issueDetail.max_score})`
+              : ""}
+            .
+          </p>
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  const bottomDock = issueDetail ? (
+    <div className="z-20 shrink-0 border-t border-border bg-background/95 px-3 py-2.5 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+      <div className="mx-auto flex w-full max-w-3xl flex-col items-center gap-2">
+        <div className="flex w-full flex-col items-center gap-1 text-center">
+          <p className="min-w-0 max-w-full truncate text-sm">
+            <span className="font-medium text-foreground">
+              {issueDetail.candidate_name || "Unknown candidate"}
+            </span>
+            <span className="ml-2 font-mono text-xs tabular-nums text-muted-foreground">
+              {issueDetail.candidate_index_number || "No index"}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            {getIssueTypeBadge(issueDetail.issue_type)}
+            <span className="text-xs text-muted-foreground">
+              {getTaskLine(issueDetail.field_name)}
+            </span>
+          </div>
+          {metaLine ? (
+            <p className="max-w-full truncate text-[11px] text-muted-foreground/80">
+              {metaLine}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex w-full flex-wrap items-end justify-center gap-2">
+          {scoreEntryPending}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const sideRail = issueDetail ? (
+    <div className="flex w-[300px] max-w-[36vw] shrink-0 flex-col border-l border-border bg-background">
+      <div className="flex min-h-0 flex-1 flex-col justify-center gap-5 overflow-y-auto px-5 py-5">
+        <div className="min-w-0 space-y-2">
+          <p className="truncate text-base font-medium leading-snug tracking-tight">
+            {issueDetail.candidate_name || "Unknown candidate"}
+            <span className="ml-2 font-mono text-xs font-normal tabular-nums text-muted-foreground">
+              {issueDetail.candidate_index_number || "No index"}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {getIssueTypeBadge(issueDetail.issue_type)}
+            <span className="text-xs text-muted-foreground">
+              {getTaskLine(issueDetail.field_name)}
+            </span>
+          </div>
+          {metaLine ? (
+            <p className="text-[11px] leading-snug text-muted-foreground/80">{metaLine}</p>
+          ) : null}
+        </div>
+        <div className="flex flex-col items-stretch gap-3">{scoreEntryPending}</div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <Dialog
@@ -531,632 +1010,41 @@ export function ValidationIssueWorkspace({
       }}
     >
       <DialogContent
-        showCloseButton
+        showCloseButton={false}
         className="!fixed !inset-2 !top-2 !left-2 !right-2 !bottom-2 !translate-x-0 !translate-y-0 !w-auto !max-w-none !h-auto !max-h-none overflow-hidden flex flex-col p-0 gap-0 rounded-xl sm:!max-w-none"
       >
-        <DialogHeader className="px-4 py-2 border-b shrink-0 space-y-0">
-          {issueDetail ? (
-            <div className="flex items-center justify-between gap-4 pr-8">
-              <div className="min-w-0 flex items-baseline gap-3">
-                <DialogTitle className="text-xl font-bold tabular-nums tracking-tight">
-                  {issueDetail.candidate_index_number || "No index"}
-                </DialogTitle>
-                <DialogDescription className="sr-only">
-                  Resolve validation issue for{" "}
-                  {issueDetail.candidate_name || "unknown candidate"}
-                </DialogDescription>
-              </div>
-              <div className="flex items-center gap-2 shrink-0 pt-1">
-                {hasDocument ? (
-                  <div
-                    className="inline-flex rounded-md border bg-background p-0.5"
-                    role="group"
-                    aria-label="Workspace layout"
-                  >
-                    <Button
-                      type="button"
-                      variant={layout === "horizontal" ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-8 gap-1.5 px-2.5 text-xs"
-                      onClick={() => setLayoutPreference("horizontal")}
-                      aria-pressed={layout === "horizontal"}
-                      title="Side by side — sheet left, entry right"
-                    >
-                      <Columns2 className="h-3.5 w-3.5" />
-                      Side by side
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={layout === "vertical" ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-8 gap-1.5 px-2.5 text-xs"
-                      onClick={() => setLayoutPreference("vertical")}
-                      aria-pressed={layout === "vertical"}
-                      title="Stacked — sheet above, entry below"
-                    >
-                      <Rows2 className="h-3.5 w-3.5" />
-                      Stacked
-                    </Button>
-                  </div>
-                ) : null}
-                {getIssueTypeBadge(issueDetail.issue_type)}
-                {issues.length > 0 ? (
-                  <span className="text-xs text-muted-foreground tabular-nums">{issuePosition}</span>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <>
-              <DialogTitle>Issue Details</DialogTitle>
-              <DialogDescription>Review and resolve validation issues</DialogDescription>
-            </>
-          )}
-        </DialogHeader>
+        <DialogTitle className="sr-only">
+          {issueDetail
+            ? `Resolve validation issue for ${issueDetail.candidate_name || "unknown candidate"}`
+            : "Issue details"}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Review the score sheet and enter a corrected score, or skip to the next issue.
+        </DialogDescription>
 
         {loadingIssueDetail && !issueDetail ? (
           <div className="flex flex-1 items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : issueDetail ? (
-          (() => {
-            const metaLine = [
-              issueDetail.subject_code && issueDetail.subject_name
-                ? `${issueDetail.subject_code} · ${issueDetail.subject_name}`
-                : issueDetail.subject_name,
-              issueDetail.school_name,
-            ]
-              .filter(Boolean)
-              .join(" · ");
-
-            const sideBySide = layout === "horizontal" && hasDocument;
-            const stacked = layout === "vertical" && hasDocument;
-
-            const entryControls = issueDetail.status === "pending" ? (
-              <div
-                className={`flex min-w-0 gap-3 ${
-                  sideBySide
-                    ? "flex-col items-stretch"
-                    : stacked
-                      ? "flex-wrap items-end justify-center"
-                      : "flex-wrap items-end"
-                }`}
-              >
-                <div className="shrink-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Current
-                  </p>
-                  <p
-                    className={`mt-0.5 font-mono text-muted-foreground tabular-nums min-w-12 ${
-                      stacked ? "text-lg" : "text-base"
-                    }`}
-                  >
-                    {issueDetail.current_score_value ?? (
-                      <span className="italic">—</span>
-                    )}
-                  </p>
-                </div>
-                <div
-                  className={
-                    sideBySide
-                      ? "w-full"
-                      : stacked
-                        ? "w-[220px]"
-                        : "flex-1 min-w-[120px] max-w-xs"
-                  }
-                >
-                  <label
-                    htmlFor="corrected-score"
-                    className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                  >
-                    Corrected
-                    {issueDetail.max_score != null && issueDetail.max_score > 0
-                      ? ` (max ${issueDetail.max_score})`
-                      : ""}
-                  </label>
-                  <Input
-                    ref={correctedScoreInputRef}
-                    id="corrected-score"
-                    value={correctedScore}
-                    onChange={(e) => setCorrectedScore(e.target.value)}
-                    placeholder={
-                      issueDetail.max_score != null && issueDetail.max_score > 0
-                        ? `0–${issueDetail.max_score} or A`
-                        : "e.g. 85"
-                    }
-                    className={`mt-0.5 font-mono ${
-                      sideBySide || stacked ? "h-12 text-lg" : "h-10 text-base"
-                    }`}
-                    autoComplete="off"
-                  />
-                </div>
-                <Button
-                  onClick={() => void handleResolveIssue()}
-                  disabled={resolvingIssue || ignoringIssue}
-                  className={`gap-2 shrink-0 ${
-                    sideBySide ? "w-full h-11" : stacked ? "h-12 px-6" : "h-10"
-                  }`}
-                >
-                  {resolvingIssue ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Resolving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Resolve
-                    </>
-                  )}
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 text-sm">
-                  {issueDetail.status === "resolved" ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <span className="capitalize font-medium">{issueDetail.status}</span>
-                </div>
-                <p className="font-mono text-base tabular-nums">
-                  {issueDetail.current_score_value ?? "—"}
-                </p>
-              </div>
-            );
-
-            const navControls = (
-              <div className={`flex items-center gap-1.5 shrink-0 ${sideBySide ? "w-full justify-between" : stacked ? "justify-center" : ""}`}>
-                {issues.length > 1 ? (
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleNavigateIssue("prev")}
-                      disabled={currentIndex === 0 || loadingIssueDetail}
-                      className="h-8 w-8 p-0"
-                      aria-label="Previous issue"
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="text-xs text-muted-foreground tabular-nums px-1">
-                      {currentIndex !== null ? currentIndex + 1 : 0}/{issues.length}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleNavigateIssue("next")}
-                      disabled={
-                        currentIndex === null ||
-                        currentIndex === issues.length - 1 ||
-                        loadingIssueDetail
-                      }
-                      className="h-8 w-8 p-0"
-                      aria-label="Next issue"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <span />
-                )}
-                <div className="flex items-center gap-1">
-                  {allowIgnore && issueDetail.status === "pending" ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleIgnoreIssue()}
-                      disabled={resolvingIssue || ignoringIssue}
-                      className="h-8 gap-1 text-muted-foreground"
-                    >
-                      {ignoringIssue ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <XCircle className="h-3.5 w-3.5" />
-                      )}
-                      Ignore
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClose}
-                    disabled={resolvingIssue || ignoringIssue}
-                    className="h-8"
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            );
-
-            const entryDock = (
-              <div className="shrink-0 border-t bg-background">
-                {/* Candidate + task context */}
-                <div className="flex items-center justify-between gap-3 px-4 pt-2">
-                  <div className="min-w-0 flex-1 text-center sm:text-left">
-                    <p className="text-base font-bold text-foreground truncate tracking-tight">
-                      {issueDetail.candidate_name || "Unknown candidate"}
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      <span className="tabular-nums font-semibold text-foreground">
-                        {issueDetail.candidate_index_number || "No index"}
-                      </span>
-                      {" · "}
-                      {getTaskLine(issueDetail.field_name)}
-                      {metaLine ? ` · ${metaLine}` : ""}
-                    </p>
-                  </div>
-                  {issues.length > 1 ? (
-                    <p className="text-xs text-muted-foreground tabular-nums shrink-0">
-                      {currentIndex !== null ? currentIndex + 1 : 0}/{issues.length}
-                    </p>
-                  ) : null}
-                </div>
-
-                {/* Primary + nav in one centered row */}
-                <div className="flex flex-wrap items-end justify-center gap-x-3 gap-y-2 px-4 py-2">
-                  {issueDetail.status === "pending" ? (
-                    <>
-                      <div className="shrink-0">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Current
-                        </p>
-                        <p className="mt-0.5 font-mono text-base text-muted-foreground tabular-nums min-w-10">
-                          {issueDetail.current_score_value ?? (
-                            <span className="italic">—</span>
-                          )}
-                        </p>
-                      </div>
-                      <div className="w-44">
-                        <label
-                          htmlFor="corrected-score"
-                          className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                        >
-                          Corrected
-                          {issueDetail.max_score != null && issueDetail.max_score > 0
-                            ? ` (max ${issueDetail.max_score})`
-                            : ""}
-                        </label>
-                        <Input
-                          ref={correctedScoreInputRef}
-                          id="corrected-score"
-                          value={correctedScore}
-                          onChange={(e) => setCorrectedScore(e.target.value)}
-                          placeholder={
-                            issueDetail.max_score != null && issueDetail.max_score > 0
-                              ? `0–${issueDetail.max_score} or A`
-                              : "e.g. 85"
-                          }
-                          className="mt-0.5 h-10 text-base font-mono text-center"
-                          autoComplete="off"
-                        />
-                      </div>
-                      <Button
-                        onClick={() => void handleResolveIssue()}
-                        disabled={resolvingIssue || ignoringIssue}
-                        className="gap-2 h-10 px-4 shrink-0"
-                      >
-                        {resolvingIssue ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Resolving...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            Resolve
-                          </>
-                        )}
-                      </Button>
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-3 py-1">
-                      <div className="flex items-center gap-2 text-sm">
-                        {issueDetail.status === "resolved" ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground" />
-                        )}
-                        <span className="capitalize font-medium">{issueDetail.status}</span>
-                      </div>
-                      <p className="font-mono text-base tabular-nums">
-                        {issueDetail.current_score_value ?? "—"}
-                      </p>
-                    </div>
-                  )}
-
-                  {issues.length > 1 ? (
-                    <div className="flex items-center gap-1.5 pl-2 border-l ml-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleNavigateIssue("prev")}
-                        disabled={currentIndex === 0 || loadingIssueDetail}
-                        className="h-9 w-9 p-0"
-                        aria-label="Previous issue"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleNavigateIssue("next")}
-                        disabled={
-                          currentIndex === null ||
-                          currentIndex === issues.length - 1 ||
-                          loadingIssueDetail
-                        }
-                        className="h-9 w-9 p-0"
-                        aria-label="Next issue"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Tertiary actions */}
-                <div className="flex items-center justify-between px-4 pb-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void handleIgnoreIssue()}
-                    disabled={
-                      issueDetail.status !== "pending" || resolvingIssue || ignoringIssue
-                    }
-                    className={`h-7 gap-1 text-xs text-muted-foreground ${
-                      issueDetail.status !== "pending" ? "invisible" : ""
-                    }`}
-                  >
-                    {ignoringIssue ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3 w-3" />
-                    )}
-                    Ignore
-                  </Button>
-                  <p className="text-[10px] text-muted-foreground hidden sm:block">
-                    Enter · resolve
-                    {allowIgnore ? " · Ctrl+I" : ""} · ←/→ · Esc
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClose}
-                    disabled={resolvingIssue || ignoringIssue}
-                    className="h-7 text-xs text-muted-foreground"
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            );
-
-            const sideRail = (
-              <div className="w-[280px] max-w-[32vw] shrink-0 border-l bg-background flex flex-col min-h-0">
-                <div className="flex-1 flex flex-col justify-center gap-5 px-4 py-4 overflow-y-auto">
-                  <div className="min-w-0">
-                    <p className="text-lg font-bold leading-snug truncate tracking-tight">
-                      {issueDetail.candidate_name || "Unknown candidate"}
-                    </p>
-                    <p className="text-sm tabular-nums font-semibold text-foreground mt-0.5">
-                      {issueDetail.candidate_index_number || "No index"}
-                    </p>
-                    <p className="text-sm font-medium leading-snug mt-3 text-muted-foreground">
-                      {getTaskLine(issueDetail.field_name)}
-                    </p>
-                    {metaLine ? (
-                      <p className="text-xs text-muted-foreground mt-1 leading-snug">{metaLine}</p>
-                    ) : null}
-                  </div>
-                  {entryControls}
-                  <p className="text-[11px] text-muted-foreground">
-                    Enter · resolve
-                    {allowIgnore ? " · Ctrl+I ignore" : ""} · ←/→ · Esc
-                  </p>
-                </div>
-                <div className="border-t px-3 py-2.5 shrink-0">{navControls}</div>
-              </div>
-            );
-
-            const documentPane = hasDocument ? (
-              <div
-                className="min-w-0 min-h-0 flex flex-col flex-1 bg-neutral-100 dark:bg-neutral-900"
-              >
-                {hasImage ? (
-                  <div className="flex items-center gap-1 px-2 py-1 border-b bg-background shrink-0">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={() =>
-                        setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))
-                      }
-                      aria-label="Zoom out"
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="text-[11px] tabular-nums w-10 text-center text-muted-foreground">
-                      {Math.round(zoom * 100)}%
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={() =>
-                        setZoom((z) => Math.min(4, Math.round((z + 0.25) * 100) / 100))
-                      }
-                      aria-label="Zoom in"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 gap-1 text-[11px] px-2"
-                      onClick={() => {
-                        setZoom(1);
-                        if (viewerRef.current) {
-                          viewerRef.current.scrollTop = 0;
-                          viewerRef.current.scrollLeft = 0;
-                        }
-                      }}
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Fit
-                    </Button>
-                  </div>
-                ) : null}
-                <div
-                  ref={viewerRef}
-                  className={`relative flex-1 min-h-0 overscroll-contain ${
-                    zoom > 1 ? "overflow-auto" : "overflow-hidden"
-                  }`}
-                  onWheel={handleWheel}
-                >
-                  {hasImage ? (
-                    <>
-                      {imageError ? (
-                        <div className="flex items-center justify-center h-full min-h-48 text-muted-foreground">
-                          <p>Unable to load document image</p>
-                        </div>
-                      ) : (
-                        <>
-                          {imageLoading && (
-                            <Skeleton className="absolute inset-0 z-10 rounded-none" />
-                          )}
-                          {zoom <= 1 ? (
-                            <div className="absolute inset-0 flex items-center justify-center p-2">
-                              <img
-                                key={`doc-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
-                                src={sheetSrc}
-                                alt={issueDetail.document_file_name || "Score sheet"}
-                                className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
-                                style={{
-                                  transform: zoom < 1 ? `scale(${zoom})` : undefined,
-                                  transformOrigin: "center center",
-                                  opacity: imageLoading ? 0 : 1,
-                                  transition: "opacity 0.2s ease-in-out",
-                                }}
-                                draggable={false}
-                                onLoad={() => setImageLoading(false)}
-                                onError={() => {
-                                  setImageLoading(false);
-                                  setImageError(true);
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div
-                              className="flex items-center justify-center p-2"
-                              style={{
-                                width: `${zoom * 100}%`,
-                                height: `${zoom * 100}%`,
-                                minWidth: "100%",
-                                minHeight: "100%",
-                              }}
-                            >
-                              <img
-                                key={`doc-zoom-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
-                                src={sheetSrc}
-                                alt={issueDetail.document_file_name || "Score sheet"}
-                                className="max-w-full max-h-full w-auto h-auto object-contain select-none rounded-sm shadow-sm bg-white"
-                                style={{
-                                  opacity: imageLoading ? 0 : 1,
-                                  transition: "opacity 0.2s ease-in-out",
-                                }}
-                                draggable={false}
-                                onLoad={() => setImageLoading(false)}
-                                onError={() => {
-                                  setImageLoading(false);
-                                  setImageError(true);
-                                }}
-                              />
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <iframe
-                      key={`pdf-${issueDetail.document_id}-${issueDetail.exam_id}-${prefetchedSheet ? "b" : "n"}`}
-                      src={sheetSrc}
-                      title={issueDetail.document_file_name || "Score sheet PDF"}
-                      className="absolute inset-0 w-full h-full border-0 bg-white"
-                    />
-                  )}
-                </div>
-              </div>
-            ) : null;
-
-            if (!hasDocument) {
-              return (
-                <div className="flex flex-1 flex-col min-h-0">
-                  <div className="flex-1 overflow-y-auto px-6 py-6">
-                    <div className="mx-auto w-full max-w-lg space-y-5">
-                      <div className="rounded-md border border-dashed px-4 py-4 text-sm space-y-2">
-                        <div className="flex items-center gap-2 font-medium text-foreground">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          No score sheet attached
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Enter the corrected score from your paper source
-                          {issueDetail.max_score != null && issueDetail.max_score > 0
-                            ? ` (0–${issueDetail.max_score}, or A/AA/AAA)`
-                            : ""}
-                          .
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-lg font-bold truncate tracking-tight">
-                          {issueDetail.candidate_name || "Unknown candidate"}
-                        </p>
-                        <p className="text-sm tabular-nums font-semibold text-foreground mt-0.5">
-                          {issueDetail.candidate_index_number || "No index"}
-                        </p>
-                        <p className="text-sm font-medium mt-3 text-muted-foreground">{getTaskLine(issueDetail.field_name)}</p>
-                        {metaLine ? (
-                          <p className="text-xs text-muted-foreground mt-1">{metaLine}</p>
-                        ) : null}
-                      </div>
-                      {entryControls}
-                      <p className="text-xs text-muted-foreground">
-                        Enter · resolve
-                        {allowIgnore ? " · Ctrl+I ignore" : ""} · ←/→ navigate · Esc close
-                      </p>
-                    </div>
-                  </div>
-                  <div className="border-t px-4 py-2 flex justify-end">{navControls}</div>
-                </div>
-              );
-            }
-
-            // Side by side: sheet left + flush mid-height rail (short eye travel).
-            // Stacked: sheet above + entry dock below.
-            if (sideBySide) {
-              return (
-                <div className="flex flex-1 min-h-0 flex-row overflow-hidden">
-                  <div className="flex-1 min-w-0 min-h-0 flex flex-col">{documentPane}</div>
-                  {sideRail}
-                </div>
-              );
-            }
-
-            return (
-              <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-                <div className="flex-1 min-h-0 flex flex-col">{documentPane}</div>
-                <div className="shrink-0">{entryDock}</div>
-              </div>
-            );
-          })()
+          sideBySide ? (
+            <div className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+              {documentStage}
+              {sideRail}
+            </div>
+          ) : (
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {documentStage}
+              {bottomDock}
+            </div>
+          )
         ) : (
-          <div className="flex flex-1 items-center justify-center text-muted-foreground gap-2">
+          <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
             <AlertCircle className="h-4 w-4" />
             Failed to load issue details
+            <Button variant="ghost" size="sm" onClick={handleClose} className="ml-2">
+              Close
+            </Button>
           </div>
         )}
       </DialogContent>
