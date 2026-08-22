@@ -64,24 +64,6 @@ const getNavMain = (
         icon: ListTodo,
         items,
       },
-      {
-        title: "Results",
-        url: "/results",
-        icon: Award,
-        items: [{ title: "Browse Results", url: "/results" }],
-      },
-      {
-        title: "Certificates",
-        url: "/results/certificates",
-        icon: FileBadge,
-        items: [
-          { title: "Manage Certificates", url: "/results/certificates" },
-          { title: "Issuance Ledger", url: "/results/certificates/issuances" },
-          { title: "Batches", url: "/results/batches" },
-          { title: "Certificate Studio", url: "/results/certificate-studio" },
-          { title: "Issue Forms", url: "/results/certificate-issue-forms" },
-        ],
-      },
     ];
   }
 

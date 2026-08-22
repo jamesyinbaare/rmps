@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 from sqlalchemy import and_, exists, func, or_, select
 
 from app.background_tasks import start_certificate_batch_job
-from app.dependencies.auth import CurrentUserDep, OfficerDep, RegistrarDep
+from app.dependencies.auth import OfficerDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
@@ -233,7 +233,7 @@ def _completion_percentage(fully_graded: int, candidate_count: int) -> float:
 async def list_exam_schools(
     exam_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     search: str | None = Query(None, description="Filter by school name, code, or region"),
@@ -359,7 +359,7 @@ async def list_exam_schools(
 async def get_exam_results_summary(
     exam_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> ExamResultsSummary:
     """Exam-level results KPIs: schools, candidates, and grading completion."""
     _ = current_user
@@ -411,7 +411,7 @@ async def list_exam_school_programmes(
     exam_id: int,
     school_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> list[ExamProgrammeSummary]:
     """Programmes represented among candidates registered for this exam at this school."""
     _ = current_user
@@ -460,7 +460,7 @@ async def get_school_results_summary(
     exam_id: int,
     school_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> SchoolResultsSummary:
     """School-level results KPIs for one examination."""
     _ = current_user
@@ -527,7 +527,7 @@ async def list_school_results(
     exam_id: int,
     school_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     programme_id: int | None = Query(None),
     search: str | None = Query(None, description="Filter by candidate name or index number"),
     status: str | None = Query(
@@ -721,7 +721,7 @@ async def list_exam_school_issue_form_candidates(
     exam_id: int,
     school_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     include_unnumbered: bool = Query(
         False,
         description="Include registered candidates that do not yet have a certificate number",
@@ -753,7 +753,7 @@ async def list_exam_school_issue_form_candidates(
 async def get_exam_registration_result_detail(
     registration_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> ExamRegistrationResultDetail:
     """Subject-level raw scores, normalized scores, and grades for one registration."""
     _ = current_user
@@ -838,7 +838,7 @@ async def get_exam_registration_result_detail(
 
 @router.get("/field-catalog", response_model=CertificateFieldCatalogResponse)
 async def get_certificate_field_catalog(
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateFieldCatalogResponse:
     """List available layout fields (exam-sourced data and static/image fields)."""
     _ = current_user
@@ -846,7 +846,7 @@ async def get_certificate_field_catalog(
 
 
 @router.get("/templates/default-layout")
-async def get_default_layout(current_user: CurrentUserDep) -> dict[str, Any]:
+async def get_default_layout(current_user: OfficerDep) -> dict[str, Any]:
     _ = current_user
     return dict(DEFAULT_CERTIFICATE_LAYOUT)
 
@@ -854,7 +854,7 @@ async def get_default_layout(current_user: CurrentUserDep) -> dict[str, Any]:
 @router.get("/templates", response_model=CertificateTemplateListResponse)
 async def list_certificate_templates(
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     exam_id: int | None = Query(None, description="Filter templates for one examination"),
     active_only: bool = Query(True),
 ) -> CertificateTemplateListResponse:
@@ -901,7 +901,7 @@ async def create_certificate_template(
 async def get_certificate_template(
     template_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateTemplateResponse:
     _ = current_user
     template = await session.get(CertificateTemplate, template_id)
@@ -955,7 +955,7 @@ async def deactivate_certificate_template(
 async def preview_certificate(
     registration_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     template_id: int | None = Query(None),
     issuance_date: date | None = Query(
         None, description="Official completion/issuance date shown on the certificate"
@@ -1038,7 +1038,7 @@ async def generate_certificate(
 async def get_registration_issuance(
     registration_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateIssuanceResponse | None:
     _ = current_user
     issuance = await issuance_service.get_active_issuance(session, registration_id)
@@ -1064,7 +1064,7 @@ async def mark_certificate_printed(
 async def download_issuance_pdf(
     issuance_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> Response:
     _ = current_user
     issuance = await session.get(CertificateIssuance, issuance_id)
@@ -1116,7 +1116,7 @@ async def set_issuance_certificate_number(
 async def list_template_assets(
     template_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateTemplateAssetListResponse:
     _ = current_user
     template = await session.get(CertificateTemplate, template_id)
@@ -1171,7 +1171,7 @@ async def get_template_asset_file(
     template_id: int,
     asset_key: str,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> Response:
     _ = current_user
     stmt = select(CertificateTemplateAsset).where(
@@ -1268,7 +1268,7 @@ async def create_certificate_batch(
 @router.get("/batches", response_model=CertificateBatchJobListResponse)
 async def list_certificate_batches(
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     exam_id: int | None = Query(None),
     school_id: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -1288,7 +1288,7 @@ async def list_certificate_batches(
 async def get_certificate_batch(
     job_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateBatchJobResponse:
     _ = current_user
     job = await session.get(CertificateBatchJob, job_id)
@@ -1312,7 +1312,7 @@ async def cancel_certificate_batch(
 async def download_certificate_batch_zip(
     job_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> Response:
     _ = current_user
     data, filename = await batch_service.get_batch_zip_bytes(session, job_id)
@@ -1326,7 +1326,7 @@ async def download_certificate_batch_zip(
 @router.get("/issuances", response_model=CertificateIssuanceLedgerResponse)
 async def list_certificate_issuances(
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     exam_id: int | None = Query(None),
     school_id: int | None = Query(None),
     programme_id: int | None = Query(None),
@@ -1483,7 +1483,7 @@ async def create_studio_batch(
 async def get_studio_batch(
     batch_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> CertificateScanBatchResponse:
     batch = await scan_service.get_scan_batch(session, batch_id)
     return await _batch_response(session, batch)
@@ -1531,7 +1531,7 @@ async def process_studio_batch(
 @router.get("/studio/scans", response_model=CertificateScanListResponse)
 async def list_studio_scans(
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     match_status: str | None = Query(None),
     exam_id: int | None = Query(None),
     batch_id: int | None = Query(None),
@@ -1558,7 +1558,7 @@ async def list_studio_scans(
 async def get_studio_scan_image(
     scan_id: int,
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
 ) -> Response:
     scan = await scan_service.get_scan(session, scan_id)
     content = await issuance_service.certificate_storage_service.retrieve(scan.storage_path)
@@ -1627,7 +1627,7 @@ async def reject_studio_scan(
 @router.get("/studio/issue-form/candidates", response_model=IssueFormCandidatesResponse)
 async def list_issue_form_candidates(
     session: DBSessionDep,
-    current_user: CurrentUserDep,
+    current_user: OfficerDep,
     exam_id: int = Query(...),
     school_id: int = Query(...),
     include_unnumbered: bool = Query(
