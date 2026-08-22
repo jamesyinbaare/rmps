@@ -387,6 +387,8 @@ export default function DocumentsPage() {
       prevFiltersRef.current?.subject_id !== filters.subject_id ||
       prevFiltersRef.current?.id_extraction_status !== filters.id_extraction_status ||
       prevFiltersRef.current?.id_extraction_error_code !== filters.id_extraction_error_code ||
+      prevFiltersRef.current?.test_type !== filters.test_type ||
+      prevFiltersRef.current?.test_type_changed !== filters.test_type_changed ||
       prevFiltersRef.current?.q !== filters.q ||
       prevFilterParamRef.current !== filterParam;
 
