@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, Send, Pencil } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { ChevronLeft, ChevronRight, File, Image as ImageIcon, FileText, Download, Trash2, Save, Loader2, X, Eye, RefreshCw, PanelRightClose, Send, Pencil, MoreHorizontal } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -32,12 +38,13 @@ import {
   type ReductoDataResponse,
 } from "@/types/document";
 import { ExtractionApplyBadge } from "@/components/data-entry/ExtractionAppliedBadge";
-import { formatFileSize } from "@/lib/utils";
+import { cn, formatFileSize } from "@/lib/utils";
 import {
   getIdExtractionErrorBadgeLabel,
   getIdExtractionErrorTitle,
   parseDuplicateConflictDocumentId,
 } from "@/lib/id-extraction-errors";
+import { DocumentIdBreakdown } from "@/components/DocumentIdBreakdown";
 import { validateDocumentId } from "@/lib/document-id";
 import {
   API_BASE_URL,
@@ -194,6 +201,7 @@ export function DocumentViewer({
   const [loadingConflicts, setLoadingConflicts] = useState(false);
   const [conflictReloadToken, setConflictReloadToken] = useState(0);
   const [retryStillDuplicate, setRetryStillDuplicate] = useState(false);
+  const manualIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open !== false && initialShowExtractionPanel) {
@@ -309,6 +317,13 @@ export function DocumentViewer({
     setPreviewProvider(undefined);
     setRetryStillDuplicate(false);
   }, [document.id, document.extracted_id]);
+
+  // Autofocus ID field when manual entry is required
+  useEffect(() => {
+    if (!showIdForm) return;
+    const t = window.setTimeout(() => manualIdInputRef.current?.focus(), 50);
+    return () => window.clearTimeout(t);
+  }, [showIdForm, document.id]);
 
   useEffect(() => {
     if (open === false || document.id_extraction_error_code !== "duplicate") {
@@ -699,607 +714,606 @@ export function DocumentViewer({
   const canQueueNext =
     showQueueChrome && currentIndex >= 0 && currentIndex < (documents?.length ?? 0) - 1;
 
-  return (
-    <Dialog open={open !== false} onOpenChange={onClose}>
-      <DialogContent className="w-screen h-[95vh] min-w-[80vw] max-h-[95vh] p-0 flex flex-col" showCloseButton={false}>
-        {/* DialogTitle for accessibility - visually hidden */}
-        <DialogTitle className="sr-only">
-          Document Viewer - {displayText}
-        </DialogTitle>
-        {/* Header with Document Details */}
-        <div className="flex items-center justify-between border-b border-border px-6 py-4 shrink-0">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3">
-              <h2 className="text-lg font-semibold truncate">
-                {document.extracted_id || "-"}
-              </h2>
-              {canEditExtractedId && !editingId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1.5 px-2"
-                  onClick={() => {
-                    setManualId(document.extracted_id || "");
-                    setIdError(null);
-                    setEditingId(true);
-                  }}
-                  aria-label="Edit ID"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Edit ID
-                </Button>
-              )}
-              {needsManualId && document.id_extraction_status === "error" && (
-                <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
-                  {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
-                </span>
-              )}
-              {needsManualId && document.id_extraction_status !== "error" && (
-                <span className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive">
-                  ID Extraction Failed
-                </span>
-              )}
-            </div>
-            {document.id_extraction_status === "error" && !isDuplicateError && (
-              <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium">
-                      {getIdExtractionErrorTitle(document.id_extraction_error_code)}
-                    </p>
-                    {document.id_extraction_error && (
-                      <p className="mt-0.5 text-muted-foreground">{document.id_extraction_error}</p>
-                    )}
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 shrink-0 gap-1.5"
-                    onClick={() => void handleRetryExtract()}
-                    disabled={retryingExtract}
-                  >
-                    {retryingExtract ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                    Retry
-                  </Button>
-                </div>
-              </div>
+  const focusIdSegment = (start: number, end: number) => {
+    const input = manualIdInputRef.current;
+    if (!input) return;
+    input.focus();
+    const safeEnd = Math.min(end, manualId.length);
+    const safeStart = Math.min(start, safeEnd);
+    input.setSelectionRange(safeStart, safeEnd || safeStart);
+  };
+
+  const floatingActions = (
+    <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-background/90 p-1 shadow-md backdrop-blur-sm">
+      {showQueueChrome && (
+        <>
+          <span className="hidden px-1.5 text-[11px] tabular-nums text-muted-foreground sm:inline">
+            {queueLabel} {queuePosition}/{queueSize.toLocaleString()}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={handlePrevious}
+            disabled={!canQueuePrev}
+            aria-label="Previous"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={handleNext}
+            disabled={!canQueueNext}
+            aria-label="Next"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+          <span className="mx-0.5 h-4 w-px bg-border" aria-hidden />
+        </>
+      )}
+      {activeExtraction && <ExtractionApplyBadge row={activeExtraction} />}
+      {!activeExtraction && document.scores_applied_at && (
+        <Badge className="h-6 border-transparent bg-primary text-[10px] text-primary-foreground">
+          Applied
+          {document.scores_applied_count != null ? ` · ${document.scores_applied_count}` : ""}
+        </Badge>
+      )}
+      {(canPreviewExtraction || showExtractionPanel) && (
+        <Button
+          variant={showExtractionPanel ? "secondary" : "ghost"}
+          size="icon-sm"
+          className="h-7 w-7"
+          onClick={handleToggleExtractionPanel}
+          disabled={loadingExtraction || (!showExtractionPanel && !canPreviewExtraction)}
+          aria-label={showExtractionPanel ? "Hide data" : "Preview data"}
+        >
+          {loadingExtraction ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : showExtractionPanel ? (
+            <PanelRightClose className="h-3.5 w-3.5" />
+          ) : (
+            <Eye className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      )}
+      {onUpdateScores &&
+        (document.scores_extraction_status === "success" || providerOptions.length > 0) &&
+        !showExtractionPanel && (
+          <Button
+            variant={activeExtraction?.current_applied ? "ghost" : "default"}
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={() => onUpdateScores(document, activeProvider)}
+            disabled={updatingScores}
+          >
+            {updatingScores ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
             )}
-            {isDuplicateError && (
-              <div className="mt-1 space-y-1">
-                <p className="text-xs text-muted-foreground">
-                  Delete this upload, change an ID, or remove the existing sheet.
-                </p>
-                <div className="flex items-center gap-3">
-                  <p className="min-w-0 truncate text-xs text-muted-foreground">
-                    {document.id_extraction_error || "Duplicate sheet ID"}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 shrink-0 gap-1.5"
-                    onClick={() => void handleRetryExtract()}
-                    disabled={retryingExtract}
-                  >
-                    {retryingExtract ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                    Retry
-                  </Button>
-                </div>
-                {retryStillDuplicate && (
-                  <p className="text-xs text-destructive">
-                    Still duplicate — change this upload&apos;s ID or delete it.
-                  </p>
-                )}
-              </div>
-            )}
-            {isPendingExtraction && (
-              <div className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                ID extraction is still processing. Manual entry is available after it finishes or fails.
-              </div>
-            )}
-            {!isDuplicateError && (
-            <div className="flex items-center gap-4 mt-1 flex-wrap">
-              {schoolName && (
-                <span className="text-xs text-muted-foreground">School: {schoolName}</span>
-              )}
-              {subjectName && (
-                <>
-                  {schoolName && <span className="text-xs text-muted-foreground">•</span>}
-                  <span className="text-xs text-muted-foreground">Subject: {subjectName}</span>
-                </>
-              )}
-              {document.id_extraction_method && (
-                <>
-                  {(schoolName || subjectName) && <span className="text-xs text-muted-foreground">•</span>}
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
-                  >
-                    {getExtractionMethodLabel(document.id_extraction_method)}
-                  </span>
-                </>
-              )}
-            </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {activeExtraction && <ExtractionApplyBadge row={activeExtraction} />}
-            {!activeExtraction && document.scores_applied_at && (
-              <Badge className="border-transparent bg-primary text-primary-foreground">
-                Applied
-                {document.scores_applied_count != null ? ` · ${document.scores_applied_count}` : ""}
-              </Badge>
-            )}
-            {(canPreviewExtraction || showExtractionPanel) && (
-              <Button
-                variant={showExtractionPanel ? "secondary" : "outline"}
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={handleToggleExtractionPanel}
-                disabled={loadingExtraction || (!showExtractionPanel && !canPreviewExtraction)}
+            <span className="hidden lg:inline">
+              {applyScoresActionLabel(activeProvider, {
+                reapply: !!activeExtraction?.current_applied,
+              })}
+            </span>
+          </Button>
+        )}
+      {(document.id_extraction_status === "error" ||
+        isDuplicateError ||
+        (onDelete && !isDuplicateError) ||
+        (canEditExtractedId && !editingId)) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="More actions">
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {canEditExtractedId && !editingId && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setManualId(document.extracted_id || "");
+                  setIdError(null);
+                  setEditingId(true);
+                }}
               >
-                {loadingExtraction ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading...
-                  </>
-                ) : showExtractionPanel ? (
-                  <>
-                    <PanelRightClose className="h-4 w-4" />
-                    Hide Data
-                  </>
-                ) : (
-                  <>
-                    <Eye className="h-4 w-4" />
-                    Preview Data
-                  </>
-                )}
-              </Button>
+                <Pencil className="h-3.5 w-3.5" />
+                Edit ID
+              </DropdownMenuItem>
             )}
-            {onUpdateScores &&
-              (document.scores_extraction_status === "success" || providerOptions.length > 0) &&
-              !showExtractionPanel && (
-              <Button
-                variant={activeExtraction?.current_applied ? "outline" : "default"}
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={() => onUpdateScores(document, activeProvider)}
-                disabled={updatingScores}
+            {(document.id_extraction_status === "error" || isDuplicateError) && (
+              <DropdownMenuItem
+                onClick={() => void handleRetryExtract()}
+                disabled={retryingExtract}
               >
-                    {updatingScores ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Applying...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4" />
-                        {applyScoresActionLabel(activeProvider, {
-                          reapply: !!activeExtraction?.current_applied,
-                        })}
-                      </>
-                    )}
-              </Button>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry extraction
+              </DropdownMenuItem>
             )}
             {onDelete && !isDuplicateError && (
-              <Button
-                variant="outline"
-                size="icon-sm"
-                onClick={() => handleDelete()}
-                className="h-8 w-8"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <DropdownMenuItem variant="destructive" onClick={() => handleDelete()}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
             )}
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={handleDownload}
-              className="h-8 w-8"
-            >
-              <Download className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onClose}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={handleDownload}
+        className="h-7 w-7"
+        aria-label="Download"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onClose}
+        className="h-7 w-7"
+        aria-label="Close"
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
 
-        {showQueueChrome && (
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-xs font-medium tabular-nums">
-                {queueLabel} {queuePosition} of {queueSize.toLocaleString()}
-              </span>
-              {isDuplicateError && (
-                <span className="hidden text-xs text-muted-foreground sm:inline">
-                  · J/K or arrows to skip
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1"
-                onClick={handlePrevious}
-                disabled={!canQueuePrev}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1"
-                onClick={handleNext}
-                disabled={!canQueueNext}
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        )}
+  return (
+    <Dialog open={open !== false} onOpenChange={onClose}>
+      <DialogContent
+        className="flex h-[95vh] max-h-[95vh] w-screen min-w-[80vw] flex-col overflow-hidden p-0"
+        showCloseButton={false}
+      >
+        <DialogTitle className="sr-only">Document Viewer - {displayText}</DialogTitle>
 
-        {/* Manual ID Entry Section */}
-        {showIdForm && (
-          <div className="border-b border-border px-6 py-4 bg-muted/30 shrink-0">
-            <div className="space-y-2">
-              <label htmlFor="manual-id" className="text-sm font-medium">
-                {needsManualId ? "Enter Document ID Manually" : "Edit Document ID"}
-              </label>
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <Input
-                    id="manual-id"
-                    type="text"
-                    inputMode="numeric"
-                    value={manualId}
-                    onChange={(e) => handleIdChange(e.target.value)}
-                    placeholder="Enter 13-digit document ID"
-                    maxLength={13}
-                    className="font-mono"
-                    aria-invalid={!!idError}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleSaveId();
-                      }
-                    }}
-                  />
-                </div>
-                <Button
-                  onClick={handleSaveId}
-                  disabled={savingId || !manualId.trim() || !!idError || idUnchanged}
-                  className="gap-2"
-                >
-                  {savingId ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4" />
-                      Save ID
-                    </>
-                  )}
-                </Button>
-                {editingId && !needsManualId && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setManualId(document.extracted_id || "");
-                      setIdError(null);
-                      setEditingId(false);
-                    }}
-                    disabled={savingId}
-                  >
-                    Cancel
-                  </Button>
-                )}
-              </div>
-              {idError && (
-                <p className="text-sm text-destructive">{idError}</p>
-              )}
-              {!idError && manualId.length === 13 && (
-                <p className="text-sm text-muted-foreground">
-                  Format: School(6) + Subject(3) + Series(1) + Type(1) + Sheet(2)
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Document Content Area */}
         {isDuplicateError ? (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <DuplicateConflictPanel
-              current={document}
-              conflicts={conflictDocs}
-              loading={loadingConflicts}
-              schools={schools}
-              subjects={subjects}
-              onDelete={onDelete ? handleDelete : undefined}
-              onUpdateId={
-                onUpdateId ??
-                (async (documentId, extractedId, schoolId, subjectId) => {
-                  await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-                  toast.success("Document ID updated successfully");
-                  setConflictReloadToken((n) => n + 1);
-                })
-              }
-              onConflictSideResolved={() => void handleConflictSideResolved()}
-            />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                  Duplicate
+                </span>
+                <p
+                  className="truncate text-xs text-muted-foreground"
+                  title={document.id_extraction_error || undefined}
+                >
+                  {document.id_extraction_error || "Duplicate sheet ID"}
+                </p>
+              </div>
+              {floatingActions}
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <DuplicateConflictPanel
+                current={document}
+                conflicts={conflictDocs}
+                loading={loadingConflicts}
+                schools={schools}
+                subjects={subjects}
+                onDelete={onDelete ? handleDelete : undefined}
+                onUpdateId={
+                  onUpdateId ??
+                  (async (documentId, extractedId, schoolId, subjectId) => {
+                    await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+                    toast.success("Document ID updated successfully");
+                    setConflictReloadToken((n) => n + 1);
+                  })
+                }
+                onConflictSideResolved={() => void handleConflictSideResolved()}
+              />
+            </div>
           </div>
         ) : (
-        <div className={`flex-1 min-h-0 overflow-hidden bg-muted/30 relative flex ${showExtractionPanel ? "flex-row" : "flex-col"}`}>
-          <div className={`relative overflow-auto p-6 ${showExtractionPanel ? "flex-1 border-r border-border" : "flex-1"}`}>
-            {/* Navigation Buttons */}
-            {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handlePrevious}
-                  disabled={currentIndex === 0}
-                  className="absolute left-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleNext}
-                  disabled={currentIndex === documents.length - 1}
-                  className="absolute right-6 top-1/2 -translate-y-1/2 z-10 h-10 w-10"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </Button>
-              </>
-            )}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className={cn(
+                "relative flex min-h-0 flex-1",
+                showExtractionPanel ? "flex-row" : "flex-col"
+              )}
+            >
+              <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
+                <div className="absolute right-2 top-2 z-20">{floatingActions}</div>
 
-            {/* Document Counter */}
-            {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
-                <div className="px-3 py-1 rounded-full bg-background/90 border border-border text-xs text-muted-foreground">
-                  {currentIndex + 1} of {documents.length}
+                {!showIdForm && (
+                  <div className="absolute left-2 top-2 z-20 max-w-[min(24rem,calc(100%-8rem))] rounded-lg border border-border/60 bg-background/90 px-2.5 py-1.5 shadow-md backdrop-blur-sm">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate font-mono text-sm font-semibold tracking-wide">
+                        {document.extracted_id || "—"}
+                      </p>
+                      {document.id_extraction_method && (
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
+                        >
+                          {getExtractionMethodLabel(document.id_extraction_method)}
+                        </span>
+                      )}
+                    </div>
+                    {(schoolName || subjectName) && (
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {[schoolName, subjectName].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {documents &&
+                  documents.length > 1 &&
+                  currentIndex !== undefined &&
+                  currentIndex >= 0 &&
+                  !showQueueChrome && (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        onClick={handlePrevious}
+                        disabled={currentIndex === 0}
+                        className="absolute left-3 top-1/2 z-10 h-9 w-9 -translate-y-1/2 opacity-90"
+                      >
+                        <ChevronLeft className="h-5 w-5" />
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        onClick={handleNext}
+                        disabled={currentIndex === documents.length - 1}
+                        className="absolute right-3 top-1/2 z-10 h-9 w-9 -translate-y-1/2 opacity-90"
+                      >
+                        <ChevronRight className="h-5 w-5" />
+                      </Button>
+                    </>
+                  )}
+
+                <div className="flex h-full w-full items-center justify-center p-2">
+                  {imageLoading && !imageError && document.mime_type.startsWith("image/") && (
+                    <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+                  )}
+                  {!imageError && document.mime_type.startsWith("image/") ? (
+                    <img
+                      src={previewUrl}
+                      alt={displayText}
+                      className="max-h-full max-w-full object-contain"
+                      onLoad={() => setImageLoading(false)}
+                      onError={() => {
+                        setImageError(true);
+                        setImageLoading(false);
+                      }}
+                    />
+                  ) : (
+                    !imageLoading && (
+                      <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-400">
+                        <Icon className="mb-4 h-16 w-16" />
+                        <p className="text-sm">Preview not available for this file type</p>
+                        <p className="mt-2 text-xs">
+                          {fileType} • {formatFileSize(document.file_size)}
+                        </p>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
-            )}
 
-            <div className="w-full h-full flex items-center justify-center min-h-0">
-              {imageLoading && !imageError && document.mime_type.startsWith("image/") && (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                </div>
-              )}
-              {!imageError && document.mime_type.startsWith("image/") ? (
-                <img
-                  src={previewUrl}
-                  alt={displayText}
-                  className="w-auto h-auto object-contain"
-                  style={{
-                    maxWidth: 'calc(100% - 3rem)',
-                    maxHeight: 'calc(100% - 3rem)'
-                  }}
-                  onLoad={() => setImageLoading(false)}
-                  onError={() => {
-                    setImageError(true);
-                    setImageLoading(false);
-                  }}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-center p-8">
-                  <Icon className="h-16 w-16 text-muted-foreground mb-4" />
-                  <p className="text-sm text-muted-foreground">
-                    Preview not available for this file type
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {fileType} • {formatFileSize(document.file_size)}
-                  </p>
+              {showExtractionPanel && (
+                <div className="flex w-full max-w-xl flex-col overflow-hidden bg-background sm:w-1/2">
+                  <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-medium">Extracted Data</h3>
+                      <p className="truncate text-xs text-muted-foreground">{document.file_name}</p>
+                      {providerOptions.length > 1 && (
+                        <div className="mt-2 flex gap-1">
+                          {providerOptions.map((provider) => (
+                            <Button
+                              key={provider}
+                              type="button"
+                              size="sm"
+                              variant={activeProvider === provider ? "secondary" : "outline"}
+                              className="h-7"
+                              onClick={() => setPreviewProvider(provider)}
+                            >
+                              {extractionProviderLabel(provider)}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                      {providerOptions.length === 1 && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {extractionProviderLabel(activeProvider)}
+                        </p>
+                      )}
+                      {activeExtraction && (
+                        <div className="mt-1">
+                          <ExtractionApplyBadge row={activeExtraction} />
+                        </div>
+                      )}
+                    </div>
+                    {onUpdateScores &&
+                      (document.scores_extraction_status === "success" || providerOptions.length > 0) && (
+                      <Button
+                        variant={activeExtraction?.current_applied ? "outline" : "default"}
+                        size="sm"
+                        className="h-8 shrink-0 gap-1.5"
+                        onClick={() => onUpdateScores(document, activeProvider)}
+                        disabled={updatingScores}
+                      >
+                        {updatingScores ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Applying...
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-4 w-4" />
+                            {applyScoresActionLabel(activeProvider, {
+                              reapply: !!activeExtraction?.current_applied,
+                            })}
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-4">
+                    {loadingExtraction ? (
+                      <div className="flex h-48 items-center justify-center">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : extractionData ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="font-medium">Status:</span> {extractionData.status}
+                          </div>
+                          <div>
+                            <span className="font-medium">Confidence:</span>{" "}
+                            {extractionData.confidence
+                              ? `${(extractionData.confidence * 100).toFixed(1)}%`
+                              : "N/A"}
+                          </div>
+                          {typeof extractionData.data?.provider === "string" && (
+                            <div>
+                              <span className="font-medium">Provider:</span>{" "}
+                              {extractionProviderLabel(extractionData.data.provider)}
+                            </div>
+                          )}
+                          {extractionData.extracted_at && (
+                            <div className="col-span-2">
+                              <span className="font-medium">Extracted At:</span>{" "}
+                              {new Date(extractionData.extracted_at).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+
+                        <Tabs
+                          value={extractionViewMode}
+                          onValueChange={(value) => setExtractionViewMode(value as "table" | "json")}
+                        >
+                          <TabsList className="grid w-full grid-cols-2">
+                            <TabsTrigger value="table">Table View</TabsTrigger>
+                            <TabsTrigger value="json">JSON / Raw</TabsTrigger>
+                          </TabsList>
+
+                          <TabsContent value="table" className="mt-4">
+                            {(() => {
+                              const candidates = parseCandidatesFromData(extractionData.data);
+                              if (candidates.length > 0) {
+                                return (
+                                  <div>
+                                    <h4 className="mb-2 text-sm font-medium">
+                                      Candidates ({candidates.length})
+                                    </h4>
+                                    <div className="max-h-[calc(95vh-22rem)] overflow-auto rounded-lg border">
+                                      <Table>
+                                        <TableHeader>
+                                          <TableRow>
+                                            <TableHead>SN</TableHead>
+                                            <TableHead>Index Number</TableHead>
+                                            <TableHead>Name</TableHead>
+                                            <TableHead>Attendance</TableHead>
+                                            <TableHead>Score</TableHead>
+                                            <TableHead>Verify</TableHead>
+                                          </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                          {candidates.map((candidate: any, idx: number) => (
+                                            <TableRow key={idx}>
+                                              <TableCell>{candidate.sn || idx + 1}</TableCell>
+                                              <TableCell>{candidate.index_number || "-"}</TableCell>
+                                              <TableCell>{candidate.candidate_name || "-"}</TableCell>
+                                              <TableCell>
+                                                {candidate.attend
+                                                  ? typeof candidate.attend === "string" &&
+                                                    (candidate.attend === "A" || candidate.attend === "AA")
+                                                    ? candidate.attend
+                                                    : "✓"
+                                                  : "-"}
+                                              </TableCell>
+                                              <TableCell>
+                                                {candidate.score === null || candidate.score === undefined || candidate.score === ""
+                                                  ? "-"
+                                                  : String(candidate.score)}
+                                              </TableCell>
+                                              <TableCell>
+                                                {candidate.verify === null ||
+                                                candidate.verify === undefined ||
+                                                candidate.verify === ""
+                                                  ? "-"
+                                                  : typeof candidate.verify === "string" &&
+                                                      (candidate.verify === "A" || candidate.verify === "AA")
+                                                    ? candidate.verify
+                                                    : candidate.verify === true ||
+                                                        candidate.verify === "✓" ||
+                                                        candidate.verify === "✔" ||
+                                                        candidate.verify === "√"
+                                                      ? "✓"
+                                                      : String(candidate.verify)}
+                                              </TableCell>
+                                            </TableRow>
+                                          ))}
+                                        </TableBody>
+                                      </Table>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="text-sm text-muted-foreground">
+                                  <p>No candidate data available in table format.</p>
+                                  <p className="mt-2 text-xs">
+                                    Try the JSON view for the raw extraction payload.
+                                  </p>
+                                </div>
+                              );
+                            })()}
+                          </TabsContent>
+
+                          <TabsContent value="json" className="mt-4">
+                            <pre className="max-h-[calc(95vh-22rem)] overflow-auto rounded bg-muted p-3 text-xs">
+                              {JSON.stringify(extractionData.data, null, 2)}
+                            </pre>
+                          </TabsContent>
+                        </Tabs>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No preview data available</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
 
-          {showExtractionPanel && (
-            <div className="flex w-full max-w-xl flex-col overflow-hidden bg-background sm:w-1/2">
-              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
-                <div className="min-w-0">
-                  <h3 className="text-sm font-medium">Extracted Data</h3>
-                  <p className="truncate text-xs text-muted-foreground">{document.file_name}</p>
-                  {providerOptions.length > 1 && (
-                    <div className="mt-2 flex gap-1">
-                      {providerOptions.map((provider) => (
-                        <Button
-                          key={provider}
-                          type="button"
-                          size="sm"
-                          variant={activeProvider === provider ? "secondary" : "outline"}
-                          className="h-7"
-                          onClick={() => setPreviewProvider(provider)}
-                        >
-                          {extractionProviderLabel(provider)}
-                        </Button>
-                      ))}
-                    </div>
+            {showIdForm && (
+              <div className="z-20 shrink-0 border-t border-border bg-background/95 px-3 py-2 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+                <div className="mb-1.5 flex items-center gap-2">
+                  {needsManualId && document.id_extraction_status === "error" && (
+                    <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                      {getIdExtractionErrorBadgeLabel(document.id_extraction_error_code)}
+                    </span>
                   )}
-                  {providerOptions.length === 1 && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {extractionProviderLabel(activeProvider)}
+                  {needsManualId && document.id_extraction_status !== "error" && (
+                    <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                      ID failed
+                    </span>
+                  )}
+                  {document.id_extraction_status === "error" && (
+                    <p className="min-w-0 truncate text-xs text-muted-foreground">
+                      {getIdExtractionErrorTitle(document.id_extraction_error_code)}
+                      {document.id_extraction_error ? (
+                        <span className="text-muted-foreground/70">
+                          {" "}
+                          — {document.id_extraction_error}
+                        </span>
+                      ) : null}
                     </p>
                   )}
-                  {activeExtraction && (
-                    <div className="mt-1">
-                      <ExtractionApplyBadge row={activeExtraction} />
-                    </div>
+                  {isPendingExtraction && (
+                    <p className="text-xs text-muted-foreground">Extraction still running…</p>
+                  )}
+                  {retryStillDuplicate && (
+                    <span className="text-[11px] text-destructive">Still duplicate</span>
+                  )}
+                  {showQueueChrome && (
+                    <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                      Skip leaves unresolved
+                      <span className="hidden sm:inline"> · Ctrl+Enter</span>
+                    </span>
                   )}
                 </div>
-                {onUpdateScores &&
-                  (document.scores_extraction_status === "success" || providerOptions.length > 0) && (
-                  <Button
-                    variant={activeExtraction?.current_applied ? "outline" : "default"}
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5"
-                    onClick={() => onUpdateScores(document, activeProvider)}
-                    disabled={updatingScores}
-                  >
-                    {updatingScores ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Applying...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4" />
-                        {applyScoresActionLabel(activeProvider, {
-                          reapply: !!activeExtraction?.current_applied,
-                        })}
-                      </>
-                    )}
-                  </Button>
-                )}
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 py-4">
-                {loadingExtraction ? (
-                  <div className="flex h-48 items-center justify-center">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  </div>
-                ) : extractionData ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <span className="font-medium">Status:</span> {extractionData.status}
-                      </div>
-                      <div>
-                        <span className="font-medium">Confidence:</span>{" "}
-                        {extractionData.confidence
-                          ? `${(extractionData.confidence * 100).toFixed(1)}%`
-                          : "N/A"}
-                      </div>
-                      {typeof extractionData.data?.provider === "string" && (
-                        <div>
-                          <span className="font-medium">Provider:</span>{" "}
-                          {extractionProviderLabel(extractionData.data.provider)}
-                        </div>
-                      )}
-                      {extractionData.extracted_at && (
-                        <div className="col-span-2">
-                          <span className="font-medium">Extracted At:</span>{" "}
-                          {new Date(extractionData.extracted_at).toLocaleString()}
-                        </div>
-                      )}
-                    </div>
 
-                    <Tabs
-                      value={extractionViewMode}
-                      onValueChange={(value) => setExtractionViewMode(value as "table" | "json")}
-                    >
-                      <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="table">Table View</TabsTrigger>
-                        <TabsTrigger value="json">JSON / Raw</TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent value="table" className="mt-4">
-                        {(() => {
-                          const candidates = parseCandidatesFromData(extractionData.data);
-                          if (candidates.length > 0) {
-                            return (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">
-                                  Candidates ({candidates.length})
-                                </h4>
-                                <div className="max-h-[calc(95vh-22rem)] overflow-auto rounded-lg border">
-                                  <Table>
-                                    <TableHeader>
-                                      <TableRow>
-                                        <TableHead>SN</TableHead>
-                                        <TableHead>Index Number</TableHead>
-                                        <TableHead>Name</TableHead>
-                                        <TableHead>Attendance</TableHead>
-                                        <TableHead>Score</TableHead>
-                                        <TableHead>Verify</TableHead>
-                                      </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                      {candidates.map((candidate: any, idx: number) => (
-                                        <TableRow key={idx}>
-                                          <TableCell>{candidate.sn || idx + 1}</TableCell>
-                                          <TableCell>{candidate.index_number || "-"}</TableCell>
-                                          <TableCell>{candidate.candidate_name || "-"}</TableCell>
-                                          <TableCell>
-                                            {candidate.attend
-                                              ? typeof candidate.attend === "string" &&
-                                                (candidate.attend === "A" || candidate.attend === "AA")
-                                                ? candidate.attend
-                                                : "✓"
-                                              : "-"}
-                                          </TableCell>
-                                          <TableCell>
-                                            {candidate.score === null || candidate.score === undefined || candidate.score === ""
-                                              ? "-"
-                                              : String(candidate.score)}
-                                          </TableCell>
-                                          <TableCell>
-                                            {candidate.verify === null ||
-                                            candidate.verify === undefined ||
-                                            candidate.verify === ""
-                                              ? "-"
-                                              : typeof candidate.verify === "string" &&
-                                                  (candidate.verify === "A" || candidate.verify === "AA")
-                                                ? candidate.verify
-                                                : candidate.verify === true ||
-                                                    candidate.verify === "✓" ||
-                                                    candidate.verify === "✔" ||
-                                                    candidate.verify === "√"
-                                                  ? "✓"
-                                                  : String(candidate.verify)}
-                                          </TableCell>
-                                        </TableRow>
-                                      ))}
-                                    </TableBody>
-                                  </Table>
-                                </div>
-                              </div>
-                            );
+                <div className="flex items-center gap-2">
+                  <label htmlFor="manual-id" className="sr-only">
+                    Document ID
+                  </label>
+                  <div className="relative min-w-0 flex-1">
+                    <Input
+                      ref={manualIdInputRef}
+                      id="manual-id"
+                      type="text"
+                      inputMode="numeric"
+                      value={manualId}
+                      onChange={(e) => handleIdChange(e.target.value)}
+                      placeholder="13-digit sheet ID"
+                      maxLength={13}
+                      className="h-9 pr-12 font-mono text-sm tracking-widest"
+                      aria-invalid={!!idError}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          if (showQueueChrome && canQueueNext) {
+                            handleNext();
                           }
-                          return (
-                            <div className="text-sm text-muted-foreground">
-                              <p>No candidate data available in table format.</p>
-                              <p className="mt-2 text-xs">
-                                Try the JSON view for the raw extraction payload.
-                              </p>
-                            </div>
-                          );
-                        })()}
-                      </TabsContent>
-
-                      <TabsContent value="json" className="mt-4">
-                        <pre className="max-h-[calc(95vh-22rem)] overflow-auto rounded bg-muted p-3 text-xs">
-                          {JSON.stringify(extractionData.data, null, 2)}
-                        </pre>
-                      </TabsContent>
-                    </Tabs>
+                          return;
+                        }
+                        if (e.key === "Enter") {
+                          void handleSaveId();
+                        }
+                      }}
+                    />
+                    <span
+                      className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center font-mono text-[11px] tabular-nums text-muted-foreground"
+                      aria-hidden
+                    >
+                      {manualId.length}/13
+                    </span>
                   </div>
+                  <Button
+                    onClick={() => void handleSaveId()}
+                    disabled={savingId || !manualId.trim() || !!idError || idUnchanged}
+                    className="h-9 shrink-0 gap-1.5"
+                    size="sm"
+                  >
+                    {savingId ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    Save
+                  </Button>
+                  {showQueueChrome && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 shrink-0 gap-1"
+                      onClick={handleNext}
+                      disabled={!canQueueNext || savingId}
+                      aria-label="Skip without resolving"
+                    >
+                      Skip
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  {editingId && !needsManualId && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 shrink-0"
+                      onClick={() => {
+                        setManualId(document.extracted_id || "");
+                        setIdError(null);
+                        setEditingId(false);
+                      }}
+                      disabled={savingId}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+
+                {idError ? (
+                  <p className="mt-1 text-xs text-destructive">{idError}</p>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No preview data available</p>
+                  <DocumentIdBreakdown
+                    className="mt-1.5"
+                    id={manualId}
+                    schools={schools}
+                    subjects={subjects}
+                    onSegmentClick={focusIdSegment}
+                  />
                 )}
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
         )}
       </DialogContent>
     </Dialog>
