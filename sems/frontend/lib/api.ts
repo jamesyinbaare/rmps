@@ -391,6 +391,8 @@ export async function listDocuments(
   if (filters.id_extraction_error_code) {
     params.append("id_extraction_error_code", filters.id_extraction_error_code);
   }
+  if (filters.test_type) params.append("test_type", filters.test_type);
+  if (filters.test_type_changed === true) params.append("test_type_changed", "true");
   if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
@@ -588,6 +590,38 @@ export async function bulkExtractDocumentIds(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document_ids: documentIds }),
+  });
+  return handleResponse(response);
+}
+
+export type BulkReclassifyPaperResultItem = {
+  document_id: number;
+  old_extracted_id: string | null;
+  new_extracted_id: string | null;
+  old_test_type: string | null;
+  new_test_type: string | null;
+  scores_moved: number;
+  error: string | null;
+};
+
+export type BulkReclassifyPaperResponse = {
+  updated: number;
+  failed: number;
+  scores_moved: number;
+  results: BulkReclassifyPaperResultItem[];
+};
+
+export async function bulkReclassifyPaper(
+  documentIds: number[],
+  targetTestType: "1" | "2"
+): Promise<BulkReclassifyPaperResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/bulk-reclassify-paper`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_ids: documentIds,
+      target_test_type: targetTestType,
+    }),
   });
   return handleResponse(response);
 }

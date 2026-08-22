@@ -1,21 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { File, Image as ImageIcon, FileText, Download, Trash2, AlertCircle, CheckCircle2, Clock } from "lucide-react";
+import { File, Image as ImageIcon, FileText, Download, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
 import { getDocumentThumbnailUrl } from "@/lib/api";
-import { getIdExtractionErrorBadgeLabel } from "@/lib/id-extraction-errors";
+import {
+  DocumentPaperIdentity,
+  DocumentPriorityStatus,
+  documentPaperLabel,
+} from "@/components/DocumentStatusMeta";
 
 interface FileGridProps {
   documents: Document[];
@@ -140,64 +137,8 @@ function DocumentCard({
   const [imageError, setImageError] = useState(false);
 
   const isFailed = doc.id_extraction_status === "error";
-  const isSuccess = doc.id_extraction_status === "success";
-  const isPending = doc.id_extraction_status === "pending";
-  const hasScores = doc.scores_extraction_status === "success";
-
-  const getStatusBadge = () => {
-    if (isFailed) {
-      const label = getIdExtractionErrorBadgeLabel(doc.id_extraction_error_code);
-      const badge = (
-        <Badge variant="destructive" className="text-xs px-1.5 py-0">
-          <AlertCircle className="h-3 w-3 mr-1" />
-          {label}
-        </Badge>
-      );
-      if (doc.id_extraction_error) {
-        return (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex">{badge}</span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs">
-                <p>{doc.id_extraction_error}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        );
-      }
-      return badge;
-    }
-    if (isPending) {
-      return (
-        <Badge variant="secondary" className="text-xs px-1.5 py-0">
-          <Clock className="h-3 w-3 mr-1" />
-          Pending
-        </Badge>
-      );
-    }
-    if (isSuccess) {
-      return (
-        <Badge variant="default" className="text-xs px-1.5 py-0 bg-green-600 hover:bg-green-700">
-          <CheckCircle2 className="h-3 w-3 mr-1" />
-          Extracted
-        </Badge>
-      );
-    }
-    return null;
-  };
-
-  const getScoresBadge = () => {
-    if (hasScores) {
-      return (
-        <Badge variant="outline" className="text-xs px-1.5 py-0 border-blue-500 text-blue-600">
-          Scores
-        </Badge>
-      );
-    }
-    return null;
-  };
+  const hasPaperMeta =
+    Boolean(documentPaperLabel(doc.test_type)) || Boolean(doc.test_type_changed_at);
 
   return (
     <div
@@ -269,27 +210,38 @@ function DocumentCard({
         )}
       </div>
 
-      {/* Status Badges - Top Right (or below checkbox if bulk mode) */}
+      {/* Single priority status — top-left, clear of hover actions */}
       <div className={cn(
-        "absolute flex flex-col gap-1.5 z-10",
+        "absolute z-10",
         enableSelection
           ? (size === "large-grid" ? "left-4 top-14" : "left-2 top-10")
           : (size === "large-grid" ? "left-4 top-4" : "left-2 top-2")
       )}>
-        {getStatusBadge()}
-        {getScoresBadge()}
+        <DocumentPriorityStatus document={doc} />
       </div>
 
-      {/* Card Footer - ID and Metadata */}
+      {/* Card Footer - ID, paper identity, metadata */}
       <div className={cn(
         "w-full border-t border-border bg-card/95 backdrop-blur-sm text-center transition-colors shrink-0",
         size === "large-grid" ? "px-5 py-2.5" : "px-3 py-1.5"
       )}>
-        <div className="flex items-center justify-center gap-1.5 mb-0.5">
+        <div className="flex items-center justify-center gap-1 mb-0.5 min-w-0">
           <p className={cn(
             "truncate font-medium leading-tight",
             size === "large-grid" ? "text-base" : "text-xs"
           )}>{displayText}</p>
+          {hasPaperMeta && (
+            <>
+              <span className={cn(
+                "text-muted-foreground shrink-0",
+                size === "large-grid" ? "text-sm" : "text-[10px]"
+              )}>·</span>
+              <DocumentPaperIdentity
+                document={doc}
+                textClassName={size === "large-grid" ? "text-sm" : "text-[10px]"}
+              />
+            </>
+          )}
         </div>
         <div className="flex flex-col gap-0">
           <p className={cn(
