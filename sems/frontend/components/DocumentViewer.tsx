@@ -33,6 +33,7 @@ import {
   type Document,
   type Exam,
   type ExtractionProvider,
+  type IdExtractionConflictItem,
   type School,
   type Subject,
   type ReductoDataResponse,
@@ -53,6 +54,7 @@ import {
   getDocument,
   getDocumentDownloadFilename,
   getDocumentIdExtractionConflicts,
+  getDocumentPaperCounterpart,
   getExam,
   getReductoData,
   listSchools,
@@ -61,6 +63,7 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 import { DuplicateConflictPanel } from "./DuplicateConflictPanel";
+import { PaperCounterpartPanel } from "./PaperCounterpartPanel";
 
 interface DocumentViewerProps {
   document: Document;
@@ -96,6 +99,10 @@ interface DocumentViewerProps {
   queueLabel?: string;
   /** After conflict-side delete or ID fix; parent may auto-retry and advance. */
   onConflictSideResolved?: () => Promise<void>;
+  /** Side-by-side Paper 1 vs Paper 2 counterpart comparison. */
+  paperCompareMode?: boolean;
+  /** After counterpart-side ID change or delete; parent may refresh. */
+  onPaperCounterpartChanged?: () => Promise<void>;
 }
 
 function parseCandidatesFromData(data: Record<string, any>): any[] {
@@ -179,6 +186,8 @@ export function DocumentViewer({
   queueTotal,
   queueLabel = "Error",
   onConflictSideResolved,
+  paperCompareMode = false,
+  onPaperCounterpartChanged,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -201,6 +210,11 @@ export function DocumentViewer({
   const [loadingConflicts, setLoadingConflicts] = useState(false);
   const [conflictReloadToken, setConflictReloadToken] = useState(0);
   const [retryStillDuplicate, setRetryStillDuplicate] = useState(false);
+  const [paperCounterpart, setPaperCounterpart] = useState<IdExtractionConflictItem | null>(
+    null
+  );
+  const [loadingPaperCounterpart, setLoadingPaperCounterpart] = useState(false);
+  const [paperCounterpartReloadToken, setPaperCounterpartReloadToken] = useState(0);
   const manualIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -219,11 +233,12 @@ export function DocumentViewer({
   // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
   const isPendingExtraction = document.id_extraction_status === "pending";
   const isDuplicateError = document.id_extraction_error_code === "duplicate";
+  const showPaperCompare = paperCompareMode && !isDuplicateError;
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
   const canEditExtractedId = !isPendingExtraction && !needsManualId && !!document.extracted_id;
-  const showIdForm = (needsManualId || editingId) && !isDuplicateError;
+  const showIdForm = (needsManualId || editingId) && !isDuplicateError && !showPaperCompare;
   const idUnchanged =
     canEditExtractedId && manualId.trim() === (document.extracted_id || "");
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
@@ -373,6 +388,47 @@ export function DocumentViewer({
     document.id_extraction_error,
     conflictRefreshKey,
     conflictReloadToken,
+  ]);
+
+  useEffect(() => {
+    if (open === false || !paperCompareMode || document.id_extraction_error_code === "duplicate") {
+      setPaperCounterpart(null);
+      setLoadingPaperCounterpart(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingPaperCounterpart(true);
+
+    const loadCounterpart = async () => {
+      try {
+        const response = await getDocumentPaperCounterpart(document.id);
+        if (!cancelled) {
+          setPaperCounterpart(response.counterpart);
+        }
+      } catch (error) {
+        console.error("Failed to load paper counterpart:", error);
+        if (!cancelled) {
+          setPaperCounterpart(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingPaperCounterpart(false);
+        }
+      }
+    };
+
+    void loadCounterpart();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    document.id,
+    paperCompareMode,
+    document.id_extraction_error_code,
+    conflictRefreshKey,
+    paperCounterpartReloadToken,
   ]);
 
   // Close preview only when the dialog itself closes
@@ -670,6 +726,14 @@ export function DocumentViewer({
     setConflictReloadToken((n) => n + 1);
   };
 
+  const handlePaperCounterpartChanged = async () => {
+    if (onPaperCounterpartChanged) {
+      await onPaperCounterpartChanged();
+      return;
+    }
+    setPaperCounterpartReloadToken((n) => n + 1);
+  };
+
   const handleDelete = (documentId: number = document.id) => {
     if (onDelete) {
       onDelete(documentId);
@@ -903,6 +967,39 @@ export function DocumentViewer({
                   })
                 }
                 onConflictSideResolved={() => void handleConflictSideResolved()}
+              />
+            </div>
+          </div>
+        ) : showPaperCompare ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                  Paper pair
+                </span>
+                <p className="truncate text-xs text-muted-foreground">
+                  Compare Paper 1 (Objectives) and Paper 2 (Essay) for the same sheet
+                </p>
+              </div>
+              {floatingActions}
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <PaperCounterpartPanel
+                current={document}
+                counterpart={paperCounterpart}
+                loading={loadingPaperCounterpart}
+                schools={schools}
+                subjects={subjects}
+                onDelete={onDelete ? handleDelete : undefined}
+                onUpdateId={
+                  onUpdateId ??
+                  (async (documentId, extractedId, schoolId, subjectId) => {
+                    await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+                    toast.success("Document ID updated successfully");
+                    setPaperCounterpartReloadToken((n) => n + 1);
+                  })
+                }
+                onCounterpartChanged={() => void handlePaperCounterpartChanged()}
               />
             </div>
           </div>
