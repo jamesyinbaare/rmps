@@ -8,8 +8,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from PIL import Image
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, case, exists, func, select
+from sqlalchemy.orm import aliased, selectinload
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
@@ -35,6 +35,7 @@ from app.schemas.document import (
     IdExtractionConflictsResponse,
     IdExtractionErrorCodeCount,
     IdExtractionStatusCounts,
+    PaperCounterpartResponse,
     ReductoQueueStatusResponse,
     ReductoWorkersUpdateRequest,
     DocumentSchoolFacet,
@@ -69,6 +70,7 @@ from app.services.id_extraction import (
     mark_id_extraction_failure,
     resolve_id_extraction_conflicts,
 )
+from app.services.paper_reclassify import find_paper_counterpart, reclassify_document_paper
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import (
     apply_extract_result,
@@ -78,7 +80,6 @@ from app.services.document_score_extraction import (
     reset_stale_extraction_row,
     sync_document_snapshot,
 )
-from app.services.paper_reclassify import reclassify_document_paper
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import add_extraction_method_to_document
@@ -1150,9 +1151,18 @@ async def list_documents(
         None,
         description="When true, only documents whose paper was reclassified via Advanced Edit",
     ),
+    paper_pair: str | None = Query(
+        None,
+        description="Filter by other-paper counterpart: paired | missing",
+    ),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
+
+    effective_test_type = test_type
+    if paper_pair == "paired" and effective_test_type is None:
+        # One row per pair when browsing paired sheets without a paper filter.
+        effective_test_type = "1"
 
     # Build base query with filters
     # If filtering by exam_type, series, or year (and not using exam_id), join with Exam table
@@ -1179,8 +1189,8 @@ async def list_documents(
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
-    if test_type is not None:
-        base_stmt = base_stmt.where(Document.test_type == test_type)
+    if effective_test_type is not None:
+        base_stmt = base_stmt.where(Document.test_type == effective_test_type)
     if test_type_changed is True:
         base_stmt = base_stmt.where(Document.test_type_changed_at.isnot(None))
 
@@ -1201,6 +1211,34 @@ async def list_documents(
 
     # Incomplete direct uploads are not listed until confirm succeeds
     base_stmt = base_stmt.where(Document.upload_status == "uploaded")
+
+    if paper_pair in ("paired", "missing"):
+        Counterpart = aliased(Document)
+        flipped = case((Document.test_type == "1", "2"), else_="1")
+        has_sheet_key = and_(
+            Document.school_id.isnot(None),
+            Document.subject_id.isnot(None),
+            Document.subject_series.isnot(None),
+            Document.sheet_number.isnot(None),
+            Document.test_type.in_(("1", "2")),
+        )
+        counterpart_exists = exists(
+            select(Counterpart.id).where(
+                Counterpart.exam_id == Document.exam_id,
+                Counterpart.school_id == Document.school_id,
+                Counterpart.subject_id == Document.subject_id,
+                Counterpart.subject_series == Document.subject_series,
+                Counterpart.sheet_number == Document.sheet_number,
+                Counterpart.test_type == flipped,
+                Counterpart.upload_status == "uploaded",
+                Counterpart.id != Document.id,
+            )
+        )
+        base_stmt = base_stmt.where(has_sheet_key)
+        if paper_pair == "paired":
+            base_stmt = base_stmt.where(counterpart_exists)
+        else:
+            base_stmt = base_stmt.where(~counterpart_exists)
 
     # Get total count with same filters
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
@@ -1226,8 +1264,8 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
-    if test_type is not None:
-        count_stmt = count_stmt.where(Document.test_type == test_type)
+    if effective_test_type is not None:
+        count_stmt = count_stmt.where(Document.test_type == effective_test_type)
     if test_type_changed is True:
         count_stmt = count_stmt.where(Document.test_type_changed_at.isnot(None))
     if error_codes:
@@ -1241,6 +1279,35 @@ async def list_documents(
         )
 
     count_stmt = count_stmt.where(Document.upload_status == "uploaded")
+
+    if paper_pair in ("paired", "missing"):
+        Counterpart = aliased(Document)
+        flipped = case((Document.test_type == "1", "2"), else_="1")
+        has_sheet_key = and_(
+            Document.school_id.isnot(None),
+            Document.subject_id.isnot(None),
+            Document.subject_series.isnot(None),
+            Document.sheet_number.isnot(None),
+            Document.test_type.in_(("1", "2")),
+        )
+        counterpart_exists = exists(
+            select(Counterpart.id).where(
+                Counterpart.exam_id == Document.exam_id,
+                Counterpart.school_id == Document.school_id,
+                Counterpart.subject_id == Document.subject_id,
+                Counterpart.subject_series == Document.subject_series,
+                Counterpart.sheet_number == Document.sheet_number,
+                Counterpart.test_type == flipped,
+                Counterpart.upload_status == "uploaded",
+                Counterpart.id != Document.id,
+            )
+        )
+        count_stmt = count_stmt.where(has_sheet_key)
+        if paper_pair == "paired":
+            count_stmt = count_stmt.where(counterpart_exists)
+        else:
+            count_stmt = count_stmt.where(~counterpart_exists)
+
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
@@ -1361,6 +1428,25 @@ async def get_id_extraction_conflicts(
     conflicts = await resolve_id_extraction_conflicts(session, document)
     return IdExtractionConflictsResponse(
         items=[IdExtractionConflictItem.model_validate(item) for item in conflicts]
+    )
+
+
+@router.get("/{document_id}/paper-counterpart", response_model=PaperCounterpartResponse)
+async def get_paper_counterpart(
+    document_id: int, session: DBSessionDep
+) -> PaperCounterpartResponse:
+    """Return the other-paper document for the same school/subject/series/page, if any."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    counterpart = await find_paper_counterpart(session, document)
+    return PaperCounterpartResponse(
+        counterpart=(
+            IdExtractionConflictItem.model_validate(counterpart) if counterpart else None
+        )
     )
 
 

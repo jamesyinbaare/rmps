@@ -41,6 +41,72 @@ def rewrite_extracted_id_test_type(extracted_id: str, target_test_type: str) -> 
     return extracted_id[:10] + target_test_type + extracted_id[11:]
 
 
+def flipped_test_type(test_type: str | None) -> str | None:
+    """Return the other paper type (1↔2), or None if unknown."""
+    if test_type == "1":
+        return "2"
+    if test_type == "2":
+        return "1"
+    return None
+
+
+async def find_paper_counterpart(
+    session: AsyncSession, document: Document
+) -> Document | None:
+    """Find the other-paper sheet for the same school/subject/series/page in this exam.
+
+    Prefers structured sheet-key fields; falls back to flipping digit 10 of extracted_id.
+    """
+    other = flipped_test_type(document.test_type)
+    if (
+        other
+        and document.school_id is not None
+        and document.subject_id is not None
+        and document.subject_series
+        and document.sheet_number
+    ):
+        stmt = (
+            select(Document)
+            .where(
+                Document.exam_id == document.exam_id,
+                Document.school_id == document.school_id,
+                Document.subject_id == document.subject_id,
+                Document.subject_series == document.subject_series,
+                Document.sheet_number == document.sheet_number,
+                Document.test_type == other,
+                Document.upload_status == "uploaded",
+                Document.id != document.id,
+            )
+            .order_by(Document.uploaded_at.desc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        found = result.scalar_one_or_none()
+        if found:
+            return found
+
+    if document.extracted_id and len(document.extracted_id) == 13 and other:
+        try:
+            counterpart_id = rewrite_extracted_id_test_type(document.extracted_id, other)
+        except ValueError:
+            return None
+        stmt = (
+            select(Document)
+            .where(
+                Document.exam_id == document.exam_id,
+                Document.extracted_id == counterpart_id,
+                Document.upload_status == "uploaded",
+                Document.id != document.id,
+            )
+            .order_by(Document.uploaded_at.desc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    return None
+
+
 def _paper_attrs(test_type: str) -> tuple[str, str, str, str]:
     attrs = PAPER_ATTRS.get(test_type)
     if not attrs:

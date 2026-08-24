@@ -447,3 +447,9 @@ class IdExtractionConflictItem(BaseModel):
 
 class IdExtractionConflictsResponse(BaseModel):
     items: list[IdExtractionConflictItem]
+
+
+class PaperCounterpartResponse(BaseModel):
+    """Other-paper document for the same school/subject/series/page, if any."""
+
+    counterpart: IdExtractionConflictItem | None = None

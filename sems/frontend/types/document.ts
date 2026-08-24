@@ -209,6 +209,8 @@ export interface DocumentFilters {
   test_type?: string;
   /** When true, only documents whose paper was reclassified */
   test_type_changed?: boolean;
+  /** Filter by other-paper counterpart: paired | missing */
+  paper_pair?: "paired" | "missing";
   q?: string;
   page?: number;
   page_size?: number;
@@ -239,6 +241,10 @@ export interface IdExtractionConflictItem {
 
 export interface IdExtractionConflictsResponse {
   items: IdExtractionConflictItem[];
+}
+
+export interface PaperCounterpartResponse {
+  counterpart: IdExtractionConflictItem | null;
 }
 
 export interface ApiError {

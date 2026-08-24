@@ -4,6 +4,7 @@ import type {
   DocumentListResponse,
   IdExtractionStatusCounts,
   IdExtractionConflictsResponse,
+  PaperCounterpartResponse,
   BulkUploadResponse,
   UploadInitiateFile,
   UploadInitiateResponse,
@@ -393,6 +394,7 @@ export async function listDocuments(
   }
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.test_type_changed === true) params.append("test_type_changed", "true");
+  if (filters.paper_pair) params.append("paper_pair", filters.paper_pair);
   if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
@@ -508,6 +510,15 @@ export async function getDocumentIdExtractionConflicts(
     `${API_BASE_URL}/api/v1/documents/${documentId}/id-extraction-conflicts`
   );
   return handleResponse<IdExtractionConflictsResponse>(response);
+}
+
+export async function getDocumentPaperCounterpart(
+  documentId: number
+): Promise<PaperCounterpartResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/${documentId}/paper-counterpart`
+  );
+  return handleResponse<PaperCounterpartResponse>(response);
 }
 
 /** Absolute download URL for a document file. */
