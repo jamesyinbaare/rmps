@@ -317,3 +317,19 @@ class ClerkListItem(BaseModel):
 
 class ClerkListResponse(BaseModel):
     clerks: list[ClerkListItem]
+
+
+class ClerkAssignPanelItem(BaseModel):
+    user_id: UUID
+    full_name: str
+    email: str | None = None
+    assigned_batches: int
+    assigned_pending_issues: int
+    resolved_today: int = 0
+    active_exam_id: int | None = None
+    active_exam_label: str | None = None
+    active_exams: list[ClerkActiveExamItem] = Field(default_factory=list)
+
+
+class ClerkAssignPanelResponse(BaseModel):
+    clerks: list[ClerkAssignPanelItem]

@@ -1199,6 +1199,22 @@ export interface ClerkListResponse {
   clerks: ClerkListItem[];
 }
 
+export interface ClerkAssignPanelItem {
+  user_id: string;
+  full_name: string;
+  email?: string | null;
+  assigned_batches: number;
+  assigned_pending_issues: number;
+  resolved_today: number;
+  active_exam_id?: number | null;
+  active_exam_label?: string | null;
+  active_exams?: ClerkActiveExamItem[];
+}
+
+export interface ClerkAssignPanelResponse {
+  clerks: ClerkAssignPanelItem[];
+}
+
 export interface RegistrationProgress {
   total_candidates: number;
   completion_percentage: number;

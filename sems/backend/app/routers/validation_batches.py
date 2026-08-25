@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, select
@@ -32,6 +34,8 @@ from app.schemas.validation import (
     ClearBatchesRequest,
     ClearBatchesResponse,
     ClerkActiveExamItem,
+    ClerkAssignPanelItem,
+    ClerkAssignPanelResponse,
     ClerkBatchItem,
     ClerkBatchListResponse,
     ClerkBatchProgressStatus,
@@ -51,12 +55,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/validation", tags=["validation-batches"])
 
 
-async def _clerk_active_exams(
-    session: DBSessionDep,
-    user_id,
-) -> list[ClerkActiveExamItem]:
-    """Return exams where the clerk currently holds assigned batches."""
-    pending_per_batch = (
+def _pending_per_batch_subquery():
+    return (
         select(
             SubjectScoreValidationIssue.batch_id.label("batch_id"),
             func.count().label("pending_count"),
@@ -68,9 +68,43 @@ async def _clerk_active_exams(
         .group_by(SubjectScoreValidationIssue.batch_id)
         .subquery()
     )
+
+
+async def _clerks_resolved_today_bulk(
+    session: DBSessionDep,
+    user_ids: list[UUID],
+    day_start: datetime,
+) -> dict[UUID, int]:
+    if not user_ids:
+        return {}
     rows = (
         await session.execute(
             select(
+                SubjectScoreValidationIssue.resolved_by_user_id,
+                func.count().label("cnt"),
+            )
+            .where(
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED,
+                SubjectScoreValidationIssue.resolved_by_user_id.in_(user_ids),
+                SubjectScoreValidationIssue.resolved_at >= day_start,
+            )
+            .group_by(SubjectScoreValidationIssue.resolved_by_user_id)
+        )
+    ).all()
+    return {row.resolved_by_user_id: int(row.cnt or 0) for row in rows}
+
+
+async def _clerks_active_exams_bulk(
+    session: DBSessionDep,
+    user_ids: list[UUID],
+) -> dict[UUID, list[ClerkActiveExamItem]]:
+    if not user_ids:
+        return {}
+    pending_per_batch = _pending_per_batch_subquery()
+    rows = (
+        await session.execute(
+            select(
+                IssueBatch.assigned_to_user_id,
                 Exam.id,
                 Exam.exam_type,
                 Exam.series,
@@ -83,20 +117,119 @@ async def _clerk_active_exams(
             .select_from(IssueBatch)
             .join(Exam, Exam.id == IssueBatch.exam_id)
             .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
-            .where(IssueBatch.assigned_to_user_id == user_id)
-            .group_by(Exam.id, Exam.exam_type, Exam.series, Exam.year)
-            .order_by(Exam.year.desc(), Exam.series.asc(), Exam.exam_type.asc())
+            .where(IssueBatch.assigned_to_user_id.in_(user_ids))
+            .group_by(
+                IssueBatch.assigned_to_user_id,
+                Exam.id,
+                Exam.exam_type,
+                Exam.series,
+                Exam.year,
+            )
+            .order_by(
+                IssueBatch.assigned_to_user_id,
+                Exam.year.desc(),
+                Exam.series.asc(),
+                Exam.exam_type.asc(),
+            )
         )
     ).all()
-    return [
-        ClerkActiveExamItem(
-            exam_id=row.id,
-            exam_label=f"{row.exam_type.value} · {row.series.value} {row.year}",
-            assigned_batches=int(row.assigned_batches or 0),
-            assigned_pending_issues=int(row.assigned_pending_issues or 0),
+    by_user: dict[UUID, list[ClerkActiveExamItem]] = defaultdict(list)
+    for row in rows:
+        by_user[row.assigned_to_user_id].append(
+            ClerkActiveExamItem(
+                exam_id=row.id,
+                exam_label=f"{row.exam_type.value} · {row.series.value} {row.year}",
+                assigned_batches=int(row.assigned_batches or 0),
+                assigned_pending_issues=int(row.assigned_pending_issues or 0),
+            )
         )
-        for row in rows
-    ]
+    return dict(by_user)
+
+
+def _primary_active_exam(
+    active_exams: list[ClerkActiveExamItem],
+) -> tuple[int | None, str | None]:
+    if not active_exams:
+        return None, None
+    primary = active_exams[0]
+    return primary.exam_id, primary.exam_label
+
+
+def _clerk_load_stmt(exam_id: int | None):
+    pending_per_batch = _pending_per_batch_subquery()
+    if exam_id is not None:
+        return (
+            select(
+                User.id,
+                User.full_name,
+                User.email,
+                func.count(IssueBatch.id).label("assigned_batches"),
+                func.coalesce(func.sum(pending_per_batch.c.pending_count), 0).label(
+                    "assigned_pending_issues"
+                ),
+            )
+            .select_from(User)
+            .outerjoin(
+                IssueBatch,
+                (IssueBatch.assigned_to_user_id == User.id) & (IssueBatch.exam_id == exam_id),
+            )
+            .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
+            .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
+            .group_by(User.id, User.full_name, User.email)
+            .order_by(User.full_name.asc())
+        )
+    return (
+        select(
+            User.id,
+            User.full_name,
+            User.email,
+            func.count(IssueBatch.id).label("assigned_batches"),
+            func.coalesce(func.sum(pending_per_batch.c.pending_count), 0).label(
+                "assigned_pending_issues"
+            ),
+        )
+        .select_from(User)
+        .outerjoin(IssueBatch, IssueBatch.assigned_to_user_id == User.id)
+        .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
+        .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
+        .group_by(User.id, User.full_name, User.email)
+        .order_by(User.full_name.asc())
+    )
+
+
+async def _build_batch_summary_clerks(
+    session: DBSessionDep,
+    exam_id: int | None,
+) -> list[BatchSummaryClerkItem]:
+    clerk_stmt = _clerk_load_stmt(exam_id)
+    clerk_rows = (await session.execute(clerk_stmt)).all()
+    user_ids = [row.id for row in clerk_rows]
+    active_by_user = await _clerks_active_exams_bulk(session, user_ids)
+    clerks: list[BatchSummaryClerkItem] = []
+    for row in clerk_rows:
+        active_exams = active_by_user.get(row.id, [])
+        active_exam_id, active_exam_label = _primary_active_exam(active_exams)
+        clerks.append(
+            BatchSummaryClerkItem(
+                user_id=row.id,
+                full_name=row.full_name,
+                assigned_batches=int(row.assigned_batches or 0),
+                assigned_pending_issues=int(row.assigned_pending_issues or 0),
+                active_exam_id=active_exam_id,
+                active_exam_label=active_exam_label,
+                active_exams=active_exams,
+            )
+        )
+    return clerks
+
+
+async def _clerk_active_exams(
+    session: DBSessionDep,
+    user_id,
+) -> list[ClerkActiveExamItem]:
+    """Return exams where the clerk currently holds assigned batches."""
+    by_user = await _clerks_active_exams_bulk(session, [user_id])
+    return by_user.get(user_id, [])
 
 
 async def _clerk_active_exam(
@@ -105,10 +238,8 @@ async def _clerk_active_exam(
 ) -> tuple[int | None, str | None, list]:
     """Return (primary exam_id, label, active_exams list) for the clerk."""
     active_exams = await _clerk_active_exams(session, user_id)
-    if not active_exams:
-        return None, None, []
-    primary = active_exams[0]
-    return primary.exam_id, primary.exam_label, active_exams
+    active_exam_id, active_exam_label = _primary_active_exam(active_exams)
+    return active_exam_id, active_exam_label, active_exams
 
 
 @router.post("/batches", response_model=CreateBatchesResponse)
@@ -451,125 +582,61 @@ async def batches_summary(
     session: DBSessionDep,
     _: RegistrarDep,
     exam_id: int | None = Query(None),
+    include_unbatched: bool = Query(True),
 ) -> BatchSummaryResponse:
-    # Unbatched pending: classify DOC/NOD in Python for accuracy
-    stmt = (
-        select(SubjectScoreValidationIssue, SubjectScore, ExamSubject, Subject)
-        .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
-        .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
-        .join(Subject, ExamSubject.subject_id == Subject.id)
-        .where(
-            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
-            SubjectScoreValidationIssue.batch_id.is_(None),
+    unbatched: list[BatchSummaryUnbatchedItem] = []
+    pending_unbatched = 0
+    if include_unbatched:
+        # Unbatched pending: classify DOC/NOD in Python for accuracy
+        stmt = (
+            select(SubjectScoreValidationIssue, SubjectScore, ExamSubject, Subject)
+            .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
+            .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
+            .join(Subject, ExamSubject.subject_id == Subject.id)
+            .where(
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+                SubjectScoreValidationIssue.batch_id.is_(None),
+            )
         )
-    )
-    if exam_id is not None:
-        stmt = stmt.where(ExamSubject.exam_id == exam_id)
+        if exam_id is not None:
+            stmt = stmt.where(ExamSubject.exam_id == exam_id)
 
-    rows = (await session.execute(stmt)).all()
-    exam_ids = {es.exam_id for _, _, es, _ in rows}
-    success_by_exam: dict[int, set[str]] = {}
-    for eid in exam_ids:
-        docs = (
-            await session.execute(
-                select(Document.extracted_id).where(
-                    Document.exam_id == eid,
-                    Document.id_extraction_status == "success",
-                    Document.extracted_id.is_not(None),
+        rows = (await session.execute(stmt)).all()
+        exam_ids = {es.exam_id for _, _, es, _ in rows}
+        success_by_exam: dict[int, set[str]] = {}
+        for eid in exam_ids:
+            docs = (
+                await session.execute(
+                    select(Document.extracted_id).where(
+                        Document.exam_id == eid,
+                        Document.id_extraction_status == "success",
+                        Document.extracted_id.is_not(None),
+                    )
                 )
-            )
-        ).scalars().all()
-        success_by_exam[eid] = {d for d in docs if d}
+            ).scalars().all()
+            success_by_exam[eid] = {d for d in docs if d}
 
-    counts: dict[tuple[int, int, str, int, bool], int] = {}
-    code_map: dict[int, str] = {}
-    for issue, score, es, subject in rows:
-        doc_id = get_score_document_id(score, issue.test_type)
-        has_doc = bool(doc_id and doc_id in success_by_exam.get(es.exam_id, set()))
-        key = (es.exam_id, subject.id, subject.code, issue.test_type, has_doc)
-        counts[key] = counts.get(key, 0) + 1
-        code_map[subject.id] = subject.code
+        counts: dict[tuple[int, int, str, int, bool], int] = {}
+        for issue, score, es, subject in rows:
+            doc_id = get_score_document_id(score, issue.test_type)
+            has_doc = bool(doc_id and doc_id in success_by_exam.get(es.exam_id, set()))
+            key = (es.exam_id, subject.id, subject.code, issue.test_type, has_doc)
+            counts[key] = counts.get(key, 0) + 1
 
-    unbatched = [
-        BatchSummaryUnbatchedItem(
-            exam_id=k[0],
-            subject_id=k[1],
-            subject_code=k[2],
-            test_type=k[3],
-            has_document=k[4],
-            pending_count=v,
-        )
-        for k, v in sorted(counts.items(), key=lambda x: (x[0][0], x[0][2], x[0][3], not x[0][4]))
-    ]
-    pending_unbatched = sum(item.pending_count for item in unbatched)
+        unbatched = [
+            BatchSummaryUnbatchedItem(
+                exam_id=k[0],
+                subject_id=k[1],
+                subject_code=k[2],
+                test_type=k[3],
+                has_document=k[4],
+                pending_count=v,
+            )
+            for k, v in sorted(counts.items(), key=lambda x: (x[0][0], x[0][2], x[0][3], not x[0][4]))
+        ]
+        pending_unbatched = sum(item.pending_count for item in unbatched)
 
-    # Per-clerk assigned pending (optionally scoped to exam)
-    pending_per_batch = (
-        select(
-            SubjectScoreValidationIssue.batch_id.label("batch_id"),
-            func.count().label("pending_count"),
-        )
-        .where(
-            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
-            SubjectScoreValidationIssue.batch_id.is_not(None),
-        )
-        .group_by(SubjectScoreValidationIssue.batch_id)
-        .subquery()
-    )
-
-    if exam_id is not None:
-        clerk_stmt = (
-            select(
-                User.id,
-                User.full_name,
-                func.count(IssueBatch.id).label("assigned_batches"),
-                func.coalesce(func.sum(pending_per_batch.c.pending_count), 0).label(
-                    "assigned_pending_issues"
-                ),
-            )
-            .select_from(User)
-            .outerjoin(
-                IssueBatch,
-                (IssueBatch.assigned_to_user_id == User.id) & (IssueBatch.exam_id == exam_id),
-            )
-            .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
-            .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
-            .group_by(User.id, User.full_name)
-            .order_by(User.full_name.asc())
-        )
-    else:
-        clerk_stmt = (
-            select(
-                User.id,
-                User.full_name,
-                func.count(IssueBatch.id).label("assigned_batches"),
-                func.coalesce(func.sum(pending_per_batch.c.pending_count), 0).label(
-                    "assigned_pending_issues"
-                ),
-            )
-            .outerjoin(IssueBatch, IssueBatch.assigned_to_user_id == User.id)
-            .outerjoin(pending_per_batch, pending_per_batch.c.batch_id == IssueBatch.id)
-            .where(User.role == UserRole.DATACLERK, User.is_active.is_(True))
-            .group_by(User.id, User.full_name)
-            .order_by(User.full_name.asc())
-        )
-    clerk_rows = (await session.execute(clerk_stmt)).all()
-    clerks: list[BatchSummaryClerkItem] = []
-    for r in clerk_rows:
-        active_exam_id, active_exam_label, active_exams = await _clerk_active_exam(
-            session, r.id
-        )
-        clerks.append(
-            BatchSummaryClerkItem(
-                user_id=r.id,
-                full_name=r.full_name,
-                assigned_batches=int(r.assigned_batches or 0),
-                assigned_pending_issues=int(r.assigned_pending_issues or 0),
-                active_exam_id=active_exam_id,
-                active_exam_label=active_exam_label,
-                active_exams=active_exams,
-            )
-        )
+    clerks = await _build_batch_summary_clerks(session, exam_id)
 
     batch_count_stmt = select(
         func.coalesce(
@@ -642,35 +709,54 @@ async def list_clerks(
     ).scalars().all()
 
     day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    user_ids = [clerk.id for clerk in clerks]
+    resolved_by_user = await _clerks_resolved_today_bulk(session, user_ids, day_start)
+    active_by_user = await _clerks_active_exams_bulk(session, user_ids)
     items: list[ClerkListItem] = []
     for clerk in clerks:
-        resolved = int(
-            (
-                await session.execute(
-                    select(func.count())
-                    .select_from(SubjectScoreValidationIssue)
-                    .where(
-                        SubjectScoreValidationIssue.status
-                        == ValidationIssueStatus.RESOLVED,
-                        SubjectScoreValidationIssue.resolved_by_user_id == clerk.id,
-                        SubjectScoreValidationIssue.resolved_at >= day_start,
-                    )
-                )
-            ).scalar()
-            or 0
-        )
-        active_exam_id, active_exam_label, active_exams = await _clerk_active_exam(
-            session, clerk.id
-        )
+        active_exams = active_by_user.get(clerk.id, [])
+        active_exam_id, active_exam_label = _primary_active_exam(active_exams)
         items.append(
             ClerkListItem(
                 user_id=clerk.id,
                 full_name=clerk.full_name,
                 email=clerk.email,
-                resolved_today=resolved,
+                resolved_today=resolved_by_user.get(clerk.id, 0),
                 active_exam_id=active_exam_id,
                 active_exam_label=active_exam_label,
                 active_exams=active_exams,
             )
         )
     return ClerkListResponse(clerks=items)
+
+
+@router.get("/clerks/assign-panel", response_model=ClerkAssignPanelResponse)
+async def clerk_assign_panel(
+    session: DBSessionDep,
+    _: RegistrarDep,
+    exam_id: int | None = Query(None),
+) -> ClerkAssignPanelResponse:
+    """Lightweight clerk list for the assign-work sidebar."""
+    clerk_rows = (await session.execute(_clerk_load_stmt(exam_id))).all()
+    user_ids = [row.id for row in clerk_rows]
+    day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    resolved_by_user = await _clerks_resolved_today_bulk(session, user_ids, day_start)
+    active_by_user = await _clerks_active_exams_bulk(session, user_ids)
+    items: list[ClerkAssignPanelItem] = []
+    for row in clerk_rows:
+        active_exams = active_by_user.get(row.id, [])
+        active_exam_id, active_exam_label = _primary_active_exam(active_exams)
+        items.append(
+            ClerkAssignPanelItem(
+                user_id=row.id,
+                full_name=row.full_name,
+                email=row.email,
+                assigned_batches=int(row.assigned_batches or 0),
+                assigned_pending_issues=int(row.assigned_pending_issues or 0),
+                resolved_today=resolved_by_user.get(row.id, 0),
+                active_exam_id=active_exam_id,
+                active_exam_label=active_exam_label,
+                active_exams=active_exams,
+            )
+        )
+    return ClerkAssignPanelResponse(clerks=items)
