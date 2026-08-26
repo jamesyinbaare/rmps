@@ -133,6 +133,11 @@ class MyValidationStatsResponse(BaseModel):
     resolved_total: int
     ignored_total: int
     assigned_pending_count: int = 0
+    assigned_skipped_count: int = 0
+    skipped_today: int = 0
+    assigned_batches_count: int = 0
+    batches_in_progress_count: int = 0
+    batches_completed_count: int = 0
 
 
 class ClerkValidationStatsItem(BaseModel):

@@ -1035,6 +1035,11 @@ export interface MyValidationStats {
   resolved_total: number;
   ignored_total: number;
   assigned_pending_count: number;
+  assigned_skipped_count?: number;
+  skipped_today?: number;
+  assigned_batches_count?: number;
+  batches_in_progress_count?: number;
+  batches_completed_count?: number;
 }
 
 export interface ClerkValidationStatsItem {

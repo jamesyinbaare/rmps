@@ -141,7 +141,9 @@ export interface ValidationIssueWorkspaceProps {
   onCurrentIndexChange: (index: number | null) => void;
   /** Called after a successful resolve/ignore/skip so the parent can drop the issue from the queue. */
   onHandled?: (issueId: number, action: "resolved" | "ignored" | "skipped") => void;
+  /** Seed for the live session pulse (today's resolved / skipped). */
   resolvedTodayHint?: number;
+  skippedTodayHint?: number;
   /** Registrar/ops only. Dataclerks cannot ignore. */
   allowIgnore?: boolean;
 }
@@ -153,7 +155,8 @@ export function ValidationIssueWorkspace({
   currentIndex,
   onCurrentIndexChange,
   onHandled,
-  resolvedTodayHint,
+  resolvedTodayHint = 0,
+  skippedTodayHint = 0,
   allowIgnore = false,
 }: ValidationIssueWorkspaceProps) {
   const [issueDetail, setIssueDetail] = useState<ValidationIssueDetailResponse | null>(null);
@@ -162,6 +165,9 @@ export function ValidationIssueWorkspace({
   const [resolvingIssue, setResolvingIssue] = useState(false);
   const [ignoringIssue, setIgnoringIssue] = useState(false);
   const [skippingIssue, setSkippingIssue] = useState(false);
+  const [sessionResolved, setSessionResolved] = useState(resolvedTodayHint);
+  const [sessionSkipped, setSessionSkipped] = useState(skippedTodayHint);
+  const [pulseKey, setPulseKey] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -182,6 +188,12 @@ export function ValidationIssueWorkspace({
   useEffect(() => {
     setLayout(readStoredLayout());
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setSessionResolved(resolvedTodayHint);
+    setSessionSkipped(skippedTodayHint);
+  }, [open, resolvedTodayHint, skippedTodayHint]);
 
   useEffect(() => {
     return prefetchCache.subscribe(() => {
@@ -363,6 +375,13 @@ export function ValidationIssueWorkspace({
 
   const finishHandle = useCallback(
     (issueId: number, action: "resolved" | "ignored" | "skipped") => {
+      if (action === "resolved") {
+        setSessionResolved((n) => n + 1);
+        setPulseKey((k) => k + 1);
+      } else if (action === "skipped") {
+        setSessionSkipped((n) => n + 1);
+        setPulseKey((k) => k + 1);
+      }
       const remainingCount = issues.length - 1;
       onHandled?.(issueId, action);
       if (currentIndex === null || remainingCount <= 0 || currentIndex >= remainingCount) {
@@ -401,18 +420,13 @@ export function ValidationIssueWorkspace({
     setResolvingIssue(true);
     try {
       await resolveValidationIssue(issueDetail.id, trimmed);
-      const todayLabel =
-        resolvedTodayHint !== undefined
-          ? ` · ${resolvedTodayHint + 1} resolved today`
-          : "";
-      toast.success(`Issue resolved${todayLabel}`);
       finishHandle(issueDetail.id, "resolved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to resolve issue");
     } finally {
       setResolvingIssue(false);
     }
-  }, [issueDetail, correctedScore, resolvedTodayHint, finishHandle]);
+  }, [issueDetail, correctedScore, finishHandle]);
 
   const handleIgnoreIssue = useCallback(async () => {
     if (!allowIgnore || !issueDetail || issueDetail.status !== "pending") return;
@@ -420,7 +434,6 @@ export function ValidationIssueWorkspace({
     setIgnoringIssue(true);
     try {
       await ignoreValidationIssue(issueDetail.id);
-      toast.success("Issue marked as ignored");
       finishHandle(issueDetail.id, "ignored");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to ignore issue");
@@ -434,7 +447,6 @@ export function ValidationIssueWorkspace({
     setSkippingIssue(true);
     try {
       await skipValidationIssue(issueDetail.id);
-      toast.message("Issue skipped — won’t show again until admin re-validates");
       finishHandle(issueDetail.id, "skipped");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to skip issue");
@@ -588,6 +600,22 @@ export function ValidationIssueWorkspace({
 
   const floatingActions = (
     <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/80 p-0.5 shadow-sm backdrop-blur-md">
+      <span
+        key={pulseKey}
+        className="hidden items-baseline gap-1.5 px-2 text-[11px] tabular-nums text-muted-foreground animate-in fade-in zoom-in-95 duration-200 sm:inline-flex"
+        aria-live="polite"
+      >
+        <span>
+          <span className="text-foreground/80 font-medium">{sessionResolved}</span> resolved
+        </span>
+        <span className="text-border">·</span>
+        <span>
+          <span className="text-foreground/80 font-medium">{sessionSkipped}</span> skipped
+        </span>
+      </span>
+      {(issues.length > 1 || sessionResolved > 0 || sessionSkipped > 0) && (
+        <span className="mx-0.5 hidden h-3.5 w-px bg-border/50 sm:block" aria-hidden />
+      )}
       {issues.length > 1 && (
         <>
           <span className="hidden px-1.5 text-[11px] tabular-nums text-muted-foreground sm:inline">
@@ -755,7 +783,7 @@ export function ValidationIssueWorkspace({
     </div>
   );
 
-  const skipTitle = "Skip for now · won’t show again until admin re-validates · Ctrl+Enter";
+  const skipTitle = "Skip for now · Ctrl+Enter";
 
   const scoreEntryPending =
     issueDetail?.status === "pending" ? (
