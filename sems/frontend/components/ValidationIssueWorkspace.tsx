@@ -602,15 +602,15 @@ export function ValidationIssueWorkspace({
     <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/80 p-0.5 shadow-sm backdrop-blur-md">
       <span
         key={pulseKey}
-        className="hidden items-baseline gap-1.5 px-2 text-[11px] tabular-nums text-muted-foreground animate-in fade-in zoom-in-95 duration-200 sm:inline-flex"
+        className="hidden items-baseline gap-1.5 rounded-full border border-border/50 bg-background/90 px-2.5 py-1 text-[11px] tabular-nums text-muted-foreground animate-in fade-in zoom-in-95 duration-200 sm:inline-flex"
         aria-live="polite"
       >
         <span>
-          <span className="text-foreground/80 font-medium">{sessionResolved}</span> resolved
+          <span className="font-semibold text-[#00853f]">{sessionResolved}</span> resolved
         </span>
         <span className="text-border">·</span>
         <span>
-          <span className="text-foreground/80 font-medium">{sessionSkipped}</span> skipped
+          <span className="font-semibold text-[#ff6c0c]">{sessionSkipped}</span> skipped
         </span>
       </span>
       {(issues.length > 1 || sessionResolved > 0 || sessionSkipped > 0) && (
