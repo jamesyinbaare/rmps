@@ -333,6 +333,15 @@ async def list_my_batches(
         ),
         0,
     ).label("done_count")
+    skipped_count_col = func.coalesce(
+        func.sum(
+            case(
+                (SubjectScoreValidationIssue.status == ValidationIssueStatus.SKIPPED, 1),
+                else_=0,
+            )
+        ),
+        0,
+    ).label("skipped_count")
     total_count_col = func.count(SubjectScoreValidationIssue.id).label("total_count")
     last_resolved_col = func.max(SubjectScoreValidationIssue.resolved_at).label(
         "last_resolved_at"
@@ -348,6 +357,7 @@ async def list_my_batches(
             Exam.series,
             pending_count_col,
             done_count_col,
+            skipped_count_col,
             total_count_col,
             last_resolved_col,
         )
@@ -391,11 +401,13 @@ async def list_my_batches(
         exam_series,
         pending_c,
         done_c,
+        skipped_c,
         total_c,
         last_resolved,
     ) in rows:
         pending = int(pending_c or 0)
         done = int(done_c or 0)
+        skipped = int(skipped_c or 0)
         total = int(total_c or 0)
         # Completed only when there are issues and none remain pending.
         if total > 0 and pending == 0:
@@ -418,6 +430,7 @@ async def list_my_batches(
             issue_count=batch.issue_count,
             pending_count=pending,
             done_count=done,
+            skipped_count=skipped,
             total_count=total,
             progress_status=progress,
             assigned_at=batch.assigned_at,

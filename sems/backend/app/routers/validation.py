@@ -776,3 +776,41 @@ async def ignore_validation_issue(
     logger.debug(f"Cache invalidated after ignoring issue {issue_id}")
 
     return SubjectScoreValidationIssueResponse.model_validate(issue)
+
+
+@router.put("/issues/{issue_id}/skip", response_model=SubjectScoreValidationIssueResponse)
+async def skip_validation_issue(
+    issue_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> SubjectScoreValidationIssueResponse:
+    """Mark a pending validation issue as skipped (deferred). Does not count as resolved."""
+    stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
+    result = await session.execute(stmt)
+    issue = result.scalar_one_or_none()
+
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Validation issue with id {issue_id} not found",
+        )
+
+    if issue.status != ValidationIssueStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending issues can be skipped",
+        )
+
+    await _assert_can_act_on_issue(session, issue, current_user)
+
+    # Do not set resolved_at / resolved_by_user_id — skip is not payment-attributed.
+    issue.status = ValidationIssueStatus.SKIPPED
+    issue.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(issue)
+
+    await cache_service.delete(generate_issue_detail_key(issue_id))
+    await cache_service.clear_pattern(generate_issues_pattern())
+    logger.debug(f"Cache invalidated after skipping issue {issue_id}")
+
+    return SubjectScoreValidationIssueResponse.model_validate(issue)

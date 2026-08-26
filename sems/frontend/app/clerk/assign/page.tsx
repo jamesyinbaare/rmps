@@ -139,18 +139,18 @@ export default function AssignWorkPage() {
   }, [examId]);
 
   useEffect(() => {
-    if (!authorized) return;
+    if (!authorized || !filtersHydrated || !examId) return;
     void refreshBatches().catch((err) =>
       toast.error(err instanceof Error ? err.message : "Failed to refresh batches")
     );
-  }, [authorized, refreshBatches]);
+  }, [authorized, filtersHydrated, examId, refreshBatches]);
 
   useEffect(() => {
-    if (!authorized) return;
+    if (!authorized || !examId) return;
     void refreshClerks().catch((err) =>
       toast.error(err instanceof Error ? err.message : "Failed to refresh clerks")
     );
-  }, [authorized, refreshClerks]);
+  }, [authorized, examId, refreshClerks]);
 
   const filteredBatches = useMemo(() => {
     if (tab === "unassigned") return batches.filter((b) => !b.assigned_to_user_id);

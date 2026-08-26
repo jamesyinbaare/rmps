@@ -876,7 +876,7 @@ export interface BulkUnmatchedActionResponse {
 }
 
 export type ValidationIssueType = "missing_score" | "invalid_score";
-export type ValidationIssueStatus = "pending" | "resolved" | "ignored";
+export type ValidationIssueStatus = "pending" | "resolved" | "ignored" | "skipped";
 
 export interface SubjectScoreValidationIssue {
   id: number;
@@ -1089,6 +1089,7 @@ export interface ClerkBatchItem {
   issue_count: number;
   pending_count: number;
   done_count: number;
+  skipped_count?: number;
   total_count: number;
   progress_status: ClerkBatchProgressStatus;
   assigned_at: string | null;
@@ -1129,6 +1130,7 @@ export interface ClearBatchesResponse {
   batches_deleted: number;
   pending_unbatched: number;
   resolved_preserved: number;
+  skipped_cleared?: number;
 }
 
 export interface CreateBatchesResponse {

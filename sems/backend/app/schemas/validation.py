@@ -20,6 +20,7 @@ class ValidationIssueStatus(str, Enum):
     PENDING = "pending"
     RESOLVED = "resolved"
     IGNORED = "ignored"
+    SKIPPED = "skipped"
 
 
 class SubjectScoreValidationIssueResponse(BaseModel):
@@ -175,6 +176,7 @@ class ClearBatchesResponse(BaseModel):
     batches_deleted: int
     pending_unbatched: int
     resolved_preserved: int
+    skipped_cleared: int = 0
 
 
 class IssueBatchResponse(BaseModel):
@@ -232,6 +234,7 @@ class ClerkBatchItem(BaseModel):
     issue_count: int
     pending_count: int
     done_count: int
+    skipped_count: int = 0
     total_count: int
     progress_status: ClerkBatchProgressStatus
     assigned_at: datetime | None = None

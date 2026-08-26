@@ -274,11 +274,15 @@ export default function ClerkDashboardPage() {
     openIssueAt(0);
   };
 
-  const handleHandled = (issueId: number) => {
+  const handleHandled = (issueId: number, action: "resolved" | "ignored" | "skipped") => {
     setBatchIssues((prev) => {
       const next = prev.filter((issue) => issue.id !== issueId);
       if (next.length === 0) {
-        toast.success("Batch complete — all issues resolved");
+        toast.success(
+          action === "skipped"
+            ? "No pending issues left in this batch"
+            : "Batch complete — all issues resolved"
+        );
         setTimeout(() => {
           setActiveBatch(null);
           setWorkspaceOpen(false);
@@ -292,7 +296,14 @@ export default function ClerkDashboardPage() {
             ? {
                 ...prevBatch,
                 pending_count: next.length,
-                done_count: prevBatch.done_count + 1,
+                done_count:
+                  action === "skipped"
+                    ? prevBatch.done_count
+                    : prevBatch.done_count + 1,
+                skipped_count:
+                  action === "skipped"
+                    ? (prevBatch.skipped_count ?? 0) + 1
+                    : prevBatch.skipped_count ?? 0,
               }
             : prevBatch
         );
@@ -712,12 +723,18 @@ function BatchList({
                 )}
                 <span className="md:hidden text-muted-foreground text-xs ml-1">
                   remaining · {batch.done_count}/{batch.total_count}
+                  {(batch.skipped_count ?? 0) > 0
+                    ? ` · ${batch.skipped_count} skipped`
+                    : ""}
                 </span>
               </p>
               <div className="space-y-1 hidden md:block">
                 <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                   <span>
                     {batch.done_count}/{batch.total_count}
+                    {(batch.skipped_count ?? 0) > 0
+                      ? ` · ${batch.skipped_count} skipped`
+                      : ""}
                   </span>
                 </div>
                 <div className="h-1 rounded-full bg-muted overflow-hidden">

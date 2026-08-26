@@ -551,7 +551,8 @@ export function PrepareBatchesPanel({
             <h2 className="font-medium">Prepare batches</h2>
             <p className="text-sm text-muted-foreground">
               Validate → optional clear → create DOC and/or NOD batches for one or more
-              subjects and papers.
+              subjects and papers. Clear also resets clerk-skipped issues so they can be
+              packed again.
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs">

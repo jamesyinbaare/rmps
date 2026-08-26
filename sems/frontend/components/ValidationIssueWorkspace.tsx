@@ -41,6 +41,7 @@ import {
   getValidationIssue,
   ignoreValidationIssue,
   resolveValidationIssue,
+  skipValidationIssue,
 } from "@/lib/api";
 import {
   createDocumentPrefetchCache,
@@ -138,8 +139,8 @@ export interface ValidationIssueWorkspaceProps {
   issues: SubjectScoreValidationIssue[];
   currentIndex: number | null;
   onCurrentIndexChange: (index: number | null) => void;
-  /** Called after a successful resolve/ignore so the parent can drop the issue from the queue. */
-  onHandled?: (issueId: number, action: "resolved" | "ignored") => void;
+  /** Called after a successful resolve/ignore/skip so the parent can drop the issue from the queue. */
+  onHandled?: (issueId: number, action: "resolved" | "ignored" | "skipped") => void;
   resolvedTodayHint?: number;
   /** Registrar/ops only. Dataclerks cannot ignore. */
   allowIgnore?: boolean;
@@ -160,6 +161,7 @@ export function ValidationIssueWorkspace({
   const [correctedScore, setCorrectedScore] = useState("");
   const [resolvingIssue, setResolvingIssue] = useState(false);
   const [ignoringIssue, setIgnoringIssue] = useState(false);
+  const [skippingIssue, setSkippingIssue] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -348,12 +350,19 @@ export function ValidationIssueWorkspace({
     [currentIndex, issues.length, onCurrentIndexChange]
   );
 
-  const canSkipNext =
+  const canGoNext =
     currentIndex !== null && currentIndex < issues.length - 1 && !loadingIssueDetail;
+  const canSkip =
+    currentIndex !== null &&
+    issueDetail?.status === "pending" &&
+    !loadingIssueDetail &&
+    !resolvingIssue &&
+    !ignoringIssue &&
+    !skippingIssue;
   const canGoPrev = currentIndex !== null && currentIndex > 0 && !loadingIssueDetail;
 
   const finishHandle = useCallback(
-    (issueId: number, action: "resolved" | "ignored") => {
+    (issueId: number, action: "resolved" | "ignored" | "skipped") => {
       const remainingCount = issues.length - 1;
       onHandled?.(issueId, action);
       if (currentIndex === null || remainingCount <= 0 || currentIndex >= remainingCount) {
@@ -420,10 +429,19 @@ export function ValidationIssueWorkspace({
     }
   }, [allowIgnore, issueDetail, finishHandle]);
 
-  const handleSkip = useCallback(() => {
-    if (!canSkipNext || resolvingIssue || ignoringIssue) return;
-    handleNavigateIssue("next");
-  }, [canSkipNext, resolvingIssue, ignoringIssue, handleNavigateIssue]);
+  const handleSkip = useCallback(async () => {
+    if (!canSkip || !issueDetail || issueDetail.status !== "pending") return;
+    setSkippingIssue(true);
+    try {
+      await skipValidationIssue(issueDetail.id);
+      toast.message("Issue skipped — won’t show again until admin re-validates");
+      finishHandle(issueDetail.id, "skipped");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to skip issue");
+    } finally {
+      setSkippingIssue(false);
+    }
+  }, [canSkip, issueDetail, finishHandle]);
 
   useEffect(() => {
     if (!open) return;
@@ -438,16 +456,18 @@ export function ValidationIssueWorkspace({
         return;
       }
 
-      // Ctrl/Cmd+Enter → Skip (leave unresolved); Enter alone → Resolve
+      // Ctrl/Cmd+Enter → Skip (persist deferred); Enter alone → Resolve
       if (e.key === "Enter" && !e.shiftKey && issueDetail?.status === "pending") {
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          handleSkip();
+          if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
+            void handleSkip();
+          }
           return;
         }
         if (isInputFocused || e.target === document.body) {
           e.preventDefault();
-          if (!resolvingIssue && !ignoringIssue) {
+          if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
             void handleResolveIssue();
           }
           return;
@@ -461,7 +481,7 @@ export function ValidationIssueWorkspace({
         issueDetail?.status === "pending"
       ) {
         e.preventDefault();
-        if (!resolvingIssue && !ignoringIssue) {
+        if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
           void handleIgnoreIssue();
         }
         return;
@@ -492,6 +512,7 @@ export function ValidationIssueWorkspace({
     issueDetail,
     resolvingIssue,
     ignoringIssue,
+    skippingIssue,
     allowIgnore,
     handleResolveIssue,
     handleIgnoreIssue,
@@ -587,7 +608,7 @@ export function ValidationIssueWorkspace({
             size="icon-sm"
             className="h-7 w-7"
             onClick={() => handleNavigateIssue("next")}
-            disabled={!canSkipNext}
+            disabled={!canGoNext}
             aria-label="Next issue"
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -703,7 +724,7 @@ export function ValidationIssueWorkspace({
                 size="icon-sm"
                 className="h-7 w-7"
                 aria-label="More actions"
-                disabled={resolvingIssue || ignoringIssue}
+                disabled={resolvingIssue || ignoringIssue || skippingIssue}
               >
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
@@ -711,7 +732,7 @@ export function ValidationIssueWorkspace({
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 onClick={() => void handleIgnoreIssue()}
-                disabled={resolvingIssue || ignoringIssue}
+                disabled={resolvingIssue || ignoringIssue || skippingIssue}
               >
                 <XCircle className="h-3.5 w-3.5" />
                 Ignore issue
@@ -726,7 +747,7 @@ export function ValidationIssueWorkspace({
         size="icon-sm"
         className="h-7 w-7"
         onClick={handleClose}
-        disabled={resolvingIssue || ignoringIssue}
+        disabled={resolvingIssue || ignoringIssue || skippingIssue}
         aria-label="Close"
       >
         <X className="h-3.5 w-3.5" />
@@ -734,7 +755,7 @@ export function ValidationIssueWorkspace({
     </div>
   );
 
-  const skipTitle = "Skip leaves unresolved · Ctrl+Enter";
+  const skipTitle = "Skip for now · won’t show again until admin re-validates · Ctrl+Enter";
 
   const scoreEntryPending =
     issueDetail?.status === "pending" ? (
@@ -783,7 +804,7 @@ export function ValidationIssueWorkspace({
         </div>
         <Button
           onClick={() => void handleResolveIssue()}
-          disabled={resolvingIssue || ignoringIssue}
+          disabled={resolvingIssue || ignoringIssue || skippingIssue}
           className={`shrink-0 gap-1.5 transition-colors ${
             sideBySide ? "h-11 w-full" : "h-10"
           }`}
@@ -796,23 +817,25 @@ export function ValidationIssueWorkspace({
           )}
           Resolve
         </Button>
-        {issues.length > 1 && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={`shrink-0 gap-1 transition-colors ${
-              sideBySide ? "h-10 w-full" : "h-10"
-            }`}
-            onClick={handleSkip}
-            disabled={!canSkipNext || resolvingIssue || ignoringIssue}
-            title={skipTitle}
-            aria-label={skipTitle}
-          >
-            Skip
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`shrink-0 gap-1 transition-colors ${
+            sideBySide ? "h-10 w-full" : "h-10"
+          }`}
+          onClick={() => void handleSkip()}
+          disabled={!canSkip}
+          title={skipTitle}
+          aria-label={skipTitle}
+        >
+          {skippingIssue ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
             <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
-        )}
+          )}
+          Skip
+        </Button>
       </>
     ) : issueDetail ? (
       <div className="flex flex-wrap items-center gap-3 py-1">
@@ -827,18 +850,17 @@ export function ValidationIssueWorkspace({
         <p className="font-mono text-base tabular-nums">
           {issueDetail.current_score_value ?? "—"}
         </p>
-        {issues.length > 1 && (
+        {canGoNext && (
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-9 shrink-0 gap-1 transition-colors"
-            onClick={handleSkip}
-            disabled={!canSkipNext}
-            title={skipTitle}
-            aria-label={skipTitle}
+            onClick={() => handleNavigateIssue("next")}
+            title="Next issue"
+            aria-label="Next issue"
           >
-            Skip
+            Next
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         )}

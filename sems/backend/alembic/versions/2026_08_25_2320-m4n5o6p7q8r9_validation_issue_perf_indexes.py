@@ -18,19 +18,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Native PG enum labels are UPPERCASE member names (PENDING/RESOLVED/IGNORED).
     op.create_index(
         "ix_ssvi_pending_unbatched",
         "subject_score_validation_issues",
         ["status", "batch_id"],
         unique=False,
-        postgresql_where=sa.text("status = 'pending' AND batch_id IS NULL"),
+        postgresql_where=sa.text("status = 'PENDING' AND batch_id IS NULL"),
     )
     op.create_index(
         "ix_ssvi_resolved_by_resolved_at",
         "subject_score_validation_issues",
         ["resolved_by_user_id", "resolved_at"],
         unique=False,
-        postgresql_where=sa.text("status = 'resolved'"),
+        postgresql_where=sa.text("status = 'RESOLVED'"),
     )
 
 

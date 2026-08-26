@@ -434,9 +434,10 @@ async def clear_batches(
     """
     Delete IssueBatch rows for exam+subject+test_type.
 
-    Pending issues in those batches are unbatched (batch_id=NULL) so they can
-    be re-packed. Resolved/ignored issue rows are never deleted; attribution
-    fields are left intact. Deleting batches nulls batch_id via FK ON DELETE SET NULL.
+    Pending and skipped issues in those batches are reset to pending and
+    unbatched (batch_id=NULL) so they can be re-packed. Resolved/ignored
+    issue rows are never deleted; attribution fields are left intact.
+    Deleting batches nulls batch_id via FK ON DELETE SET NULL.
     """
     if test_type not in (1, 2, 3):
         raise ValueError("test_type must be 1, 2, or 3")
@@ -456,6 +457,7 @@ async def clear_batches(
             "batches_deleted": 0,
             "pending_unbatched": 0,
             "resolved_preserved": 0,
+            "skipped_cleared": 0,
         }
 
     pending_count = (
@@ -465,6 +467,17 @@ async def clear_batches(
             .where(
                 SubjectScoreValidationIssue.batch_id.in_(batch_ids),
                 SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            )
+        )
+    ).scalar() or 0
+
+    skipped_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .where(
+                SubjectScoreValidationIssue.batch_id.in_(batch_ids),
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.SKIPPED,
             )
         )
     ).scalar() or 0
@@ -482,13 +495,20 @@ async def clear_batches(
         )
     ).scalar() or 0
 
+    # Convert skipped → pending and unbatch both pending + formerly skipped.
     await session.execute(
         update(SubjectScoreValidationIssue)
         .where(
             SubjectScoreValidationIssue.batch_id.in_(batch_ids),
-            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            SubjectScoreValidationIssue.status.in_(
+                [ValidationIssueStatus.PENDING, ValidationIssueStatus.SKIPPED]
+            ),
         )
-        .values(batch_id=None, updated_at=datetime.utcnow())
+        .values(
+            status=ValidationIssueStatus.PENDING,
+            batch_id=None,
+            updated_at=datetime.utcnow(),
+        )
     )
 
     await session.execute(delete(IssueBatch).where(IssueBatch.id.in_(batch_ids)))
@@ -496,16 +516,18 @@ async def clear_batches(
 
     logger.info(
         "Cleared %s batches for exam=%s subject=%s test_type=%s "
-        "(pending_unbatched=%s resolved_preserved=%s)",
+        "(pending_unbatched=%s skipped_cleared=%s resolved_preserved=%s)",
         len(batch_ids),
         exam_id,
         subject_id,
         test_type,
         pending_count,
+        skipped_count,
         resolved_preserved,
     )
     return {
         "batches_deleted": len(batch_ids),
-        "pending_unbatched": pending_count,
+        "pending_unbatched": int(pending_count) + int(skipped_count),
         "resolved_preserved": resolved_preserved,
+        "skipped_cleared": int(skipped_count),
     }

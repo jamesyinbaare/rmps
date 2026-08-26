@@ -3107,6 +3107,19 @@ export async function ignoreValidationIssue(issueId: number): Promise<SubjectSco
   return handleResponse<SubjectScoreValidationIssue>(response);
 }
 
+export async function skipValidationIssue(issueId: number): Promise<SubjectScoreValidationIssue> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues/${issueId}/skip`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<SubjectScoreValidationIssue>(response);
+}
+
 export async function getMyValidationStats(): Promise<MyValidationStats> {
   const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/stats/me`);
   return handleResponse<MyValidationStats>(response);
