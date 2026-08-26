@@ -78,7 +78,12 @@ function DocNodBadge({ hasDocument }: { hasDocument: boolean }) {
       <TooltipTrigger asChild>
         <Badge
           variant={hasDocument ? "default" : "secondary"}
-          className="shrink-0 cursor-help"
+          className={cn(
+            "shrink-0 cursor-help px-1.5 py-0 text-[10px] font-semibold tracking-wide",
+            hasDocument
+              ? "bg-[#003764] hover:bg-[#003764]/90"
+              : "bg-muted text-muted-foreground"
+          )}
           title={title}
         >
           {label}
@@ -110,37 +115,105 @@ function formatActiveExam(batch: ClerkBatchItem | null): string | null {
   return batch.exam_year != null ? `Exam ${batch.exam_year}` : null;
 }
 
+type KpiAccent = "navy" | "green" | "ember" | "gold";
+
+const KPI_ACCENT: Record<
+  KpiAccent,
+  { bar: string; well: string; icon: string; value: string }
+> = {
+  navy: {
+    bar: "bg-[#003764]",
+    well: "bg-[#003764]/10",
+    icon: "text-[#003764]",
+    value: "text-[#003764]",
+  },
+  green: {
+    bar: "bg-[#00853f]",
+    well: "bg-[#00853f]/10",
+    icon: "text-[#00853f]",
+    value: "text-[#00853f]",
+  },
+  ember: {
+    bar: "bg-[#ff6c0c]",
+    well: "bg-[#ff6c0c]/10",
+    icon: "text-[#ff6c0c]",
+    value: "text-[#c45508]",
+  },
+  gold: {
+    bar: "bg-[#e6b800]",
+    well: "bg-[#ffcc00]/18",
+    icon: "text-[#9a7b00]",
+    value: "text-[#7a6200]",
+  },
+};
+
 function KpiCard({
   label,
   value,
   hint,
   icon: Icon,
+  accent,
   loading,
 }: {
   label: string;
   value: string | number;
   hint?: string;
   icon: ComponentType<{ className?: string }>;
+  accent: KpiAccent;
   loading?: boolean;
 }) {
+  const tone = KPI_ACCENT[accent];
   return (
-    <div className="rounded-xl border border-border/70 bg-background/80 px-4 py-3.5 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </p>
-        <Icon className="h-3.5 w-3.5 text-muted-foreground/70" aria-hidden />
+    <div
+      className={cn(
+        "group relative overflow-hidden rounded-2xl border border-border/60",
+        "bg-background/70 backdrop-blur-sm",
+        "shadow-[0_1px_0_rgba(0,0,0,0.04),0_8px_24px_-16px_rgba(0,55,100,0.18)]",
+        "transition-transform duration-300 hover:-translate-y-0.5"
+      )}
+    >
+      <div className={cn("absolute inset-x-0 top-0 h-0.5", tone.bar)} aria-hidden />
+      <div className="px-4 pb-3.5 pt-4">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {label}
+          </p>
+          <span
+            className={cn(
+              "inline-flex h-8 w-8 items-center justify-center rounded-lg",
+              tone.well
+            )}
+          >
+            <Icon className={cn("h-4 w-4", tone.icon)} aria-hidden />
+          </span>
+        </div>
+        {loading ? (
+          <div className="mt-3 space-y-2">
+            <Skeleton className="h-9 w-20" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        ) : (
+          <>
+            <p
+              key={String(value)}
+              className={cn(
+                "mt-2.5 text-3xl sm:text-4xl font-semibold tabular-nums tracking-tight",
+                "animate-in fade-in zoom-in-95 duration-300",
+                tone.value
+              )}
+            >
+              {value}
+            </p>
+            {hint ? (
+              <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                {hint}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-transparent select-none">.</p>
+            )}
+          </>
+        )}
       </div>
-      {loading ? (
-        <Skeleton className="mt-2 h-8 w-16" />
-      ) : (
-        <p className="mt-1.5 text-3xl font-semibold tracking-tight tabular-nums">{value}</p>
-      )}
-      {hint ? (
-        <p className="mt-1 text-xs text-muted-foreground tabular-nums">{hint}</p>
-      ) : (
-        <p className="mt-1 text-xs text-transparent select-none">.</p>
-      )}
     </div>
   );
 }
@@ -567,47 +640,75 @@ export default function ClerkDashboardPage() {
           <div className="container mx-auto px-6 py-8 space-y-8">
             <section
               className={cn(
-                "relative overflow-hidden rounded-2xl border border-border/60",
-                "bg-gradient-to-br from-muted/50 via-background to-background",
-                "px-5 py-6 sm:px-7 sm:py-7"
+                "relative overflow-hidden rounded-2xl border border-border/50",
+                "px-5 py-7 sm:px-8 sm:py-8",
+                "animate-in fade-in duration-500"
               )}
+              style={{
+                backgroundImage: [
+                  "radial-gradient(ellipse 80% 60% at 100% 0%, rgba(0,55,100,0.10), transparent 55%)",
+                  "radial-gradient(ellipse 70% 50% at 0% 100%, rgba(0,133,63,0.09), transparent 50%)",
+                  "radial-gradient(ellipse 40% 30% at 70% 80%, rgba(255,204,0,0.06), transparent 45%)",
+                  "linear-gradient(to bottom right, hsl(var(--background)), hsl(var(--muted) / 0.35))",
+                  "repeating-linear-gradient(0deg, transparent, transparent 11px, rgba(0,55,100,0.03) 11px, rgba(0,55,100,0.03) 12px)",
+                  "repeating-linear-gradient(90deg, transparent, transparent 11px, rgba(0,55,100,0.03) 11px, rgba(0,55,100,0.03) 12px)",
+                ].join(", "),
+              }}
             >
-              <div
-                className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.06] blur-3xl"
-                aria-hidden
-              />
-              <div
-                className="pointer-events-none absolute -bottom-24 -left-10 h-48 w-48 rounded-full bg-muted-foreground/[0.05] blur-3xl"
-                aria-hidden
-              />
-
-              <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-                <div className="space-y-2 max-w-xl">
-                  <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+              <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+                <div className="max-w-xl space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                  <div className="flex items-center gap-2.5">
+                    <span className="h-px w-6 bg-[#e6b800]" aria-hidden />
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Data entry · Today
+                    </p>
+                  </div>
+                  <h1 className="text-3xl sm:text-4xl font-semibold tracking-[-0.02em] text-foreground">
                     Ready when you are
                   </h1>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  <p className="text-sm sm:text-[15px] leading-relaxed text-foreground/70">
                     Work through assigned batches — resolve scores from the sheet, or skip
                     issues you can’t finish yet.
                   </p>
                 </div>
-                <Button
-                  size="lg"
-                  className="gap-2 shrink-0 shadow-sm"
-                  onClick={handleResumeNext}
-                  disabled={!resumeBatch || loading}
-                >
-                  <Play className="h-4 w-4" />
-                  <span className="truncate max-w-[16rem]">{resumeLabel}</span>
-                </Button>
+                <div className="flex flex-col items-stretch sm:items-end gap-2 animate-in fade-in slide-in-from-bottom-3 duration-700">
+                  <Button
+                    size="lg"
+                    className={cn(
+                      "gap-2 shrink-0 shadow-[0_8px_24px_-8px_rgba(0,133,63,0.45)]",
+                      "transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                    )}
+                    onClick={handleResumeNext}
+                    disabled={!resumeBatch || loading}
+                  >
+                    <Play className="h-4 w-4" />
+                    <span className="truncate max-w-[16rem]">{resumeLabel}</span>
+                  </Button>
+                  {resumeBatch ? (
+                    <p className="text-[11px] tabular-nums text-muted-foreground sm:text-right">
+                      {[
+                        resumeBatch.subject_code,
+                        getTestTypeLabel(resumeBatch.test_type),
+                        resumeBatch.has_document ? "DOC" : "NOD",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground/80 sm:text-right">
+                      No batch in progress
+                    </p>
+                  )}
+                </div>
               </div>
 
-              <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="relative mt-7 grid grid-cols-2 gap-3 lg:grid-cols-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
                 <KpiCard
                   label="Assigned"
                   value={stats?.assigned_pending_count ?? 0}
                   hint="Issues waiting"
                   icon={Inbox}
+                  accent="navy"
                   loading={!stats && loading}
                 />
                 <KpiCard
@@ -615,6 +716,7 @@ export default function ClerkDashboardPage() {
                   value={stats?.resolved_today ?? 0}
                   hint={stats ? `Week · ${stats.resolved_week}` : undefined}
                   icon={CheckCircle2}
+                  accent="green"
                   loading={!stats && loading}
                 />
                 <KpiCard
@@ -622,6 +724,7 @@ export default function ClerkDashboardPage() {
                   value={stats?.assigned_skipped_count ?? 0}
                   hint={stats ? `Today · ${stats.skipped_today ?? 0}` : undefined}
                   icon={SkipForward}
+                  accent="ember"
                   loading={!stats && loading}
                 />
                 <KpiCard
@@ -629,6 +732,7 @@ export default function ClerkDashboardPage() {
                   value={`${stats?.batches_in_progress_count ?? inProgressCount}`}
                   hint={`${stats?.batches_completed_count ?? completedCount} completed`}
                   icon={Layers}
+                  accent="gold"
                   loading={!stats && loading}
                 />
               </div>
@@ -725,10 +829,10 @@ function BatchList({
 }) {
   if (loading) {
     return (
-      <div className="rounded-lg border divide-y">
+      <div className="overflow-hidden rounded-2xl border border-border/60 divide-y">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="px-4 py-3">
-            <Skeleton className="h-10 w-full" />
+          <div key={i} className="px-4 py-4">
+            <Skeleton className="h-11 w-full" />
           </div>
         ))}
       </div>
@@ -736,12 +840,12 @@ function BatchList({
   }
   if (error) {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-3 py-8">
-          <div className="flex items-center gap-2 text-destructive">
-            <AlertCircle className="h-4 w-4" />
-            {error}
+      <Card className="rounded-2xl border-border/60">
+        <CardContent className="flex flex-col items-center gap-3 py-10">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+            <AlertCircle className="h-5 w-5 text-destructive" />
           </div>
+          <p className="text-sm text-destructive">{error}</p>
           <Button variant="outline" size="sm" onClick={onRetry}>
             Retry
           </Button>
@@ -751,24 +855,32 @@ function BatchList({
   }
   if (batches.length === 0) {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          {emptyIcon === "inbox" ? (
-            <Inbox className="h-8 w-8 text-muted-foreground" />
-          ) : (
-            <CheckCircle2 className="h-8 w-8 text-primary" />
-          )}
-          <p className="font-medium text-foreground">{emptyTitle}</p>
-          <p className="text-sm text-center max-w-sm">{emptyDescription}</p>
+      <Card className="rounded-2xl border-border/60">
+        <CardContent className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
+          <div
+            className={cn(
+              "flex h-14 w-14 items-center justify-center rounded-full",
+              emptyIcon === "inbox" ? "bg-muted" : "bg-[#00853f]/10"
+            )}
+          >
+            {emptyIcon === "inbox" ? (
+              <Inbox className="h-7 w-7 text-muted-foreground" />
+            ) : (
+              <CheckCircle2 className="h-7 w-7 text-[#00853f]" />
+            )}
+          </div>
+          <div className="space-y-1 text-center">
+            <p className="text-base font-medium text-foreground">{emptyTitle}</p>
+            <p className="text-sm max-w-sm leading-relaxed">{emptyDescription}</p>
+          </div>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <ul className="rounded-lg border divide-y">
-      {/* Header — desktop */}
-      <li className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide bg-muted/30">
+    <ul className="overflow-hidden rounded-2xl border border-border/60 divide-y divide-border/50 bg-background/50 shadow-[0_8px_30px_-20px_rgba(0,55,100,0.2)]">
+      <li className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] gap-3 px-5 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.12em] bg-muted/40 border-b border-border/50">
         <span>Batch</span>
         <span>Stream</span>
         <span>Subject</span>
@@ -780,6 +892,7 @@ function BatchList({
       {batches.map((batch) => {
         const total = Math.max(batch.total_count, 1);
         const pct = Math.min(100, Math.round((batch.done_count / total) * 100));
+        const done = mode === "completed" || pct >= 100;
         const meta = [
           batch.exam_year,
           batch.subject_code,
@@ -800,10 +913,16 @@ function BatchList({
                   onOpen(batch);
                 }
               }}
-              className="w-full text-left px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] md:items-center md:gap-3 flex flex-col gap-2"
+              className={cn(
+                "w-full text-left px-5 py-4 transition-colors duration-200 cursor-pointer",
+                "hover:bg-muted/40",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                "md:grid md:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)_5.5rem_7rem_6.5rem_6.5rem] md:items-center md:gap-3",
+                "flex flex-col gap-2.5"
+              )}
             >
               <div className="min-w-0 flex items-center gap-2 md:contents">
-                <p className="font-medium truncate min-w-0">{batch.name}</p>
+                <p className="font-medium truncate min-w-0 tracking-tight">{batch.name}</p>
                 <div className="md:justify-self-start">
                   <DocNodBadge hasDocument={batch.has_document} />
                 </div>
@@ -816,7 +935,7 @@ function BatchList({
               </p>
               <p className="text-sm tabular-nums text-right md:text-right">
                 {mode === "in_progress" ? (
-                  <span className="font-medium">{batch.pending_count}</span>
+                  <span className="font-semibold text-[#003764]">{batch.pending_count}</span>
                 ) : (
                   <span className="text-muted-foreground">—</span>
                 )}
@@ -827,7 +946,7 @@ function BatchList({
                     : ""}
                 </span>
               </p>
-              <div className="space-y-1 hidden md:block">
+              <div className="space-y-1.5 hidden md:block">
                 <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                   <span>
                     {batch.done_count}/{batch.total_count}
@@ -836,9 +955,12 @@ function BatchList({
                       : ""}
                   </span>
                 </div>
-                <div className="h-1 rounded-full bg-muted overflow-hidden">
+                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-primary transition-all"
+                    className={cn(
+                      "h-full rounded-full transition-all duration-500 ease-out",
+                      done ? "bg-muted-foreground/35" : "bg-[#00853f]"
+                    )}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
