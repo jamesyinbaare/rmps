@@ -61,8 +61,8 @@ async def process_validation(
     Run validation for specified scope.
 
     Issues are unique per (subject_score_id, exam_subject_id, test_type).
-    Re-flagging a previously resolved/ignored field reopens the same row and
-    clears resolved_by attribution. Auto-resolve of clean pending fields does
+    Re-flagging a previously resolved/ignored/skipped field reopens the same row and
+    clears resolved_by attribution. Auto-resolve of clean pending/skipped fields does
     not set resolved_by_user_id (does not count for payment).
 
     Returns:
@@ -71,7 +71,7 @@ async def process_validation(
         - issues_found: int
         - issues_resolved: int (pending → resolved because field is clean)
         - issues_created: int (brand-new rows)
-        - issues_reopened: int (resolved/ignored → pending)
+        - issues_reopened: int (resolved/ignored/skipped → pending)
     """
     stmt = _apply_validation_scope_filters(
         _scoped_subject_score_joins(select(SubjectScore, ExamSubject)),
@@ -119,11 +119,14 @@ async def process_validation(
             current_issue_fields = {issue["field_name"] for issue in validation_issues}
             score_existing = existing_issues_by_score.get(subject_score.id, {})
 
-            # Auto-resolve pending issues for fields that are now clean.
+            # Auto-resolve pending/skipped issues for fields that are now clean.
             # Already-resolved/ignored clean fields are left alone.
             for field_name, existing_issue in list(score_existing.items()):
                 if field_name not in current_issue_fields:
-                    if existing_issue.status == ValidationIssueStatus.PENDING:
+                    if existing_issue.status in (
+                        ValidationIssueStatus.PENDING,
+                        ValidationIssueStatus.SKIPPED,
+                    ):
                         existing_issue.status = ValidationIssueStatus.RESOLVED
                         existing_issue.resolved_at = datetime.utcnow()
                         # No resolved_by_user_id — does not count for payment

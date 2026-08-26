@@ -79,6 +79,7 @@ import type {
   ClearBatchesResponse,
   BatchSummaryResponse,
   ClerkListResponse,
+  ClerkAssignPanelResponse,
   User,
   UserUpdate,
   UserPasswordReset,
@@ -3106,6 +3107,19 @@ export async function ignoreValidationIssue(issueId: number): Promise<SubjectSco
   return handleResponse<SubjectScoreValidationIssue>(response);
 }
 
+export async function skipValidationIssue(issueId: number): Promise<SubjectScoreValidationIssue> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/issues/${issueId}/skip`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<SubjectScoreValidationIssue>(response);
+}
+
 export async function getMyValidationStats(): Promise<MyValidationStats> {
   const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/stats/me`);
   return handleResponse<MyValidationStats>(response);
@@ -3209,9 +3223,15 @@ export async function releaseIssueBatches(payload: {
   return handleResponse(response);
 }
 
-export async function getBatchSummary(examId?: number): Promise<BatchSummaryResponse> {
+export async function getBatchSummary(
+  examId?: number,
+  options?: { includeUnbatched?: boolean }
+): Promise<BatchSummaryResponse> {
   const params = new URLSearchParams();
   if (examId) params.append("exam_id", String(examId));
+  if (options?.includeUnbatched === false) {
+    params.append("include_unbatched", "false");
+  }
   const response = await fetchWithAuth(
     `${API_BASE_URL}/api/v1/validation/batches/summary?${params.toString()}`
   );
@@ -3221,6 +3241,17 @@ export async function getBatchSummary(examId?: number): Promise<BatchSummaryResp
 export async function listClerks(): Promise<ClerkListResponse> {
   const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/validation/clerks`);
   return handleResponse<ClerkListResponse>(response);
+}
+
+export async function getClerkAssignPanel(
+  examId?: number
+): Promise<ClerkAssignPanelResponse> {
+  const params = new URLSearchParams();
+  if (examId) params.append("exam_id", String(examId));
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/validation/clerks/assign-panel?${params.toString()}`
+  );
+  return handleResponse<ClerkAssignPanelResponse>(response);
 }
 
 export async function getClerkDigitalEntrySetting(): Promise<{ enabled: boolean }> {

@@ -876,7 +876,7 @@ export interface BulkUnmatchedActionResponse {
 }
 
 export type ValidationIssueType = "missing_score" | "invalid_score";
-export type ValidationIssueStatus = "pending" | "resolved" | "ignored";
+export type ValidationIssueStatus = "pending" | "resolved" | "ignored" | "skipped";
 
 export interface SubjectScoreValidationIssue {
   id: number;
@@ -1035,6 +1035,11 @@ export interface MyValidationStats {
   resolved_total: number;
   ignored_total: number;
   assigned_pending_count: number;
+  assigned_skipped_count?: number;
+  skipped_today?: number;
+  assigned_batches_count?: number;
+  batches_in_progress_count?: number;
+  batches_completed_count?: number;
 }
 
 export interface ClerkValidationStatsItem {
@@ -1089,6 +1094,7 @@ export interface ClerkBatchItem {
   issue_count: number;
   pending_count: number;
   done_count: number;
+  skipped_count?: number;
   total_count: number;
   progress_status: ClerkBatchProgressStatus;
   assigned_at: string | null;
@@ -1129,6 +1135,7 @@ export interface ClearBatchesResponse {
   batches_deleted: number;
   pending_unbatched: number;
   resolved_preserved: number;
+  skipped_cleared?: number;
 }
 
 export interface CreateBatchesResponse {
@@ -1197,6 +1204,22 @@ export interface ClerkListItem {
 
 export interface ClerkListResponse {
   clerks: ClerkListItem[];
+}
+
+export interface ClerkAssignPanelItem {
+  user_id: string;
+  full_name: string;
+  email?: string | null;
+  assigned_batches: number;
+  assigned_pending_issues: number;
+  resolved_today: number;
+  active_exam_id?: number | null;
+  active_exam_label?: string | null;
+  active_exams?: ClerkActiveExamItem[];
+}
+
+export interface ClerkAssignPanelResponse {
+  clerks: ClerkAssignPanelItem[];
 }
 
 export interface RegistrationProgress {

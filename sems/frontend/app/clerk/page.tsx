@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { format } from "date-fns";
 import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
   Inbox,
+  Layers,
   Loader2,
   Play,
+  SkipForward,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -30,6 +31,7 @@ import {
   getValidationIssues,
   listMyBatches,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type {
   ClerkBatchItem,
   MyValidationStats,
@@ -106,6 +108,41 @@ function formatActiveExam(batch: ClerkBatchItem | null): string | null {
     .filter(Boolean);
   if (parts.length) return parts.join(" · ");
   return batch.exam_year != null ? `Exam ${batch.exam_year}` : null;
+}
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  loading,
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  icon: ComponentType<{ className?: string }>;
+  loading?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-background/80 px-4 py-3.5 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        <Icon className="h-3.5 w-3.5 text-muted-foreground/70" aria-hidden />
+      </div>
+      {loading ? (
+        <Skeleton className="mt-2 h-8 w-16" />
+      ) : (
+        <p className="mt-1.5 text-3xl font-semibold tracking-tight tabular-nums">{value}</p>
+      )}
+      {hint ? (
+        <p className="mt-1 text-xs text-muted-foreground tabular-nums">{hint}</p>
+      ) : (
+        <p className="mt-1 text-xs text-transparent select-none">.</p>
+      )}
+    </div>
+  );
 }
 
 export default function ClerkDashboardPage() {
@@ -267,18 +304,42 @@ export default function ClerkDashboardPage() {
   };
 
   const handleContinueResolving = () => {
-    if (batchIssues.length === 0) {
-      toast.message("No pending issues left in this batch");
-      return;
-    }
+    if (batchIssues.length === 0) return;
     openIssueAt(0);
   };
 
-  const handleHandled = (issueId: number) => {
+  const handleHandled = (issueId: number, action: "resolved" | "ignored" | "skipped") => {
+    setStats((prev) => {
+      if (!prev) return prev;
+      if (action === "resolved") {
+        return {
+          ...prev,
+          resolved_today: prev.resolved_today + 1,
+          resolved_week: prev.resolved_week + 1,
+          resolved_total: prev.resolved_total + 1,
+          assigned_pending_count: Math.max(0, prev.assigned_pending_count - 1),
+          open_count: Math.max(0, prev.open_count - 1),
+        };
+      }
+      if (action === "skipped") {
+        return {
+          ...prev,
+          assigned_pending_count: Math.max(0, prev.assigned_pending_count - 1),
+          open_count: Math.max(0, prev.open_count - 1),
+          assigned_skipped_count: (prev.assigned_skipped_count ?? 0) + 1,
+          skipped_today: (prev.skipped_today ?? 0) + 1,
+        };
+      }
+      return {
+        ...prev,
+        assigned_pending_count: Math.max(0, prev.assigned_pending_count - 1),
+        open_count: Math.max(0, prev.open_count - 1),
+      };
+    });
+
     setBatchIssues((prev) => {
       const next = prev.filter((issue) => issue.id !== issueId);
       if (next.length === 0) {
-        toast.success("Batch complete — all issues resolved");
         setTimeout(() => {
           setActiveBatch(null);
           setWorkspaceOpen(false);
@@ -292,14 +353,20 @@ export default function ClerkDashboardPage() {
             ? {
                 ...prevBatch,
                 pending_count: next.length,
-                done_count: prevBatch.done_count + 1,
+                done_count:
+                  action === "skipped"
+                    ? prevBatch.done_count
+                    : prevBatch.done_count + 1,
+                skipped_count:
+                  action === "skipped"
+                    ? (prevBatch.skipped_count ?? 0) + 1
+                    : prevBatch.skipped_count ?? 0,
               }
             : prevBatch
         );
       }
       return next;
     });
-    void loadStats();
   };
 
   if (activeBatch) {
@@ -361,6 +428,17 @@ export default function ClerkDashboardPage() {
                         style={{ width: `${pct}%` }}
                       />
                     </div>
+                    {stats ? (
+                      <p className="text-xs text-muted-foreground tabular-nums pt-0.5">
+                        Today · {stats.resolved_today} resolved
+                        {(stats.skipped_today ?? 0) > 0
+                          ? ` · ${stats.skipped_today} skipped`
+                          : ""}
+                        {(activeBatch.skipped_count ?? 0) > 0
+                          ? ` · ${activeBatch.skipped_count} skipped in batch`
+                          : ""}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 {isInProgress ? (
@@ -474,7 +552,8 @@ export default function ClerkDashboardPage() {
           currentIndex={currentIssueIndex}
           onCurrentIndexChange={setCurrentIssueIndex}
           onHandled={handleHandled}
-          resolvedTodayHint={stats?.resolved_today}
+          resolvedTodayHint={stats?.resolved_today ?? 0}
+          skippedTodayHint={stats?.skipped_today ?? 0}
         />
       </DashboardLayout>
     );
@@ -485,15 +564,36 @@ export default function ClerkDashboardPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="My Work" showSearch={false} />
         <main className="flex-1 overflow-y-auto">
-          <div className="container mx-auto px-6 py-8 space-y-6">
-            <section className="space-y-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <p className="text-muted-foreground text-sm max-w-xl">
-                  Open a batch to resolve score issues and enter values from the score sheet.
-                </p>
+          <div className="container mx-auto px-6 py-8 space-y-8">
+            <section
+              className={cn(
+                "relative overflow-hidden rounded-2xl border border-border/60",
+                "bg-gradient-to-br from-muted/50 via-background to-background",
+                "px-5 py-6 sm:px-7 sm:py-7"
+              )}
+            >
+              <div
+                className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.06] blur-3xl"
+                aria-hidden
+              />
+              <div
+                className="pointer-events-none absolute -bottom-24 -left-10 h-48 w-48 rounded-full bg-muted-foreground/[0.05] blur-3xl"
+                aria-hidden
+              />
+
+              <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+                <div className="space-y-2 max-w-xl">
+                  <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+                    Ready when you are
+                  </h1>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Work through assigned batches — resolve scores from the sheet, or skip
+                    issues you can’t finish yet.
+                  </p>
+                </div>
                 <Button
                   size="lg"
-                  className="gap-2 shrink-0"
+                  className="gap-2 shrink-0 shadow-sm"
                   onClick={handleResumeNext}
                   disabled={!resumeBatch || loading}
                 >
@@ -502,25 +602,35 @@ export default function ClerkDashboardPage() {
                 </Button>
               </div>
 
-              <div className="rounded-lg border px-4 py-3">
-                {stats ? (
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-                    <p>
-                      <span className="text-muted-foreground">Resolved today · </span>
-                      <span className="font-semibold tabular-nums">
-                        {stats.resolved_today}
-                      </span>
-                    </p>
-                    <p className="text-muted-foreground tabular-nums">
-                      {stats.assigned_pending_count} pending assigned
-                    </p>
-                    <p className="text-muted-foreground tabular-nums">
-                      Week · {stats.resolved_week}
-                    </p>
-                  </div>
-                ) : (
-                  <Skeleton className="h-5 w-64" />
-                )}
+              <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <KpiCard
+                  label="Assigned"
+                  value={stats?.assigned_pending_count ?? 0}
+                  hint="Issues waiting"
+                  icon={Inbox}
+                  loading={!stats && loading}
+                />
+                <KpiCard
+                  label="Resolved today"
+                  value={stats?.resolved_today ?? 0}
+                  hint={stats ? `Week · ${stats.resolved_week}` : undefined}
+                  icon={CheckCircle2}
+                  loading={!stats && loading}
+                />
+                <KpiCard
+                  label="Skipped"
+                  value={stats?.assigned_skipped_count ?? 0}
+                  hint={stats ? `Today · ${stats.skipped_today ?? 0}` : undefined}
+                  icon={SkipForward}
+                  loading={!stats && loading}
+                />
+                <KpiCard
+                  label="Batches"
+                  value={`${stats?.batches_in_progress_count ?? inProgressCount}`}
+                  hint={`${stats?.batches_completed_count ?? completedCount} completed`}
+                  icon={Layers}
+                  loading={!stats && loading}
+                />
               </div>
             </section>
 
@@ -533,7 +643,7 @@ export default function ClerkDashboardPage() {
                   </p>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    Open a batch to resolve issues and enter scores from the sheet.
+                    Batches assigned to you appear below.
                   </p>
                 )}
                 <span className="text-xs text-muted-foreground">
@@ -712,12 +822,18 @@ function BatchList({
                 )}
                 <span className="md:hidden text-muted-foreground text-xs ml-1">
                   remaining · {batch.done_count}/{batch.total_count}
+                  {(batch.skipped_count ?? 0) > 0
+                    ? ` · ${batch.skipped_count} skipped`
+                    : ""}
                 </span>
               </p>
               <div className="space-y-1 hidden md:block">
                 <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                   <span>
                     {batch.done_count}/{batch.total_count}
+                    {(batch.skipped_count ?? 0) > 0
+                      ? ` · ${batch.skipped_count} skipped`
+                      : ""}
                   </span>
                 </div>
                 <div className="h-1 rounded-full bg-muted overflow-hidden">

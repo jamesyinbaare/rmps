@@ -48,18 +48,13 @@ import {
 } from "@/components/ui/table";
 import {
   assignIssueBatches,
-  getBatchSummary,
-  listClerks,
+  getClerkAssignPanel,
   listIssueBatches,
   releaseIssueBatches,
 } from "@/lib/api";
 import { useDataEntryExamScope } from "@/hooks/useDataEntryExamScope";
 import { cn } from "@/lib/utils";
-import type {
-  BatchSummaryResponse,
-  ClerkListItem,
-  IssueBatch,
-} from "@/types/document";
+import type { ClerkAssignPanelItem, IssueBatch } from "@/types/document";
 
 type DocFilter = "all" | "doc" | "nod";
 type AssignTab = "all" | "unassigned" | "assigned";
@@ -83,8 +78,8 @@ export default function AssignWorkPage() {
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
   const [assignClerkId, setAssignClerkId] = useState("");
-  const [clerks, setClerks] = useState<ClerkListItem[]>([]);
-  const [summary, setSummary] = useState<BatchSummaryResponse | null>(null);
+  const [clerks, setClerks] = useState<ClerkAssignPanelItem[]>([]);
+  const [loadingClerks, setLoadingClerks] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [confirmAssignOpen, setConfirmAssignOpen] = useState(false);
@@ -133,21 +128,29 @@ export default function AssignWorkPage() {
     }
   }, [examId, subjectId, testType, hasDocFilter]);
 
-  const refreshSummaryAndClerks = useCallback(async () => {
-    const [summaryData, clerksData] = await Promise.all([
-      getBatchSummary(examId || undefined),
-      listClerks(),
-    ]);
-    setSummary(summaryData);
-    setClerks(clerksData.clerks);
+  const refreshClerks = useCallback(async () => {
+    setLoadingClerks(true);
+    try {
+      const data = await getClerkAssignPanel(examId || undefined);
+      setClerks(data.clerks);
+    } finally {
+      setLoadingClerks(false);
+    }
   }, [examId]);
 
   useEffect(() => {
-    if (!authorized) return;
-    void Promise.all([refreshBatches(), refreshSummaryAndClerks()]).catch((err) =>
-      toast.error(err instanceof Error ? err.message : "Failed to refresh")
+    if (!authorized || !filtersHydrated || !examId) return;
+    void refreshBatches().catch((err) =>
+      toast.error(err instanceof Error ? err.message : "Failed to refresh batches")
     );
-  }, [authorized, refreshBatches, refreshSummaryAndClerks]);
+  }, [authorized, filtersHydrated, examId, refreshBatches]);
+
+  useEffect(() => {
+    if (!authorized || !examId) return;
+    void refreshClerks().catch((err) =>
+      toast.error(err instanceof Error ? err.message : "Failed to refresh clerks")
+    );
+  }, [authorized, examId, refreshClerks]);
 
   const filteredBatches = useMemo(() => {
     if (tab === "unassigned") return batches.filter((b) => !b.assigned_to_user_id);
@@ -163,27 +166,23 @@ export default function AssignWorkPage() {
   const selectedAssigned = selectedBatches.filter((b) => !!b.assigned_to_user_id);
 
   const clerkRows = useMemo(() => {
-    return [...clerks].sort((a, b) => {
-      const loadA =
-        summary?.clerks.find((c) => c.user_id === a.user_id)?.assigned_pending_issues ?? 0;
-      const loadB =
-        summary?.clerks.find((c) => c.user_id === b.user_id)?.assigned_pending_issues ?? 0;
-      return loadA - loadB || a.full_name.localeCompare(b.full_name);
-    });
-  }, [clerks, summary]);
+    return [...clerks].sort(
+      (a, b) =>
+        a.assigned_pending_issues - b.assigned_pending_issues ||
+        a.full_name.localeCompare(b.full_name)
+    );
+  }, [clerks]);
 
   const selectedClerk = clerks.find((q) => q.user_id === assignClerkId) ?? null;
-  const selectedClerkLoad = summary?.clerks.find((c) => c.user_id === assignClerkId);
   const selectedClerkActiveExams =
     selectedClerk?.active_exams ??
-    selectedClerkLoad?.active_exams ??
     (selectedClerk?.active_exam_label
       ? [
           {
             exam_id: selectedClerk.active_exam_id ?? 0,
             exam_label: selectedClerk.active_exam_label,
-            assigned_batches: 0,
-            assigned_pending_issues: 0,
+            assigned_batches: selectedClerk.assigned_batches,
+            assigned_pending_issues: selectedClerk.assigned_pending_issues,
           },
         ]
       : []);
@@ -238,7 +237,7 @@ export default function AssignWorkPage() {
       );
       setConfirmAssignOpen(false);
       setSelectedBatchIds(new Set());
-      await Promise.all([refreshBatches(), refreshSummaryAndClerks()]);
+      await Promise.all([refreshBatches(), refreshClerks()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Assign failed");
     } finally {
@@ -259,7 +258,7 @@ export default function AssignWorkPage() {
       toast.success(`Released ${result.released_count} batch(es)`);
       setConfirmReleaseOpen(false);
       setSelectedBatchIds(new Set());
-      await Promise.all([refreshBatches(), refreshSummaryAndClerks()]);
+      await Promise.all([refreshBatches(), refreshClerks()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Release failed");
     } finally {
@@ -388,7 +387,11 @@ export default function AssignWorkPage() {
                     </p>
                   </div>
                   <div className="flex-1 overflow-y-auto divide-y">
-                    {clerkRows.length === 0 ? (
+                    {loadingClerks ? (
+                      <div className="flex items-center justify-center py-16">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : clerkRows.length === 0 ? (
                       <div className="p-6 text-sm text-muted-foreground">
                         No active data clerks.{" "}
                         <Link href={clerksHref} className="underline">
@@ -397,18 +400,16 @@ export default function AssignWorkPage() {
                       </div>
                     ) : (
                       clerkRows.map((q) => {
-                        const load = summary?.clerks.find((c) => c.user_id === q.user_id);
                         const selected = assignClerkId === q.user_id;
                         const activeExams =
                           q.active_exams ??
-                          load?.active_exams ??
                           (q.active_exam_label
                             ? [
                                 {
                                   exam_id: q.active_exam_id ?? 0,
                                   exam_label: q.active_exam_label,
-                                  assigned_batches: 0,
-                                  assigned_pending_issues: 0,
+                                  assigned_batches: q.assigned_batches,
+                                  assigned_pending_issues: q.assigned_pending_issues,
                                 },
                               ]
                             : []);
@@ -431,8 +432,8 @@ export default function AssignWorkPage() {
                               ) : null}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                              <span>{load?.assigned_batches ?? 0} batches</span>
-                              <span>{load?.assigned_pending_issues ?? 0} pending</span>
+                              <span>{q.assigned_batches} batches</span>
+                              <span>{q.assigned_pending_issues} pending</span>
                               <span className="tabular-nums">
                                 {q.resolved_today} today
                               </span>

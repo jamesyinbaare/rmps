@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
-import { getAllExams, getCurrentUser, listSubjects } from "@/lib/api";
+import { getAllExams, getCurrentUser, listExamSubjects } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
-import type { Exam, Subject, UserRole } from "@/types/document";
+import type { Exam, ExamType, Subject, UserRole } from "@/types/document";
 
 export const DATA_ENTRY_EXAM_STORAGE_KEY = "sems.dataEntry.examId";
 
@@ -63,17 +63,7 @@ export function useDataEntryExamScope({ path }: UseDataEntryExamScopeOptions) {
         setCurrentRole(role as UserRole);
 
         const examsData = await getAllExams().catch(() => []);
-        const allSubjects: Subject[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const chunk = await listSubjects(page, 100);
-          allSubjects.push(...chunk);
-          hasMore = chunk.length === 100;
-          page++;
-        }
         setExams(Array.isArray(examsData) ? examsData : []);
-        setSubjects(allSubjects);
 
         const fromQuery = searchParams.get("exam_id");
         let initial: number | null = fromQuery ? Number(fromQuery) : null;
@@ -97,6 +87,41 @@ export function useDataEntryExamScope({ path }: UseDataEntryExamScopeOptions) {
     void init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  useEffect(() => {
+    if (!examId) {
+      setSubjects([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadSubjects = async () => {
+      try {
+        const examSubjects = await listExamSubjects(examId);
+        if (cancelled) return;
+        const selectedExam = exams.find((e) => e.id === examId);
+        const examType = (selectedExam?.exam_type ?? "Certificate II Examinations") as ExamType;
+        setSubjects(
+          examSubjects.map((es) => ({
+            id: es.subject_id,
+            code: es.subject_code,
+            original_code: es.original_code,
+            name: es.subject_name,
+            subject_type: es.subject_type,
+            exam_type: examType,
+            created_at: es.created_at,
+            updated_at: es.updated_at,
+          }))
+        );
+      } catch {
+        if (!cancelled) setSubjects([]);
+      }
+    };
+    void loadSubjects();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, exams]);
 
   return {
     loading,

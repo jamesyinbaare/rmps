@@ -181,6 +181,13 @@ async def get_my_validation_stats(
         )
     )
 
+    assigned_pending = 0
+    assigned_skipped = 0
+    skipped_today = 0
+    assigned_batches_count = 0
+    batches_in_progress_count = 0
+    batches_completed_count = 0
+
     # Assigned pending for clerks; global pending open_count for elevated roles
     if current_user.role == UserRole.DATACLERK:
         assigned_pending_result = await session.execute(
@@ -192,24 +199,89 @@ async def get_my_validation_stats(
                 IssueBatch.assigned_to_user_id == current_user.id,
             )
         )
-        assigned_pending = assigned_pending_result.scalar() or 0
+        assigned_pending = int(assigned_pending_result.scalar() or 0)
         open_count = assigned_pending
+
+        assigned_skipped_result = await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id)
+            .where(
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.SKIPPED,
+                IssueBatch.assigned_to_user_id == current_user.id,
+            )
+        )
+        assigned_skipped = int(assigned_skipped_result.scalar() or 0)
+
+        skipped_today_result = await session.execute(
+            select(func.count())
+            .select_from(SubjectScoreValidationIssue)
+            .join(IssueBatch, SubjectScoreValidationIssue.batch_id == IssueBatch.id)
+            .where(
+                SubjectScoreValidationIssue.status == ValidationIssueStatus.SKIPPED,
+                IssueBatch.assigned_to_user_id == current_user.id,
+                SubjectScoreValidationIssue.updated_at >= day_start,
+            )
+        )
+        skipped_today = int(skipped_today_result.scalar() or 0)
+
+        batch_progress_rows = (
+            await session.execute(
+                select(
+                    IssueBatch.id,
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    SubjectScoreValidationIssue.status
+                                    == ValidationIssueStatus.PENDING,
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ).label("pending_count"),
+                    func.count(SubjectScoreValidationIssue.id).label("total_count"),
+                )
+                .select_from(IssueBatch)
+                .outerjoin(
+                    SubjectScoreValidationIssue,
+                    SubjectScoreValidationIssue.batch_id == IssueBatch.id,
+                )
+                .where(IssueBatch.assigned_to_user_id == current_user.id)
+                .group_by(IssueBatch.id)
+            )
+        ).all()
+        assigned_batches_count = len(batch_progress_rows)
+        for row in batch_progress_rows:
+            pending = int(row.pending_count or 0)
+            total = int(row.total_count or 0)
+            if total > 0 and pending == 0:
+                batches_completed_count += 1
+            else:
+                batches_in_progress_count += 1
     else:
         open_result = await session.execute(
             select(func.count())
             .select_from(SubjectScoreValidationIssue)
             .where(SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING)
         )
-        open_count = open_result.scalar() or 0
-        assigned_pending = 0
+        open_count = int(open_result.scalar() or 0)
+        assigned_pending = open_count
 
     return MyValidationStatsResponse(
         open_count=open_count,
         resolved_today=await _count_resolved(day_start),
         resolved_week=await _count_resolved(week_start),
         resolved_total=await _count_resolved(),
-        ignored_total=ignored_total_result.scalar() or 0,
-        assigned_pending_count=assigned_pending if current_user.role == UserRole.DATACLERK else open_count,
+        ignored_total=int(ignored_total_result.scalar() or 0),
+        assigned_pending_count=assigned_pending,
+        assigned_skipped_count=assigned_skipped,
+        skipped_today=skipped_today,
+        assigned_batches_count=assigned_batches_count,
+        batches_in_progress_count=batches_in_progress_count,
+        batches_completed_count=batches_completed_count,
     )
 
 
@@ -774,5 +846,43 @@ async def ignore_validation_issue(
     await cache_service.delete(generate_issue_detail_key(issue_id))
     await cache_service.clear_pattern(generate_issues_pattern())
     logger.debug(f"Cache invalidated after ignoring issue {issue_id}")
+
+    return SubjectScoreValidationIssueResponse.model_validate(issue)
+
+
+@router.put("/issues/{issue_id}/skip", response_model=SubjectScoreValidationIssueResponse)
+async def skip_validation_issue(
+    issue_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> SubjectScoreValidationIssueResponse:
+    """Mark a pending validation issue as skipped (deferred). Does not count as resolved."""
+    stmt = select(SubjectScoreValidationIssue).where(SubjectScoreValidationIssue.id == issue_id)
+    result = await session.execute(stmt)
+    issue = result.scalar_one_or_none()
+
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Validation issue with id {issue_id} not found",
+        )
+
+    if issue.status != ValidationIssueStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending issues can be skipped",
+        )
+
+    await _assert_can_act_on_issue(session, issue, current_user)
+
+    # Do not set resolved_at / resolved_by_user_id — skip is not payment-attributed.
+    issue.status = ValidationIssueStatus.SKIPPED
+    issue.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(issue)
+
+    await cache_service.delete(generate_issue_detail_key(issue_id))
+    await cache_service.clear_pattern(generate_issues_pattern())
+    logger.debug(f"Cache invalidated after skipping issue {issue_id}")
 
     return SubjectScoreValidationIssueResponse.model_validate(issue)

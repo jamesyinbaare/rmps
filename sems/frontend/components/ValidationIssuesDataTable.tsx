@@ -97,6 +97,13 @@ function getStatusBadge(status: ValidationIssueStatus) {
           Ignored
         </Badge>
       );
+    case "skipped":
+      return (
+        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+          <AlertCircle className="mr-1 h-3 w-3" />
+          Skipped
+        </Badge>
+      );
     default:
       return <Badge>{status}</Badge>;
   }
@@ -299,6 +306,7 @@ export function ValidationIssuesDataTable({
               <SelectItem value="pending">Open</SelectItem>
               <SelectItem value="resolved">Resolved</SelectItem>
               <SelectItem value="ignored">Ignored</SelectItem>
+              <SelectItem value="skipped">Skipped</SelectItem>
             </SelectContent>
           </Select>
 

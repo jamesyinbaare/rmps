@@ -41,6 +41,7 @@ import {
   getValidationIssue,
   ignoreValidationIssue,
   resolveValidationIssue,
+  skipValidationIssue,
 } from "@/lib/api";
 import {
   createDocumentPrefetchCache,
@@ -138,9 +139,11 @@ export interface ValidationIssueWorkspaceProps {
   issues: SubjectScoreValidationIssue[];
   currentIndex: number | null;
   onCurrentIndexChange: (index: number | null) => void;
-  /** Called after a successful resolve/ignore so the parent can drop the issue from the queue. */
-  onHandled?: (issueId: number, action: "resolved" | "ignored") => void;
+  /** Called after a successful resolve/ignore/skip so the parent can drop the issue from the queue. */
+  onHandled?: (issueId: number, action: "resolved" | "ignored" | "skipped") => void;
+  /** Seed for the live session pulse (today's resolved / skipped). */
   resolvedTodayHint?: number;
+  skippedTodayHint?: number;
   /** Registrar/ops only. Dataclerks cannot ignore. */
   allowIgnore?: boolean;
 }
@@ -152,7 +155,8 @@ export function ValidationIssueWorkspace({
   currentIndex,
   onCurrentIndexChange,
   onHandled,
-  resolvedTodayHint,
+  resolvedTodayHint = 0,
+  skippedTodayHint = 0,
   allowIgnore = false,
 }: ValidationIssueWorkspaceProps) {
   const [issueDetail, setIssueDetail] = useState<ValidationIssueDetailResponse | null>(null);
@@ -160,6 +164,10 @@ export function ValidationIssueWorkspace({
   const [correctedScore, setCorrectedScore] = useState("");
   const [resolvingIssue, setResolvingIssue] = useState(false);
   const [ignoringIssue, setIgnoringIssue] = useState(false);
+  const [skippingIssue, setSkippingIssue] = useState(false);
+  const [sessionResolved, setSessionResolved] = useState(resolvedTodayHint);
+  const [sessionSkipped, setSessionSkipped] = useState(skippedTodayHint);
+  const [pulseKey, setPulseKey] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -180,6 +188,12 @@ export function ValidationIssueWorkspace({
   useEffect(() => {
     setLayout(readStoredLayout());
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setSessionResolved(resolvedTodayHint);
+    setSessionSkipped(skippedTodayHint);
+  }, [open, resolvedTodayHint, skippedTodayHint]);
 
   useEffect(() => {
     return prefetchCache.subscribe(() => {
@@ -348,12 +362,26 @@ export function ValidationIssueWorkspace({
     [currentIndex, issues.length, onCurrentIndexChange]
   );
 
-  const canSkipNext =
+  const canGoNext =
     currentIndex !== null && currentIndex < issues.length - 1 && !loadingIssueDetail;
+  const canSkip =
+    currentIndex !== null &&
+    issueDetail?.status === "pending" &&
+    !loadingIssueDetail &&
+    !resolvingIssue &&
+    !ignoringIssue &&
+    !skippingIssue;
   const canGoPrev = currentIndex !== null && currentIndex > 0 && !loadingIssueDetail;
 
   const finishHandle = useCallback(
-    (issueId: number, action: "resolved" | "ignored") => {
+    (issueId: number, action: "resolved" | "ignored" | "skipped") => {
+      if (action === "resolved") {
+        setSessionResolved((n) => n + 1);
+        setPulseKey((k) => k + 1);
+      } else if (action === "skipped") {
+        setSessionSkipped((n) => n + 1);
+        setPulseKey((k) => k + 1);
+      }
       const remainingCount = issues.length - 1;
       onHandled?.(issueId, action);
       if (currentIndex === null || remainingCount <= 0 || currentIndex >= remainingCount) {
@@ -392,18 +420,13 @@ export function ValidationIssueWorkspace({
     setResolvingIssue(true);
     try {
       await resolveValidationIssue(issueDetail.id, trimmed);
-      const todayLabel =
-        resolvedTodayHint !== undefined
-          ? ` · ${resolvedTodayHint + 1} resolved today`
-          : "";
-      toast.success(`Issue resolved${todayLabel}`);
       finishHandle(issueDetail.id, "resolved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to resolve issue");
     } finally {
       setResolvingIssue(false);
     }
-  }, [issueDetail, correctedScore, resolvedTodayHint, finishHandle]);
+  }, [issueDetail, correctedScore, finishHandle]);
 
   const handleIgnoreIssue = useCallback(async () => {
     if (!allowIgnore || !issueDetail || issueDetail.status !== "pending") return;
@@ -411,7 +434,6 @@ export function ValidationIssueWorkspace({
     setIgnoringIssue(true);
     try {
       await ignoreValidationIssue(issueDetail.id);
-      toast.success("Issue marked as ignored");
       finishHandle(issueDetail.id, "ignored");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to ignore issue");
@@ -420,10 +442,18 @@ export function ValidationIssueWorkspace({
     }
   }, [allowIgnore, issueDetail, finishHandle]);
 
-  const handleSkip = useCallback(() => {
-    if (!canSkipNext || resolvingIssue || ignoringIssue) return;
-    handleNavigateIssue("next");
-  }, [canSkipNext, resolvingIssue, ignoringIssue, handleNavigateIssue]);
+  const handleSkip = useCallback(async () => {
+    if (!canSkip || !issueDetail || issueDetail.status !== "pending") return;
+    setSkippingIssue(true);
+    try {
+      await skipValidationIssue(issueDetail.id);
+      finishHandle(issueDetail.id, "skipped");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to skip issue");
+    } finally {
+      setSkippingIssue(false);
+    }
+  }, [canSkip, issueDetail, finishHandle]);
 
   useEffect(() => {
     if (!open) return;
@@ -438,16 +468,18 @@ export function ValidationIssueWorkspace({
         return;
       }
 
-      // Ctrl/Cmd+Enter → Skip (leave unresolved); Enter alone → Resolve
+      // Ctrl/Cmd+Enter → Skip (persist deferred); Enter alone → Resolve
       if (e.key === "Enter" && !e.shiftKey && issueDetail?.status === "pending") {
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          handleSkip();
+          if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
+            void handleSkip();
+          }
           return;
         }
         if (isInputFocused || e.target === document.body) {
           e.preventDefault();
-          if (!resolvingIssue && !ignoringIssue) {
+          if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
             void handleResolveIssue();
           }
           return;
@@ -461,7 +493,7 @@ export function ValidationIssueWorkspace({
         issueDetail?.status === "pending"
       ) {
         e.preventDefault();
-        if (!resolvingIssue && !ignoringIssue) {
+        if (!resolvingIssue && !ignoringIssue && !skippingIssue) {
           void handleIgnoreIssue();
         }
         return;
@@ -492,6 +524,7 @@ export function ValidationIssueWorkspace({
     issueDetail,
     resolvingIssue,
     ignoringIssue,
+    skippingIssue,
     allowIgnore,
     handleResolveIssue,
     handleIgnoreIssue,
@@ -567,6 +600,22 @@ export function ValidationIssueWorkspace({
 
   const floatingActions = (
     <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/80 p-0.5 shadow-sm backdrop-blur-md">
+      <span
+        key={pulseKey}
+        className="hidden items-baseline gap-1.5 px-2 text-[11px] tabular-nums text-muted-foreground animate-in fade-in zoom-in-95 duration-200 sm:inline-flex"
+        aria-live="polite"
+      >
+        <span>
+          <span className="text-foreground/80 font-medium">{sessionResolved}</span> resolved
+        </span>
+        <span className="text-border">·</span>
+        <span>
+          <span className="text-foreground/80 font-medium">{sessionSkipped}</span> skipped
+        </span>
+      </span>
+      {(issues.length > 1 || sessionResolved > 0 || sessionSkipped > 0) && (
+        <span className="mx-0.5 hidden h-3.5 w-px bg-border/50 sm:block" aria-hidden />
+      )}
       {issues.length > 1 && (
         <>
           <span className="hidden px-1.5 text-[11px] tabular-nums text-muted-foreground sm:inline">
@@ -587,7 +636,7 @@ export function ValidationIssueWorkspace({
             size="icon-sm"
             className="h-7 w-7"
             onClick={() => handleNavigateIssue("next")}
-            disabled={!canSkipNext}
+            disabled={!canGoNext}
             aria-label="Next issue"
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -703,7 +752,7 @@ export function ValidationIssueWorkspace({
                 size="icon-sm"
                 className="h-7 w-7"
                 aria-label="More actions"
-                disabled={resolvingIssue || ignoringIssue}
+                disabled={resolvingIssue || ignoringIssue || skippingIssue}
               >
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
@@ -711,7 +760,7 @@ export function ValidationIssueWorkspace({
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 onClick={() => void handleIgnoreIssue()}
-                disabled={resolvingIssue || ignoringIssue}
+                disabled={resolvingIssue || ignoringIssue || skippingIssue}
               >
                 <XCircle className="h-3.5 w-3.5" />
                 Ignore issue
@@ -726,7 +775,7 @@ export function ValidationIssueWorkspace({
         size="icon-sm"
         className="h-7 w-7"
         onClick={handleClose}
-        disabled={resolvingIssue || ignoringIssue}
+        disabled={resolvingIssue || ignoringIssue || skippingIssue}
         aria-label="Close"
       >
         <X className="h-3.5 w-3.5" />
@@ -734,7 +783,7 @@ export function ValidationIssueWorkspace({
     </div>
   );
 
-  const skipTitle = "Skip leaves unresolved · Ctrl+Enter";
+  const skipTitle = "Skip for now · Ctrl+Enter";
 
   const scoreEntryPending =
     issueDetail?.status === "pending" ? (
@@ -783,7 +832,7 @@ export function ValidationIssueWorkspace({
         </div>
         <Button
           onClick={() => void handleResolveIssue()}
-          disabled={resolvingIssue || ignoringIssue}
+          disabled={resolvingIssue || ignoringIssue || skippingIssue}
           className={`shrink-0 gap-1.5 transition-colors ${
             sideBySide ? "h-11 w-full" : "h-10"
           }`}
@@ -796,23 +845,25 @@ export function ValidationIssueWorkspace({
           )}
           Resolve
         </Button>
-        {issues.length > 1 && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={`shrink-0 gap-1 transition-colors ${
-              sideBySide ? "h-10 w-full" : "h-10"
-            }`}
-            onClick={handleSkip}
-            disabled={!canSkipNext || resolvingIssue || ignoringIssue}
-            title={skipTitle}
-            aria-label={skipTitle}
-          >
-            Skip
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`shrink-0 gap-1 transition-colors ${
+            sideBySide ? "h-10 w-full" : "h-10"
+          }`}
+          onClick={() => void handleSkip()}
+          disabled={!canSkip}
+          title={skipTitle}
+          aria-label={skipTitle}
+        >
+          {skippingIssue ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
             <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
-        )}
+          )}
+          Skip
+        </Button>
       </>
     ) : issueDetail ? (
       <div className="flex flex-wrap items-center gap-3 py-1">
@@ -827,18 +878,17 @@ export function ValidationIssueWorkspace({
         <p className="font-mono text-base tabular-nums">
           {issueDetail.current_score_value ?? "—"}
         </p>
-        {issues.length > 1 && (
+        {canGoNext && (
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-9 shrink-0 gap-1 transition-colors"
-            onClick={handleSkip}
-            disabled={!canSkipNext}
-            title={skipTitle}
-            aria-label={skipTitle}
+            onClick={() => handleNavigateIssue("next")}
+            title="Next issue"
+            aria-label="Next issue"
           >
-            Skip
+            Next
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         )}

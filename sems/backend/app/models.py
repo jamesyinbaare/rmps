@@ -465,6 +465,7 @@ class ValidationIssueStatus(enum.Enum):
     PENDING = "pending"
     RESOLVED = "resolved"
     IGNORED = "ignored"
+    SKIPPED = "skipped"
 
 
 class ProcessType(enum.Enum):
