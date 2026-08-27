@@ -110,18 +110,24 @@ import type {
 
 /**
  * Resolve the public/internal API base URL.
- * - NEXT_PUBLIC_API_BASE_URL wins when set (build-time or runtime).
- * - In the browser, derive `sems-api.<parent>` from the current host (exam-tools pattern).
- * - On the server, prefer INTERNAL_API_BASE_URL (compose service name).
+ * - In the browser during development, use same-origin `/api` (Next.js rewrite proxy)
+ *   so LAN/WSL hostnames do not hit CORS or wrong ports.
+ * - NEXT_PUBLIC_API_BASE_URL wins in production browser when set.
+ * - On the server (SSR), prefer INTERNAL_API_BASE_URL (compose service name).
  */
 export function getApiBaseUrl(): string {
-  const envBase =
-    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL?.trim() : undefined;
-  if (envBase) return envBase.replace(/\/$/, "");
-
   if (typeof window !== "undefined") {
+    if (process.env.NODE_ENV === "development") {
+      return window.location.origin.replace(/\/$/, "");
+    }
+
+    const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    if (envBase) return envBase.replace(/\/$/, "");
+
     const { protocol, hostname } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return "http://localhost:8000";
+    }
 
     const parts = hostname.split(".");
     if (parts.length >= 3) {
@@ -130,12 +136,16 @@ export function getApiBaseUrl(): string {
       return `${protocol}//${apiSubdomain}.${rest.join(".")}`;
     }
 
-    return `${protocol}//${hostname}`;
+    return `${protocol}//${hostname}:8000`;
   }
 
   const internal =
     typeof process !== "undefined" ? process.env.INTERNAL_API_BASE_URL?.trim() : undefined;
   if (internal) return internal.replace(/\/$/, "");
+
+  const envBase =
+    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL?.trim() : undefined;
+  if (envBase) return envBase.replace(/\/$/, "");
 
   return "http://localhost:8000";
 }
@@ -379,6 +389,53 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+/** Thrown when another document already owns the target sheet ID. */
+export class IdOwnershipConflictError extends Error {
+  readonly errorCode = "id_ownership" as const;
+  readonly conflictDocumentId: number;
+  readonly status: number;
+
+  constructor(message: string, conflictDocumentId: number, status = 409) {
+    super(message);
+    this.name = "IdOwnershipConflictError";
+    this.conflictDocumentId = conflictDocumentId;
+    this.status = status;
+  }
+}
+
+/** Extract ownership conflict document id from an API error, if present. */
+export function parseOwnershipConflictDocumentId(error: unknown): number | null {
+  if (error instanceof IdOwnershipConflictError) {
+    return error.conflictDocumentId;
+  }
+  if (error && typeof error === "object" && "conflictDocumentId" in error) {
+    const id = (error as { conflictDocumentId?: unknown }).conflictDocumentId;
+    if (typeof id === "number" && Number.isFinite(id)) return id;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  // Structured JSON stringified by handleResponse: {"message":"...","error_code":"id_ownership","conflict_document_id":123}
+  try {
+    const parsed = JSON.parse(message) as {
+      error_code?: string;
+      conflict_document_id?: number;
+      message?: string;
+    };
+    if (
+      parsed?.error_code === "id_ownership" &&
+      typeof parsed.conflict_document_id === "number"
+    ) {
+      return parsed.conflict_document_id;
+    }
+  } catch {
+    // not JSON
+  }
+  const match = message.match(/Another document \(#(\d+)\) already uses ID/i);
+  if (match) {
+    return Number(match[1]);
+  }
+  return null;
+}
+
 export async function listDocuments(
   filters: DocumentFilters = {}
 ): Promise<DocumentListResponse> {
@@ -395,6 +452,17 @@ export async function listDocuments(
   }
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.test_type_changed === true) params.append("test_type_changed", "true");
+  if (filters.subject_changed === true) params.append("subject_changed", "true");
+  if (filters.paper_changed === true) params.append("paper_changed", "true");
+  if (filters.subject_changed_subject_ids?.length) {
+    params.append("subject_changed_subject_ids", filters.subject_changed_subject_ids.join(","));
+  }
+  if (
+    filters.subject_changed_subject_scope &&
+    filters.subject_changed_subject_scope !== "either"
+  ) {
+    params.append("subject_changed_subject_scope", filters.subject_changed_subject_scope);
+  }
   if (filters.paper_pair) params.append("paper_pair", filters.paper_pair);
   if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
@@ -614,6 +682,8 @@ export type BulkReclassifyPaperResultItem = {
   new_test_type: string | null;
   scores_moved: number;
   error: string | null;
+  error_code?: string | null;
+  conflict_document_id?: number | null;
 };
 
 export type BulkReclassifyPaperResponse = {
@@ -625,7 +695,8 @@ export type BulkReclassifyPaperResponse = {
 
 export async function bulkReclassifyPaper(
   documentIds: number[],
-  targetTestType: "1" | "2"
+  targetTestType: "1" | "2",
+  overwrite = false
 ): Promise<BulkReclassifyPaperResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/bulk-reclassify-paper`, {
     method: "POST",
@@ -633,8 +704,63 @@ export async function bulkReclassifyPaper(
     body: JSON.stringify({
       document_ids: documentIds,
       target_test_type: targetTestType,
+      overwrite,
     }),
   });
+  return handleResponse(response);
+}
+
+export type ScoreMigrationEndpointMeta = {
+  extracted_id: string | null;
+  subject_id: number | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  test_type: string | null;
+  paper_label: string | null;
+};
+
+export type ScoreMigrationConflictItem = {
+  index_number: string | null;
+  candidate_name: string | null;
+  existing_score: string | null;
+  existing_document_id: string | null;
+  subject_score_id: number | null;
+};
+
+export type ScoreMigrationUnregisteredItem = {
+  index_number: string | null;
+  candidate_name: string | null;
+};
+
+export type ScoreMigrationPreviewResponse = {
+  requires_confirm: boolean;
+  subject_changed: boolean;
+  paper_changed: boolean;
+  scores_to_move: number;
+  from_meta: ScoreMigrationEndpointMeta;
+  to_meta: ScoreMigrationEndpointMeta;
+  conflicts: ScoreMigrationConflictItem[];
+  unregistered?: ScoreMigrationUnregisteredItem[];
+  blocking_errors: string[];
+  conflict_document_id?: number | null;
+};
+
+export async function previewScoreMigration(
+  documentId: number,
+  payload: {
+    extracted_id: string;
+    school_id?: number;
+    subject_id?: number;
+  }
+): Promise<ScoreMigrationPreviewResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/${documentId}/score-migration-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
   return handleResponse(response);
 }
 
@@ -646,11 +772,12 @@ export async function updateDocumentId(
   documentId: number,
   extractedId: string,
   schoolId?: number,
-  subjectId?: number
+  subjectId?: number,
+  options?: { overwrite_scores?: boolean }
 ): Promise<Document> {
-  const body: any = {
+  const body: Record<string, unknown> = {
     extracted_id: extractedId,
-    id_extraction_status: "success"
+    id_extraction_status: "success",
   };
 
   if (schoolId !== undefined) {
@@ -661,6 +788,10 @@ export async function updateDocumentId(
     body.subject_id = subjectId;
   }
 
+  if (options?.overwrite_scores) {
+    body.overwrite_scores = true;
+  }
+
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/id`, {
     method: "PATCH",
     headers: {
@@ -668,6 +799,29 @@ export async function updateDocumentId(
     },
     body: JSON.stringify(body),
   });
+  if (!response.ok) {
+    try {
+      const payload = await response.clone().json();
+      const detail = payload?.detail;
+      if (
+        detail &&
+        typeof detail === "object" &&
+        !Array.isArray(detail) &&
+        detail.error_code === "id_ownership" &&
+        typeof detail.conflict_document_id === "number"
+      ) {
+        throw new IdOwnershipConflictError(
+          typeof detail.message === "string"
+            ? detail.message
+            : `Another document (#${detail.conflict_document_id}) already uses this ID`,
+          detail.conflict_document_id,
+          response.status
+        );
+      }
+    } catch (err) {
+      if (err instanceof IdOwnershipConflictError) throw err;
+    }
+  }
   return handleResponse<Document>(response);
 }
 

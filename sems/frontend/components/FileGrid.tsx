@@ -11,6 +11,7 @@ import { getDocumentThumbnailUrl } from "@/lib/api";
 import {
   DocumentPaperIdentity,
   DocumentPriorityStatus,
+  documentHasSheetChangeMarker,
   documentPaperLabel,
 } from "@/components/DocumentStatusMeta";
 
@@ -138,7 +139,7 @@ function DocumentCard({
 
   const isFailed = doc.id_extraction_status === "error";
   const hasPaperMeta =
-    Boolean(documentPaperLabel(doc.test_type)) || Boolean(doc.test_type_changed_at);
+    Boolean(documentPaperLabel(doc.test_type)) || documentHasSheetChangeMarker(doc);
 
   return (
     <div

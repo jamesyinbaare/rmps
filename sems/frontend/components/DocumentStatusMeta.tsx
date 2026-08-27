@@ -27,6 +27,19 @@ export function documentPaperLabel(
   return `P${testType}`;
 }
 
+function subjectShortLabel(
+  name: string | null | undefined,
+  code: string | null | undefined
+): string | null {
+  if (name) return name;
+  if (code) return code;
+  return null;
+}
+
+export function documentHasSheetChangeMarker(document: Document): boolean {
+  return Boolean(document.test_type_changed_at || document.subject_changed_at);
+}
+
 /** Single priority chip: error > pending > scores > ID ok (icon only). */
 export function DocumentPriorityStatus({
   document,
@@ -118,7 +131,7 @@ export function DocumentPriorityStatus({
   return null;
 }
 
-/** Quiet paper identity + optional reclassify mark for footers / list titles. */
+/** Quiet paper/subject identity + optional reassignment mark for footers / list titles. */
 export function DocumentPaperIdentity({
   document,
   className,
@@ -129,32 +142,75 @@ export function DocumentPaperIdentity({
   textClassName?: string;
 }) {
   const paper = documentPaperLabel(document.test_type);
-  const fromLabel = documentPaperLabel(document.test_type_changed_from);
-  const transition =
-    fromLabel && paper && document.test_type_changed_from !== document.test_type
-      ? `${fromLabel} → ${paper}`
+  const fromPaper = documentPaperLabel(document.test_type_changed_from);
+  const paperTransition =
+    fromPaper && paper && document.test_type_changed_from !== document.test_type
+      ? `${fromPaper} → ${paper}`
       : null;
 
-  if (!paper && !document.test_type_changed_at) return null;
+  const toSubject = subjectShortLabel(document.subject_name, document.subject_code);
+  const fromSubject = subjectShortLabel(
+    document.subject_changed_from_name,
+    document.subject_changed_from_code
+  );
+  const subjectTransition =
+    fromSubject &&
+    toSubject &&
+    document.subject_changed_from != null &&
+    document.subject_changed_from !== document.subject_id
+      ? `${fromSubject} → ${toSubject}`
+      : null;
 
-  const reclassifyTooltip = document.test_type_changed_at ? (
+  const hasPaperChange = Boolean(document.test_type_changed_at);
+  const hasSubjectChange = Boolean(document.subject_changed_at);
+  const hasChange = hasPaperChange || hasSubjectChange;
+
+  if (!paper && !hasChange) return null;
+
+  const changedAt =
+    document.subject_changed_at && document.test_type_changed_at
+      ? new Date(document.subject_changed_at) > new Date(document.test_type_changed_at)
+        ? document.subject_changed_at
+        : document.test_type_changed_at
+      : document.subject_changed_at || document.test_type_changed_at;
+
+  const primaryTransition = paperTransition || subjectTransition;
+  const ariaLabel = [
+    paperTransition ? `Paper changed: ${paperTransition}` : null,
+    subjectTransition ? `Subject changed: ${subjectTransition}` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  const reclassifyTooltip = hasChange ? (
     <TooltipContent side="bottom" className="max-w-xs">
-      {transition ? (
-        <p className="font-medium">{transition}</p>
-      ) : (
-        <p className="font-medium">Paper changed</p>
+      {paperTransition && <p className="font-medium">Paper · {paperTransition}</p>}
+      {subjectTransition && (
+        <p className="font-medium">Subject · {subjectTransition}</p>
       )}
-      <p className="text-muted-foreground">
-        Reclassified {formatRelativeDate(document.test_type_changed_at)}
-      </p>
-      <p className="text-muted-foreground">
-        {new Date(document.test_type_changed_at).toLocaleString()}
-      </p>
+      {!paperTransition && !subjectTransition && (
+        <p className="font-medium">
+          {hasPaperChange && hasSubjectChange
+            ? "Paper & subject changed"
+            : hasSubjectChange
+              ? "Subject changed"
+              : "Paper changed"}
+        </p>
+      )}
+      {changedAt && (
+        <>
+          <p className="text-muted-foreground">
+            Reassigned {formatRelativeDate(changedAt)}
+          </p>
+          <p className="text-muted-foreground">
+            {new Date(changedAt).toLocaleString()}
+          </p>
+        </>
+      )}
     </TooltipContent>
   ) : null;
 
-  // Prefer "↻ Obj → Essay" when we know the transition; otherwise current paper + optional ↻
-  if (document.test_type_changed_at && transition) {
+  if (hasChange && primaryTransition) {
     return (
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -164,11 +220,14 @@ export function DocumentPaperIdentity({
                 "inline-flex items-center gap-0.5 shrink-0 text-amber-700 dark:text-amber-400",
                 className
               )}
-              aria-label={`Paper changed: ${transition}`}
+              aria-label={ariaLabel || "Sheet reassigned"}
               onClick={(e) => e.stopPropagation()}
             >
               <RotateCcw className="h-3 w-3" />
-              <span className={cn("font-medium", textClassName)}>{transition}</span>
+              <span className={cn("font-medium truncate max-w-[14rem]", textClassName)}>
+                {primaryTransition}
+                {paperTransition && subjectTransition ? " · subject" : ""}
+              </span>
             </span>
           </TooltipTrigger>
           {reclassifyTooltip}
@@ -182,13 +241,13 @@ export function DocumentPaperIdentity({
       {paper && (
         <span className={cn("text-muted-foreground", textClassName)}>{paper}</span>
       )}
-      {document.test_type_changed_at && (
+      {hasChange && (
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 className="inline-flex text-amber-600 dark:text-amber-400"
-                aria-label="Paper changed"
+                aria-label={ariaLabel || "Sheet reassigned"}
                 onClick={(e) => e.stopPropagation()}
               >
                 <RotateCcw className="h-3 w-3" />

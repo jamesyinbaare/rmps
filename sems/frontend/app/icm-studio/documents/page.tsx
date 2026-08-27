@@ -6,7 +6,7 @@ import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
-import { BulkReclassifyPaperDialog } from "@/components/BulkReclassifyPaperDialog";
+import { BulkReclassifyPaperDialog, type OwnershipConflictPair, type BulkReclassifyResume } from "@/components/BulkReclassifyPaperDialog";
 import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -62,6 +62,8 @@ import type {
   ExamSeries,
   ExamType,
   IdExtractionStatusCounts,
+  SheetReassignmentFilter,
+  SubjectChangedSubjectScope,
 } from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
 import { toast } from "sonner";
@@ -93,6 +95,81 @@ function formatExamLabel(exam: Exam) {
   return `${exam.year} ${exam.series} ${typeLabel}`;
 }
 
+function sheetReassignmentFromFilters(
+  filters: Pick<DocumentFiltersType, "test_type_changed" | "subject_changed" | "paper_changed">
+): SheetReassignmentFilter | undefined {
+  if (filters.subject_changed) return "subject";
+  if (filters.paper_changed) return "paper";
+  if (filters.test_type_changed) return "all";
+  return undefined;
+}
+
+function reassignmentFilterFields(
+  value: SheetReassignmentFilter | undefined
+): Pick<DocumentFiltersType, "test_type_changed" | "subject_changed" | "paper_changed"> {
+  return {
+    test_type_changed: value === "all" ? true : undefined,
+    subject_changed: value === "subject" ? true : undefined,
+    paper_changed: value === "paper" ? true : undefined,
+  };
+}
+
+function reassignmentEmptyCopy(
+  filter: SheetReassignmentFilter | undefined,
+  subjectIds?: number[],
+  subjectScope: SubjectChangedSubjectScope = "either"
+) {
+  if (filter === "subject") {
+    if (subjectIds && subjectIds.length > 0) {
+      const scopeLabel =
+        subjectScope === "current"
+          ? "reassigned to"
+          : subjectScope === "prior"
+            ? "reassigned from"
+            : "reassigned to or from";
+      return {
+        title: "No matching subject-changed sheets",
+        description: `No sheets in this exam were ${scopeLabel} the selected subject(s).`,
+      };
+    }
+    return {
+      title: "No sheets with a subject change",
+      description: "No sheets in this exam have had their subject reassigned.",
+    };
+  }
+  if (filter === "paper") {
+    return {
+      title: "No sheets with a paper change",
+      description: "No sheets in this exam have had their paper reassigned.",
+    };
+  }
+  if (filter === "all") {
+    return {
+      title: "No sheets with a paper or subject change",
+      description: "No sheets in this exam have had paper or subject reassigned.",
+    };
+  }
+  return null;
+}
+
+function parseSubjectIdsParam(param: string | null): number[] | undefined {
+  if (!param) return undefined;
+  const ids = param
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+  return ids.length > 0 ? ids : undefined;
+}
+
+function parseSubjectChangedScopeParam(
+  param: string | null
+): SubjectChangedSubjectScope | undefined {
+  if (param === "current" || param === "prior" || param === "either") {
+    return param;
+  }
+  return undefined;
+}
+
 export default function DocumentsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -102,6 +179,10 @@ export default function DocumentsPage() {
   const errorParam = searchParams.get("error") || "";
   const testTypeParam = searchParams.get("test_type");
   const testTypeChangedParam = searchParams.get("test_type_changed");
+  const subjectChangedParam = searchParams.get("subject_changed");
+  const paperChangedParam = searchParams.get("paper_changed");
+  const subjectChangedSubjectsParam = searchParams.get("subject_changed_subjects");
+  const subjectChangedScopeParam = searchParams.get("subject_changed_scope");
   const paperPairParam = searchParams.get("paper_pair");
   const examIdFromUrl = parseOptionalInt(examIdParam);
 
@@ -134,6 +215,20 @@ export default function DocumentsPage() {
     }
     if (testTypeChangedParam === "1" || testTypeChangedParam === "true") {
       initial.test_type_changed = true;
+    }
+    if (subjectChangedParam === "1" || subjectChangedParam === "true") {
+      initial.subject_changed = true;
+    }
+    if (paperChangedParam === "1" || paperChangedParam === "true") {
+      initial.paper_changed = true;
+    }
+    const subjectChangedSubjectIds = parseSubjectIdsParam(subjectChangedSubjectsParam);
+    if (subjectChangedSubjectIds) {
+      initial.subject_changed_subject_ids = subjectChangedSubjectIds;
+    }
+    const subjectChangedScope = parseSubjectChangedScopeParam(subjectChangedScopeParam);
+    if (subjectChangedScope && subjectChangedScope !== "either") {
+      initial.subject_changed_subject_scope = subjectChangedScope;
     }
     if (paperPairParam === "paired" || paperPairParam === "missing") {
       initial.paper_pair = paperPairParam;
@@ -180,9 +275,32 @@ export default function DocumentsPage() {
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
+  const [ownershipQueue, setOwnershipQueue] = useState<OwnershipConflictPair[]>([]);
+  const [ownershipQueueIndex, setOwnershipQueueIndex] = useState(0);
+  const [ownershipPeerDoc, setOwnershipPeerDoc] = useState<Document | null>(null);
+  const [ownershipSourceDocs, setOwnershipSourceDocs] = useState<Document[]>([]);
+  const [reclassifyResume, setReclassifyResume] = useState<BulkReclassifyResume | null>(
+    null
+  );
+  const [reclassifyResumeDocs, setReclassifyResumeDocs] = useState<Document[]>([]);
 
+  const isOwnershipReview = ownershipQueue.length > 0;
   const scopeReady = !!filters.exam_id;
   const isErrorsView = filters.id_extraction_status === "error";
+  const sheetReassignment = sheetReassignmentFromFilters(filters);
+  const reassignmentEmpty = reassignmentEmptyCopy(
+    sheetReassignment,
+    filters.subject_changed_subject_ids,
+    filters.subject_changed_subject_scope ?? "either"
+  );
+  const subjectChangedToolbarPlaceholder =
+    filters.subject_changed && filters.subject_changed_subject_scope === "prior"
+      ? "Prior subject"
+      : filters.subject_changed && filters.subject_changed_subject_scope === "current"
+        ? "Current subject"
+        : filters.subject_changed
+          ? "Subject (current or prior)"
+          : undefined;
   const selectionEnabled = isErrorsView || bulkMode;
   const useInfiniteScroll = viewMode === "grid" && !isErrorsView;
 
@@ -389,6 +507,12 @@ export default function DocumentsPage() {
       prevFiltersRef.current?.id_extraction_error_code !== filters.id_extraction_error_code ||
       prevFiltersRef.current?.test_type !== filters.test_type ||
       prevFiltersRef.current?.test_type_changed !== filters.test_type_changed ||
+      prevFiltersRef.current?.subject_changed !== filters.subject_changed ||
+      prevFiltersRef.current?.paper_changed !== filters.paper_changed ||
+      JSON.stringify(prevFiltersRef.current?.subject_changed_subject_ids ?? []) !==
+        JSON.stringify(filters.subject_changed_subject_ids ?? []) ||
+      prevFiltersRef.current?.subject_changed_subject_scope !==
+        filters.subject_changed_subject_scope ||
       prevFiltersRef.current?.paper_pair !== filters.paper_pair ||
       prevFiltersRef.current?.q !== filters.q ||
       prevFilterParamRef.current !== filterParam;
@@ -432,6 +556,21 @@ export default function DocumentsPage() {
     if (filters.test_type_changed) {
       params.set("test_type_changed", "1");
     }
+    if (filters.subject_changed) {
+      params.set("subject_changed", "1");
+    }
+    if (filters.paper_changed) {
+      params.set("paper_changed", "1");
+    }
+    if (filters.subject_changed_subject_ids?.length) {
+      params.set("subject_changed_subjects", filters.subject_changed_subject_ids.join(","));
+    }
+    if (
+      filters.subject_changed_subject_scope &&
+      filters.subject_changed_subject_scope !== "either"
+    ) {
+      params.set("subject_changed_scope", filters.subject_changed_subject_scope);
+    }
     if (filters.paper_pair) {
       params.set("paper_pair", filters.paper_pair);
     }
@@ -445,6 +584,10 @@ export default function DocumentsPage() {
     filters.id_extraction_error_code,
     filters.test_type,
     filters.test_type_changed,
+    filters.subject_changed,
+    filters.paper_changed,
+    filters.subject_changed_subject_ids,
+    filters.subject_changed_subject_scope,
     filters.paper_pair,
     filterParam,
     examIdFromUrl,
@@ -895,7 +1038,124 @@ export default function DocumentsPage() {
     setViewerOpen(false);
     setSelectedDocument(null);
     setSelectedIndex(-1);
+    setOwnershipQueue([]);
+    setOwnershipQueueIndex(0);
+    setOwnershipPeerDoc(null);
+    setOwnershipSourceDocs([]);
   }, []);
+
+  const openOwnershipPairAt = useCallback(async (pairs: OwnershipConflictPair[], index: number) => {
+    const pair = pairs[index];
+    if (!pair) return;
+    try {
+      const [source, conflict] = await Promise.all([
+        getDocument(pair.sourceId),
+        getDocument(pair.conflictId),
+      ]);
+      setOwnershipQueue(pairs);
+      setOwnershipQueueIndex(index);
+      setOwnershipPeerDoc(conflict);
+      setSelectedDocument(source);
+      setSelectedIndex(index);
+      setViewerOpen(true);
+      setOwnershipSourceDocs((prev) => {
+        const next = [...prev];
+        next[index] = source;
+        // Fill placeholders for queue nav length
+        for (let i = 0; i < pairs.length; i++) {
+          if (!next[i]) {
+            next[i] = {
+              ...source,
+              id: pairs[i].sourceId,
+              extracted_id: null,
+              file_name: `Document #${pairs[i].sourceId}`,
+            } as Document;
+          }
+        }
+        next[index] = source;
+        return next;
+      });
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to load conflict pair"
+      );
+    }
+  }, []);
+
+  const startOwnershipReview = useCallback(
+    async (pairs: OwnershipConflictPair[]) => {
+      if (pairs.length === 0) return;
+      await openOwnershipPairAt(pairs, 0);
+    },
+    [openOwnershipPairAt]
+  );
+
+  const advanceOwnershipQueue = useCallback(async () => {
+    const nextIdx = ownershipQueueIndex + 1;
+    if (nextIdx >= ownershipQueue.length) {
+      const resume = reclassifyResume;
+      const resumeDocs = ownershipSourceDocs.filter((d) =>
+        resume?.documentIds.includes(d.id)
+      );
+      handleCloseViewer();
+      await loadDocuments(false);
+      void loadStatusCounts();
+      void loadPaperPairCounts();
+      if (resume && resume.documentIds.length > 0) {
+        setReclassifyResumeDocs(resumeDocs);
+        toast.message("All ID conflicts resolved — continue reclassify?", {
+          action: {
+            label: "Continue",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const fresh = await Promise.all(
+                    resume.documentIds.map((id) => getDocument(id))
+                  );
+                  setSelectedIds(new Set(resume.documentIds));
+                  setBulkMode(true);
+                  setReclassifyResume(resume);
+                  setReclassifyResumeDocs(fresh);
+                  setReclassifyDialogOpen(true);
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to reload sheets for reclassify"
+                  );
+                }
+              })();
+            },
+          },
+          duration: 12000,
+        });
+      } else {
+        toast.success("Finished ID conflict review");
+        setReclassifyResume(null);
+        setReclassifyResumeDocs([]);
+      }
+      return;
+    }
+    await openOwnershipPairAt(ownershipQueue, nextIdx);
+  }, [
+    ownershipQueue,
+    ownershipQueueIndex,
+    openOwnershipPairAt,
+    handleCloseViewer,
+    loadDocuments,
+    loadStatusCounts,
+    loadPaperPairCounts,
+    reclassifyResume,
+    ownershipSourceDocs,
+  ]);
+
+  const handleOwnershipNavigate = useCallback(
+    async (index: number) => {
+      if (index < 0 || index >= ownershipQueue.length) return;
+      await openOwnershipPairAt(ownershipQueue, index);
+    },
+    [ownershipQueue, openOwnershipPairAt]
+  );
 
   const advanceAfterResolved = useCallback(
     async (resolvedDocumentId: number, options?: { queueEmptyMessage?: string }) => {
@@ -1008,13 +1268,37 @@ export default function DocumentsPage() {
     extractedId: string,
     schoolId?: number,
     subjectId?: number,
-    options?: { advance?: boolean }
+    options?: { advance?: boolean; overwrite_scores?: boolean }
   ) => {
     try {
-      const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-      toast.success("Document ID updated successfully");
+      const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId, {
+        overwrite_scores: options?.overwrite_scores,
+      });
+      const moved = updated.scores_moved ?? 0;
+      if (moved <= 0) {
+        toast.success("Sheet updated (no applied scores)");
+      } else {
+        const dest = [updated.subject_name, updated.test_type === "1" ? "Objectives" : updated.test_type === "2" ? "Essay" : null]
+          .filter(Boolean)
+          .join(" · ");
+        toast.success(
+          dest
+            ? `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"} to ${dest}`
+            : `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"}`
+        );
+      }
       void loadStatusCounts();
       void loadPaperPairCounts();
+
+      if (isOwnershipReview) {
+        if (selectedDocument && selectedDocument.id === documentId) {
+          setSelectedDocument({ ...selectedDocument, ...updated });
+        }
+        if (options?.advance !== false) {
+          await advanceOwnershipQueue();
+        }
+        return;
+      }
 
       if (
         (isErrorsView || isPaperCompareView) &&
@@ -1091,6 +1375,11 @@ export default function DocumentsPage() {
     const deletedId = documentToDelete.id;
     const role = deleteResolutionRole;
     setDeleteResolutionRole(null);
+
+    if (isOwnershipReview && viewerOpen) {
+      await advanceOwnershipQueue();
+      return;
+    }
 
     if (
       (isErrorsView || isPaperCompareView) &&
@@ -1316,6 +1605,7 @@ export default function DocumentsPage() {
                     filters={filters}
                     onFiltersChange={handleFiltersChange}
                     hideExam
+                    subjectPlaceholder={subjectChangedToolbarPlaceholder}
                   />
                   <IdExtractionStatusPills
                     counts={statusCounts}
@@ -1351,7 +1641,9 @@ export default function DocumentsPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   <DocumentsSecondaryFilters
                     testType={filters.test_type}
-                    testTypeChanged={filters.test_type_changed}
+                    sheetReassignment={sheetReassignment}
+                    subjectChangedSubjectIds={filters.subject_changed_subject_ids}
+                    subjectChangedSubjectScope={filters.subject_changed_subject_scope ?? "either"}
                     recentActive={filterParam === "recent"}
                     onTestTypeChange={(value) => {
                       setSelectedIds(new Set());
@@ -1365,14 +1657,42 @@ export default function DocumentsPage() {
                         return next;
                       });
                     }}
-                    onTestTypeChangedToggle={() => {
+                    onSheetReassignmentChange={(value) => {
                       setSelectedIds(new Set());
                       setFilters((prev) => {
                         const next = { ...prev, page: 1 };
-                        if (prev.test_type_changed) {
-                          delete next.test_type_changed;
+                        delete next.test_type_changed;
+                        delete next.subject_changed;
+                        delete next.paper_changed;
+                        delete next.subject_changed_subject_ids;
+                        delete next.subject_changed_subject_scope;
+                        const fields = reassignmentFilterFields(value);
+                        if (fields.test_type_changed) next.test_type_changed = true;
+                        if (fields.subject_changed) next.subject_changed = true;
+                        if (fields.paper_changed) next.paper_changed = true;
+                        return next;
+                      });
+                    }}
+                    onSubjectChangedSubjectIdsChange={(ids) => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (ids.length > 0) {
+                          next.subject_changed_subject_ids = ids;
                         } else {
-                          next.test_type_changed = true;
+                          delete next.subject_changed_subject_ids;
+                        }
+                        return next;
+                      });
+                    }}
+                    onSubjectChangedSubjectScopeChange={(scope) => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (scope === "either") {
+                          delete next.subject_changed_subject_scope;
+                        } else {
+                          next.subject_changed_subject_scope = scope;
                         }
                         return next;
                       });
@@ -1386,6 +1706,10 @@ export default function DocumentsPage() {
                         const next = { ...prev, page: 1 };
                         delete next.test_type;
                         delete next.test_type_changed;
+                        delete next.subject_changed;
+                        delete next.paper_changed;
+                        delete next.subject_changed_subject_ids;
+                        delete next.subject_changed_subject_scope;
                         return next;
                       });
                       if (filterParam === "recent") {
@@ -1567,11 +1891,15 @@ export default function DocumentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setReclassifyDialogOpen(true)}
+                    onClick={() => {
+                      setReclassifyResume(null);
+                      setReclassifyResumeDocs([]);
+                      setReclassifyDialogOpen(true);
+                    }}
                     className="gap-2"
                   >
                     <Pencil className="h-4 w-4" />
-                    Advanced Edit ({selectedIds.size})
+                    Sheet tools ({selectedIds.size})
                   </Button>
                   <Button
                     variant="destructive"
@@ -1632,43 +1960,40 @@ export default function DocumentsPage() {
               hasMore={hasMore}
               hideEmptyState={!loading && total === 0}
               emptyTitle={
-                filters.test_type_changed
-                  ? "No sheets with a paper change"
-                  : filters.paper_pair === "paired"
-                    ? "No paired paper sheets"
-                    : filters.paper_pair === "missing"
-                      ? "No sheets missing a counterpart"
-                      : searchQuery.trim() ||
-                          filters.school_id ||
-                          filters.subject_id ||
-                          filters.id_extraction_status ||
-                          filters.test_type
-                        ? "No matching documents"
-                        : "No documents yet"
+                reassignmentEmpty?.title ??
+                (filters.paper_pair === "paired"
+                  ? "No paired paper sheets"
+                  : filters.paper_pair === "missing"
+                    ? "No sheets missing a counterpart"
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "No matching documents"
+                      : "No documents yet")
               }
               emptyDescription={
-                filters.test_type_changed
-                  ? "No sheets in this exam have been reclassified via Advanced Edit."
-                  : filters.paper_pair === "paired"
-                    ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
-                    : filters.paper_pair === "missing"
-                      ? "Every sheet with a complete ID already has its other paper."
-                      : searchQuery.trim() ||
-                          filters.school_id ||
-                          filters.subject_id ||
-                          filters.id_extraction_status ||
-                          filters.test_type
-                        ? "Try clearing search or filters."
-                        : "Upload scanned ICMs to get started."
+                reassignmentEmpty?.description ??
+                (filters.paper_pair === "paired"
+                  ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
+                  : filters.paper_pair === "missing"
+                    ? "Every sheet with a complete ID already has its other paper."
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "Try clearing search or filters."
+                      : "Upload scanned ICMs to get started.")
               }
             />
 
             {!loading && total === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <p className="text-lg font-medium mb-2">
-                  {filters.test_type_changed
-                    ? "No sheets with a paper change"
-                    : filters.paper_pair === "paired"
+                  {reassignmentEmpty?.title ??
+                    (filters.paper_pair === "paired"
                       ? "No paired paper sheets"
                       : filters.paper_pair === "missing"
                         ? "No sheets missing a counterpart"
@@ -1678,12 +2003,11 @@ export default function DocumentsPage() {
                             filters.id_extraction_status ||
                             filters.test_type
                           ? "No matching documents"
-                          : "No documents yet"}
+                          : "No documents yet")}
                 </p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  {filters.test_type_changed
-                    ? "No sheets in this exam have been reclassified via Advanced Edit."
-                    : filters.paper_pair === "paired"
+                  {reassignmentEmpty?.description ??
+                    (filters.paper_pair === "paired"
                       ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
                       : filters.paper_pair === "missing"
                         ? "Every sheet with a complete ID already has its other paper."
@@ -1693,7 +2017,7 @@ export default function DocumentsPage() {
                             filters.id_extraction_status ||
                             filters.test_type
                           ? "Try clearing search or filters to see more results."
-                          : "Upload scanned ICMs to populate this exam."}
+                          : "Upload scanned ICMs to populate this exam.")}
                 </p>
                 {(searchQuery.trim() ||
                   filters.id_extraction_status ||
@@ -1767,11 +2091,15 @@ export default function DocumentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setReclassifyDialogOpen(true)}
+                    onClick={() => {
+                      setReclassifyResume(null);
+                      setReclassifyResumeDocs([]);
+                      setReclassifyDialogOpen(true);
+                    }}
                     className="h-9 gap-2"
                   >
                     <Pencil className="h-4 w-4" />
-                    Advanced Edit ({selectedIds.size})
+                    Sheet tools ({selectedIds.size})
                   </Button>
                   <Button
                     variant="destructive"
@@ -1791,31 +2119,48 @@ export default function DocumentsPage() {
           {selectedDocument && (
             <DocumentViewer
               document={selectedDocument}
-              documents={documents}
-              currentIndex={selectedIndex}
+              documents={isOwnershipReview ? ownershipSourceDocs : documents}
+              currentIndex={isOwnershipReview ? ownershipQueueIndex : selectedIndex}
               open={viewerOpen}
               onClose={handleCloseViewer}
-              onNavigate={handleNavigate}
+              onNavigate={isOwnershipReview ? handleOwnershipNavigate : handleNavigate}
               onDownload={handleDownload}
               onUpdateId={handleUpdateId}
               onDelete={handleDeleteFromViewer}
               conflictRefreshKey={conflictRefreshKey}
-              resolutionQueueMode={isErrorsView || isPaperCompareView}
-              queueTotal={total}
-              queueLabel={
-                isPaperCompareView
-                  ? isPaperPairFilter
-                    ? "Paper pair"
-                    : "Missing pair"
-                  : isDuplicateFilter || selectedDocument.id_extraction_error_code === "duplicate"
-                    ? "Duplicate"
-                    : "Error"
+              resolutionQueueMode={
+                isErrorsView || isPaperCompareView || isOwnershipReview
               }
-              onConflictSideResolved={handleConflictSideResolved}
-              paperCompareMode={isPaperCompareView}
+              queueTotal={isOwnershipReview ? ownershipQueue.length : total}
+              queueLabel={
+                isOwnershipReview
+                  ? "ID conflict"
+                  : isPaperCompareView
+                    ? isPaperPairFilter
+                      ? "Paper pair"
+                      : "Missing pair"
+                    : isDuplicateFilter ||
+                        selectedDocument.id_extraction_error_code === "duplicate"
+                      ? "Duplicate"
+                      : "Error"
+              }
+              onConflictSideResolved={
+                isOwnershipReview
+                  ? async () => {
+                      /* advance via onUpdateId / delete */
+                    }
+                  : handleConflictSideResolved
+              }
+              paperCompareMode={isPaperCompareView && !isOwnershipReview}
               onPaperCounterpartChanged={async () => {
                 setConflictRefreshKey((n) => n + 1);
                 await loadDocuments(false);
+              }}
+              ownershipConflictDocs={
+                isOwnershipReview && ownershipPeerDoc ? [ownershipPeerDoc] : null
+              }
+              onOwnershipConflictCleared={() => {
+                /* Parent-controlled queue advances on update/delete */
               }}
             />
           )}
@@ -1836,15 +2181,27 @@ export default function DocumentsPage() {
           />
 
           <BulkReclassifyPaperDialog
-            documents={documents.filter((d) => selectedIds.has(d.id))}
+            documents={
+              reclassifyResumeDocs.length > 0
+                ? reclassifyResumeDocs
+                : documents.filter((d) => selectedIds.has(d.id))
+            }
             open={reclassifyDialogOpen}
             onOpenChange={setReclassifyDialogOpen}
+            initialTargetTestType={reclassifyResume?.targetTestType}
+            resumeMode={Boolean(reclassifyResume)}
             onSuccess={async () => {
               setSelectedIds(new Set());
               setBulkMode(false);
+              setReclassifyResume(null);
+              setReclassifyResumeDocs([]);
               await loadDocuments(false);
               void loadStatusCounts();
               void loadPaperPairCounts();
+            }}
+            onOwnershipConflicts={(pairs, resume) => {
+              setReclassifyResume(resume);
+              void startOwnershipReview(pairs);
             }}
           />
 

@@ -21,6 +21,9 @@ interface DuplicateConflictPanelProps {
   onUpdateId: DocumentCompareUpdateId;
   /** After conflict-side ID fix; parent may auto-retry when no conflicts remain. */
   onConflictSideResolved?: () => void | Promise<void>;
+  currentTitle?: string;
+  conflictTitle?: string;
+  emptyConflictHint?: string;
 }
 
 function statusLabel(status: string): string {
@@ -45,6 +48,9 @@ export function DuplicateConflictPanel({
   onDelete,
   onUpdateId,
   onConflictSideResolved,
+  currentTitle = "This upload",
+  conflictTitle = "Already in the system",
+  emptyConflictHint = "Retry extraction or change this ID.",
 }: DuplicateConflictPanelProps) {
   const [conflictIndex, setConflictIndex] = useState(0);
 
@@ -72,7 +78,7 @@ export function DuplicateConflictPanel({
           <div className="h-full min-h-0 overflow-hidden border-r border-border">
             <DocumentComparePane
               doc={current}
-              title="This upload"
+              title={currentTitle}
               tone="current"
               schools={schools}
               subjects={subjects}
@@ -125,7 +131,7 @@ export function DuplicateConflictPanel({
             {conflict ? (
               <DocumentComparePane
                 doc={conflict}
-                title="Already in the system"
+                title={conflictTitle}
                 tone="existing"
                 schools={schools}
                 subjects={subjects}
@@ -139,7 +145,7 @@ export function DuplicateConflictPanel({
               <div className="flex h-full min-h-0 flex-col items-center justify-center bg-muted/20 px-8 text-center">
                 <p className="text-sm font-medium">No conflicting document</p>
                 <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                  Retry extraction or change this ID.
+                  {emptyConflictHint}
                 </p>
               </div>
             )}

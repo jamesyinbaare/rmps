@@ -46,7 +46,13 @@ import {
   parseDuplicateConflictDocumentId,
 } from "@/lib/id-extraction-errors";
 import { DocumentIdBreakdown } from "@/components/DocumentIdBreakdown";
-import { validateDocumentId } from "@/lib/document-id";
+import {
+  DocumentPaperIdentity,
+  documentHasSheetChangeMarker,
+  documentPaperLabel,
+} from "@/components/DocumentStatusMeta";
+import { ScoreMigrationConfirmDialog } from "@/components/ScoreMigrationConfirmDialog";
+import { parseDocumentIdParts, validateDocumentId } from "@/lib/document-id";
 import {
   API_BASE_URL,
   downloadDocument,
@@ -59,7 +65,10 @@ import {
   getReductoData,
   listSchools,
   listSubjects,
+  previewScoreMigration,
   updateDocumentId,
+  parseOwnershipConflictDocumentId,
+  type ScoreMigrationPreviewResponse,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { DuplicateConflictPanel } from "./DuplicateConflictPanel";
@@ -78,7 +87,7 @@ interface DocumentViewerProps {
     extractedId: string,
     schoolId?: number,
     subjectId?: number,
-    options?: { advance?: boolean }
+    options?: { advance?: boolean; overwrite_scores?: boolean }
   ) => Promise<void>;
   onDelete?: (documentId: number) => Promise<void>;
   /** Show Preview Data toggle that opens extraction panel inside this viewer */
@@ -103,6 +112,13 @@ interface DocumentViewerProps {
   paperCompareMode?: boolean;
   /** After counterpart-side ID change or delete; parent may refresh. */
   onPaperCounterpartChanged?: () => Promise<void>;
+  /**
+   * When set, force DuplicateConflictPanel for ID ownership clashes
+   * (even if extraction error_code is not "duplicate").
+   */
+  ownershipConflictDocs?: Document[] | null;
+  /** Called when ownership compare should clear (ID fixed / dismissed). */
+  onOwnershipConflictCleared?: () => void;
 }
 
 function parseCandidatesFromData(data: Record<string, any>): any[] {
@@ -188,6 +204,8 @@ export function DocumentViewer({
   onConflictSideResolved,
   paperCompareMode = false,
   onPaperCounterpartChanged,
+  ownershipConflictDocs = null,
+  onOwnershipConflictCleared,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -197,6 +215,15 @@ export function DocumentViewer({
   const [manualId, setManualId] = useState("");
   const [editingId, setEditingId] = useState(false);
   const [savingId, setSavingId] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
+  const [migrationPreview, setMigrationPreview] =
+    useState<ScoreMigrationPreviewResponse | null>(null);
+  const [pendingMigration, setPendingMigration] = useState<{
+    extractedId: string;
+    schoolId?: number;
+    subjectId?: number;
+    advance?: boolean;
+  } | null>(null);
   const [retryingExtract, setRetryingExtract] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
@@ -215,6 +242,11 @@ export function DocumentViewer({
   );
   const [loadingPaperCounterpart, setLoadingPaperCounterpart] = useState(false);
   const [paperCounterpartReloadToken, setPaperCounterpartReloadToken] = useState(0);
+  const [localOwnershipPeers, setLocalOwnershipPeers] = useState<Document[] | null>(null);
+
+  useEffect(() => {
+    setLocalOwnershipPeers(null);
+  }, [document?.id]);
   const manualIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -233,12 +265,16 @@ export function DocumentViewer({
   // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
   const isPendingExtraction = document.id_extraction_status === "pending";
   const isDuplicateError = document.id_extraction_error_code === "duplicate";
-  const showPaperCompare = paperCompareMode && !isDuplicateError;
+  const ownershipPeers = ownershipConflictDocs ?? localOwnershipPeers;
+  const showOwnershipCompare = Boolean(ownershipPeers && ownershipPeers.length > 0);
+  const showDuplicateCompare = isDuplicateError || showOwnershipCompare;
+  const showPaperCompare = paperCompareMode && !showDuplicateCompare;
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
   const canEditExtractedId = !isPendingExtraction && !needsManualId && !!document.extracted_id;
-  const showIdForm = (needsManualId || editingId) && !isDuplicateError && !showPaperCompare;
+  const showIdForm =
+    (needsManualId || editingId) && !showDuplicateCompare && !showPaperCompare;
   const idUnchanged =
     canEditExtractedId && manualId.trim() === (document.extracted_id || "");
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
@@ -644,6 +680,118 @@ export function DocumentViewer({
     }
   };
 
+  const openOwnershipCompare = async (
+    conflictDocumentId: number,
+    options?: { keepSheetChangePending?: boolean }
+  ) => {
+    try {
+      const peer = await getDocument(conflictDocumentId);
+      setLocalOwnershipPeers([peer]);
+      setMigrationOpen(false);
+      if (!options?.keepSheetChangePending) {
+        setPendingMigration(null);
+        setMigrationPreview(null);
+      }
+      toast.message("ID already in use — compare sheets side by side");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to load conflicting document"
+      );
+    }
+  };
+
+  const clearOwnershipCompare = () => {
+    setLocalOwnershipPeers(null);
+    onOwnershipConflictCleared?.();
+  };
+
+  const resumeSheetChangeReview = async () => {
+    if (!pendingMigration) return;
+    setLocalOwnershipPeers(null);
+    setSavingId(true);
+    try {
+      const preview = await previewScoreMigration(document.id, {
+        extracted_id: pendingMigration.extractedId,
+        school_id: pendingMigration.schoolId,
+        subject_id: pendingMigration.subjectId,
+      });
+      setMigrationPreview(preview);
+      setMigrationOpen(true);
+      toast.message("Back to sheet change review");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Failed to refresh sheet change preview"
+      );
+      setPendingMigration(null);
+      setMigrationPreview(null);
+    } finally {
+      setSavingId(false);
+    }
+  };
+
+  const formatSheetUpdatedToast = (
+    moved: number,
+    meta?: {
+      subjectName?: string | null;
+      paperLabel?: string | null;
+      replaced?: number;
+    }
+  ) => {
+    if (moved <= 0) return "Sheet updated (no applied scores)";
+    const dest = [meta?.subjectName, meta?.paperLabel].filter(Boolean).join(" · ");
+    let msg = dest
+      ? `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"} to ${dest}`
+      : `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"}`;
+    if (meta?.replaced && meta.replaced > 0) {
+      msg += ` · replaced ${meta.replaced} existing`;
+    }
+    return msg;
+  };
+
+  const commitIdUpdate = async (
+    extractedId: string,
+    schoolId: number | undefined,
+    subjectId: number | undefined,
+    options?: { advance?: boolean; overwrite_scores?: boolean }
+  ) => {
+    const destSubject =
+      migrationPreview?.to_meta.subject_name ||
+      subjects.find((s) => s.id === subjectId)?.name ||
+      null;
+    const destPaper = migrationPreview?.to_meta.paper_label || null;
+    const replacedCount = options?.overwrite_scores
+      ? migrationPreview?.conflicts.length ?? 0
+      : 0;
+
+    if (onUpdateId) {
+      await onUpdateId(document.id, extractedId, schoolId, subjectId, options);
+    } else {
+      const updated = await updateDocumentId(
+        document.id,
+        extractedId,
+        schoolId,
+        subjectId,
+        { overwrite_scores: options?.overwrite_scores }
+      );
+      const moved = updated.scores_moved ?? 0;
+      toast.success(
+        formatSheetUpdatedToast(moved, {
+          subjectName: destSubject,
+          paperLabel: destPaper,
+          replaced: replacedCount,
+        })
+      );
+    }
+    setEditingId(false);
+    setPendingMigration(null);
+    setMigrationPreview(null);
+    if (!onUpdateId) {
+      clearOwnershipCompare();
+    }
+  };
+
   const handleSaveId = async () => {
     const trimmedId = manualId.trim();
 
@@ -656,7 +804,6 @@ export function DocumentViewer({
       return;
     }
 
-    // Validate before saving
     const validation = validateId(trimmedId);
     if (validation.error) {
       setIdError(validation.error);
@@ -664,27 +811,83 @@ export function DocumentViewer({
       return;
     }
 
+    const advanceOpt =
+      editingId && !needsManualId ? false : undefined;
+
+    const oldId = document.extracted_id || "";
+    const oldParts = parseDocumentIdParts(oldId);
+    const newParts = parseDocumentIdParts(trimmedId);
+    const subjectChanged =
+      Boolean(oldParts.subjectCode || newParts.subjectCode) &&
+      oldParts.subjectCode !== newParts.subjectCode;
+    const oldPaper = document.test_type || oldParts.testType;
+    const paperChanged =
+      Boolean(oldPaper || newParts.testType) && oldPaper !== newParts.testType;
+
     setSavingId(true);
     setIdError(null);
     try {
-      if (onUpdateId) {
-        await onUpdateId(
-          document.id,
-          trimmedId,
-          validation.schoolId,
-          validation.subjectId,
-          editingId && !needsManualId ? { advance: false } : undefined
-        );
-      } else {
-        await updateDocumentId(document.id, trimmedId, validation.schoolId, validation.subjectId);
-        toast.success("Document ID updated successfully");
+      if (subjectChanged || paperChanged) {
+        const preview = await previewScoreMigration(document.id, {
+          extracted_id: trimmedId,
+          school_id: validation.schoolId,
+          subject_id: validation.subjectId,
+        });
+        // Always open sheet-change review so clerks see before→after (including blockers)
+        setMigrationPreview(preview);
+        setPendingMigration({
+          extractedId: trimmedId,
+          schoolId: validation.schoolId,
+          subjectId: validation.subjectId,
+          advance: advanceOpt,
+        });
+        setMigrationOpen(true);
+        return;
       }
-      setEditingId(false);
+
+      await commitIdUpdate(trimmedId, validation.schoolId, validation.subjectId, {
+        advance: advanceOpt,
+      });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to update document ID";
+      const conflictId = parseOwnershipConflictDocumentId(error);
+      if (conflictId != null) {
+        await openOwnershipCompare(conflictId);
+        return;
+      }
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update document ID";
       setIdError(errorMessage);
       toast.error(errorMessage);
       console.error("Error updating document ID:", error);
+    } finally {
+      setSavingId(false);
+    }
+  };
+
+  const handleConfirmMigration = async (overwrite: boolean) => {
+    if (!pendingMigration) return;
+    setSavingId(true);
+    try {
+      await commitIdUpdate(
+        pendingMigration.extractedId,
+        pendingMigration.schoolId,
+        pendingMigration.subjectId,
+        {
+          advance: pendingMigration.advance,
+          overwrite_scores: overwrite,
+        }
+      );
+      setMigrationOpen(false);
+    } catch (error) {
+      const conflictId = parseOwnershipConflictDocumentId(error);
+      if (conflictId != null) {
+        await openOwnershipCompare(conflictId, { keepSheetChangePending: true });
+        return;
+      }
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update document ID";
+      setIdError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setSavingId(false);
     }
@@ -927,6 +1130,7 @@ export function DocumentViewer({
   );
 
   return (
+    <>
     <Dialog open={open !== false} onOpenChange={onClose}>
       <DialogContent
         className="flex h-[95vh] max-h-[95vh] w-screen min-w-[80vw] flex-col overflow-hidden p-0"
@@ -934,18 +1138,20 @@ export function DocumentViewer({
       >
         <DialogTitle className="sr-only">Document Viewer - {displayText}</DialogTitle>
 
-        {isDuplicateError ? (
+        {showDuplicateCompare ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
-                  Duplicate
+                  {showOwnershipCompare && !isDuplicateError ? "ID conflict" : "Duplicate"}
                 </span>
                 <p
                   className="truncate text-xs text-muted-foreground"
                   title={document.id_extraction_error || undefined}
                 >
-                  {document.id_extraction_error || "Duplicate sheet ID"}
+                  {showOwnershipCompare && !isDuplicateError
+                    ? "Another document already uses this sheet ID"
+                    : document.id_extraction_error || "Duplicate sheet ID"}
                 </p>
               </div>
               {floatingActions}
@@ -953,20 +1159,74 @@ export function DocumentViewer({
             <div className="min-h-0 flex-1 overflow-hidden">
               <DuplicateConflictPanel
                 current={document}
-                conflicts={conflictDocs}
-                loading={loadingConflicts}
+                conflicts={showOwnershipCompare ? ownershipPeers ?? [] : conflictDocs}
+                loading={showOwnershipCompare ? false : loadingConflicts}
                 schools={schools}
                 subjects={subjects}
-                onDelete={onDelete ? handleDelete : undefined}
-                onUpdateId={
-                  onUpdateId ??
-                  (async (documentId, extractedId, schoolId, subjectId) => {
-                    await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-                    toast.success("Document ID updated successfully");
-                    setConflictReloadToken((n) => n + 1);
-                  })
+                currentTitle={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "This document"
+                    : "This upload"
                 }
-                onConflictSideResolved={() => void handleConflictSideResolved()}
+                conflictTitle={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "Already uses this ID"
+                    : "Already in the system"
+                }
+                emptyConflictHint={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "Change either document’s ID to resolve the conflict."
+                    : undefined
+                }
+                onDelete={onDelete ? handleDelete : undefined}
+                onUpdateId={async (documentId, extractedId, schoolId, subjectId, options) => {
+                  if (onUpdateId) {
+                    await onUpdateId(
+                      documentId,
+                      extractedId,
+                      schoolId,
+                      subjectId,
+                      options
+                    );
+                  } else {
+                    await updateDocumentId(
+                      documentId,
+                      extractedId,
+                      schoolId,
+                      subjectId
+                    );
+                    toast.success("Document ID updated successfully");
+                  }
+                  setConflictReloadToken((n) => n + 1);
+                  if (
+                    showOwnershipCompare &&
+                    !isDuplicateError &&
+                    pendingMigration &&
+                    documentId === document.id
+                  ) {
+                    setPendingMigration(null);
+                    setMigrationPreview(null);
+                    clearOwnershipCompare();
+                    return;
+                  }
+                  if (!onUpdateId && showOwnershipCompare && !isDuplicateError) {
+                    clearOwnershipCompare();
+                  }
+                }}
+                onConflictSideResolved={() => {
+                  if (showOwnershipCompare && !isDuplicateError) {
+                    if (pendingMigration) {
+                      void resumeSheetChangeReview();
+                      return;
+                    }
+                    setLocalOwnershipPeers(null);
+                    if (onConflictSideResolved) {
+                      void onConflictSideResolved();
+                    }
+                    return;
+                  }
+                  void handleConflictSideResolved();
+                }}
               />
             </div>
           </div>
@@ -1004,7 +1264,60 @@ export function DocumentViewer({
             </div>
           </div>
         ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-background px-3 py-2">
+              <div className="min-w-0 flex-1 space-y-1">
+                {!showIdForm ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="truncate font-mono text-sm font-semibold tracking-wide">
+                        {document.extracted_id || "—"}
+                      </p>
+                      {document.id_extraction_method && (
+                        <span
+                          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
+                        >
+                          {getExtractionMethodLabel(document.id_extraction_method)}
+                        </span>
+                      )}
+                      {documentHasSheetChangeMarker(document) && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 ring-1 ring-amber-500/25">
+                          <DocumentPaperIdentity
+                            document={document}
+                            textClassName="text-[11px]"
+                          />
+                        </span>
+                      )}
+                    </div>
+                    {(schoolName || subjectName || documentPaperLabel(document.test_type)) && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {[
+                          schoolName,
+                          subjectName,
+                          documentPaperLabel(document.test_type),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {needsManualId ? "Enter sheet ID" : "Edit sheet ID"}
+                    {document.extracted_id ? (
+                      <>
+                        {" · "}
+                        <span className="font-mono text-foreground">
+                          {document.extracted_id}
+                        </span>
+                      </>
+                    ) : null}
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0">{floatingActions}</div>
+            </div>
+
             <div
               className={cn(
                 "relative flex min-h-0 flex-1",
@@ -1012,29 +1325,6 @@ export function DocumentViewer({
               )}
             >
               <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
-                <div className="absolute right-2 top-2 z-20">{floatingActions}</div>
-
-                {!showIdForm && (
-                  <div className="absolute left-2 top-2 z-20 max-w-[min(24rem,calc(100%-8rem))] rounded-lg border border-border/60 bg-background/90 px-2.5 py-1.5 shadow-md backdrop-blur-sm">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate font-mono text-sm font-semibold tracking-wide">
-                        {document.extracted_id || "—"}
-                      </p>
-                      {document.id_extraction_method && (
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
-                        >
-                          {getExtractionMethodLabel(document.id_extraction_method)}
-                        </span>
-                      )}
-                    </div>
-                    {(schoolName || subjectName) && (
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {[schoolName, subjectName].filter(Boolean).join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                )}
 
                 {documents &&
                   documents.length > 1 &&
@@ -1414,5 +1704,28 @@ export function DocumentViewer({
         )}
       </DialogContent>
     </Dialog>
+
+    <ScoreMigrationConfirmDialog
+      open={migrationOpen}
+      onOpenChange={(open) => {
+        setMigrationOpen(open);
+        if (!open) {
+          setPendingMigration(null);
+          setMigrationPreview(null);
+        }
+      }}
+      preview={migrationPreview}
+      loading={savingId}
+      onConfirm={handleConfirmMigration}
+      onCompareOwnership={
+        migrationPreview?.conflict_document_id
+          ? () =>
+              void openOwnershipCompare(migrationPreview.conflict_document_id!, {
+                keepSheetChangePending: true,
+              })
+          : undefined
+      }
+    />
+    </>
   );
 }

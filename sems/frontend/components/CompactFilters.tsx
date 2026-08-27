@@ -12,12 +12,14 @@ interface CompactFiltersProps {
   onFiltersChange: (filters: DocumentFilters) => void;
   /** When true, exam is controlled elsewhere — only school/subject show. */
   hideExam?: boolean;
+  subjectPlaceholder?: string;
 }
 
 export function CompactFilters({
   filters,
   onFiltersChange,
   hideExam = false,
+  subjectPlaceholder,
 }: CompactFiltersProps) {
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
@@ -197,7 +199,7 @@ export function CompactFilters({
           }))}
           value={filters.subject_id || "all"}
           onValueChange={(value) => handleFilterChange("subject_id", value)}
-          placeholder="Subject"
+          placeholder={subjectPlaceholder ?? "Subject"}
           disabled={loading}
           allowAll
           allLabel="All subjects"
