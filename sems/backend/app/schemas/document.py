@@ -212,6 +212,8 @@ class BulkReclassifyPaperItem(BaseModel):
     new_test_type: str | None = None
     scores_moved: int = 0
     error: str | None = None
+    error_code: str | None = None
+    conflict_document_id: int | None = None
 
 
 class BulkReclassifyPaperResponse(BaseModel):
@@ -255,6 +257,7 @@ class ScoreMigrationPreviewResponse(BaseModel):
     to_meta: ScoreMigrationEndpointMeta
     conflicts: list[ScoreMigrationConflictItem] = Field(default_factory=list)
     blocking_errors: list[str] = Field(default_factory=list)
+    conflict_document_id: int | None = None
 
 
 class BulkExtractIdResponse(BaseModel):

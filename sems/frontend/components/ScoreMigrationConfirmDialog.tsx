@@ -97,6 +97,8 @@ export type ScoreMigrationConfirmDialogProps = {
   };
   loading?: boolean;
   onConfirm: (overwrite: boolean) => void | Promise<void>;
+  /** When ID ownership blocks continue, offer side-by-side compare */
+  onCompareOwnership?: () => void;
 };
 
 export function ScoreMigrationConfirmDialog({
@@ -106,6 +108,7 @@ export function ScoreMigrationConfirmDialog({
   bulkSummary,
   loading = false,
   onConfirm,
+  onCompareOwnership,
 }: ScoreMigrationConfirmDialogProps) {
   const [overwrite, setOverwrite] = useState(false);
 
@@ -251,13 +254,26 @@ export function ScoreMigrationConfirmDialog({
           </div>
 
           {blocking.length > 0 && (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              <p className="font-medium mb-1">Cannot continue</p>
-              <ul className="list-disc pl-4 space-y-1 text-destructive/90">
-                {blocking.map((err) => (
-                  <li key={err}>{err}</li>
-                ))}
-              </ul>
+            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive space-y-3">
+              <div>
+                <p className="font-medium mb-1">Cannot continue</p>
+                <ul className="list-disc pl-4 space-y-1 text-destructive/90">
+                  {blocking.map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+              {onCompareOwnership && preview?.conflict_document_id != null && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-destructive/40 bg-background/80"
+                  disabled={loading}
+                  onClick={() => onCompareOwnership()}
+                >
+                  Compare side by side
+                </Button>
+              )}
             </div>
           )}
 

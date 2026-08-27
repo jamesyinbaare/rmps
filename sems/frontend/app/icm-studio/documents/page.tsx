@@ -6,7 +6,7 @@ import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
-import { BulkReclassifyPaperDialog } from "@/components/BulkReclassifyPaperDialog";
+import { BulkReclassifyPaperDialog, type OwnershipConflictPair } from "@/components/BulkReclassifyPaperDialog";
 import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -180,7 +180,12 @@ export default function DocumentsPage() {
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   const [downloadErrorOpen, setDownloadErrorOpen] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
+  const [ownershipQueue, setOwnershipQueue] = useState<OwnershipConflictPair[]>([]);
+  const [ownershipQueueIndex, setOwnershipQueueIndex] = useState(0);
+  const [ownershipPeerDoc, setOwnershipPeerDoc] = useState<Document | null>(null);
+  const [ownershipSourceDocs, setOwnershipSourceDocs] = useState<Document[]>([]);
 
+  const isOwnershipReview = ownershipQueue.length > 0;
   const scopeReady = !!filters.exam_id;
   const isErrorsView = filters.id_extraction_status === "error";
   const selectionEnabled = isErrorsView || bulkMode;
@@ -895,7 +900,86 @@ export default function DocumentsPage() {
     setViewerOpen(false);
     setSelectedDocument(null);
     setSelectedIndex(-1);
+    setOwnershipQueue([]);
+    setOwnershipQueueIndex(0);
+    setOwnershipPeerDoc(null);
+    setOwnershipSourceDocs([]);
   }, []);
+
+  const openOwnershipPairAt = useCallback(async (pairs: OwnershipConflictPair[], index: number) => {
+    const pair = pairs[index];
+    if (!pair) return;
+    try {
+      const [source, conflict] = await Promise.all([
+        getDocument(pair.sourceId),
+        getDocument(pair.conflictId),
+      ]);
+      setOwnershipQueue(pairs);
+      setOwnershipQueueIndex(index);
+      setOwnershipPeerDoc(conflict);
+      setSelectedDocument(source);
+      setSelectedIndex(index);
+      setViewerOpen(true);
+      setOwnershipSourceDocs((prev) => {
+        const next = [...prev];
+        next[index] = source;
+        // Fill placeholders for queue nav length
+        for (let i = 0; i < pairs.length; i++) {
+          if (!next[i]) {
+            next[i] = {
+              ...source,
+              id: pairs[i].sourceId,
+              extracted_id: null,
+              file_name: `Document #${pairs[i].sourceId}`,
+            } as Document;
+          }
+        }
+        next[index] = source;
+        return next;
+      });
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to load conflict pair"
+      );
+    }
+  }, []);
+
+  const startOwnershipReview = useCallback(
+    async (pairs: OwnershipConflictPair[]) => {
+      if (pairs.length === 0) return;
+      await openOwnershipPairAt(pairs, 0);
+    },
+    [openOwnershipPairAt]
+  );
+
+  const advanceOwnershipQueue = useCallback(async () => {
+    const nextIdx = ownershipQueueIndex + 1;
+    if (nextIdx >= ownershipQueue.length) {
+      handleCloseViewer();
+      toast.success("Finished ID conflict review");
+      await loadDocuments(false);
+      void loadStatusCounts();
+      void loadPaperPairCounts();
+      return;
+    }
+    await openOwnershipPairAt(ownershipQueue, nextIdx);
+  }, [
+    ownershipQueue,
+    ownershipQueueIndex,
+    openOwnershipPairAt,
+    handleCloseViewer,
+    loadDocuments,
+    loadStatusCounts,
+    loadPaperPairCounts,
+  ]);
+
+  const handleOwnershipNavigate = useCallback(
+    async (index: number) => {
+      if (index < 0 || index >= ownershipQueue.length) return;
+      await openOwnershipPairAt(ownershipQueue, index);
+    },
+    [ownershipQueue, openOwnershipPairAt]
+  );
 
   const advanceAfterResolved = useCallback(
     async (resolvedDocumentId: number, options?: { queueEmptyMessage?: string }) => {
@@ -1023,6 +1107,16 @@ export default function DocumentsPage() {
       void loadStatusCounts();
       void loadPaperPairCounts();
 
+      if (isOwnershipReview) {
+        if (selectedDocument && selectedDocument.id === documentId) {
+          setSelectedDocument({ ...selectedDocument, ...updated });
+        }
+        if (options?.advance !== false) {
+          await advanceOwnershipQueue();
+        }
+        return;
+      }
+
       if (
         (isErrorsView || isPaperCompareView) &&
         options?.advance !== false
@@ -1098,6 +1192,11 @@ export default function DocumentsPage() {
     const deletedId = documentToDelete.id;
     const role = deleteResolutionRole;
     setDeleteResolutionRole(null);
+
+    if (isOwnershipReview && viewerOpen) {
+      await advanceOwnershipQueue();
+      return;
+    }
 
     if (
       (isErrorsView || isPaperCompareView) &&
@@ -1798,31 +1897,48 @@ export default function DocumentsPage() {
           {selectedDocument && (
             <DocumentViewer
               document={selectedDocument}
-              documents={documents}
-              currentIndex={selectedIndex}
+              documents={isOwnershipReview ? ownershipSourceDocs : documents}
+              currentIndex={isOwnershipReview ? ownershipQueueIndex : selectedIndex}
               open={viewerOpen}
               onClose={handleCloseViewer}
-              onNavigate={handleNavigate}
+              onNavigate={isOwnershipReview ? handleOwnershipNavigate : handleNavigate}
               onDownload={handleDownload}
               onUpdateId={handleUpdateId}
               onDelete={handleDeleteFromViewer}
               conflictRefreshKey={conflictRefreshKey}
-              resolutionQueueMode={isErrorsView || isPaperCompareView}
-              queueTotal={total}
-              queueLabel={
-                isPaperCompareView
-                  ? isPaperPairFilter
-                    ? "Paper pair"
-                    : "Missing pair"
-                  : isDuplicateFilter || selectedDocument.id_extraction_error_code === "duplicate"
-                    ? "Duplicate"
-                    : "Error"
+              resolutionQueueMode={
+                isErrorsView || isPaperCompareView || isOwnershipReview
               }
-              onConflictSideResolved={handleConflictSideResolved}
-              paperCompareMode={isPaperCompareView}
+              queueTotal={isOwnershipReview ? ownershipQueue.length : total}
+              queueLabel={
+                isOwnershipReview
+                  ? "ID conflict"
+                  : isPaperCompareView
+                    ? isPaperPairFilter
+                      ? "Paper pair"
+                      : "Missing pair"
+                    : isDuplicateFilter ||
+                        selectedDocument.id_extraction_error_code === "duplicate"
+                      ? "Duplicate"
+                      : "Error"
+              }
+              onConflictSideResolved={
+                isOwnershipReview
+                  ? async () => {
+                      /* advance via onUpdateId / delete */
+                    }
+                  : handleConflictSideResolved
+              }
+              paperCompareMode={isPaperCompareView && !isOwnershipReview}
               onPaperCounterpartChanged={async () => {
                 setConflictRefreshKey((n) => n + 1);
                 await loadDocuments(false);
+              }}
+              ownershipConflictDocs={
+                isOwnershipReview && ownershipPeerDoc ? [ownershipPeerDoc] : null
+              }
+              onOwnershipConflictCleared={() => {
+                /* Parent-controlled queue advances on update/delete */
               }}
             />
           )}
@@ -1852,6 +1968,9 @@ export default function DocumentsPage() {
               await loadDocuments(false);
               void loadStatusCounts();
               void loadPaperPairCounts();
+            }}
+            onOwnershipConflicts={(pairs) => {
+              void startOwnershipReview(pairs);
             }}
           />
 

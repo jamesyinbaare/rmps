@@ -895,6 +895,8 @@ async def bulk_reclassify_paper(
                 new_test_type=outcome.new_test_type,
                 scores_moved=outcome.scores_moved,
                 error=outcome.error,
+                error_code=outcome.error_code,
+                conflict_document_id=outcome.conflict_document_id,
             )
             results.append(item)
             if outcome.error:
@@ -1647,8 +1649,15 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             if conflict_doc:
                 await session.rollback()
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Another document (#{conflict_doc.id}) already uses ID {new_extracted_id}",
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": (
+                            f"Another document (#{conflict_doc.id}) already uses ID "
+                            f"{new_extracted_id}"
+                        ),
+                        "error_code": "id_ownership",
+                        "conflict_document_id": conflict_doc.id,
+                    },
                 )
 
         migration = await migrate_applied_scores_for_id_change(
@@ -1756,6 +1765,25 @@ async def score_migration_preview(
         dry_run=True,
     )
 
+    ownership_conflict_id: int | None = None
+    blocking_errors = list(migration.blocking_errors)
+    if new_extracted_id != old_extracted_id:
+        ownership_stmt = select(Document).where(
+            Document.extracted_id == new_extracted_id,
+            Document.exam_id == document.exam_id,
+            Document.id != document.id,
+            Document.upload_status == "uploaded",
+        )
+        ownership_doc = (await session.execute(ownership_stmt)).scalar_one_or_none()
+        if ownership_doc:
+            ownership_conflict_id = ownership_doc.id
+            msg = (
+                f"Another document (#{ownership_doc.id}) already uses ID "
+                f"{new_extracted_id}"
+            )
+            if msg not in blocking_errors:
+                blocking_errors.append(msg)
+
     from_meta = migration.from_meta
     to_meta = migration.to_meta
     return ScoreMigrationPreviewResponse(
@@ -1789,7 +1817,8 @@ async def score_migration_preview(
             )
             for c in migration.conflicts
         ],
-        blocking_errors=migration.blocking_errors,
+        blocking_errors=blocking_errors,
+        conflict_document_id=ownership_conflict_id,
     )
 
 

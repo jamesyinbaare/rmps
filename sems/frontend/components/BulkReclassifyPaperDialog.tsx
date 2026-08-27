@@ -24,7 +24,7 @@ import {
 } from "@/lib/api";
 import type { Document } from "@/types/document";
 import { toast } from "sonner";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Columns2, Loader2 } from "lucide-react";
 
 function rewriteExtractedIdTestType(
   extractedId: string,
@@ -46,11 +46,17 @@ function paperLabel(testType: string | null | undefined): string {
   return testType ? `Paper ${testType}` : "—";
 }
 
+export type OwnershipConflictPair = {
+  sourceId: number;
+  conflictId: number;
+};
+
 interface BulkReclassifyPaperDialogProps {
   documents: Document[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  onOwnershipConflicts?: (pairs: OwnershipConflictPair[]) => void;
 }
 
 export function BulkReclassifyPaperDialog({
@@ -58,12 +64,17 @@ export function BulkReclassifyPaperDialog({
   open,
   onOpenChange,
   onSuccess,
+  onOwnershipConflicts,
 }: BulkReclassifyPaperDialogProps) {
   const [targetTestType, setTargetTestType] = useState<"1" | "2">("2");
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmPreview, setConfirmPreview] =
     useState<ScoreMigrationPreviewResponse | null>(null);
+  const [ownershipPairs, setOwnershipPairs] = useState<OwnershipConflictPair[]>(
+    []
+  );
+  const [lastUpdated, setLastUpdated] = useState(0);
 
   const preview = useMemo(() => {
     return documents.map((doc) => {
@@ -139,12 +150,14 @@ export function BulkReclassifyPaperDialog({
       return;
     }
     setLoading(true);
+    setOwnershipPairs([]);
     try {
       const result = await bulkReclassifyPaper(
         actionable.map((p) => p.doc.id),
         targetTestType,
         overwrite
       );
+      setLastUpdated(result.updated);
       if (result.updated > 0) {
         const moved =
           result.scores_moved > 0
@@ -152,15 +165,40 @@ export function BulkReclassifyPaperDialog({
             : "";
         toast.success(`Updated Paper on ${result.updated} document(s).${moved}`);
       }
-      if (result.failed > 0) {
-        const firstError = result.results.find((r) => r.error)?.error;
+
+      const pairs: OwnershipConflictPair[] = result.results
+        .filter(
+          (r) =>
+            r.error_code === "id_ownership" &&
+            typeof r.conflict_document_id === "number"
+        )
+        .map((r) => ({
+          sourceId: r.document_id,
+          conflictId: r.conflict_document_id as number,
+        }));
+
+      const otherFailed = result.failed - pairs.length;
+      if (otherFailed > 0) {
+        const firstError = result.results.find(
+          (r) => r.error && r.error_code !== "id_ownership"
+        )?.error;
         toast.error(
-          `Failed on ${result.failed} document(s)${firstError ? `: ${firstError}` : ""}`
+          `Failed on ${otherFailed} document(s)${firstError ? `: ${firstError}` : ""}`
         );
       }
-      onSuccess?.();
-      onOpenChange(false);
+
       setConfirmOpen(false);
+      onSuccess?.();
+
+      if (pairs.length > 0) {
+        setOwnershipPairs(pairs);
+        toast.message(
+          `${pairs.length} document(s) conflict with an existing sheet ID — review side by side`
+        );
+        return;
+      }
+
+      onOpenChange(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk reclassify failed");
     } finally {
@@ -173,13 +211,27 @@ export function BulkReclassifyPaperDialog({
       toast.error("No documents eligible to reclassify");
       return;
     }
+    setOwnershipPairs([]);
     setConfirmPreview(buildBulkConfirmPreview());
     setConfirmOpen(true);
   };
 
+  const handleReviewConflicts = () => {
+    if (ownershipPairs.length === 0) return;
+    onOwnershipConflicts?.(ownershipPairs);
+    setOwnershipPairs([]);
+    onOpenChange(false);
+  };
+
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) setOwnershipPairs([]);
+          onOpenChange(next);
+        }}
+      >
         <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Advanced Edit — Change Paper</DialogTitle>
@@ -252,6 +304,33 @@ export function BulkReclassifyPaperDialog({
                 </p>
               </div>
             )}
+
+            {ownershipPairs.length > 0 && (
+              <div className="space-y-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4">
+                <div className="flex gap-2 text-sm text-destructive">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">
+                      {lastUpdated > 0 ? `Updated ${lastUpdated} · ` : ""}
+                      {ownershipPairs.length} ID conflict
+                      {ownershipPairs.length === 1 ? "" : "s"}
+                    </p>
+                    <p className="text-xs text-destructive/80 mt-0.5">
+                      Another document already owns the target sheet ID. Review
+                      each pair side by side to fix IDs.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full gap-2"
+                  onClick={handleReviewConflicts}
+                >
+                  <Columns2 className="h-4 w-4" />
+                  Review side by side
+                </Button>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
@@ -260,12 +339,14 @@ export function BulkReclassifyPaperDialog({
               onClick={() => onOpenChange(false)}
               disabled={loading}
             >
-              Cancel
+              {ownershipPairs.length > 0 ? "Close" : "Cancel"}
             </Button>
-            <Button onClick={handleApply} disabled={loading || actionable.length === 0}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Apply to {actionable.length}
-            </Button>
+            {ownershipPairs.length === 0 && (
+              <Button onClick={handleApply} disabled={loading || actionable.length === 0}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Apply to {actionable.length}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

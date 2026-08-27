@@ -373,6 +373,7 @@ async def test_subject_change_missing_registration_blocks() -> None:
             source_result,
             exam_subject_result,
             target_reg_result,
+            target_reg_result,  # alternate candidate+exam+subject lookup
         ]
     )
 
@@ -406,3 +407,13 @@ def test_migration_result_conflict_dataclass() -> None:
     )
     assert r.has_conflicts
     assert not r.has_blocking
+
+
+def test_find_source_rows_filters_by_exam_id_in_migrate_signature() -> None:
+    """Regression: sheet IDs collide across years; migrate must scope by exam_id."""
+    import inspect
+
+    from app.services.paper_reclassify import _find_source_rows
+
+    params = inspect.signature(_find_source_rows).parameters
+    assert "exam_id" in params

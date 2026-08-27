@@ -62,6 +62,7 @@ import {
   listSubjects,
   previewScoreMigration,
   updateDocumentId,
+  parseOwnershipConflictDocumentId,
   type ScoreMigrationPreviewResponse,
 } from "@/lib/api";
 import { toast } from "sonner";
@@ -106,6 +107,13 @@ interface DocumentViewerProps {
   paperCompareMode?: boolean;
   /** After counterpart-side ID change or delete; parent may refresh. */
   onPaperCounterpartChanged?: () => Promise<void>;
+  /**
+   * When set, force DuplicateConflictPanel for ID ownership clashes
+   * (even if extraction error_code is not "duplicate").
+   */
+  ownershipConflictDocs?: Document[] | null;
+  /** Called when ownership compare should clear (ID fixed / dismissed). */
+  onOwnershipConflictCleared?: () => void;
 }
 
 function parseCandidatesFromData(data: Record<string, any>): any[] {
@@ -191,6 +199,8 @@ export function DocumentViewer({
   onConflictSideResolved,
   paperCompareMode = false,
   onPaperCounterpartChanged,
+  ownershipConflictDocs = null,
+  onOwnershipConflictCleared,
 }: DocumentViewerProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
@@ -227,6 +237,11 @@ export function DocumentViewer({
   );
   const [loadingPaperCounterpart, setLoadingPaperCounterpart] = useState(false);
   const [paperCounterpartReloadToken, setPaperCounterpartReloadToken] = useState(0);
+  const [localOwnershipPeers, setLocalOwnershipPeers] = useState<Document[] | null>(null);
+
+  useEffect(() => {
+    setLocalOwnershipPeers(null);
+  }, [document?.id]);
   const manualIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -245,12 +260,16 @@ export function DocumentViewer({
   // Allow manual correction for any failed extraction (including duplicates that still have a candidate ID)
   const isPendingExtraction = document.id_extraction_status === "pending";
   const isDuplicateError = document.id_extraction_error_code === "duplicate";
-  const showPaperCompare = paperCompareMode && !isDuplicateError;
+  const ownershipPeers = ownershipConflictDocs ?? localOwnershipPeers;
+  const showOwnershipCompare = Boolean(ownershipPeers && ownershipPeers.length > 0);
+  const showDuplicateCompare = isDuplicateError || showOwnershipCompare;
+  const showPaperCompare = paperCompareMode && !showDuplicateCompare;
   const needsManualId =
     !isPendingExtraction &&
     (document.id_extraction_status === "error" || !document.extracted_id);
   const canEditExtractedId = !isPendingExtraction && !needsManualId && !!document.extracted_id;
-  const showIdForm = (needsManualId || editingId) && !isDuplicateError && !showPaperCompare;
+  const showIdForm =
+    (needsManualId || editingId) && !showDuplicateCompare && !showPaperCompare;
   const idUnchanged =
     canEditExtractedId && manualId.trim() === (document.extracted_id || "");
   // List endpoints omit scores_extraction_data; gate on status and load via getReductoData.
@@ -656,6 +675,26 @@ export function DocumentViewer({
     }
   };
 
+  const openOwnershipCompare = async (conflictDocumentId: number) => {
+    try {
+      const peer = await getDocument(conflictDocumentId);
+      setLocalOwnershipPeers([peer]);
+      setMigrationOpen(false);
+      setPendingMigration(null);
+      setMigrationPreview(null);
+      toast.message("ID already in use — compare documents side by side");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to load conflicting document"
+      );
+    }
+  };
+
+  const clearOwnershipCompare = () => {
+    setLocalOwnershipPeers(null);
+    onOwnershipConflictCleared?.();
+  };
+
   const commitIdUpdate = async (
     extractedId: string,
     schoolId: number | undefined,
@@ -680,6 +719,9 @@ export function DocumentViewer({
       );
     }
     setEditingId(false);
+    if (!onUpdateId) {
+      clearOwnershipCompare();
+    }
   };
 
   const handleSaveId = async () => {
@@ -726,6 +768,17 @@ export function DocumentViewer({
         if (preview.blocking_errors.length > 0) {
           const msg = preview.blocking_errors.join("; ");
           setIdError(msg);
+          if (preview.conflict_document_id) {
+            setMigrationPreview(preview);
+            setPendingMigration({
+              extractedId: trimmedId,
+              schoolId: validation.schoolId,
+              subjectId: validation.subjectId,
+              advance: advanceOpt,
+            });
+            setMigrationOpen(true);
+            return;
+          }
           toast.error(msg);
           return;
         }
@@ -746,6 +799,11 @@ export function DocumentViewer({
         advance: advanceOpt,
       });
     } catch (error) {
+      const conflictId = parseOwnershipConflictDocumentId(error);
+      if (conflictId != null) {
+        await openOwnershipCompare(conflictId);
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Failed to update document ID";
       setIdError(errorMessage);
@@ -773,6 +831,11 @@ export function DocumentViewer({
       setPendingMigration(null);
       setMigrationPreview(null);
     } catch (error) {
+      const conflictId = parseOwnershipConflictDocumentId(error);
+      if (conflictId != null) {
+        await openOwnershipCompare(conflictId);
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Failed to update document ID";
       setIdError(errorMessage);
@@ -1027,18 +1090,20 @@ export function DocumentViewer({
       >
         <DialogTitle className="sr-only">Document Viewer - {displayText}</DialogTitle>
 
-        {isDuplicateError ? (
+        {showDuplicateCompare ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
-                  Duplicate
+                  {showOwnershipCompare && !isDuplicateError ? "ID conflict" : "Duplicate"}
                 </span>
                 <p
                   className="truncate text-xs text-muted-foreground"
                   title={document.id_extraction_error || undefined}
                 >
-                  {document.id_extraction_error || "Duplicate sheet ID"}
+                  {showOwnershipCompare && !isDuplicateError
+                    ? "Another document already uses this sheet ID"
+                    : document.id_extraction_error || "Duplicate sheet ID"}
                 </p>
               </div>
               {floatingActions}
@@ -1046,10 +1111,25 @@ export function DocumentViewer({
             <div className="min-h-0 flex-1 overflow-hidden">
               <DuplicateConflictPanel
                 current={document}
-                conflicts={conflictDocs}
-                loading={loadingConflicts}
+                conflicts={showOwnershipCompare ? ownershipPeers ?? [] : conflictDocs}
+                loading={showOwnershipCompare ? false : loadingConflicts}
                 schools={schools}
                 subjects={subjects}
+                currentTitle={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "This document"
+                    : "This upload"
+                }
+                conflictTitle={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "Already uses this ID"
+                    : "Already in the system"
+                }
+                emptyConflictHint={
+                  showOwnershipCompare && !isDuplicateError
+                    ? "Change either document’s ID to resolve the conflict."
+                    : undefined
+                }
                 onDelete={onDelete ? handleDelete : undefined}
                 onUpdateId={
                   onUpdateId ??
@@ -1057,9 +1137,16 @@ export function DocumentViewer({
                     await updateDocumentId(documentId, extractedId, schoolId, subjectId);
                     toast.success("Document ID updated successfully");
                     setConflictReloadToken((n) => n + 1);
+                    clearOwnershipCompare();
                   })
                 }
-                onConflictSideResolved={() => void handleConflictSideResolved()}
+                onConflictSideResolved={() => {
+                  if (showOwnershipCompare && !isDuplicateError) {
+                    setLocalOwnershipPeers(null);
+                    return;
+                  }
+                  void handleConflictSideResolved();
+                }}
               />
             </div>
           </div>
@@ -1520,6 +1607,11 @@ export function DocumentViewer({
       preview={migrationPreview}
       loading={savingId}
       onConfirm={handleConfirmMigration}
+      onCompareOwnership={
+        migrationPreview?.conflict_document_id
+          ? () => void openOwnershipCompare(migrationPreview.conflict_document_id!)
+          : undefined
+      }
     />
     </>
   );

@@ -35,6 +35,8 @@ class ReclassifyResult:
     new_test_type: str
     scores_moved: int
     error: str | None = None
+    error_code: str | None = None
+    conflict_document_id: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -236,8 +238,13 @@ async def _find_source_rows(
     *,
     old_extracted_id: str,
     old_test_type: str | None,
+    exam_id: int | None = None,
 ) -> list[tuple[SubjectScore, Candidate | None, ExamRegistration | None]]:
-    """SubjectScore rows linked to this sheet, with candidate context when available."""
+    """SubjectScore rows linked to this sheet, with candidate context when available.
+
+    When exam_id is set, only rows under that exam's registrations are returned
+    (sheet IDs are not globally unique across exam years).
+    """
     if old_test_type and old_test_type in PAPER_ATTRS:
         _, old_doc, _, _ = _paper_attrs(old_test_type)
         doc_filter = getattr(SubjectScore, old_doc) == old_extracted_id
@@ -261,6 +268,8 @@ async def _find_source_rows(
         .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
         .where(doc_filter)
     )
+    if exam_id is not None:
+        stmt = stmt.where(ExamRegistration.exam_id == exam_id)
     result = await session.execute(stmt)
     return list(result.all())
 
@@ -347,7 +356,10 @@ async def migrate_applied_scores_for_id_change(
         return result
 
     source_rows = await _find_source_rows(
-        session, old_extracted_id=old_extracted_id, old_test_type=old_tt
+        session,
+        old_extracted_id=old_extracted_id,
+        old_test_type=old_tt,
+        exam_id=exam_id if exam_id else None,
     )
     result.scores_to_move = len(source_rows)
 
@@ -411,15 +423,32 @@ async def migrate_applied_scores_for_id_change(
         if subject_changed:
             assert new_exam_subject is not None
             assert exam_reg is not None
+            # Prefer same exam-registration link; also allow lookup by candidate+exam+subject
+            # (same matching path as apply-extraction) in case of data quirks.
             reg_stmt = select(SubjectRegistration).where(
                 SubjectRegistration.exam_registration_id == exam_reg.id,
                 SubjectRegistration.exam_subject_id == new_exam_subject.id,
             )
             target_reg = (await session.execute(reg_stmt)).scalar_one_or_none()
+            if target_reg is None and candidate is not None:
+                alt_stmt = (
+                    select(SubjectRegistration)
+                    .join(
+                        ExamRegistration,
+                        SubjectRegistration.exam_registration_id == ExamRegistration.id,
+                    )
+                    .where(
+                        ExamRegistration.candidate_id == candidate.id,
+                        ExamRegistration.exam_id == exam_id,
+                        SubjectRegistration.exam_subject_id == new_exam_subject.id,
+                    )
+                )
+                target_reg = (await session.execute(alt_stmt)).scalar_one_or_none()
             if not target_reg:
                 idx = candidate.index_number if candidate else "?"
+                subj_label = new_name or new_code or str(new_subject_id)
                 result.blocking_errors.append(
-                    f"Candidate {idx} is not registered for the new subject"
+                    f"Candidate {idx} is not registered for {subj_label} in this exam"
                 )
                 continue
             target_reg_id = target_reg.id
@@ -611,6 +640,8 @@ async def reclassify_document_paper(
             new_test_type=target_test_type,
             scores_moved=0,
             error=f"Another document (#{conflict_doc.id}) already uses ID {new_extracted_id}",
+            error_code="id_ownership",
+            conflict_document_id=conflict_doc.id,
         )
 
     migration = await migrate_applied_scores_for_id_change(

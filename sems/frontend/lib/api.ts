@@ -379,6 +379,53 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+/** Thrown when another document already owns the target sheet ID. */
+export class IdOwnershipConflictError extends Error {
+  readonly errorCode = "id_ownership" as const;
+  readonly conflictDocumentId: number;
+  readonly status: number;
+
+  constructor(message: string, conflictDocumentId: number, status = 409) {
+    super(message);
+    this.name = "IdOwnershipConflictError";
+    this.conflictDocumentId = conflictDocumentId;
+    this.status = status;
+  }
+}
+
+/** Extract ownership conflict document id from an API error, if present. */
+export function parseOwnershipConflictDocumentId(error: unknown): number | null {
+  if (error instanceof IdOwnershipConflictError) {
+    return error.conflictDocumentId;
+  }
+  if (error && typeof error === "object" && "conflictDocumentId" in error) {
+    const id = (error as { conflictDocumentId?: unknown }).conflictDocumentId;
+    if (typeof id === "number" && Number.isFinite(id)) return id;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  // Structured JSON stringified by handleResponse: {"message":"...","error_code":"id_ownership","conflict_document_id":123}
+  try {
+    const parsed = JSON.parse(message) as {
+      error_code?: string;
+      conflict_document_id?: number;
+      message?: string;
+    };
+    if (
+      parsed?.error_code === "id_ownership" &&
+      typeof parsed.conflict_document_id === "number"
+    ) {
+      return parsed.conflict_document_id;
+    }
+  } catch {
+    // not JSON
+  }
+  const match = message.match(/Another document \(#(\d+)\) already uses ID/i);
+  if (match) {
+    return Number(match[1]);
+  }
+  return null;
+}
+
 export async function listDocuments(
   filters: DocumentFilters = {}
 ): Promise<DocumentListResponse> {
@@ -614,6 +661,8 @@ export type BulkReclassifyPaperResultItem = {
   new_test_type: string | null;
   scores_moved: number;
   error: string | null;
+  error_code?: string | null;
+  conflict_document_id?: number | null;
 };
 
 export type BulkReclassifyPaperResponse = {
@@ -666,6 +715,7 @@ export type ScoreMigrationPreviewResponse = {
   to_meta: ScoreMigrationEndpointMeta;
   conflicts: ScoreMigrationConflictItem[];
   blocking_errors: string[];
+  conflict_document_id?: number | null;
 };
 
 export async function previewScoreMigration(
@@ -722,6 +772,29 @@ export async function updateDocumentId(
     },
     body: JSON.stringify(body),
   });
+  if (!response.ok) {
+    try {
+      const payload = await response.clone().json();
+      const detail = payload?.detail;
+      if (
+        detail &&
+        typeof detail === "object" &&
+        !Array.isArray(detail) &&
+        detail.error_code === "id_ownership" &&
+        typeof detail.conflict_document_id === "number"
+      ) {
+        throw new IdOwnershipConflictError(
+          typeof detail.message === "string"
+            ? detail.message
+            : `Another document (#${detail.conflict_document_id}) already uses this ID`,
+          detail.conflict_document_id,
+          response.status
+        );
+      }
+    } catch (err) {
+      if (err instanceof IdOwnershipConflictError) throw err;
+    }
+  }
   return handleResponse<Document>(response);
 }
 
