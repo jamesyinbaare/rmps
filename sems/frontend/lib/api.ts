@@ -706,6 +706,11 @@ export type ScoreMigrationConflictItem = {
   subject_score_id: number | null;
 };
 
+export type ScoreMigrationUnregisteredItem = {
+  index_number: string | null;
+  candidate_name: string | null;
+};
+
 export type ScoreMigrationPreviewResponse = {
   requires_confirm: boolean;
   subject_changed: boolean;
@@ -714,6 +719,7 @@ export type ScoreMigrationPreviewResponse = {
   from_meta: ScoreMigrationEndpointMeta;
   to_meta: ScoreMigrationEndpointMeta;
   conflicts: ScoreMigrationConflictItem[];
+  unregistered?: ScoreMigrationUnregisteredItem[];
   blocking_errors: string[];
   conflict_document_id?: number | null;
 };

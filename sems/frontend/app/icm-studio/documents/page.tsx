@@ -6,7 +6,7 @@ import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { DeleteDocumentDialog } from "@/components/DeleteDocumentDialog";
-import { BulkReclassifyPaperDialog, type OwnershipConflictPair } from "@/components/BulkReclassifyPaperDialog";
+import { BulkReclassifyPaperDialog, type OwnershipConflictPair, type BulkReclassifyResume } from "@/components/BulkReclassifyPaperDialog";
 import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
@@ -184,6 +184,10 @@ export default function DocumentsPage() {
   const [ownershipQueueIndex, setOwnershipQueueIndex] = useState(0);
   const [ownershipPeerDoc, setOwnershipPeerDoc] = useState<Document | null>(null);
   const [ownershipSourceDocs, setOwnershipSourceDocs] = useState<Document[]>([]);
+  const [reclassifyResume, setReclassifyResume] = useState<BulkReclassifyResume | null>(
+    null
+  );
+  const [reclassifyResumeDocs, setReclassifyResumeDocs] = useState<Document[]>([]);
 
   const isOwnershipReview = ownershipQueue.length > 0;
   const scopeReady = !!filters.exam_id;
@@ -955,11 +959,47 @@ export default function DocumentsPage() {
   const advanceOwnershipQueue = useCallback(async () => {
     const nextIdx = ownershipQueueIndex + 1;
     if (nextIdx >= ownershipQueue.length) {
+      const resume = reclassifyResume;
+      const resumeDocs = ownershipSourceDocs.filter((d) =>
+        resume?.documentIds.includes(d.id)
+      );
       handleCloseViewer();
-      toast.success("Finished ID conflict review");
       await loadDocuments(false);
       void loadStatusCounts();
       void loadPaperPairCounts();
+      if (resume && resume.documentIds.length > 0) {
+        setReclassifyResumeDocs(resumeDocs);
+        toast.message("All ID conflicts resolved — continue reclassify?", {
+          action: {
+            label: "Continue",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const fresh = await Promise.all(
+                    resume.documentIds.map((id) => getDocument(id))
+                  );
+                  setSelectedIds(new Set(resume.documentIds));
+                  setBulkMode(true);
+                  setReclassifyResume(resume);
+                  setReclassifyResumeDocs(fresh);
+                  setReclassifyDialogOpen(true);
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to reload sheets for reclassify"
+                  );
+                }
+              })();
+            },
+          },
+          duration: 12000,
+        });
+      } else {
+        toast.success("Finished ID conflict review");
+        setReclassifyResume(null);
+        setReclassifyResumeDocs([]);
+      }
       return;
     }
     await openOwnershipPairAt(ownershipQueue, nextIdx);
@@ -971,6 +1011,8 @@ export default function DocumentsPage() {
     loadDocuments,
     loadStatusCounts,
     loadPaperPairCounts,
+    reclassifyResume,
+    ownershipSourceDocs,
   ]);
 
   const handleOwnershipNavigate = useCallback(
@@ -1099,11 +1141,18 @@ export default function DocumentsPage() {
         overwrite_scores: options?.overwrite_scores,
       });
       const moved = updated.scores_moved ?? 0;
-      toast.success(
-        moved > 0
-          ? `Document ID updated. Moved scores for ${moved} candidate row(s).`
-          : "Document ID updated successfully"
-      );
+      if (moved <= 0) {
+        toast.success("Sheet updated (no applied scores)");
+      } else {
+        const dest = [updated.subject_name, updated.test_type === "1" ? "Objectives" : updated.test_type === "2" ? "Essay" : null]
+          .filter(Boolean)
+          .join(" · ");
+        toast.success(
+          dest
+            ? `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"} to ${dest}`
+            : `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"}`
+        );
+      }
       void loadStatusCounts();
       void loadPaperPairCounts();
 
@@ -1673,11 +1722,15 @@ export default function DocumentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setReclassifyDialogOpen(true)}
+                    onClick={() => {
+                      setReclassifyResume(null);
+                      setReclassifyResumeDocs([]);
+                      setReclassifyDialogOpen(true);
+                    }}
                     className="gap-2"
                   >
                     <Pencil className="h-4 w-4" />
-                    Advanced Edit ({selectedIds.size})
+                    Sheet tools ({selectedIds.size})
                   </Button>
                   <Button
                     variant="destructive"
@@ -1873,11 +1926,15 @@ export default function DocumentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setReclassifyDialogOpen(true)}
+                    onClick={() => {
+                      setReclassifyResume(null);
+                      setReclassifyResumeDocs([]);
+                      setReclassifyDialogOpen(true);
+                    }}
                     className="h-9 gap-2"
                   >
                     <Pencil className="h-4 w-4" />
-                    Advanced Edit ({selectedIds.size})
+                    Sheet tools ({selectedIds.size})
                   </Button>
                   <Button
                     variant="destructive"
@@ -1959,17 +2016,26 @@ export default function DocumentsPage() {
           />
 
           <BulkReclassifyPaperDialog
-            documents={documents.filter((d) => selectedIds.has(d.id))}
+            documents={
+              reclassifyResumeDocs.length > 0
+                ? reclassifyResumeDocs
+                : documents.filter((d) => selectedIds.has(d.id))
+            }
             open={reclassifyDialogOpen}
             onOpenChange={setReclassifyDialogOpen}
+            initialTargetTestType={reclassifyResume?.targetTestType}
+            resumeMode={Boolean(reclassifyResume)}
             onSuccess={async () => {
               setSelectedIds(new Set());
               setBulkMode(false);
+              setReclassifyResume(null);
+              setReclassifyResumeDocs([]);
               await loadDocuments(false);
               void loadStatusCounts();
               void loadPaperPairCounts();
             }}
-            onOwnershipConflicts={(pairs) => {
+            onOwnershipConflicts={(pairs, resume) => {
+              setReclassifyResume(resume);
               void startOwnershipReview(pairs);
             }}
           />

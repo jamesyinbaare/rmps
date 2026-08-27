@@ -50,6 +50,7 @@ from app.schemas.document import (
     ScoreMigrationEndpointMeta,
     ScoreMigrationPreviewRequest,
     ScoreMigrationPreviewResponse,
+    ScoreMigrationUnregisteredItem,
     UploadConfirmItem,
     UploadConfirmRequest,
     UploadConfirmResponse,
@@ -1690,11 +1691,17 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
                     ],
                 },
             )
-        if migration.blocking_errors:
+        if migration.blocking_errors or migration.unregistered:
             await session.rollback()
+            parts = list(migration.blocking_errors)
+            if migration.unregistered:
+                n = len(migration.unregistered)
+                parts.append(
+                    f"{n} candidate{'s' if n != 1 else ''} not registered for the new subject"
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="; ".join(migration.blocking_errors),
+                detail="; ".join(parts),
             )
         scores_moved = migration.scores_moved
 
@@ -1766,7 +1773,12 @@ async def score_migration_preview(
     )
 
     ownership_conflict_id: int | None = None
-    blocking_errors = list(migration.blocking_errors)
+    # Keep hard blockers separate from ownership (surfaced via conflict_document_id)
+    blocking_errors = [
+        e
+        for e in migration.blocking_errors
+        if "already uses ID" not in e
+    ]
     if new_extracted_id != old_extracted_id:
         ownership_stmt = select(Document).where(
             Document.extracted_id == new_extracted_id,
@@ -1777,12 +1789,6 @@ async def score_migration_preview(
         ownership_doc = (await session.execute(ownership_stmt)).scalar_one_or_none()
         if ownership_doc:
             ownership_conflict_id = ownership_doc.id
-            msg = (
-                f"Another document (#{ownership_doc.id}) already uses ID "
-                f"{new_extracted_id}"
-            )
-            if msg not in blocking_errors:
-                blocking_errors.append(msg)
 
     from_meta = migration.from_meta
     to_meta = migration.to_meta
@@ -1816,6 +1822,13 @@ async def score_migration_preview(
                 subject_score_id=c.subject_score_id,
             )
             for c in migration.conflicts
+        ],
+        unregistered=[
+            ScoreMigrationUnregisteredItem(
+                index_number=u.index_number,
+                candidate_name=u.candidate_name,
+            )
+            for u in migration.unregistered
         ],
         blocking_errors=blocking_errors,
         conflict_document_id=ownership_conflict_id,

@@ -53,6 +53,12 @@ class ScoreConflict:
 
 
 @dataclass
+class UnregisteredCandidate:
+    index_number: str | None
+    candidate_name: str | None
+
+
+@dataclass
 class MigrationEndpoint:
     extracted_id: str | None
     subject_id: int | None
@@ -68,6 +74,7 @@ class MigrationResult:
     scores_moved: int = 0
     conflicts: list[ScoreConflict] = field(default_factory=list)
     blocking_errors: list[str] = field(default_factory=list)
+    unregistered: list[UnregisteredCandidate] = field(default_factory=list)
     subject_changed: bool = False
     paper_changed: bool = False
     requires_confirm: bool = False
@@ -76,7 +83,7 @@ class MigrationResult:
 
     @property
     def has_blocking(self) -> bool:
-        return bool(self.blocking_errors)
+        return bool(self.blocking_errors) or bool(self.unregistered)
 
     @property
     def has_conflicts(self) -> bool:
@@ -445,10 +452,11 @@ async def migrate_applied_scores_for_id_change(
                 )
                 target_reg = (await session.execute(alt_stmt)).scalar_one_or_none()
             if not target_reg:
-                idx = candidate.index_number if candidate else "?"
-                subj_label = new_name or new_code or str(new_subject_id)
-                result.blocking_errors.append(
-                    f"Candidate {idx} is not registered for {subj_label} in this exam"
+                result.unregistered.append(
+                    UnregisteredCandidate(
+                        index_number=candidate.index_number if candidate else None,
+                        candidate_name=candidate.name if candidate else None,
+                    )
                 )
                 continue
             target_reg_id = target_reg.id
@@ -458,7 +466,7 @@ async def migrate_applied_scores_for_id_change(
             (score_row, target_row, target_reg_id, source_paper, target_paper, candidate)
         )
 
-    if result.blocking_errors:
+    if result.blocking_errors or result.unregistered:
         return result
 
     for source_row, target_row, _reg_id, source_paper, target_paper, candidate in planned:
@@ -561,8 +569,19 @@ async def migrate_subject_scores_for_paper_change(
         raise ValueError(
             "Target paper already has scores; cannot overwrite without overwrite flag"
         )
-    if migration.blocking_errors:
-        raise ValueError("; ".join(migration.blocking_errors))
+    if migration.blocking_errors or migration.unregistered:
+        raise ValueError(
+            "; ".join(
+                migration.blocking_errors
+                + (
+                    [
+                        f"{len(migration.unregistered)} candidate(s) not registered for the new subject"
+                    ]
+                    if migration.unregistered
+                    else []
+                )
+            )
+        )
     return migration.scores_moved
 
 
@@ -668,7 +687,13 @@ async def reclassify_document_paper(
             scores_moved=0,
             error=f"Target paper already has scores ({detail}); cannot overwrite",
         )
-    if migration.blocking_errors:
+    if migration.blocking_errors or migration.unregistered:
+        parts = list(migration.blocking_errors)
+        if migration.unregistered:
+            n = len(migration.unregistered)
+            parts.append(
+                f"{n} candidate{'s' if n != 1 else ''} not registered for the new subject"
+            )
         return ReclassifyResult(
             document_id=document.id,
             old_extracted_id=old_extracted_id,
@@ -676,7 +701,7 @@ async def reclassify_document_paper(
             old_test_type=old_test_type,
             new_test_type=target_test_type,
             scores_moved=0,
-            error="; ".join(migration.blocking_errors),
+            error="; ".join(parts),
         )
 
     document.extracted_id = new_extracted_id

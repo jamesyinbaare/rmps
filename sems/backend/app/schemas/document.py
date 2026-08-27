@@ -248,6 +248,11 @@ class ScoreMigrationConflictItem(BaseModel):
     subject_score_id: int | None = None
 
 
+class ScoreMigrationUnregisteredItem(BaseModel):
+    index_number: str | None = None
+    candidate_name: str | None = None
+
+
 class ScoreMigrationPreviewResponse(BaseModel):
     requires_confirm: bool
     subject_changed: bool
@@ -256,6 +261,7 @@ class ScoreMigrationPreviewResponse(BaseModel):
     from_meta: ScoreMigrationEndpointMeta
     to_meta: ScoreMigrationEndpointMeta
     conflicts: list[ScoreMigrationConflictItem] = Field(default_factory=list)
+    unregistered: list[ScoreMigrationUnregisteredItem] = Field(default_factory=list)
     blocking_errors: list[str] = Field(default_factory=list)
     conflict_document_id: int | None = None
 

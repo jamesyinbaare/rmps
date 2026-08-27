@@ -391,7 +391,7 @@ async def test_subject_change_missing_registration_blocks() -> None:
     )
 
     assert result.has_blocking
-    assert any("not registered" in e for e in result.blocking_errors)
+    assert len(result.unregistered) >= 1
 
 
 def test_migration_result_conflict_dataclass() -> None:

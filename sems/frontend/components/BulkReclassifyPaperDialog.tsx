@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -51,12 +51,24 @@ export type OwnershipConflictPair = {
   conflictId: number;
 };
 
+export type BulkReclassifyResume = {
+  documentIds: number[];
+  targetTestType: "1" | "2";
+};
+
 interface BulkReclassifyPaperDialogProps {
   documents: Document[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
-  onOwnershipConflicts?: (pairs: OwnershipConflictPair[]) => void;
+  onOwnershipConflicts?: (
+    pairs: OwnershipConflictPair[],
+    resume: BulkReclassifyResume
+  ) => void;
+  /** Prefill target when resuming after ID conflict review */
+  initialTargetTestType?: "1" | "2";
+  /** When true, show resume banner after ownership queue */
+  resumeMode?: boolean;
 }
 
 export function BulkReclassifyPaperDialog({
@@ -65,8 +77,12 @@ export function BulkReclassifyPaperDialog({
   onOpenChange,
   onSuccess,
   onOwnershipConflicts,
+  initialTargetTestType,
+  resumeMode = false,
 }: BulkReclassifyPaperDialogProps) {
-  const [targetTestType, setTargetTestType] = useState<"1" | "2">("2");
+  const [targetTestType, setTargetTestType] = useState<"1" | "2">(
+    initialTargetTestType ?? "2"
+  );
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmPreview, setConfirmPreview] =
@@ -75,6 +91,12 @@ export function BulkReclassifyPaperDialog({
     []
   );
   const [lastUpdated, setLastUpdated] = useState(0);
+
+  useEffect(() => {
+    if (open && initialTargetTestType) {
+      setTargetTestType(initialTargetTestType);
+    }
+  }, [open, initialTargetTestType]);
 
   const preview = useMemo(() => {
     return documents.map((doc) => {
@@ -140,6 +162,7 @@ export function BulkReclassifyPaperDialog({
         paper_label: paperLabel(targetTestType),
       },
       conflicts: [],
+      unregistered: [],
       blocking_errors: [],
     };
   };
@@ -161,9 +184,11 @@ export function BulkReclassifyPaperDialog({
       if (result.updated > 0) {
         const moved =
           result.scores_moved > 0
-            ? ` Moved scores for ${result.scores_moved} candidate row(s).`
+            ? ` · moved scores for ${result.scores_moved} candidate row(s)`
             : "";
-        toast.success(`Updated Paper on ${result.updated} document(s).${moved}`);
+        toast.success(
+          `Sheet updated · paper changed on ${result.updated} document(s)${moved}`
+        );
       }
 
       const pairs: OwnershipConflictPair[] = result.results
@@ -188,16 +213,16 @@ export function BulkReclassifyPaperDialog({
       }
 
       setConfirmOpen(false);
-      onSuccess?.();
 
       if (pairs.length > 0) {
         setOwnershipPairs(pairs);
         toast.message(
-          `${pairs.length} document(s) conflict with an existing sheet ID — review side by side`
+          `${pairs.length} ID conflict${pairs.length === 1 ? "" : "s"} — review side by side, then continue reclassify`
         );
         return;
       }
 
+      onSuccess?.();
       onOpenChange(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk reclassify failed");
@@ -218,7 +243,10 @@ export function BulkReclassifyPaperDialog({
 
   const handleReviewConflicts = () => {
     if (ownershipPairs.length === 0) return;
-    onOwnershipConflicts?.(ownershipPairs);
+    onOwnershipConflicts?.(ownershipPairs, {
+      documentIds: ownershipPairs.map((p) => p.sourceId),
+      targetTestType,
+    });
     setOwnershipPairs([]);
     onOpenChange(false);
   };
@@ -234,14 +262,22 @@ export function BulkReclassifyPaperDialog({
       >
         <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Advanced Edit — Change Paper</DialogTitle>
+            <DialogTitle>Change paper</DialogTitle>
             <DialogDescription>
-              Rewrite the paper digit in each selected sheet ID (Objectives ↔ Essay).
-              Applied scores move to the new paper fields.
+              {resumeMode
+                ? "All ID conflicts are resolved. Confirm the target paper and apply to the remaining sheets. Scores move with each sheet."
+                : "Sheet tools · rewrite the paper digit in each selected sheet ID (Objectives ↔ Essay). Scores move with the sheet."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 overflow-y-auto flex-1 min-h-0">
+            {resumeMode && (
+              <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-950 dark:text-sky-50">
+                Ready to finish reclassify on {documents.length} sheet
+                {documents.length === 1 ? "" : "s"}.
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Target paper</label>
               <Select
@@ -299,25 +335,24 @@ export function BulkReclassifyPaperDialog({
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <p>
                   {appliedCount} selected document(s) already have applied scores.
-                  Those scores will be moved from the old paper fields to{" "}
-                  {paperName(targetTestType)}.
+                  Those scores will move to {paperName(targetTestType)}.
                 </p>
               </div>
             )}
 
             {ownershipPairs.length > 0 && (
-              <div className="space-y-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4">
-                <div className="flex gap-2 text-sm text-destructive">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="space-y-3 rounded-xl border border-sky-500/40 bg-sky-500/10 p-4">
+                <div className="flex gap-2 text-sm text-sky-950 dark:text-sky-50">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-sky-700 dark:text-sky-300" />
                   <div>
                     <p className="font-medium">
                       {lastUpdated > 0 ? `Updated ${lastUpdated} · ` : ""}
                       {ownershipPairs.length} ID conflict
                       {ownershipPairs.length === 1 ? "" : "s"}
                     </p>
-                    <p className="text-xs text-destructive/80 mt-0.5">
-                      Another document already owns the target sheet ID. Review
-                      each pair side by side to fix IDs.
+                    <p className="text-xs text-sky-900/80 dark:text-sky-100/80 mt-0.5">
+                      Another document already owns the target sheet ID. Compare
+                      each pair, fix either ID, then continue reclassify.
                     </p>
                   </div>
                 </div>
@@ -327,7 +362,7 @@ export function BulkReclassifyPaperDialog({
                   onClick={handleReviewConflicts}
                 >
                   <Columns2 className="h-4 w-4" />
-                  Review side by side
+                  Compare sheets
                 </Button>
               </div>
             )}
@@ -344,7 +379,7 @@ export function BulkReclassifyPaperDialog({
             {ownershipPairs.length === 0 && (
               <Button onClick={handleApply} disabled={loading || actionable.length === 0}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Apply to {actionable.length}
+                {resumeMode ? "Continue reclassify" : `Apply to ${actionable.length}`}
               </Button>
             )}
           </DialogFooter>

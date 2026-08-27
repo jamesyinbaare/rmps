@@ -14,12 +14,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type {
   ScoreMigrationConflictItem,
   ScoreMigrationPreviewResponse,
+  ScoreMigrationUnregisteredItem,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowRight,
-  FileSpreadsheet,
+  CheckCircle2,
+  ChevronDown,
+  Columns2,
   Loader2,
   Shuffle,
 } from "lucide-react";
@@ -28,14 +31,19 @@ function HighlightedSheetId({
   id,
   highlightSubject,
   highlightPaper,
+  size = "md",
 }: {
   id: string | null | undefined;
   highlightSubject?: boolean;
   highlightPaper?: boolean;
+  size?: "md" | "lg";
 }) {
+  const textClass = size === "lg" ? "text-base sm:text-lg" : "text-sm";
   if (!id || id.length !== 13) {
     return (
-      <span className="font-mono text-sm text-muted-foreground">{id || "—"}</span>
+      <span className={cn("font-mono text-muted-foreground", textClass)}>
+        {id || "—"}
+      </span>
     );
   }
   const school = id.slice(0, 6);
@@ -44,7 +52,7 @@ function HighlightedSheetId({
   const paper = id.slice(10, 11);
   const sheet = id.slice(11, 13);
   return (
-    <span className="font-mono text-sm tracking-wide">
+    <span className={cn("font-mono tracking-wide", textClass)}>
       <span className="text-muted-foreground">{school}</span>
       <span
         className={cn(
@@ -68,21 +76,32 @@ function HighlightedSheetId({
   );
 }
 
-function MetaChip({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | null | undefined;
-}) {
-  return (
-    <div className="flex flex-col gap-0.5 min-w-0">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
-      <span className="text-sm font-medium truncate">{value || "—"}</span>
-    </div>
-  );
+function subjectDisplay(meta: {
+  subject_name?: string | null;
+  subject_code?: string | null;
+} | null | undefined): string {
+  if (!meta) return "—";
+  if (meta.subject_name) {
+    return meta.subject_code
+      ? `${meta.subject_name} (${meta.subject_code})`
+      : meta.subject_name;
+  }
+  return meta.subject_code || "—";
+}
+
+function parseUnregisteredFromErrors(
+  errors: string[]
+): ScoreMigrationUnregisteredItem[] {
+  const items: ScoreMigrationUnregisteredItem[] = [];
+  for (const err of errors) {
+    const match = err.match(
+      /Candidate\s+(\S+)\s+\(([^)]+)\)\s+is not registered/i
+    );
+    if (match) {
+      items.push({ index_number: match[1], candidate_name: match[2] });
+    }
+  }
+  return items;
 }
 
 export type ScoreMigrationConfirmDialogProps = {
@@ -111,16 +130,48 @@ export function ScoreMigrationConfirmDialog({
   onCompareOwnership,
 }: ScoreMigrationConfirmDialogProps) {
   const [overwrite, setOverwrite] = useState(false);
+  const [unregisteredExpanded, setUnregisteredExpanded] = useState(false);
+  const [otherErrorsExpanded, setOtherErrorsExpanded] = useState(false);
 
   useEffect(() => {
-    if (open) setOverwrite(false);
+    if (open) {
+      setOverwrite(false);
+      setUnregisteredExpanded(false);
+      setOtherErrorsExpanded(false);
+    }
   }, [open, preview]);
 
   const conflicts: ScoreMigrationConflictItem[] = preview?.conflicts ?? [];
   const hasConflicts = conflicts.length > 0;
-  const blocking = preview?.blocking_errors ?? [];
+  const ownershipId = preview?.conflict_document_id ?? null;
+  const hasOwnership = ownershipId != null && Boolean(onCompareOwnership);
+
+  const structuredUnregistered = preview?.unregistered ?? [];
+  const blockingRaw = preview?.blocking_errors ?? [];
+  const parsedFromErrors =
+    structuredUnregistered.length === 0
+      ? parseUnregisteredFromErrors(blockingRaw)
+      : [];
+  const unregistered =
+    structuredUnregistered.length > 0
+      ? structuredUnregistered
+      : parsedFromErrors;
+  const otherBlocking =
+    structuredUnregistered.length > 0
+      ? blockingRaw
+      : blockingRaw.filter(
+          (e) => !/is not registered/i.test(e) && !/already uses ID/i.test(e)
+        );
+
+  const hasUnregistered = unregistered.length > 0;
+  const hasOtherBlocking = otherBlocking.length > 0;
+  const isBlocked = hasUnregistered || hasOtherBlocking;
+
   const canContinue =
-    blocking.length === 0 && (!hasConflicts || overwrite) && !loading;
+    !hasOwnership &&
+    !isBlocked &&
+    (!hasConflicts || overwrite) &&
+    !loading;
 
   const subjectChanged = preview?.subject_changed ?? false;
   const paperChanged = preview?.paper_changed ?? Boolean(bulkSummary);
@@ -129,10 +180,14 @@ export function ScoreMigrationConfirmDialog({
   const from = preview?.from_meta;
   const to = preview?.to_meta;
 
-  const titleBits: string[] = [];
-  if (subjectChanged) titleBits.push("subject");
-  if (paperChanged) titleBits.push("paper");
-  const changeLabel = titleBits.length ? titleBits.join(" & ") : "sheet";
+  const title =
+    subjectChanged && paperChanged
+      ? "Change subject & paper"
+      : subjectChanged
+        ? "Change subject"
+        : paperChanged
+          ? "Change paper"
+          : "Sheet change";
 
   const destinationLabel = [
     to?.subject_name || to?.subject_code,
@@ -140,6 +195,20 @@ export function ScoreMigrationConfirmDialog({
   ]
     .filter(Boolean)
     .join(" · ");
+
+  const primaryLabel = hasOwnership
+    ? "Compare sheets"
+    : hasConflicts
+      ? "Replace & continue"
+      : "Continue";
+
+  const handlePrimary = () => {
+    if (hasOwnership && onCompareOwnership) {
+      onCompareOwnership();
+      return;
+    }
+    void onConfirm(overwrite);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -159,12 +228,9 @@ export function ScoreMigrationConfirmDialog({
                 <Shuffle className="h-5 w-5" />
               </div>
               <div className="space-y-1 min-w-0">
-                <DialogTitle className="text-xl tracking-tight">
-                  Confirm {changeLabel} change
-                </DialogTitle>
+                <DialogTitle className="text-xl tracking-tight">{title}</DialogTitle>
                 <DialogDescription className="text-sm leading-relaxed">
-                  Review what will happen before applied scores move with this
-                  sheet.
+                  Scores move with the sheet.
                 </DialogDescription>
               </div>
             </div>
@@ -173,76 +239,56 @@ export function ScoreMigrationConfirmDialog({
 
         <div className="space-y-4 px-6 py-5 max-h-[min(60vh,480px)] overflow-y-auto">
           {(from || to || bulkSummary) && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 rounded-xl border bg-card/50 p-4 shadow-sm">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                <div className="space-y-3 min-w-0 rounded-lg bg-muted/40 p-3">
+            <div className="relative overflow-hidden rounded-xl border bg-muted/30">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-0">
+                <div className="space-y-2 px-4 py-4 min-w-0">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    From
+                    Before
                   </p>
                   <HighlightedSheetId
                     id={from?.extracted_id}
                     highlightSubject={subjectChanged}
                     highlightPaper={paperChanged}
+                    size="lg"
                   />
-                  <div className="grid grid-cols-2 gap-2">
-                    <MetaChip
-                      label="Subject"
-                      value={
-                        from?.subject_name
-                          ? `${from.subject_name}${from.subject_code ? ` (${from.subject_code})` : ""}`
-                          : from?.subject_code
-                      }
-                    />
-                    <MetaChip label="Paper" value={from?.paper_label} />
+                  <div className="space-y-0.5 pt-1">
+                    <p className="text-sm font-medium leading-snug truncate">
+                      {subjectDisplay(from)}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {from?.paper_label || "—"}
+                    </p>
                   </div>
                 </div>
 
-                <div className="flex h-9 w-9 items-center justify-center rounded-full border bg-background shadow-sm">
-                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                <div className="flex items-center justify-center px-1">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full border bg-background shadow-sm">
+                    <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
                 </div>
 
-                <div className="space-y-3 min-w-0 rounded-lg border border-sky-500/25 bg-sky-500/5 p-3">
+                <div className="space-y-2 border-l border-sky-500/20 bg-sky-500/5 px-4 py-4 min-w-0 animate-in fade-in slide-in-from-right-2 duration-400">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-200">
-                    To
+                    After
                   </p>
                   <HighlightedSheetId
                     id={to?.extracted_id}
                     highlightSubject={subjectChanged}
                     highlightPaper={paperChanged}
+                    size="lg"
                   />
-                  <div className="grid grid-cols-2 gap-2">
-                    <MetaChip
-                      label="Subject"
-                      value={
-                        to?.subject_name
-                          ? `${to.subject_name}${to.subject_code ? ` (${to.subject_code})` : ""}`
-                          : to?.subject_code
-                      }
-                    />
-                    <MetaChip
-                      label="Paper"
-                      value={to?.paper_label || bulkSummary?.targetPaperLabel}
-                    />
+                  <div className="space-y-0.5 pt-1">
+                    <p className="text-sm font-medium leading-snug truncate">
+                      {subjectDisplay(to)}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {to?.paper_label || bulkSummary?.targetPaperLabel || "—"}
+                    </p>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-
-          <div className="flex items-start gap-3 rounded-xl border px-4 py-3">
-            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-              <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="space-y-1 min-w-0">
-              <p className="text-sm font-medium">
-                {scoresToMove > 0
-                  ? `${scoresToMove} applied score${scoresToMove === 1 ? "" : "s"} will move${
-                      destinationLabel ? ` to ${destinationLabel}` : ""
-                    }.`
-                  : "No applied scores to move; sheet subject/paper will still update."}
-              </p>
               {bulkSummary && (
-                <p className="text-xs text-muted-foreground">
+                <p className="border-t px-4 py-2 text-xs text-muted-foreground">
                   {bulkSummary.documentCount} document
                   {bulkSummary.documentCount === 1 ? "" : "s"} selected
                   {bulkSummary.appliedCount > 0
@@ -251,46 +297,120 @@ export function ScoreMigrationConfirmDialog({
                 </p>
               )}
             </div>
-          </div>
+          )}
 
-          {blocking.length > 0 && (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive space-y-3">
-              <div>
-                <p className="font-medium mb-1">Cannot continue</p>
-                <ul className="list-disc pl-4 space-y-1 text-destructive/90">
-                  {blocking.map((err) => (
-                    <li key={err}>{err}</li>
+          {/* Outcome strip — ownership first when present */}
+          {hasOwnership && (
+            <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 space-y-3">
+              <div className="flex gap-2.5">
+                <Columns2 className="h-4 w-4 shrink-0 mt-0.5 text-sky-700 dark:text-sky-300" />
+                <div className="space-y-1 min-w-0">
+                  <p className="text-sm font-medium text-sky-950 dark:text-sky-50">
+                    ID already owned
+                  </p>
+                  <p className="text-xs text-sky-900/80 dark:text-sky-100/80">
+                    Another sheet already uses this ID. Compare both documents,
+                    fix either ID, then return here to finish.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {hasUnregistered && (
+            <div className="animate-in fade-in duration-300 rounded-xl border border-destructive/40 bg-destructive/10 p-4 space-y-2">
+              <button
+                type="button"
+                className="flex w-full items-start gap-2.5 text-left"
+                onClick={() => setUnregisteredExpanded((v) => !v)}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-destructive">
+                    {unregistered.length} candidate
+                    {unregistered.length === 1 ? " isn’t" : "s aren’t"} registered
+                    for {to?.subject_name || to?.subject_code || "the new subject"}
+                  </p>
+                  <p className="text-xs text-destructive/80 mt-0.5">
+                    Register them for this subject, or choose a different target.
+                  </p>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 mt-0.5 text-destructive transition-transform",
+                    unregisteredExpanded && "rotate-180"
+                  )}
+                />
+              </button>
+              {unregisteredExpanded && (
+                <ul className="max-h-40 overflow-y-auto rounded-lg border border-destructive/20 bg-background/60 divide-y text-sm animate-in fade-in slide-in-from-top-1 duration-200">
+                  {unregistered.map((u, i) => (
+                    <li
+                      key={`${u.index_number ?? i}-${u.candidate_name}`}
+                      className="flex items-center justify-between gap-3 px-3 py-2"
+                    >
+                      <span className="font-mono text-xs truncate">
+                        {u.index_number || "—"}
+                      </span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        {u.candidate_name || "Unknown"}
+                      </span>
+                    </li>
                   ))}
                 </ul>
-              </div>
-              {onCompareOwnership && preview?.conflict_document_id != null && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full border-destructive/40 bg-background/80"
-                  disabled={loading}
-                  onClick={() => onCompareOwnership()}
-                >
-                  Compare side by side
-                </Button>
               )}
             </div>
           )}
 
-          {hasConflicts && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-400 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+          {hasOtherBlocking && (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 space-y-2">
+              <button
+                type="button"
+                className="flex w-full items-start gap-2.5 text-left"
+                onClick={() => setOtherErrorsExpanded((v) => !v)}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-destructive">
+                    {otherBlocking.length === 1
+                      ? "Cannot continue"
+                      : `${otherBlocking.length} issues block this change`}
+                  </p>
+                  {!otherErrorsExpanded && (
+                    <p className="text-xs text-destructive/80 mt-0.5 truncate">
+                      {otherBlocking[0]}
+                    </p>
+                  )}
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 mt-0.5 text-destructive transition-transform",
+                    otherErrorsExpanded && "rotate-180"
+                  )}
+                />
+              </button>
+              {otherErrorsExpanded && (
+                <ul className="list-disc pl-8 space-y-1 text-sm text-destructive/90">
+                  {otherBlocking.map((err) => (
+                    <li key={err}>{err}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {!hasOwnership && !isBlocked && hasConflicts && (
+            <div className="animate-in fade-in duration-300 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
               <div className="flex gap-2 text-amber-950 dark:text-amber-50">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-medium">
-                    {conflicts.length} candidate
+                    Overwrite needed · {conflicts.length} candidate
                     {conflicts.length === 1 ? "" : "s"} already{" "}
-                    {conflicts.length === 1 ? "has" : "have"} scores on the
-                    target
+                    {conflicts.length === 1 ? "has" : "have"} scores on the target
                   </p>
                   <p className="text-xs text-amber-900/80 dark:text-amber-100/80">
-                    Continuing with override will replace those values with the
-                    scores from this sheet.
+                    Confirm replace to continue with those values overwritten.
                   </p>
                 </div>
               </div>
@@ -322,13 +442,29 @@ export function ScoreMigrationConfirmDialog({
                   disabled={loading}
                 />
                 <span className="text-sm leading-snug">
-                  <span className="font-medium">Replace existing scores</span>
+                  <span className="font-medium">
+                    Replace existing scores on the target
+                  </span>
                   <span className="block text-xs text-muted-foreground mt-0.5">
-                    I understand target scores will be overwritten and cannot be
-                    undone from this dialog.
+                    This cannot be undone from this dialog.
                   </span>
                 </span>
               </label>
+            </div>
+          )}
+
+          {!hasOwnership && !isBlocked && !hasConflicts && (
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
+              <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-400" />
+              <div className="space-y-1 min-w-0">
+                <p className="text-sm font-medium">
+                  {scoresToMove > 0
+                    ? `Ready · ${scoresToMove} score${scoresToMove === 1 ? "" : "s"} will move${
+                        destinationLabel ? ` to ${destinationLabel}` : ""
+                      }.`
+                    : "Ready · no applied scores to move; sheet subject/paper will still update."}
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -344,12 +480,19 @@ export function ScoreMigrationConfirmDialog({
           </Button>
           <Button
             type="button"
-            variant={hasConflicts ? "destructive" : "default"}
-            disabled={!canContinue}
-            onClick={() => void onConfirm(overwrite)}
+            variant={
+              hasOwnership
+                ? "default"
+                : hasConflicts && !isBlocked
+                  ? "destructive"
+                  : "default"
+            }
+            disabled={hasOwnership ? loading : !canContinue}
+            onClick={handlePrimary}
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {hasConflicts ? "Replace & continue" : "Continue"}
+            {hasOwnership && <Columns2 className="mr-2 h-4 w-4" />}
+            {primaryLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -675,14 +675,19 @@ export function DocumentViewer({
     }
   };
 
-  const openOwnershipCompare = async (conflictDocumentId: number) => {
+  const openOwnershipCompare = async (
+    conflictDocumentId: number,
+    options?: { keepSheetChangePending?: boolean }
+  ) => {
     try {
       const peer = await getDocument(conflictDocumentId);
       setLocalOwnershipPeers([peer]);
       setMigrationOpen(false);
-      setPendingMigration(null);
-      setMigrationPreview(null);
-      toast.message("ID already in use — compare documents side by side");
+      if (!options?.keepSheetChangePending) {
+        setPendingMigration(null);
+        setMigrationPreview(null);
+      }
+      toast.message("ID already in use — compare sheets side by side");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to load conflicting document"
@@ -695,12 +700,66 @@ export function DocumentViewer({
     onOwnershipConflictCleared?.();
   };
 
+  const resumeSheetChangeReview = async () => {
+    if (!pendingMigration) return;
+    setLocalOwnershipPeers(null);
+    setSavingId(true);
+    try {
+      const preview = await previewScoreMigration(document.id, {
+        extracted_id: pendingMigration.extractedId,
+        school_id: pendingMigration.schoolId,
+        subject_id: pendingMigration.subjectId,
+      });
+      setMigrationPreview(preview);
+      setMigrationOpen(true);
+      toast.message("Back to sheet change review");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Failed to refresh sheet change preview"
+      );
+      setPendingMigration(null);
+      setMigrationPreview(null);
+    } finally {
+      setSavingId(false);
+    }
+  };
+
+  const formatSheetUpdatedToast = (
+    moved: number,
+    meta?: {
+      subjectName?: string | null;
+      paperLabel?: string | null;
+      replaced?: number;
+    }
+  ) => {
+    if (moved <= 0) return "Sheet updated (no applied scores)";
+    const dest = [meta?.subjectName, meta?.paperLabel].filter(Boolean).join(" · ");
+    let msg = dest
+      ? `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"} to ${dest}`
+      : `Sheet updated · moved ${moved} score${moved === 1 ? "" : "s"}`;
+    if (meta?.replaced && meta.replaced > 0) {
+      msg += ` · replaced ${meta.replaced} existing`;
+    }
+    return msg;
+  };
+
   const commitIdUpdate = async (
     extractedId: string,
     schoolId: number | undefined,
     subjectId: number | undefined,
     options?: { advance?: boolean; overwrite_scores?: boolean }
   ) => {
+    const destSubject =
+      migrationPreview?.to_meta.subject_name ||
+      subjects.find((s) => s.id === subjectId)?.name ||
+      null;
+    const destPaper = migrationPreview?.to_meta.paper_label || null;
+    const replacedCount = options?.overwrite_scores
+      ? migrationPreview?.conflicts.length ?? 0
+      : 0;
+
     if (onUpdateId) {
       await onUpdateId(document.id, extractedId, schoolId, subjectId, options);
     } else {
@@ -713,12 +772,16 @@ export function DocumentViewer({
       );
       const moved = updated.scores_moved ?? 0;
       toast.success(
-        moved > 0
-          ? `Document ID updated. Moved scores for ${moved} candidate row(s).`
-          : "Document ID updated successfully"
+        formatSheetUpdatedToast(moved, {
+          subjectName: destSubject,
+          paperLabel: destPaper,
+          replaced: replacedCount,
+        })
       );
     }
     setEditingId(false);
+    setPendingMigration(null);
+    setMigrationPreview(null);
     if (!onUpdateId) {
       clearOwnershipCompare();
     }
@@ -828,12 +891,10 @@ export function DocumentViewer({
         }
       );
       setMigrationOpen(false);
-      setPendingMigration(null);
-      setMigrationPreview(null);
     } catch (error) {
       const conflictId = parseOwnershipConflictDocumentId(error);
       if (conflictId != null) {
-        await openOwnershipCompare(conflictId);
+        await openOwnershipCompare(conflictId, { keepSheetChangePending: true });
         return;
       }
       const errorMessage =
@@ -1131,18 +1192,50 @@ export function DocumentViewer({
                     : undefined
                 }
                 onDelete={onDelete ? handleDelete : undefined}
-                onUpdateId={
-                  onUpdateId ??
-                  (async (documentId, extractedId, schoolId, subjectId) => {
-                    await updateDocumentId(documentId, extractedId, schoolId, subjectId);
+                onUpdateId={async (documentId, extractedId, schoolId, subjectId, options) => {
+                  if (onUpdateId) {
+                    await onUpdateId(
+                      documentId,
+                      extractedId,
+                      schoolId,
+                      subjectId,
+                      options
+                    );
+                  } else {
+                    await updateDocumentId(
+                      documentId,
+                      extractedId,
+                      schoolId,
+                      subjectId
+                    );
                     toast.success("Document ID updated successfully");
-                    setConflictReloadToken((n) => n + 1);
+                  }
+                  setConflictReloadToken((n) => n + 1);
+                  if (
+                    showOwnershipCompare &&
+                    !isDuplicateError &&
+                    pendingMigration &&
+                    documentId === document.id
+                  ) {
+                    setPendingMigration(null);
+                    setMigrationPreview(null);
                     clearOwnershipCompare();
-                  })
-                }
+                    return;
+                  }
+                  if (!onUpdateId && showOwnershipCompare && !isDuplicateError) {
+                    clearOwnershipCompare();
+                  }
+                }}
                 onConflictSideResolved={() => {
                   if (showOwnershipCompare && !isDuplicateError) {
+                    if (pendingMigration) {
+                      void resumeSheetChangeReview();
+                      return;
+                    }
                     setLocalOwnershipPeers(null);
+                    if (onConflictSideResolved) {
+                      void onConflictSideResolved();
+                    }
                     return;
                   }
                   void handleConflictSideResolved();
@@ -1609,7 +1702,10 @@ export function DocumentViewer({
       onConfirm={handleConfirmMigration}
       onCompareOwnership={
         migrationPreview?.conflict_document_id
-          ? () => void openOwnershipCompare(migrationPreview.conflict_document_id!)
+          ? () =>
+              void openOwnershipCompare(migrationPreview.conflict_document_id!, {
+                keepSheetChangePending: true,
+              })
           : undefined
       }
     />
