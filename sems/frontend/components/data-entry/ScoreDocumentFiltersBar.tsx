@@ -17,6 +17,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  SubjectMultiSelectFilter,
+  type SubjectTypeFilterValue,
+} from "@/components/SubjectMultiSelectFilter";
 import type { ExtractionProviderFilter, School, Subject } from "@/types/document";
 import { DEFAULT_EXTRACTION_PROVIDER, extractionProviderFilterLabel } from "@/types/document";
 import { cn } from "@/lib/utils";
@@ -31,6 +35,12 @@ interface ScoreDocumentFiltersBarProps {
   subjects: Subject[];
   schoolId?: number;
   subjectId?: number;
+  /** Apply Scores multi-select mode */
+  multiSubject?: boolean;
+  subjectIds?: number[];
+  onSubjectIdsChange?: (ids: number[]) => void;
+  subjectTypeFilter?: SubjectTypeFilterValue;
+  onSubjectTypeFilterChange?: (value: SubjectTypeFilterValue) => void;
   testType?: string;
   extractionProvider?: ExtractionProviderFilter;
   onSchoolChange: (value: string | number | "all" | "") => void;
@@ -59,6 +69,10 @@ interface ScoreDocumentFiltersBarProps {
   refreshing?: boolean;
   onClear: () => void;
   trailing?: ReactNode;
+  /** Where to render `trailing`. Use "none" when the page owns a separate mode row. */
+  trailingPlacement?: "inline" | "none";
+  /** Rendered between the scope filter row and active chips (e.g. Apply Scores mode tabs). */
+  afterScope?: ReactNode;
 }
 
 export function ScoreDocumentFiltersBar({
@@ -69,6 +83,11 @@ export function ScoreDocumentFiltersBar({
   subjects,
   schoolId,
   subjectId,
+  multiSubject = false,
+  subjectIds = [],
+  onSubjectIdsChange,
+  subjectTypeFilter = "ALL",
+  onSubjectTypeFilterChange,
   testType,
   extractionProvider,
   onSchoolChange,
@@ -91,6 +110,8 @@ export function ScoreDocumentFiltersBar({
   refreshing,
   onClear,
   trailing,
+  trailingPlacement = "inline",
+  afterScope,
 }: ScoreDocumentFiltersBarProps) {
   const extraFilterCount =
     (testType ? 1 : 0) +
@@ -113,7 +134,29 @@ export function ScoreDocumentFiltersBar({
       onRemove: () => onSchoolChange("all"),
     });
   }
-  if (!hideExamSubject && subjectId) {
+  if (!hideExamSubject && multiSubject) {
+    if (subjectTypeFilter !== "ALL") {
+      chips.push({
+        key: "subject-type",
+        label: `Type: ${subjectTypeFilter === "CORE" ? "Core" : "Elective"}`,
+        onRemove: () => onSubjectTypeFilterChange?.("ALL"),
+      });
+    }
+    if (subjectIds.length === 1) {
+      const subject = subjects.find((s) => s.id === subjectIds[0]);
+      chips.push({
+        key: "subject",
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : subjectIds[0]}`,
+        onRemove: () => onSubjectIdsChange?.([]),
+      });
+    } else if (subjectIds.length > 1) {
+      chips.push({
+        key: "subjects",
+        label: `Subjects: ${subjectIds.length}`,
+        onRemove: () => onSubjectIdsChange?.([]),
+      });
+    }
+  } else if (!hideExamSubject && subjectId) {
     const subject = subjects.find((s) => s.id === subjectId);
     chips.push({
       key: "subject",
@@ -144,179 +187,202 @@ export function ScoreDocumentFiltersBar({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {!hideExamSubject && (
-          <>
-            <div className="w-[280px]">
-              <SearchableSelect
-                options={examOptions}
-                value={selectedExamId || ""}
-                onValueChange={onExamChange}
-                placeholder={requireExam ? "Select examination…" : "Examination"}
-                disabled={loading}
-                allowAll={!requireExam}
-                allLabel="All examinations"
-                searchPlaceholder="Search examinations..."
-                emptyMessage="No examinations found"
-                triggerClassName="h-8"
-              />
-            </div>
-
-            <div className="flex items-center gap-1">
-              <div className="w-[240px]">
+      <div
+        className={cn(
+          afterScope
+            ? "flex flex-col gap-3 min-[1280px]:flex-row min-[1280px]:items-end min-[1280px]:justify-between min-[1280px]:gap-6"
+            : undefined
+        )}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {!hideExamSubject && (
+            <>
+              <div className="w-[280px]">
                 <SearchableSelect
-                  options={subjects.map((subject) => ({
-                    value: subject.id,
-                    label: `${subject.code} - ${subject.name}`,
-                  }))}
-                  value={subjectId != null ? subjectId : !requireSubject ? "all" : ""}
-                  onValueChange={onSubjectChange}
-                  placeholder={
-                    requireSubject
-                      ? selectedExamId
-                        ? "Select subject…"
-                        : "Select examination first"
-                      : "Subject"
-                  }
-                  disabled={loading || subjectDisabled || (requireSubject && !selectedExamId)}
-                  allowAll={!requireSubject}
-                  allLabel="All subjects"
-                  searchPlaceholder="Search subject code or name..."
-                  emptyMessage={
-                    requireSubject && !selectedExamId
-                      ? "Select an examination first"
-                      : "No subjects found"
-                  }
+                  options={examOptions}
+                  value={selectedExamId || ""}
+                  onValueChange={onExamChange}
+                  placeholder={requireExam ? "Select examination…" : "Examination"}
+                  disabled={loading}
+                  allowAll={!requireExam}
+                  allLabel="All examinations"
+                  searchPlaceholder="Search examinations..."
+                  emptyMessage="No examinations found"
                   triggerClassName="h-8"
                 />
               </div>
-              {showSubjectNav && (
-                <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={!canPrevSubject || loading || subjectDisabled}
-                    onClick={onPrevSubject}
-                    aria-label="Previous subject"
-                    title="Previous subject"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={!canNextSubject || loading || subjectDisabled}
-                    onClick={onNextSubject}
-                    aria-label="Next subject"
-                    title="Next subject"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
+
+              {multiSubject && onSubjectIdsChange && onSubjectTypeFilterChange ? (
+                <SubjectMultiSelectFilter
+                  subjects={subjects}
+                  value={subjectIds}
+                  onChange={onSubjectIdsChange}
+                  subjectType={subjectTypeFilter}
+                  onSubjectTypeChange={onSubjectTypeFilterChange}
+                  disabled={loading || subjectDisabled}
+                />
+              ) : (
+                <div className="flex items-center gap-1">
+                  <div className="w-[240px]">
+                    <SearchableSelect
+                      options={subjects.map((subject) => ({
+                        value: subject.id,
+                        label: `${subject.code} - ${subject.name}`,
+                      }))}
+                      value={subjectId != null ? subjectId : !requireSubject ? "all" : ""}
+                      onValueChange={onSubjectChange}
+                      placeholder={
+                        requireSubject
+                          ? selectedExamId
+                            ? "Select subject…"
+                            : "Select examination first"
+                          : "Subject"
+                      }
+                      disabled={loading || subjectDisabled || (requireSubject && !selectedExamId)}
+                      allowAll={!requireSubject}
+                      allLabel="All subjects"
+                      searchPlaceholder="Search subject code or name..."
+                      emptyMessage={
+                        requireSubject && !selectedExamId
+                          ? "Select an examination first"
+                          : "No subjects found"
+                      }
+                      triggerClassName="h-8"
+                    />
+                  </div>
+                  {showSubjectNav && (
+                    <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        disabled={!canPrevSubject || loading || subjectDisabled}
+                        onClick={onPrevSubject}
+                        aria-label="Previous subject"
+                        title="Previous subject"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        disabled={!canNextSubject || loading || subjectDisabled}
+                        onClick={onNextSubject}
+                        aria-label="Next subject"
+                        title="Next subject"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          </>
-        )}
+            </>
+          )}
 
-        <div className="w-[240px]">
-          <SearchableSelect
-            options={schools.map((school) => ({
-              value: school.id,
-              label: `${school.code} - ${school.name}`,
-            }))}
-            value={schoolId || ""}
-            onValueChange={onSchoolChange}
-            placeholder="School"
-            disabled={loading}
-            allowAll
-            allLabel="All schools"
-            searchPlaceholder="Search schools..."
-            emptyMessage="No schools found"
-            triggerClassName="h-8"
-          />
-        </div>
+          <div className="w-[240px]">
+            <SearchableSelect
+              options={schools.map((school) => ({
+                value: school.id,
+                label: `${school.code} - ${school.name}`,
+              }))}
+              value={schoolId || ""}
+              onValueChange={onSchoolChange}
+              placeholder="School"
+              disabled={loading}
+              allowAll
+              allLabel="All schools"
+              searchPlaceholder="Search schools..."
+              emptyMessage="No schools found"
+              triggerClassName="h-8"
+            />
+          </div>
 
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm" className="h-8 gap-1">
-              More
-              {extraFilterCount > 0 && (
-                <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums">
-                  {extraFilterCount}
-                </span>
-              )}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-80 space-y-3">
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground">Paper</p>
-              <Select
-                value={testType || "all"}
-                onValueChange={(value) => onTestTypeChange(value === "all" ? undefined : value)}
-                disabled={loading}
-              >
-                <SelectTrigger size="sm" className="h-8 w-full">
-                  <SelectValue placeholder="Paper" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All papers</SelectItem>
-                  <SelectItem value="1">Objectives</SelectItem>
-                  <SelectItem value="2">Essay</SelectItem>
-                  <SelectItem value="3">Practicals</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {!requireProvider && showProviderFilter && onExtractionProviderChange && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1">
+                More
+                {extraFilterCount > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums">
+                    {extraFilterCount}
+                  </span>
+                )}
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 space-y-3">
               <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">Has extraction from</p>
+                <p className="text-xs font-medium text-muted-foreground">Paper</p>
                 <Select
-                  value={extractionProvider || "all"}
-                  onValueChange={(value) =>
-                    onExtractionProviderChange(
-                      value === "all" ? undefined : (value as ExtractionProviderFilter)
-                    )
-                  }
+                  value={testType || "all"}
+                  onValueChange={(value) => onTestTypeChange(value === "all" ? undefined : value)}
                   disabled={loading}
                 >
                   <SelectTrigger size="sm" className="h-8 w-full">
-                    <SelectValue placeholder="Has extraction from" />
+                    <SelectValue placeholder="Paper" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All providers</SelectItem>
-                    <SelectItem value="llama_only">Llama Extract only</SelectItem>
-                    <SelectItem value="reducto_only">Reducto only</SelectItem>
-                    <SelectItem value="both">Both providers</SelectItem>
+                    <SelectItem value="all">All papers</SelectItem>
+                    <SelectItem value="1">Objectives</SelectItem>
+                    <SelectItem value="2">Essay</SelectItem>
+                    <SelectItem value="3">Practicals</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            )}
-          </PopoverContent>
-        </Popover>
+              {!requireProvider && showProviderFilter && onExtractionProviderChange && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">Has extraction from</p>
+                  <Select
+                    value={extractionProvider || "all"}
+                    onValueChange={(value) =>
+                      onExtractionProviderChange(
+                        value === "all" ? undefined : (value as ExtractionProviderFilter)
+                      )
+                    }
+                    disabled={loading}
+                  >
+                    <SelectTrigger size="sm" className="h-8 w-full">
+                      <SelectValue placeholder="Has extraction from" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All providers</SelectItem>
+                      <SelectItem value="llama_only">Llama Extract only</SelectItem>
+                      <SelectItem value="reducto_only">Reducto only</SelectItem>
+                      <SelectItem value="both">Both providers</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1"
-          onClick={onRefresh}
-          disabled={refreshing}
-          title="Refresh list"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-          Refresh
-        </Button>
-
-        {hasActiveFilters && (
-          <Button variant="outline" size="sm" onClick={onClear} className="h-8">
-            Reset
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1"
+            onClick={onRefresh}
+            disabled={refreshing}
+            title="Refresh list"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            Refresh
           </Button>
-        )}
 
-        {trailing ? <div className="ml-auto flex flex-wrap items-center gap-2">{trailing}</div> : null}
+          {hasActiveFilters && (
+            <Button variant="outline" size="sm" onClick={onClear} className="h-8">
+              Reset
+            </Button>
+          )}
+
+          {trailingPlacement === "inline" && trailing ? (
+            <div className="ml-auto flex flex-wrap items-center gap-2">{trailing}</div>
+          ) : null}
+        </div>
+
+        {afterScope ? <div className="shrink-0">{afterScope}</div> : null}
       </div>
 
       {chips.length > 0 && (

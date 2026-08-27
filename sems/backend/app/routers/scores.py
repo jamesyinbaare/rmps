@@ -217,6 +217,12 @@ async def get_filtered_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id when set)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_status: str | None = Query(
         None,
@@ -293,8 +299,13 @@ async def get_filtered_documents(
 
     if school_id is not None:
         base_stmt = base_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    subject_id_list = _parse_subject_ids(subject_ids)
+    if subject_id_list:
+        base_stmt = base_stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == test_type)
     if extraction_method is not None:
@@ -320,6 +331,8 @@ async def get_filtered_documents(
     # Join with Exam table if filtering by exam_type, series, or year (and not using exam_id)
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         count_stmt = count_stmt.join(Exam, Document.exam_id == Exam.id)
+    if subject_type is not None:
+        count_stmt = count_stmt.join(Subject, Document.subject_id == Subject.id)
 
     # Apply exam filters
     if exam_id is not None:
@@ -335,8 +348,12 @@ async def get_filtered_documents(
 
     if school_id is not None:
         count_stmt = count_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    if subject_id_list:
+        count_stmt = count_stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        count_stmt = count_stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == test_type)
     if extraction_method is not None:
@@ -418,6 +435,12 @@ async def get_scores_extraction_status_counts(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id when set)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_method: DataExtractionMethod | None = Query(
         None, description="Filter by extraction method in scores_extraction_methods array"
@@ -466,6 +489,8 @@ async def get_scores_extraction_status_counts(
 
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         stmt = stmt.join(Exam, Document.exam_id == Exam.id)
+    if subject_type is not None:
+        stmt = stmt.join(Subject, Document.subject_id == Subject.id)
 
     if exam_id is not None:
         stmt = stmt.where(Document.exam_id == exam_id)
@@ -479,8 +504,13 @@ async def get_scores_extraction_status_counts(
 
     if school_id is not None:
         stmt = stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    subject_id_list = _parse_subject_ids(subject_ids)
+    if subject_id_list:
+        stmt = stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         stmt = stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        stmt = stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         stmt = stmt.where(Document.test_type == test_type)
     if extraction_method is not None:
@@ -1504,6 +1534,19 @@ async def batch_update_scores_manual_entry(
     failed = 0
     errors: list[dict[str, str]] = []
 
+    async def _touch_document_for_field(
+        document_id: str | None,
+        method: DataExtractionMethod,
+    ) -> Document | None:
+        if not document_id:
+            return None
+        doc_stmt = select(Document).where(Document.extracted_id == document_id)
+        doc_result = await session.execute(doc_stmt)
+        doc = doc_result.scalar_one_or_none()
+        if doc:
+            add_extraction_method_to_document(doc, method)
+        return doc
+
     for score_item in batch_update.scores:
         try:
             if score_item.score_id is None:
@@ -1532,45 +1575,53 @@ async def batch_update_scores_manual_entry(
                 errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
                 continue
 
-            # Track documents that need status updates
+            fields_set = score_item.model_fields_set
             documents_to_update_status: set[Document] = set()
+            applied_any = False
 
-            # Update fields and set extraction methods per field
-            if score_item.obj_raw_score is not None:
+            # Explicitly set fields: null clears; omitted fields are left alone
+            if "obj_raw_score" in fields_set:
                 subject_score.obj_raw_score = score_item.obj_raw_score
-                subject_score.obj_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.obj_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.obj_raw_score is not None:
+                    subject_score.obj_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.obj_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
 
-            if score_item.essay_raw_score is not None:
+            if "essay_raw_score" in fields_set:
                 subject_score.essay_raw_score = score_item.essay_raw_score
-                subject_score.essay_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.essay_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.essay_raw_score is not None:
+                    subject_score.essay_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.essay_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
 
-            if score_item.pract_raw_score is not None:
+            if "pract_raw_score" in fields_set:
                 subject_score.pract_raw_score = score_item.pract_raw_score
-                subject_score.pract_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.pract_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.pract_raw_score is not None:
+                    subject_score.pract_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.pract_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
+
+            if not applied_any:
+                failed += 1
+                errors.append(
+                    {
+                        "score_id": str(score_item.score_id),
+                        "error": "No score fields provided to update",
+                    }
+                )
+                continue
 
             # Update document extraction status to success when scores are manually entered/transcribed
             current_time = datetime.utcnow()

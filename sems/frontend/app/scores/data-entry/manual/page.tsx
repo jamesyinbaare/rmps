@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -20,34 +20,87 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getCandidatesForManualEntry, getAllExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry, findExamId, listSchools, listSchoolProgrammes, listProgrammeSubjects, getCurrentUser } from "@/lib/api";
+import { getCandidatesForManualEntry, getAllExams, listSubjects, batchUpdateScoresForManualEntry, listSchools, listSchoolProgrammes, listProgrammeSubjects, getCurrentUser } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, BatchScoreUpdateItem, ExamType, ExamSeries } from "@/types/document";
-import { Loader2, Save, Search, X, Users, Edit, CheckCircle2, AlertCircle, Filter, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Save, Search, X, Edit, Filter, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+type ScoreChangeEntry = {
+  subject_registration_id: number;
+  obj?: string | null;
+  essay?: string | null;
+  pract?: string | null;
+};
+
+const DEFAULT_PAGE_SIZE = 25;
+
+function parseOptionalInt(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const n = parseInt(value, 10);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+function filtersFromSearchParams(sp: URLSearchParams): ManualEntryFilters {
+  const filters: ManualEntryFilters = {
+    page: parseOptionalInt(sp.get("page")) ?? 1,
+    page_size: parseOptionalInt(sp.get("page_size")) ?? DEFAULT_PAGE_SIZE,
+  };
+  const examId = parseOptionalInt(sp.get("exam_id"));
+  if (examId != null) filters.exam_id = examId;
+  const schoolId = parseOptionalInt(sp.get("school_id"));
+  if (schoolId != null) filters.school_id = schoolId;
+  const programmeId = parseOptionalInt(sp.get("programme_id"));
+  if (programmeId != null) filters.programme_id = programmeId;
+  const subjectId = parseOptionalInt(sp.get("subject_id"));
+  if (subjectId != null) filters.subject_id = subjectId;
+  const documentId = sp.get("document_id")?.trim();
+  if (documentId) filters.document_id = documentId;
+  return filters;
+}
+
+function filtersToQueryString(filters: ManualEntryFilters): string {
+  const params = new URLSearchParams();
+  if (filters.exam_id != null) params.set("exam_id", String(filters.exam_id));
+  if (filters.school_id != null) params.set("school_id", String(filters.school_id));
+  if (filters.programme_id != null) params.set("programme_id", String(filters.programme_id));
+  if (filters.subject_id != null) params.set("subject_id", String(filters.subject_id));
+  if (filters.document_id) params.set("document_id", filters.document_id);
+  if (filters.page != null && filters.page !== 1) params.set("page", String(filters.page));
+  if (filters.page_size != null && filters.page_size !== DEFAULT_PAGE_SIZE) {
+    params.set("page_size", String(filters.page_size));
+  }
+  return params.toString();
+}
+
+function isScopedFilters(filters: ManualEntryFilters): boolean {
+  if (filters.document_id) return Boolean(filters.exam_id);
+  return Boolean(filters.exam_id && filters.school_id && filters.subject_id);
+}
 
 export default function ManualEntryPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const lastUrlQueryRef = useRef<string | null>(null);
+
   const [authChecked, setAuthChecked] = useState(false);
   const [candidates, setCandidates] = useState<CandidateScoreEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [filters, setFilters] = useState<ManualEntryFilters>({
-    page: 1,
-    page_size: 20,
-  });
+  const [filters, setFilters] = useState<ManualEntryFilters>(() =>
+    filtersFromSearchParams(searchParams)
+  );
   // Pending filters - filters that are set but not yet applied
-  const [pendingFilters, setPendingFilters] = useState<ManualEntryFilters>({
-    page: 1,
-    page_size: 20,
-  });
+  const [pendingFilters, setPendingFilters] = useState<ManualEntryFilters>(() =>
+    filtersFromSearchParams(searchParams)
+  );
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -63,10 +116,12 @@ export default function ManualEntryPage() {
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]); // Store all subjects for filtering
 
   // Exam filtering state (combined)
-  const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
+  const [selectedExamId, setSelectedExamId] = useState<number | undefined>(() =>
+    parseOptionalInt(searchParams.get("exam_id"))
+  );
 
   // Score changes tracking - use score_id as key, but only track if score_id exists
-  const [scoreChanges, setScoreChanges] = useState<Map<number, { obj?: string | null; essay?: string | null; pract?: string | null }>>(new Map());
+  const [scoreChanges, setScoreChanges] = useState<Map<number, ScoreChangeEntry>>(new Map());
 
   // Table filtering state
   const [tableSearchQuery, setTableSearchQuery] = useState("");
@@ -80,28 +135,41 @@ export default function ManualEntryPage() {
   // Document ID search mode - tracks which document type matched
   const [documentIdMatchType, setDocumentIdMatchType] = useState<"obj" | "essay" | "pract" | null>(null);
 
-  // Collapsible state for filters and stats
-  const [filtersOpen, setFiltersOpen] = useState(true);
-  const [statsOpen, setStatsOpen] = useState(true);
+  // Collapsible filters — open until scoped (URL or Search)
+  const initialScoped = isScopedFilters(filtersFromSearchParams(searchParams));
+  const [filtersOpen, setFiltersOpen] = useState(!initialScoped);
+  const [hasScopedOnce, setHasScopedOnce] = useState(initialScoped);
+  const handleSaveRef = useRef<(() => Promise<void>) | null>(null);
 
-  // Keyboard shortcut handler (Ctrl/Cmd + K to toggle filters)
+  // Keyboard shortcuts: Ctrl+K filters, Ctrl+S save
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+K or Cmd+K to toggle filters
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
         setFiltersOpen((prev) => !prev);
       }
-      // Ctrl+Shift+K or Cmd+Shift+K to toggle stats
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'K') {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        setStatsOpen((prev) => !prev);
+        if (scoreChanges.size > 0 && !saving) {
+          void handleSaveRef.current?.();
+        }
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [scoreChanges.size, saving]);
+
+  // Warn on tab close with unsaved edits
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (scoreChanges.size === 0) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [scoreChanges.size]);
 
   // Load filter options
   useEffect(() => {
@@ -163,7 +231,6 @@ export default function ManualEntryPage() {
     async function loadProgrammesForSchool() {
       if (!pendingFilters.school_id) {
         setProgrammes([]);
-        setSubjects([]); // Clear subjects when school is cleared
         return;
       }
 
@@ -171,18 +238,13 @@ export default function ManualEntryPage() {
       try {
         const programmesData = await listSchoolProgrammes(pendingFilters.school_id);
         setProgrammes(programmesData);
-        // Clear programme in pending filters when school changes
-        setPendingFilters((prev) => ({
-          ...prev,
-          programme_id: undefined,
-        }));
       } catch (err) {
         console.error("Error loading programmes for school:", err);
       } finally {
         setLoadingProgrammes(false);
       }
     }
-    loadProgrammesForSchool();
+    void loadProgrammesForSchool();
   }, [pendingFilters.school_id]);
 
   // Load subjects when school is selected (and optionally programme)
@@ -198,27 +260,22 @@ export default function ManualEntryPage() {
         let subjectsToShow: Subject[] = [];
 
         if (pendingFilters.programme_id) {
-          // If programme is selected, load subjects from that programme
           const programmeSubjects = await listProgrammeSubjects(pendingFilters.programme_id);
-          // Convert ProgrammeSubject[] to Subject[] by matching with allSubjects
-          const programmeSubjectIds = new Set(programmeSubjects.map(ps => ps.subject_id));
-          subjectsToShow = allSubjects.filter(subject => programmeSubjectIds.has(subject.id));
+          const programmeSubjectIds = new Set(programmeSubjects.map((ps) => ps.subject_id));
+          subjectsToShow = allSubjects.filter((subject) => programmeSubjectIds.has(subject.id));
         } else {
-          // If only school is selected (no programme), show all subjects
-          // In the future, if there's a listSchoolSubjects API, use that
           subjectsToShow = allSubjects;
         }
 
         setSubjects(subjectsToShow);
       } catch (err) {
         console.error("Error loading subjects:", err);
-        // Fallback to all subjects on error
         setSubjects(allSubjects);
       } finally {
         setLoadingSubjects(false);
       }
     }
-    loadSubjectsForSchoolAndProgramme();
+    void loadSubjectsForSchoolAndProgramme();
   }, [pendingFilters.school_id, pendingFilters.programme_id, allSubjects]);
 
   // Load candidates
@@ -254,7 +311,7 @@ export default function ManualEntryPage() {
       setTotal(response.total);
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
-      setScoreChanges(new Map()); // Reset changes when loading new data
+      // Keep scoreChanges across reloads so edits survive pagination
 
       // If searching by document_id, determine which document type matched
       if (filters.document_id && response.items.length > 0) {
@@ -295,42 +352,65 @@ export default function ManualEntryPage() {
     loadCandidates();
   }, [loadCandidates]);
 
-  // Update pending filters when selected exam changes
+  // Keep applied filters in the URL so refresh restores scope
   useEffect(() => {
-    if (selectedExamId && exams.length > 0) {
-      const exam = exams.find((e) => e.id === selectedExamId);
-      if (exam) {
-        setPendingFilters((prev) => ({
-          ...prev,
-          exam_id: exam.id,
-          exam_type: exam.exam_type as ExamType,
-          series: exam.series as ExamSeries,
-          year: exam.year,
-          page: 1,
-        }));
+    const next = filtersToQueryString(filters);
+    if (lastUrlQueryRef.current === next) return;
+    lastUrlQueryRef.current = next;
+    router.replace(`/scores/data-entry/manual${next ? `?${next}` : ""}`, { scroll: false });
+  }, [
+    filters.exam_id,
+    filters.school_id,
+    filters.programme_id,
+    filters.subject_id,
+    filters.document_id,
+    filters.page,
+    filters.page_size,
+    router,
+  ]);
+
+  // Enrich pending/applied exam metadata when exams load (do not reset page or wipe pending)
+  useEffect(() => {
+    if (!selectedExamId || exams.length === 0) return;
+    const exam = exams.find((e) => e.id === selectedExamId);
+    if (!exam) return;
+    const patch = {
+      exam_id: exam.id,
+      exam_type: exam.exam_type as ExamType,
+      series: exam.series as ExamSeries,
+      year: exam.year,
+    };
+    setPendingFilters((prev) => {
+      if (
+        prev.exam_id === patch.exam_id &&
+        prev.exam_type === patch.exam_type &&
+        prev.series === patch.series &&
+        prev.year === patch.year
+      ) {
+        return prev;
       }
-    } else {
-      setPendingFilters((prev) => ({
-        ...prev,
-        exam_id: undefined,
-        exam_type: undefined,
-        series: undefined,
-        year: undefined,
-        page: 1,
-      }));
-    }
+      return { ...prev, ...patch };
+    });
+    setFilters((prev) => {
+      if (prev.exam_id !== exam.id) return prev;
+      if (
+        prev.exam_type === patch.exam_type &&
+        prev.series === patch.series &&
+        prev.year === patch.year
+      ) {
+        return prev;
+      }
+      return { ...prev, ...patch };
+    });
   }, [selectedExamId, exams]);
 
-  // Reverse lookup: if filters have exam_id, populate selectedExamId
+  // Hydrate exam picker from applied URL/filters only — never clear pending selection
   useEffect(() => {
-    if (exams.length > 0 && filters.exam_id) {
-      if (filters.exam_id !== selectedExamId) {
-        setSelectedExamId(filters.exam_id);
-      }
-    } else if (!filters.exam_id && selectedExamId !== undefined) {
-      setSelectedExamId(undefined);
+    if (!filters.exam_id) return;
+    if (filters.exam_id !== selectedExamId) {
+      setSelectedExamId(filters.exam_id);
     }
-  }, [filters.exam_id, exams]);
+  }, [filters.exam_id, selectedExamId]);
 
   const handleFilterChange = (key: keyof ManualEntryFilters, value: number | string | undefined) => {
     setPendingFilters((prev) => {
@@ -364,49 +444,78 @@ export default function ManualEntryPage() {
     });
   };
 
+  const confirmDiscardChanges = (actionLabel: string) => {
+    if (scoreChanges.size === 0) return true;
+    return window.confirm(
+      `You have ${scoreChanges.size} unsaved change${scoreChanges.size === 1 ? "" : "s"}. ${actionLabel} will discard them. Continue?`
+    );
+  };
+
   const handleSearch = () => {
-    // Apply pending filters to actual filters, which will trigger the search
+    if (!confirmDiscardChanges("Searching")) return;
+    setScoreChanges(new Map());
     const searchFilters = {
       ...pendingFilters,
       page: 1,
     };
     setFilters(searchFilters);
-    setPendingFilters(searchFilters); // Keep in sync
+    setPendingFilters(searchFilters);
+    setHasScopedOnce(true);
+    setFiltersOpen(false);
   };
 
   const handleClearFilters = () => {
-    // Clear all filters
+    if (!confirmDiscardChanges("Clearing filters")) return;
+    setScoreChanges(new Map());
     setSelectedExamId(undefined);
-    setPendingFilters({
+    const cleared: ManualEntryFilters = {
       page: 1,
-      page_size: 20,
-    });
-    setFilters({
-      page: 1,
-      page_size: 20,
-    });
+      page_size: DEFAULT_PAGE_SIZE,
+    };
+    setPendingFilters(cleared);
+    setFilters(cleared);
+    lastUrlQueryRef.current = "";
+    router.replace("/scores/data-entry/manual", { scroll: false });
     setProgrammes([]);
     setSubjects([]);
-    // Reset document ID match type
     setDocumentIdMatchType(null);
-    // Reset toggles to default
     setShowObj(true);
     setShowEssay(true);
     setShowPract(false);
+    setHasScopedOnce(false);
+    setFiltersOpen(true);
   };
 
   const handleExamChange = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") {
       setSelectedExamId(undefined);
-    } else {
-      setSelectedExamId(typeof value === "number" ? value : parseInt(String(value), 10));
+      setPendingFilters((prev) => ({
+        ...prev,
+        exam_id: undefined,
+        exam_type: undefined,
+        series: undefined,
+        year: undefined,
+        page: 1,
+      }));
+      return;
     }
+    const examId = typeof value === "number" ? value : parseInt(String(value), 10);
+    const exam = exams.find((e) => e.id === examId);
+    setSelectedExamId(examId);
+    setPendingFilters((prev) => ({
+      ...prev,
+      exam_id: examId,
+      exam_type: exam ? (exam.exam_type as ExamType) : prev.exam_type,
+      series: exam ? (exam.series as ExamSeries) : prev.series,
+      year: exam ? exam.year : prev.year,
+      page: 1,
+    }));
   };
 
   // Generate exam options for the combined dropdown
   const examOptions = exams
+    .slice()
     .sort((a, b) => {
-      // Sort by year (descending), then series, then type
       if (b.year !== a.year) return b.year - a.year;
       if (a.series !== b.series) return a.series.localeCompare(b.series);
       return (a.exam_type || "").localeCompare(b.exam_type || "");
@@ -420,15 +529,20 @@ export default function ManualEntryPage() {
     });
 
   const handleScoreChange = (candidate: CandidateScoreEntry, field: "obj" | "essay" | "pract", value: string) => {
-    // Only allow changes if score_id exists
-    if (!candidate.score_id) {
+    if (!candidate.score_id || !candidate.subject_registration_id) {
       return;
     }
 
     setScoreChanges((prev) => {
       const newMap = new Map(prev);
-      const current = newMap.get(candidate.score_id!) || {};
-      newMap.set(candidate.score_id!, { ...current, [field]: value || null });
+      const current = newMap.get(candidate.score_id!) || {
+        subject_registration_id: candidate.subject_registration_id,
+      };
+      newMap.set(candidate.score_id!, {
+        ...current,
+        subject_registration_id: candidate.subject_registration_id,
+        [field]: value || null,
+      });
       return newMap;
     });
   };
@@ -446,37 +560,82 @@ export default function ManualEntryPage() {
       const scoreUpdates: BatchScoreUpdateItem[] = [];
 
       scoreChanges.forEach((changes, scoreId) => {
-        const candidate = candidates.find((c) => c.score_id === scoreId);
-        if (!candidate || !candidate.subject_registration_id || !candidate.score_id) return;
-
-        scoreUpdates.push({
+        const update: BatchScoreUpdateItem = {
           score_id: scoreId,
-          subject_registration_id: candidate.subject_registration_id,
-          obj_raw_score: changes.obj !== undefined ? changes.obj : candidate.obj_raw_score,
-          essay_raw_score: changes.essay !== undefined ? changes.essay : candidate.essay_raw_score,
-          pract_raw_score: changes.pract !== undefined ? changes.pract : candidate.pract_raw_score,
-        });
+          subject_registration_id: changes.subject_registration_id,
+        };
+        if (changes.obj !== undefined) update.obj_raw_score = changes.obj;
+        if (changes.essay !== undefined) update.essay_raw_score = changes.essay;
+        if (changes.pract !== undefined) update.pract_raw_score = changes.pract;
+
+        if (
+          changes.obj === undefined &&
+          changes.essay === undefined &&
+          changes.pract === undefined
+        ) {
+          return;
+        }
+
+        scoreUpdates.push(update);
       });
+
+      if (scoreUpdates.length === 0) {
+        setError("No changes to save");
+        return;
+      }
 
       const response = await batchUpdateScoresForManualEntry({ scores: scoreUpdates });
 
-      if (response.failed > 0) {
+      if (response.failed > 0 && response.successful === 0) {
         const errorMsg = `Failed to save ${response.failed} score(s). ${response.errors.map((e) => e.error || "").join(", ")}`;
         setError(errorMsg);
         toast.error(errorMsg);
+      } else if (response.failed > 0) {
+        const errorMsg = `Saved ${response.successful}, failed ${response.failed}. ${response.errors.map((e) => e.error || "").join(", ")}`;
+        setError(errorMsg);
+        toast.error(errorMsg);
+        // Patch local rows for succeeded updates, keep remaining dirty map entries
+        setCandidates((prev) =>
+          prev.map((c) => {
+            if (!c.score_id || !scoreChanges.has(c.score_id)) return c;
+            const changes = scoreChanges.get(c.score_id)!;
+            return {
+              ...c,
+              obj_raw_score: changes.obj !== undefined ? changes.obj : c.obj_raw_score,
+              essay_raw_score: changes.essay !== undefined ? changes.essay : c.essay_raw_score,
+              pract_raw_score: changes.pract !== undefined ? changes.pract : c.pract_raw_score,
+            };
+          })
+        );
+        // On partial failure we cannot know which IDs failed without per-id errors — keep all dirty
       } else {
-        // Success - reload data
-        await loadCandidates();
+        setCandidates((prev) =>
+          prev.map((c) => {
+            if (!c.score_id || !scoreChanges.has(c.score_id)) return c;
+            const changes = scoreChanges.get(c.score_id)!;
+            return {
+              ...c,
+              obj_raw_score: changes.obj !== undefined ? changes.obj : c.obj_raw_score,
+              essay_raw_score: changes.essay !== undefined ? changes.essay : c.essay_raw_score,
+              pract_raw_score: changes.pract !== undefined ? changes.pract : c.pract_raw_score,
+            };
+          })
+        );
+        setScoreChanges(new Map());
         setError(null);
         toast.success(`Successfully saved ${scoreUpdates.length} score(s)`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save scores");
+      const message = err instanceof Error ? err.message : "Failed to save scores";
+      setError(message);
+      toast.error(message);
       console.error("Error saving scores:", err);
     } finally {
       setSaving(false);
     }
   };
+
+  handleSaveRef.current = handleSave;
 
   const getScoreValue = (candidate: CandidateScoreEntry, field: "obj" | "essay" | "pract") => {
     if (!candidate.score_id) {
@@ -521,12 +680,16 @@ export default function ManualEntryPage() {
       const pract = c.pract_pct !== null ? getScoreValue(c, "pract") : null;
       return obj && essay && (pract !== null ? pract : true);
     }).length,
-    incomplete: candidates.filter((c) => {
-      const obj = getScoreValue(c, "obj");
-      const essay = getScoreValue(c, "essay");
-      const pract = c.pract_pct !== null ? getScoreValue(c, "pract") : null;
-      return !obj || !essay || (pract !== null && !pract);
-    }).length,
+  };
+
+  const changePage = (newPage: number) => {
+    setFilters((prev) => ({ ...prev, page: newPage }));
+    setPendingFilters((prev) => ({ ...prev, page: newPage }));
+  };
+
+  const changePageSize = (newPageSize: number) => {
+    setFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
+    setPendingFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
   };
 
   // Get active filter chips
@@ -591,596 +754,573 @@ export default function ManualEntryPage() {
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col h-full">
+      <div className="flex h-full min-h-0 flex-col">
         <TopBar title="Manual Score Entry" />
 
-        {/* Statistics Dashboard - Collapsible */}
-        {!loading && candidates.length > 0 && (
-          <div className="border-b border-border bg-background">
-            <Collapsible open={statsOpen} onOpenChange={setStatsOpen}>
-              <div className="px-4 py-2">
-                <CollapsibleTrigger className="flex items-center justify-between w-full hover:bg-muted/50 rounded-md px-2 py-1.5 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Statistics</span>
-                    <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                      {stats.total}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Ctrl+Shift+K</span>
-                    {statsOpen ? (
-                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </div>
-                </CollapsibleTrigger>
-              </div>
-              <CollapsibleContent>
-                <div className="px-6 pb-4 border-t border-border pt-4">
-                  <div className="grid gap-4 md:grid-cols-5 max-w-[2000px] mx-auto">
-              <Card className="cursor-pointer hover:shadow-md transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Total Candidates</p>
-                      <p className="text-2xl font-bold mt-1">{stats.total.toLocaleString()}</p>
-                    </div>
-                    <Users className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="cursor-pointer hover:shadow-md transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Loaded</p>
-                      <p className="text-2xl font-bold mt-1">{stats.loaded.toLocaleString()}</p>
-                    </div>
-                    <FileText className="h-8 w-8 text-blue-600" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className={`cursor-pointer hover:shadow-md transition-shadow ${stats.modified > 0 ? 'border-orange-300 bg-orange-50/50' : ''}`}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Modified</p>
-                      <p className="text-2xl font-bold mt-1 text-orange-600">{stats.modified.toLocaleString()}</p>
-                    </div>
-                    <Edit className="h-8 w-8 text-orange-600" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="cursor-pointer hover:shadow-md transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Complete</p>
-                      <p className="text-2xl font-bold mt-1 text-green-600">{stats.complete.toLocaleString()}</p>
-                    </div>
-                    <CheckCircle2 className="h-8 w-8 text-green-600" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="cursor-pointer hover:shadow-md transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Incomplete</p>
-                      <p className="text-2xl font-bold mt-1 text-yellow-600">{stats.incomplete.toLocaleString()}</p>
-                    </div>
-                    <AlertCircle className="h-8 w-8 text-yellow-600" />
-                  </div>
-                </CardContent>
-              </Card>
-                  </div>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
-          {/* Filters - Collapsible */}
-          <div className="border-b border-border bg-background -mx-6 px-6 pb-4">
-            <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-              <div className="py-2">
-                <CollapsibleTrigger className="flex items-center justify-between w-full hover:bg-muted/50 rounded-md px-2 py-1.5 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <Filter className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Filters</span>
-                    {getActiveFilterChips().length > 0 && (
-                      <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                        {getActiveFilterChips().length}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Ctrl+K</span>
-                    {filtersOpen ? (
-                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </div>
-                </CollapsibleTrigger>
-              </div>
-              <CollapsibleContent>
-                <div className="pt-4">
-                  <div className="flex justify-center">
-                    <Card className="w-1/3">
-                      <CardContent>
-                      <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Examination</label>
-                  <SearchableSelect
-                    options={examOptions}
-                    value={selectedExamId || ""}
-                    onValueChange={handleExamChange}
-                    placeholder="Select Examination"
-                    disabled={loadingFilters || !!pendingFilters.document_id}
-                    allowAll={false}
-                    searchPlaceholder="Search examinations..."
-                    emptyMessage="No examinations found"
-                    className="flex-1"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">School</label>
-                  <SearchableSelect
-                    options={schools.map((school) => ({
-                      value: school.id,
-                      label: `${school.code} - ${school.name}`,
-                    }))}
-                    value={pendingFilters.school_id || ""}
-                    onValueChange={(value) => {
-                      if (value === "" || value === undefined) {
-                        handleFilterChange("school_id", undefined);
-                      } else {
-                        handleFilterChange("school_id", typeof value === "number" ? value : parseInt(value.toString()));
-                      }
-                    }}
-                    placeholder="Select School"
-                    disabled={loadingFilters || !selectedExamId || !!pendingFilters.document_id}
-                    allowAll={false}
-                    searchPlaceholder="Search schools..."
-                    emptyMessage="No schools found"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Programme</label>
-                  <Select
-                    value={pendingFilters.programme_id?.toString() || undefined}
-                    onValueChange={(value) => handleFilterChange("programme_id", value && value !== "all" ? parseInt(value) : undefined)}
-                    disabled={loadingFilters || loadingProgrammes || !pendingFilters.school_id || !!pendingFilters.document_id}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={pendingFilters.school_id ? "Select Programme" : "Select School First"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Programmes</SelectItem>
-                      {programmes.map((programme) => (
-                        <SelectItem key={programme.id} value={programme.id.toString()}>
-                          {programme.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Subject</label>
-                  <SearchableSelect
-                    options={subjects.map((subject) => ({
-                      value: subject.id,
-                      label: `${subject.code} - ${subject.name}`,
-                    }))}
-                    value={pendingFilters.subject_id || ""}
-                    onValueChange={(value) => {
-                      if (value === "" || value === undefined) {
-                        handleFilterChange("subject_id", undefined);
-                      } else {
-                        handleFilterChange("subject_id", typeof value === "number" ? value : parseInt(value.toString()));
-                      }
-                    }}
-                    placeholder={!pendingFilters.school_id ? "Select School First" : "Select Subject"}
-                    disabled={loadingFilters || loadingSubjects || !pendingFilters.school_id}
-                    allowAll={false}
-                    searchPlaceholder="Search subjects..."
-                    emptyMessage="No subjects found"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Document ID</label>
-                  <Input
-                    type="text"
-                    placeholder={!selectedExamId ? "Select Examination first" : "Enter document ID..."}
-                    value={pendingFilters.document_id || ""}
-                    onChange={(e) => {
-                      const docId = e.target.value || undefined;
-                      handleFilterChange("document_id", docId);
-                    }}
-                    disabled={loadingFilters || !selectedExamId}
-                    className="flex-1"
-                  />
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    onClick={handleSearch}
-                    disabled={
-                      loading ||
-                      !selectedExamId ||
-                      (!pendingFilters.document_id && (
-                        !pendingFilters.school_id ||
-                        !pendingFilters.subject_id
-                      ))
-                    }
-                    className="flex-1"
-                  >
-                    <Search className="mr-2 h-4 w-4" />
-                    Search
-                  </Button>
-                  <Button
-                    onClick={handleClearFilters}
-                    variant="outline"
-                    disabled={loading}
-                    className="flex-1"
-                  >
-                    <X className="mr-2 h-4 w-4" />
-                    Clear Filters
-                  </Button>
-                </div>
-                      </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {/* Active Filter Chips */}
-                  {getActiveFilterChips().length > 0 && (
-                    <div className="flex items-center gap-2 flex-wrap mt-3">
-                      <span className="text-xs text-muted-foreground">Active:</span>
-                      {getActiveFilterChips().map((chip, index) => (
-                        <Badge
-                          key={index}
-                          variant="secondary"
-                          className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80 text-xs h-5"
-                          onClick={chip.onRemove}
-                        >
-                          {chip.label}
-                          <X className="h-3 w-3" />
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              {scoreChanges.size > 0 && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-300">
-                    <Edit className="h-3 w-3 mr-1" />
-                    {scoreChanges.size} change{scoreChanges.size !== 1 ? 's' : ''} pending
+        {/* Dense sticky toolbar */}
+        <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <span>
+                Total <span className="font-semibold text-foreground">{stats.total.toLocaleString()}</span>
+              </span>
+              <span className="text-border">·</span>
+              <span>
+                On page <span className="font-semibold text-foreground">{stats.loaded.toLocaleString()}</span>
+              </span>
+              <span className="text-border">·</span>
+              <span>
+                Complete <span className="font-semibold text-foreground">{stats.complete.toLocaleString()}</span>
+              </span>
+              {stats.modified > 0 && (
+                <>
+                  <span className="text-border">·</span>
+                  <Badge variant="secondary" className="h-5 gap-1 border-orange-300 bg-orange-50 px-1.5 text-orange-800">
+                    <Edit className="h-3 w-3" />
+                    {stats.modified} unsaved
                   </Badge>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleClearAllChanges}
-                    disabled={saving}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Clear All Changes
-                  </Button>
-                </div>
+                </>
               )}
             </div>
-            <Button
-              onClick={handleSave}
-              disabled={scoreChanges.size === 0 || saving || (!filters.exam_id && !filters.exam_type)}
-              size="lg"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save {scoreChanges.size > 0 ? `${scoreChanges.size} Change${scoreChanges.size !== 1 ? 's' : ''}` : 'Changes'}
-                </>
-              )}
-            </Button>
+
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1">
+                <div className="flex items-center gap-1.5">
+                  <Checkbox
+                    id="toggle-obj"
+                    checked={showObj}
+                    onCheckedChange={(checked) => setShowObj(checked === true)}
+                    disabled={documentIdMatchType !== null && documentIdMatchType !== "obj"}
+                  />
+                  <label
+                    htmlFor="toggle-obj"
+                    className={cn(
+                      "text-xs",
+                      documentIdMatchType !== null && documentIdMatchType !== "obj"
+                        ? "cursor-not-allowed text-muted-foreground"
+                        : "cursor-pointer"
+                    )}
+                  >
+                    Obj
+                  </label>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Checkbox
+                    id="toggle-essay"
+                    checked={showEssay}
+                    onCheckedChange={(checked) => setShowEssay(checked === true)}
+                    disabled={documentIdMatchType !== null && documentIdMatchType !== "essay"}
+                  />
+                  <label
+                    htmlFor="toggle-essay"
+                    className={cn(
+                      "text-xs",
+                      documentIdMatchType !== null && documentIdMatchType !== "essay"
+                        ? "cursor-not-allowed text-muted-foreground"
+                        : "cursor-pointer"
+                    )}
+                  >
+                    Essay
+                  </label>
+                </div>
+                {(candidates.some((c) => c.pract_pct !== null) || showPract) && (
+                  <div className="flex items-center gap-1.5">
+                    <Checkbox
+                      id="toggle-pract"
+                      checked={showPract}
+                      onCheckedChange={(checked) => setShowPract(checked === true)}
+                      disabled={documentIdMatchType !== null && documentIdMatchType !== "pract"}
+                    />
+                    <label
+                      htmlFor="toggle-pract"
+                      className={cn(
+                        "text-xs",
+                        documentIdMatchType !== null && documentIdMatchType !== "pract"
+                          ? "cursor-not-allowed text-muted-foreground"
+                          : "cursor-pointer"
+                      )}
+                    >
+                      Pract
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <Button
+                variant={filtersOpen ? "secondary" : "outline"}
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => setFiltersOpen((o) => !o)}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                Scope
+                {getActiveFilterChips().length > 0 && (
+                  <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px]">
+                    {getActiveFilterChips().length}
+                  </Badge>
+                )}
+              </Button>
+            </div>
           </div>
 
-          {/* Candidates Table */}
-          <Card className="flex-1 overflow-hidden flex flex-col">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="text"
-                    placeholder="Search by index number or name..."
-                    value={tableSearchQuery}
-                    onChange={(e) => setTableSearchQuery(e.target.value)}
-                    className="w-64"
-                  />
-                  <Select
-                    value={tableSubjectSeriesFilter === "all" ? "all" : tableSubjectSeriesFilter.toString()}
-                    onValueChange={(value) => setTableSubjectSeriesFilter(value === "all" ? "all" : parseInt(value))}
-                  >
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="All Series" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Series</SelectItem>
-                      {Array.from(new Set(candidates.map((c) => c.subject_series).filter((s): s is number => s !== null)))
-                        .sort((a, b) => a - b)
-                        .map((series) => (
-                          <SelectItem key={series} value={series.toString()}>
-                            Series {series}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-4">
-                  {/* Test Type Toggles */}
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="toggle-obj"
-                        checked={showObj}
-                        onCheckedChange={(checked) => setShowObj(checked === true)}
-                        disabled={documentIdMatchType !== null && documentIdMatchType !== "obj"}
-                      />
-                      <label htmlFor="toggle-obj" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "obj" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
-                        Objectives
-                      </label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="toggle-essay"
-                        checked={showEssay}
-                        onCheckedChange={(checked) => setShowEssay(checked === true)}
-                        disabled={documentIdMatchType !== null && documentIdMatchType !== "essay"}
-                      />
-                      <label htmlFor="toggle-essay" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "essay" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
-                        Essay
-                      </label>
-                    </div>
-                    {candidates.some((c) => c.pract_pct !== null) && (
-                      <div className="flex items-center gap-2">
-                        <Checkbox
-                          id="toggle-pract"
-                          checked={showPract}
-                          onCheckedChange={(checked) => setShowPract(checked === true)}
-                          disabled={documentIdMatchType !== null && documentIdMatchType !== "pract"}
-                        />
-                        <label htmlFor="toggle-pract" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "pract" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
-                          Practicals
-                        </label>
-                      </div>
-                    )}
-                    {documentIdMatchType && (
-                      <Badge variant="outline" className="text-xs">
-                        Showing: {documentIdMatchType === "obj" ? "Objectives" : documentIdMatchType === "essay" ? "Essay" : "Practicals"}
-                      </Badge>
-                    )}
+          <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+            <CollapsibleContent>
+              <div className="space-y-2 border-t border-border px-4 py-3">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="w-[200px] sm:w-[240px]">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Examination</label>
+                    <SearchableSelect
+                      options={examOptions}
+                      value={selectedExamId || ""}
+                      onValueChange={handleExamChange}
+                      placeholder="Select exam"
+                      disabled={loadingFilters || !!pendingFilters.document_id}
+                      allowAll={false}
+                      searchPlaceholder="Search examinations..."
+                      emptyMessage="No examinations found"
+                      triggerClassName="h-8"
+                    />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={filters.page_size?.toString() || "20"}
+                  <div className="w-[180px] sm:w-[220px]">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">School</label>
+                    <SearchableSelect
+                      options={schools.map((school) => ({
+                        value: school.id,
+                        label: `${school.code} - ${school.name}`,
+                      }))}
+                      value={pendingFilters.school_id || ""}
                       onValueChange={(value) => {
-                        const newPageSize = parseInt(value);
-                        setFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
-                        setPendingFilters((prev) => ({ ...prev, page_size: newPageSize, page: 1 }));
+                        if (value === "" || value === undefined) {
+                          handleFilterChange("school_id", undefined);
+                        } else {
+                          handleFilterChange(
+                            "school_id",
+                            typeof value === "number" ? value : parseInt(value.toString())
+                          );
+                        }
                       }}
+                      placeholder="Select school"
+                      disabled={loadingFilters || !selectedExamId || !!pendingFilters.document_id}
+                      allowAll={false}
+                      searchPlaceholder="Search schools..."
+                      emptyMessage="No schools found"
+                      triggerClassName="h-8"
+                    />
+                  </div>
+                  <div className="w-[160px]">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Programme</label>
+                    <Select
+                      value={pendingFilters.programme_id?.toString() || undefined}
+                      onValueChange={(value) =>
+                        handleFilterChange(
+                          "programme_id",
+                          value && value !== "all" ? parseInt(value) : undefined
+                        )
+                      }
+                      disabled={
+                        loadingFilters ||
+                        loadingProgrammes ||
+                        !pendingFilters.school_id ||
+                        !!pendingFilters.document_id
+                      }
                     >
-                      <SelectTrigger className="w-24 h-8">
-                        <SelectValue />
+                      <SelectTrigger className="h-8">
+                        <SelectValue placeholder="All" />
                       </SelectTrigger>
                       <SelectContent>
-                        {[25, 50, 75, 100, 125, 150, 175, 200].map((size) => (
-                          <SelectItem key={size} value={size.toString()}>
-                            {size}
+                        <SelectItem value="all">All programmes</SelectItem>
+                        {programmes.map((programme) => (
+                          <SelectItem key={programme.id} value={programme.id.toString()}>
+                            {programme.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <span className="text-sm text-muted-foreground">per page</span>
                   </div>
+                  <div className="w-[180px] sm:w-[220px]">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Subject</label>
+                    <SearchableSelect
+                      options={subjects.map((subject) => ({
+                        value: subject.id,
+                        label: `${subject.code} - ${subject.name}`,
+                      }))}
+                      value={pendingFilters.subject_id || ""}
+                      onValueChange={(value) => {
+                        if (value === "" || value === undefined) {
+                          handleFilterChange("subject_id", undefined);
+                        } else {
+                          handleFilterChange(
+                            "subject_id",
+                            typeof value === "number" ? value : parseInt(value.toString())
+                          );
+                        }
+                      }}
+                      placeholder={!pendingFilters.school_id ? "School first" : "Select subject"}
+                      disabled={loadingFilters || loadingSubjects || !pendingFilters.school_id}
+                      allowAll={false}
+                      searchPlaceholder="Search subjects..."
+                      emptyMessage="No subjects found"
+                      triggerClassName="h-8"
+                    />
+                  </div>
+                  <div className="w-[140px]">
+                    <label className="mb-1 block text-[11px] text-muted-foreground">Document ID</label>
+                    <Input
+                      type="text"
+                      placeholder={!selectedExamId ? "Exam first" : "Optional…"}
+                      value={pendingFilters.document_id || ""}
+                      onChange={(e) => handleFilterChange("document_id", e.target.value || undefined)}
+                      disabled={loadingFilters || !selectedExamId}
+                      className="h-8"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    onClick={handleSearch}
+                    disabled={
+                      loading ||
+                      !selectedExamId ||
+                      (!pendingFilters.document_id &&
+                        (!pendingFilters.school_id || !pendingFilters.subject_id))
+                    }
+                  >
+                    <Search className="mr-1.5 h-3.5 w-3.5" />
+                    Search
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8"
+                    onClick={handleClearFilters}
+                    disabled={loading}
+                  >
+                    Clear
+                  </Button>
                 </div>
+                {getActiveFilterChips().length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {getActiveFilterChips().map((chip, index) => (
+                      <Badge
+                        key={index}
+                        variant="secondary"
+                        className="h-5 cursor-pointer gap-1 pr-1 text-xs hover:bg-secondary/80"
+                        onClick={chip.onRemove}
+                      >
+                        {chip.label}
+                        <X className="h-3 w-3" />
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-auto">
-              {error && (
-                <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
-                  {error}
-                </div>
-              )}
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
 
-              {!filters.exam_id && !filters.exam_type ? (
-                <div className="text-center text-muted-foreground py-8">
-                  Please select an examination to view candidates
-                </div>
-              ) : loading && loadingFilters ? (
-                <div className="flex flex-col items-center justify-center h-32">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                  <div className="text-sm text-muted-foreground">Loading candidates...</div>
-                  <div className="mt-4 w-full max-w-md">
-                    <div className="space-y-2">
-                      {[...Array(5)].map((_, i) => (
-                        <div key={i} className="h-12 bg-muted animate-pulse rounded" />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (() => {
-                // Filter candidates based on search query and subject series
+        {/* Table region */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+            <Input
+              type="text"
+              placeholder="Filter index or name…"
+              value={tableSearchQuery}
+              onChange={(e) => setTableSearchQuery(e.target.value)}
+              className="h-8 w-56"
+            />
+            <Select
+              value={tableSubjectSeriesFilter === "all" ? "all" : tableSubjectSeriesFilter.toString()}
+              onValueChange={(value) =>
+                setTableSubjectSeriesFilter(value === "all" ? "all" : parseInt(value))
+              }
+            >
+              <SelectTrigger className="h-8 w-28">
+                <SelectValue placeholder="Series" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All series</SelectItem>
+                {Array.from(
+                  new Set(
+                    candidates
+                      .map((c) => c.subject_series)
+                      .filter((s): s is number => s !== null)
+                  )
+                )
+                  .sort((a, b) => a - b)
+                  .map((series) => (
+                    <SelectItem key={series} value={series.toString()}>
+                      Series {series}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {documentIdMatchType && (
+              <Badge variant="outline" className="text-xs">
+                Showing:{" "}
+                {documentIdMatchType === "obj"
+                  ? "Objectives"
+                  : documentIdMatchType === "essay"
+                    ? "Essay"
+                    : "Practicals"}
+              </Badge>
+            )}
+            {hasScopedOnce && !filtersOpen && (
+              <button
+                type="button"
+                className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setFiltersOpen(true)}
+              >
+                Change scope
+                <ChevronDown className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-auto px-4 py-2">
+            {error && (
+              <div className="mb-3 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            {!filters.exam_id && !filters.exam_type ? (
+              <div className="flex h-40 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                <p className="text-sm font-medium text-foreground">Choose a scope to begin</p>
+                <p className="text-xs">Select an examination, school, and subject, then Search.</p>
+                {!filtersOpen && (
+                  <Button size="sm" variant="outline" className="mt-1 h-8" onClick={() => setFiltersOpen(true)}>
+                    Open scope
+                  </Button>
+                )}
+              </div>
+            ) : loading ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <Loader2 className="mb-3 h-6 w-6 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Loading candidates…</p>
+              </div>
+            ) : (
+              (() => {
                 const filteredCandidates = candidates.filter((candidate) => {
-                  // Search filter
                   const searchLower = tableSearchQuery.toLowerCase();
                   const matchesSearch =
                     !searchLower ||
                     candidate.candidate_index_number.toLowerCase().includes(searchLower) ||
                     candidate.candidate_name.toLowerCase().includes(searchLower);
-
-                  // Subject series filter
                   const matchesSeries =
-                    tableSubjectSeriesFilter === "all" || candidate.subject_series === tableSubjectSeriesFilter;
-
+                    tableSubjectSeriesFilter === "all" ||
+                    candidate.subject_series === tableSubjectSeriesFilter;
                   return matchesSearch && matchesSeries;
                 });
 
-                // Determine which test types to show based on toggle state
                 const hasObj = showObj;
                 const hasEssay = showEssay;
                 const hasPract = showPract && candidates.some((c) => c.pract_pct !== null);
                 const testTypeCount = [hasObj, hasEssay, hasPract].filter(Boolean).length;
 
+                const fieldEnabled = (
+                  candidate: CandidateScoreEntry,
+                  field: "obj" | "essay" | "pract"
+                ) => {
+                  if (!candidate.score_id) return false;
+                  if (field === "pract" && candidate.pract_pct === null) return false;
+                  if (documentIdMatchType !== null && documentIdMatchType !== field) return false;
+                  return true;
+                };
+
                 return (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Index Number</TableHead>
-                        <TableHead>Candidate Name</TableHead>
-                        <TableHead>Subject Series</TableHead>
-                        {hasObj && <TableHead>Objectives</TableHead>}
+                        <TableHead>Index</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="w-20">Series</TableHead>
+                        {hasObj && <TableHead>Obj</TableHead>}
                         {hasEssay && <TableHead>Essay</TableHead>}
-                        {hasPract && <TableHead>Practicals</TableHead>}
+                        {hasPract && <TableHead>Pract</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredCandidates.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={3 + testTypeCount} className="text-center text-muted-foreground">
+                          <TableCell
+                            colSpan={3 + testTypeCount}
+                            className="py-10 text-center text-muted-foreground"
+                          >
                             {candidates.length === 0
                               ? "No candidates found with existing scores"
-                              : "No candidates match the search criteria"}
+                              : "No candidates match the table filter"}
                           </TableCell>
                         </TableRow>
                       ) : (
                         filteredCandidates.map((candidate) => {
                           const rowHasChanges = hasRowChanges(candidate);
-                          const rowClass = rowHasChanges
-                            ? "bg-orange-50/50 hover:bg-orange-100/50 border-l-2 border-l-orange-500"
-                            : "";
                           return (
-                          <TableRow key={candidate.score_id || candidate.candidate_id} className={rowClass}>
-                            <TableCell className="font-medium">{candidate.candidate_index_number}</TableCell>
-                            <TableCell>{candidate.candidate_name}</TableCell>
-                            <TableCell>{candidate.subject_series ?? "-"}</TableCell>
-                            {hasObj && (
-                              <TableCell>
-                                <div className="relative">
+                            <TableRow
+                              key={candidate.score_id || candidate.candidate_id}
+                              className={cn(
+                                rowHasChanges && "border-l-2 border-l-orange-500 bg-orange-50/40"
+                              )}
+                            >
+                              <TableCell className="font-medium tabular-nums">
+                                {candidate.candidate_index_number}
+                              </TableCell>
+                              <TableCell>{candidate.candidate_name}</TableCell>
+                              <TableCell>{candidate.subject_series ?? "—"}</TableCell>
+                              {hasObj && (
+                                <TableCell>
                                   <Input
                                     type="text"
                                     value={getScoreValue(candidate, "obj")}
-                                    onChange={(e) => handleScoreChange(candidate, "obj", e.target.value)}
-                                    className={`w-32 ${hasFieldChanged(candidate, "obj") ? "border-orange-500 focus:border-orange-600" : ""}`}
-                                    disabled={!candidate.score_id}
+                                    onChange={(e) =>
+                                      handleScoreChange(candidate, "obj", e.target.value)
+                                    }
+                                    className={cn(
+                                      "h-8 w-24",
+                                      hasFieldChanged(candidate, "obj") &&
+                                        "border-orange-500 focus-visible:border-orange-600"
+                                    )}
+                                    disabled={!fieldEnabled(candidate, "obj")}
                                   />
-                                  {hasFieldChanged(candidate, "obj") && (
-                                    <div className="absolute -right-2 -top-1">
-                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )}
-                            {hasEssay && (
-                              <TableCell>
-                                <div className="relative">
+                                </TableCell>
+                              )}
+                              {hasEssay && (
+                                <TableCell>
                                   <Input
                                     type="text"
                                     value={getScoreValue(candidate, "essay")}
-                                    onChange={(e) => handleScoreChange(candidate, "essay", e.target.value)}
-                                    className={`w-32 ${hasFieldChanged(candidate, "essay") ? "border-orange-500 focus:border-orange-600" : ""}`}
-                                    disabled={!candidate.score_id || (documentIdMatchType !== null && documentIdMatchType !== "essay")}
+                                    onChange={(e) =>
+                                      handleScoreChange(candidate, "essay", e.target.value)
+                                    }
+                                    className={cn(
+                                      "h-8 w-24",
+                                      hasFieldChanged(candidate, "essay") &&
+                                        "border-orange-500 focus-visible:border-orange-600"
+                                    )}
+                                    disabled={!fieldEnabled(candidate, "essay")}
                                   />
-                                  {hasFieldChanged(candidate, "essay") && (
-                                    <div className="absolute -right-2 -top-1">
-                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )}
-                            {hasPract && (
-                              <TableCell>
-                                <div className="relative">
+                                </TableCell>
+                              )}
+                              {hasPract && (
+                                <TableCell>
                                   <Input
                                     type="text"
                                     value={getScoreValue(candidate, "pract")}
-                                    onChange={(e) => handleScoreChange(candidate, "pract", e.target.value)}
-                                    className={`w-32 ${hasFieldChanged(candidate, "pract") ? "border-orange-500 focus:border-orange-600" : ""}`}
-                                    disabled={!candidate.score_id || candidate.pract_pct === null || (documentIdMatchType !== null && documentIdMatchType !== "pract")}
+                                    onChange={(e) =>
+                                      handleScoreChange(candidate, "pract", e.target.value)
+                                    }
+                                    className={cn(
+                                      "h-8 w-24",
+                                      hasFieldChanged(candidate, "pract") &&
+                                        "border-orange-500 focus-visible:border-orange-600"
+                                    )}
+                                    disabled={!fieldEnabled(candidate, "pract")}
                                   />
-                                  {hasFieldChanged(candidate, "pract") && (
-                                    <div className="absolute -right-2 -top-1">
-                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )}
-                          </TableRow>
+                                </TableCell>
+                              )}
+                            </TableRow>
                           );
                         })
                       )}
                     </TableBody>
                   </Table>
                 );
-              })()}
+              })()
+            )}
+          </div>
 
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <div className="text-sm text-muted-foreground">
-                    Page {currentPage} of {totalPages}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const newPage = (filters.page || 1) - 1;
-                        setFilters((prev) => ({ ...prev, page: newPage }));
-                        setPendingFilters((prev) => ({ ...prev, page: newPage }));
-                      }}
-                      disabled={currentPage === 1}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const newPage = (filters.page || 1) + 1;
-                        setFilters((prev) => ({ ...prev, page: newPage }));
-                        setPendingFilters((prev) => ({ ...prev, page: newPage }));
-                      }}
-                      disabled={currentPage === totalPages}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
+          {/* Sticky footer: save + pagination */}
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t border-border bg-background px-4 py-2">
+            <div className="flex items-center gap-2">
+              {scoreChanges.size > 0 ? (
+                <>
+                  <Badge
+                    variant="secondary"
+                    className="h-6 gap-1 border-orange-300 bg-orange-50 text-orange-800"
+                  >
+                    <Edit className="h-3 w-3" />
+                    {scoreChanges.size} unsaved
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8"
+                    onClick={handleClearAllChanges}
+                    disabled={saving}
+                  >
+                    Discard
+                  </Button>
+                </>
+              ) : (
+                <span className="text-xs text-muted-foreground">No unsaved changes</span>
               )}
-            </CardContent>
-          </Card>
+            </div>
+
+            <Button
+              size="sm"
+              className="h-8"
+              onClick={() => void handleSave()}
+              disabled={scoreChanges.size === 0 || saving}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="mr-1.5 h-3.5 w-3.5" />
+                  Save{scoreChanges.size > 0 ? ` ${scoreChanges.size}` : ""}
+                  <kbd className="ml-1.5 hidden rounded border border-border/60 px-1 text-[10px] font-normal opacity-70 sm:inline">
+                    ⌘S
+                  </kbd>
+                </>
+              )}
+            </Button>
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Select
+                value={(filters.page_size || DEFAULT_PAGE_SIZE).toString()}
+                onValueChange={(value) => changePageSize(parseInt(value))}
+              >
+                <SelectTrigger className="h-8 w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[25, 50, 75, 100, 125, 150, 175, 200].map((size) => (
+                    <SelectItem key={size} value={size.toString()}>
+                      {size}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground">per page</span>
+              {totalPages > 1 && (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    Page {currentPage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => changePage((filters.page || 1) - 1)}
+                    disabled={currentPage === 1 || loading}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => changePage((filters.page || 1) + 1)}
+                    disabled={currentPage === totalPages || loading}
+                  >
+                    Next
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </DashboardLayout>
