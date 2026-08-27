@@ -52,7 +52,11 @@ import {
   documentPaperLabel,
 } from "@/components/DocumentStatusMeta";
 import { ScoreMigrationConfirmDialog } from "@/components/ScoreMigrationConfirmDialog";
-import { parseDocumentIdParts, validateDocumentId } from "@/lib/document-id";
+import {
+  documentHasCompleteSheetIdentity,
+  parseDocumentIdParts,
+  validateDocumentId,
+} from "@/lib/document-id";
 import {
   API_BASE_URL,
   downloadDocument,
@@ -814,15 +818,19 @@ export function DocumentViewer({
     const advanceOpt =
       editingId && !needsManualId ? false : undefined;
 
+    const hasCompletePriorIdentity = documentHasCompleteSheetIdentity(document);
     const oldId = document.extracted_id || "";
     const oldParts = parseDocumentIdParts(oldId);
     const newParts = parseDocumentIdParts(trimmedId);
     const subjectChanged =
+      hasCompletePriorIdentity &&
       Boolean(oldParts.subjectCode || newParts.subjectCode) &&
       oldParts.subjectCode !== newParts.subjectCode;
     const oldPaper = document.test_type || oldParts.testType;
     const paperChanged =
-      Boolean(oldPaper || newParts.testType) && oldPaper !== newParts.testType;
+      hasCompletePriorIdentity &&
+      Boolean(oldPaper || newParts.testType) &&
+      oldPaper !== newParts.testType;
 
     setSavingId(true);
     setIdError(null);
