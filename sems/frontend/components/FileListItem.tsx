@@ -10,6 +10,7 @@ import { parseDuplicateConflictDocumentId } from "@/lib/id-extraction-errors";
 import {
   DocumentPaperIdentity,
   DocumentPriorityStatus,
+  documentHasSheetChangeMarker,
   documentPaperLabel,
 } from "@/components/DocumentStatusMeta";
 
@@ -64,7 +65,7 @@ export function FileListItem({
   const selectionOn = enableSelection ?? bulkMode;
   const hasPaperMeta =
     Boolean(documentPaperLabel(document.test_type)) ||
-    Boolean(document.test_type_changed_at);
+    documentHasSheetChangeMarker(document);
 
   const isLarge = size === "large-list";
   const paddingClass = isLarge ? "py-4" : "py-3";

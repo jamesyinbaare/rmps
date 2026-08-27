@@ -92,6 +92,10 @@ class DocumentResponse(DocumentBase):
     scores_unmatched_count: int | None = None
     test_type_changed_at: datetime | None = None
     test_type_changed_from: str | None = None
+    subject_changed_at: datetime | None = None
+    subject_changed_from: int | None = None
+    subject_changed_from_code: str | None = None
+    subject_changed_from_name: str | None = None
     extractions: list[ScoreExtractionItem] = Field(default_factory=list)
     scores_moved: int | None = Field(
         None, description="Applied score rows migrated on ID/subject/paper update"
@@ -136,6 +140,10 @@ class DocumentListItem(DocumentBase):
     scores_unmatched_count: int | None = None
     test_type_changed_at: datetime | None = None
     test_type_changed_from: str | None = None
+    subject_changed_at: datetime | None = None
+    subject_changed_from: int | None = None
+    subject_changed_from_code: str | None = None
+    subject_changed_from_name: str | None = None
     extractions: list[ScoreExtractionItem] = Field(default_factory=list)
 
     class Config:

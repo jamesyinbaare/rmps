@@ -33,8 +33,12 @@ export interface Document {
   scores_applied_at: string | null; // When extracted scores were applied to SubjectScore
   scores_applied_count: number | null;
   scores_unmatched_count: number | null;
-  test_type_changed_at?: string | null; // When paper/test_type was reclassified via Advanced Edit
+  test_type_changed_at?: string | null; // When paper/test_type was reclassified
   test_type_changed_from?: string | null; // Previous paper digit before last reclassify
+  subject_changed_at?: string | null; // When subject was reassigned via Edit ID
+  subject_changed_from?: number | null; // Previous subject_id before last reassignment
+  subject_changed_from_code?: string | null;
+  subject_changed_from_name?: string | null;
   extractions?: DocumentScoreExtraction[];
   /** Present on ID update responses when applied scores were migrated */
   scores_moved?: number | null;
@@ -199,6 +203,12 @@ export type ExamType = "Certificate II Examinations" | "Advance" | "Technician P
 
 export type ExamSeries = "MAY/JUNE" | "NOV/DEC";
 
+/** Sheet reassignment filter dimension for ICM Studio documents list */
+export type SheetReassignmentFilter = "all" | "subject" | "paper";
+
+/** Which side of a subject change to match when filtering by subject */
+export type SubjectChangedSubjectScope = "either" | "current" | "prior";
+
 export interface DocumentFilters {
   exam_id?: number;
   exam_type?: ExamType;
@@ -209,8 +219,16 @@ export interface DocumentFilters {
   id_extraction_status?: string;
   id_extraction_error_code?: string;
   test_type?: string;
-  /** When true, only documents whose paper was reclassified */
+  /** When true, documents with paper or subject reassignment (combined OR filter) */
   test_type_changed?: boolean;
+  /** When true, only documents whose subject was reassigned */
+  subject_changed?: boolean;
+  /** When true, only documents whose paper was reassigned */
+  paper_changed?: boolean;
+  /** With subject_changed, limit to sheets whose current or prior subject is in this list */
+  subject_changed_subject_ids?: number[];
+  /** With subject_changed, match current subject, prior subject, or either (default) */
+  subject_changed_subject_scope?: SubjectChangedSubjectScope;
   /** Filter by other-paper counterpart: paired | missing */
   paper_pair?: "paired" | "missing";
   q?: string;

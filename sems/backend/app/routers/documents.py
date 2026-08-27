@@ -8,7 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from PIL import Image
-from sqlalchemy import and_, case, exists, func, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.orm import aliased, selectinload
 
 from app.config import settings
@@ -76,6 +76,8 @@ from app.services.id_extraction import (
     resolve_id_extraction_conflicts,
 )
 from app.services.paper_reclassify import (
+    apply_subject_change_markers,
+    apply_test_type_change_markers,
     find_paper_counterpart,
     migrate_applied_scores_for_id_change,
     reclassify_document_paper,
@@ -102,13 +104,97 @@ ID_EXTRACTION_CONCURRENCY = 4
 THUMBNAIL_MAX_SIZE = 320
 
 
-def _document_to_list_item(doc: Document) -> DocumentListItem:
+def _apply_reassignment_filters(
+    stmt: Any,
+    *,
+    test_type_changed: bool | None,
+    subject_changed: bool | None,
+    paper_changed: bool | None,
+) -> Any:
+    """Filter documents by sheet reassignment (subject, paper, or either)."""
+    if subject_changed is True:
+        return stmt.where(Document.subject_changed_at.isnot(None))
+    if paper_changed is True:
+        return stmt.where(Document.test_type_changed_at.isnot(None))
+    if test_type_changed is True:
+        return stmt.where(
+            or_(
+                Document.test_type_changed_at.isnot(None),
+                Document.subject_changed_at.isnot(None),
+            )
+        )
+    return stmt
+
+
+def _parse_csv_ints(value: str | None) -> list[int]:
+    if not value:
+        return []
+    ids: list[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            continue
+    return ids
+
+
+def _subject_changed_scope_ids(
+    subject_id: int | None,
+    subject_changed_subject_ids: str | None,
+) -> list[int]:
+    ids = _parse_csv_ints(subject_changed_subject_ids)
+    if subject_id is not None and subject_id not in ids:
+        ids.append(subject_id)
+    return ids
+
+
+def _apply_subject_filter(
+    stmt: Any,
+    *,
+    subject_id: int | None,
+    subject_changed: bool | None,
+    subject_changed_subject_ids: str | None,
+    subject_changed_subject_scope: str | None,
+) -> Any:
+    if subject_changed is True:
+        scope_ids = _subject_changed_scope_ids(subject_id, subject_changed_subject_ids)
+        if scope_ids:
+            scope = (subject_changed_subject_scope or "either").lower()
+            if scope == "current":
+                return stmt.where(Document.subject_id.in_(scope_ids))
+            if scope == "prior":
+                return stmt.where(Document.subject_changed_from.in_(scope_ids))
+            return stmt.where(
+                or_(
+                    Document.subject_id.in_(scope_ids),
+                    Document.subject_changed_from.in_(scope_ids),
+                )
+            )
+        return stmt
+    if subject_id is not None:
+        return stmt.where(Document.subject_id == subject_id)
+    return stmt
+
+
+def _document_to_list_item(
+    doc: Document,
+    *,
+    prior_subjects: dict[int, Subject] | None = None,
+) -> DocumentListItem:
     """Build a slim list item without scores_extraction_data."""
     item = DocumentListItem.model_validate(doc)
+    prior = None
+    if doc.subject_changed_from and prior_subjects:
+        prior = prior_subjects.get(doc.subject_changed_from)
     return item.model_copy(
         update={
             "school_name": doc.school.name if getattr(doc, "school", None) else None,
             "subject_name": doc.subject.name if getattr(doc, "subject", None) else None,
+            "subject_changed_from_code": prior.code if prior else None,
+            "subject_changed_from_name": prior.name if prior else None,
         }
     )
 
@@ -1035,9 +1121,23 @@ async def get_document(document_id: int, session: DBSessionDep) -> DocumentRespo
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     response = DocumentResponse.model_validate(document)
+    prior_code = None
+    prior_name = None
+    if document.subject_changed_from is not None:
+        prior = (
+            await session.execute(
+                select(Subject).where(Subject.id == document.subject_changed_from)
+            )
+        ).scalar_one_or_none()
+        if prior:
+            prior_code = prior.code
+            prior_name = prior.name
     return response.model_copy(
         update={
             "school_name": document.school.name if document.school else None,
+            "subject_name": document.subject.name if document.subject else None,
+            "subject_changed_from_code": prior_code,
+            "subject_changed_from_name": prior_name,
         }
     )
 
@@ -1160,7 +1260,32 @@ async def list_documents(
     ),
     test_type_changed: bool | None = Query(
         None,
-        description="When true, only documents whose paper was reclassified via Advanced Edit",
+        description=(
+            "When true, only documents whose paper or subject was reassigned "
+            "(test_type_changed_at or subject_changed_at set)"
+        ),
+    ),
+    subject_changed: bool | None = Query(
+        None,
+        description="When true, only documents whose subject was reassigned (subject_changed_at set)",
+    ),
+    paper_changed: bool | None = Query(
+        None,
+        description="When true, only documents whose paper was reassigned (test_type_changed_at set)",
+    ),
+    subject_changed_subject_ids: str | None = Query(
+        None,
+        description=(
+            "Comma-separated subject IDs; with subject_changed=true, matches subjects "
+            "per subject_changed_subject_scope"
+        ),
+    ),
+    subject_changed_subject_scope: str | None = Query(
+        None,
+        description=(
+            "With subject_changed=true: either (default), current (subject_id only), "
+            "or prior (subject_changed_from only)"
+        ),
     ),
     paper_pair: str | None = Query(
         None,
@@ -1169,6 +1294,15 @@ async def list_documents(
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
+
+    if subject_changed_subject_scope is not None:
+        normalized_scope = subject_changed_subject_scope.lower()
+        if normalized_scope not in {"either", "current", "prior"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="subject_changed_subject_scope must be either, current, or prior",
+            )
+        subject_changed_subject_scope = normalized_scope
 
     effective_test_type = test_type
     if paper_pair == "paired" and effective_test_type is None:
@@ -1196,14 +1330,23 @@ async def list_documents(
 
     if school_id is not None:
         base_stmt = base_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
-        base_stmt = base_stmt.where(Document.subject_id == subject_id)
+    base_stmt = _apply_subject_filter(
+        base_stmt,
+        subject_id=subject_id,
+        subject_changed=subject_changed,
+        subject_changed_subject_ids=subject_changed_subject_ids,
+        subject_changed_subject_scope=subject_changed_subject_scope,
+    )
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
     if effective_test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == effective_test_type)
-    if test_type_changed is True:
-        base_stmt = base_stmt.where(Document.test_type_changed_at.isnot(None))
+    base_stmt = _apply_reassignment_filters(
+        base_stmt,
+        test_type_changed=test_type_changed,
+        subject_changed=subject_changed,
+        paper_changed=paper_changed,
+    )
 
     error_codes: list[str] = []
     if id_extraction_error_code:
@@ -1271,14 +1414,23 @@ async def list_documents(
 
     if school_id is not None:
         count_stmt = count_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
-        count_stmt = count_stmt.where(Document.subject_id == subject_id)
+    count_stmt = _apply_subject_filter(
+        count_stmt,
+        subject_id=subject_id,
+        subject_changed=subject_changed,
+        subject_changed_subject_ids=subject_changed_subject_ids,
+        subject_changed_subject_scope=subject_changed_subject_scope,
+    )
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
     if effective_test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == effective_test_type)
-    if test_type_changed is True:
-        count_stmt = count_stmt.where(Document.test_type_changed_at.isnot(None))
+    count_stmt = _apply_reassignment_filters(
+        count_stmt,
+        test_type_changed=test_type_changed,
+        subject_changed=subject_changed,
+        paper_changed=paper_changed,
+    )
     if error_codes:
         count_stmt = count_stmt.where(Document.id_extraction_error_code.in_(error_codes))
         if id_extraction_status is None:
@@ -1332,10 +1484,25 @@ async def list_documents(
     result = await session.execute(stmt)
     documents = result.scalars().unique().all()
 
+    prior_ids = {
+        doc.subject_changed_from
+        for doc in documents
+        if doc.subject_changed_from is not None
+    }
+    prior_subjects: dict[int, Subject] = {}
+    if prior_ids:
+        prior_rows = (
+            await session.execute(select(Subject).where(Subject.id.in_(prior_ids)))
+        ).scalars().all()
+        prior_subjects = {s.id: s for s in prior_rows}
+
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return DocumentListResponse(
-        items=[_document_to_list_item(doc) for doc in documents],
+        items=[
+            _document_to_list_item(doc, prior_subjects=prior_subjects)
+            for doc in documents
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -1705,16 +1872,41 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             )
         scores_moved = migration.scores_moved
 
-        if old_test_type and new_test_type and old_test_type != new_test_type:
-            document.test_type_changed_from = old_test_type
-            document.test_type_changed_at = datetime.utcnow()
+    if old_test_type and new_test_type and old_test_type != new_test_type:
+        apply_test_type_change_markers(
+            document,
+            old_test_type=old_test_type,
+            new_test_type=new_test_type,
+        )
+    if old_subject_id != new_subject_id:
+        apply_subject_change_markers(
+            document,
+            old_subject_id=old_subject_id,
+            new_subject_id=new_subject_id,
+        )
 
     await session.commit()
     await session.refresh(document)
 
     response = DocumentResponse.model_validate(document)
-    response.scores_moved = scores_moved
-    return response
+    prior_code = None
+    prior_name = None
+    if document.subject_changed_from is not None:
+        prior = (
+            await session.execute(
+                select(Subject).where(Subject.id == document.subject_changed_from)
+            )
+        ).scalar_one_or_none()
+        if prior:
+            prior_code = prior.code
+            prior_name = prior.name
+    return response.model_copy(
+        update={
+            "scores_moved": scores_moved,
+            "subject_changed_from_code": prior_code,
+            "subject_changed_from_name": prior_name,
+        }
+    )
 
 
 @router.post(

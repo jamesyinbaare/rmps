@@ -11,6 +11,8 @@ from app.services.paper_reclassify import (
     MigrationResult,
     ScoreConflict,
     _is_target_occupied,
+    apply_subject_change_markers,
+    apply_test_type_change_markers,
     migrate_applied_scores_for_id_change,
     paper_label,
     rewrite_extracted_id_test_type,
@@ -34,6 +36,48 @@ def test_paper_label() -> None:
     assert paper_label("2") == "Essay"
     assert paper_label("3") == "Practicals"
     assert paper_label(None) is None
+
+
+def test_apply_test_type_change_markers_stamp_clear_and_chain() -> None:
+    doc = SimpleNamespace(test_type_changed_from=None, test_type_changed_at=None)
+
+    apply_test_type_change_markers(doc, old_test_type="1", new_test_type="2")
+    assert doc.test_type_changed_from == "1"
+    assert doc.test_type_changed_at is not None
+
+    apply_test_type_change_markers(doc, old_test_type="2", new_test_type="1")
+    assert doc.test_type_changed_from is None
+    assert doc.test_type_changed_at is None
+
+    apply_test_type_change_markers(doc, old_test_type="1", new_test_type="2")
+    apply_test_type_change_markers(doc, old_test_type="2", new_test_type="3")
+    assert doc.test_type_changed_from == "2"
+    assert doc.test_type_changed_at is not None
+
+
+def test_apply_subject_change_markers_stamp_clear_and_independent() -> None:
+    doc = SimpleNamespace(
+        test_type_changed_from="1",
+        test_type_changed_at="kept",
+        subject_changed_from=None,
+        subject_changed_at=None,
+    )
+
+    apply_subject_change_markers(doc, old_subject_id=10, new_subject_id=20)
+    assert doc.subject_changed_from == 10
+    assert doc.subject_changed_at is not None
+    assert doc.test_type_changed_from == "1"
+    assert doc.test_type_changed_at == "kept"
+
+    apply_subject_change_markers(doc, old_subject_id=20, new_subject_id=10)
+    assert doc.subject_changed_from is None
+    assert doc.subject_changed_at is None
+    assert doc.test_type_changed_from == "1"
+
+    apply_subject_change_markers(doc, old_subject_id=10, new_subject_id=20)
+    apply_subject_change_markers(doc, old_subject_id=20, new_subject_id=30)
+    assert doc.subject_changed_from == 20
+    assert doc.subject_changed_at is not None
 
 
 def test_is_target_occupied_empty() -> None:

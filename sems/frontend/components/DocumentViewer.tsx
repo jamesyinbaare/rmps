@@ -46,6 +46,11 @@ import {
   parseDuplicateConflictDocumentId,
 } from "@/lib/id-extraction-errors";
 import { DocumentIdBreakdown } from "@/components/DocumentIdBreakdown";
+import {
+  DocumentPaperIdentity,
+  documentHasSheetChangeMarker,
+  documentPaperLabel,
+} from "@/components/DocumentStatusMeta";
 import { ScoreMigrationConfirmDialog } from "@/components/ScoreMigrationConfirmDialog";
 import { parseDocumentIdParts, validateDocumentId } from "@/lib/document-id";
 import {
@@ -828,34 +833,16 @@ export function DocumentViewer({
           school_id: validation.schoolId,
           subject_id: validation.subjectId,
         });
-        if (preview.blocking_errors.length > 0) {
-          const msg = preview.blocking_errors.join("; ");
-          setIdError(msg);
-          if (preview.conflict_document_id) {
-            setMigrationPreview(preview);
-            setPendingMigration({
-              extractedId: trimmedId,
-              schoolId: validation.schoolId,
-              subjectId: validation.subjectId,
-              advance: advanceOpt,
-            });
-            setMigrationOpen(true);
-            return;
-          }
-          toast.error(msg);
-          return;
-        }
-        if (preview.requires_confirm) {
-          setMigrationPreview(preview);
-          setPendingMigration({
-            extractedId: trimmedId,
-            schoolId: validation.schoolId,
-            subjectId: validation.subjectId,
-            advance: advanceOpt,
-          });
-          setMigrationOpen(true);
-          return;
-        }
+        // Always open sheet-change review so clerks see before→after (including blockers)
+        setMigrationPreview(preview);
+        setPendingMigration({
+          extractedId: trimmedId,
+          schoolId: validation.schoolId,
+          subjectId: validation.subjectId,
+          advance: advanceOpt,
+        });
+        setMigrationOpen(true);
+        return;
       }
 
       await commitIdUpdate(trimmedId, validation.schoolId, validation.subjectId, {
@@ -1277,7 +1264,60 @@ export function DocumentViewer({
             </div>
           </div>
         ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-background px-3 py-2">
+              <div className="min-w-0 flex-1 space-y-1">
+                {!showIdForm ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="truncate font-mono text-sm font-semibold tracking-wide">
+                        {document.extracted_id || "—"}
+                      </p>
+                      {document.id_extraction_method && (
+                        <span
+                          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
+                        >
+                          {getExtractionMethodLabel(document.id_extraction_method)}
+                        </span>
+                      )}
+                      {documentHasSheetChangeMarker(document) && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 ring-1 ring-amber-500/25">
+                          <DocumentPaperIdentity
+                            document={document}
+                            textClassName="text-[11px]"
+                          />
+                        </span>
+                      )}
+                    </div>
+                    {(schoolName || subjectName || documentPaperLabel(document.test_type)) && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {[
+                          schoolName,
+                          subjectName,
+                          documentPaperLabel(document.test_type),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {needsManualId ? "Enter sheet ID" : "Edit sheet ID"}
+                    {document.extracted_id ? (
+                      <>
+                        {" · "}
+                        <span className="font-mono text-foreground">
+                          {document.extracted_id}
+                        </span>
+                      </>
+                    ) : null}
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0">{floatingActions}</div>
+            </div>
+
             <div
               className={cn(
                 "relative flex min-h-0 flex-1",
@@ -1285,29 +1325,6 @@ export function DocumentViewer({
               )}
             >
               <div className="relative min-h-0 flex-1 overflow-hidden bg-zinc-950">
-                <div className="absolute right-2 top-2 z-20">{floatingActions}</div>
-
-                {!showIdForm && (
-                  <div className="absolute left-2 top-2 z-20 max-w-[min(24rem,calc(100%-8rem))] rounded-lg border border-border/60 bg-background/90 px-2.5 py-1.5 shadow-md backdrop-blur-sm">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate font-mono text-sm font-semibold tracking-wide">
-                        {document.extracted_id || "—"}
-                      </p>
-                      {document.id_extraction_method && (
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getExtractionMethodBadgeClass(document.id_extraction_method)}`}
-                        >
-                          {getExtractionMethodLabel(document.id_extraction_method)}
-                        </span>
-                      )}
-                    </div>
-                    {(schoolName || subjectName) && (
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {[schoolName, subjectName].filter(Boolean).join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                )}
 
                 {documents &&
                   documents.length > 1 &&

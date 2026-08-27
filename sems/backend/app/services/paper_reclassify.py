@@ -102,6 +102,42 @@ def paper_label(test_type: str | None) -> str | None:
     return None
 
 
+def apply_test_type_change_markers(
+    document: Document,
+    *,
+    old_test_type: str | None,
+    new_test_type: str | None,
+) -> None:
+    """Stamp or clear paper reclassify markers (clear when reverting to previous)."""
+    if not old_test_type or not new_test_type or old_test_type == new_test_type:
+        return
+    if document.test_type_changed_from == new_test_type:
+        document.test_type_changed_from = None
+        document.test_type_changed_at = None
+    else:
+        document.test_type_changed_from = old_test_type
+        document.test_type_changed_at = datetime.utcnow()
+
+
+def apply_subject_change_markers(
+    document: Document,
+    *,
+    old_subject_id: int | None,
+    new_subject_id: int | None,
+) -> None:
+    """Stamp or clear subject reassignment markers (clear when reverting to previous)."""
+    if old_subject_id is None or new_subject_id is None:
+        return
+    if old_subject_id == new_subject_id:
+        return
+    if document.subject_changed_from == new_subject_id:
+        document.subject_changed_from = None
+        document.subject_changed_at = None
+    else:
+        document.subject_changed_from = old_subject_id
+        document.subject_changed_at = datetime.utcnow()
+
+
 def rewrite_extracted_id_test_type(extracted_id: str, target_test_type: str) -> str:
     if len(extracted_id) != 13:
         raise ValueError("extracted_id must be exactly 13 characters")
@@ -706,8 +742,11 @@ async def reclassify_document_paper(
 
     document.extracted_id = new_extracted_id
     document.test_type = target_test_type
-    document.test_type_changed_from = old_test_type
-    document.test_type_changed_at = datetime.utcnow()
+    apply_test_type_change_markers(
+        document,
+        old_test_type=old_test_type,
+        new_test_type=target_test_type,
+    )
 
     return ReclassifyResult(
         document_id=document.id,

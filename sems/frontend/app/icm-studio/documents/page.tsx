@@ -62,6 +62,8 @@ import type {
   ExamSeries,
   ExamType,
   IdExtractionStatusCounts,
+  SheetReassignmentFilter,
+  SubjectChangedSubjectScope,
 } from "@/types/document";
 import { ID_EXTRACTION_ERROR_FILTERS } from "@/lib/id-extraction-errors";
 import { toast } from "sonner";
@@ -93,6 +95,81 @@ function formatExamLabel(exam: Exam) {
   return `${exam.year} ${exam.series} ${typeLabel}`;
 }
 
+function sheetReassignmentFromFilters(
+  filters: Pick<DocumentFiltersType, "test_type_changed" | "subject_changed" | "paper_changed">
+): SheetReassignmentFilter | undefined {
+  if (filters.subject_changed) return "subject";
+  if (filters.paper_changed) return "paper";
+  if (filters.test_type_changed) return "all";
+  return undefined;
+}
+
+function reassignmentFilterFields(
+  value: SheetReassignmentFilter | undefined
+): Pick<DocumentFiltersType, "test_type_changed" | "subject_changed" | "paper_changed"> {
+  return {
+    test_type_changed: value === "all" ? true : undefined,
+    subject_changed: value === "subject" ? true : undefined,
+    paper_changed: value === "paper" ? true : undefined,
+  };
+}
+
+function reassignmentEmptyCopy(
+  filter: SheetReassignmentFilter | undefined,
+  subjectIds?: number[],
+  subjectScope: SubjectChangedSubjectScope = "either"
+) {
+  if (filter === "subject") {
+    if (subjectIds && subjectIds.length > 0) {
+      const scopeLabel =
+        subjectScope === "current"
+          ? "reassigned to"
+          : subjectScope === "prior"
+            ? "reassigned from"
+            : "reassigned to or from";
+      return {
+        title: "No matching subject-changed sheets",
+        description: `No sheets in this exam were ${scopeLabel} the selected subject(s).`,
+      };
+    }
+    return {
+      title: "No sheets with a subject change",
+      description: "No sheets in this exam have had their subject reassigned.",
+    };
+  }
+  if (filter === "paper") {
+    return {
+      title: "No sheets with a paper change",
+      description: "No sheets in this exam have had their paper reassigned.",
+    };
+  }
+  if (filter === "all") {
+    return {
+      title: "No sheets with a paper or subject change",
+      description: "No sheets in this exam have had paper or subject reassigned.",
+    };
+  }
+  return null;
+}
+
+function parseSubjectIdsParam(param: string | null): number[] | undefined {
+  if (!param) return undefined;
+  const ids = param
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+  return ids.length > 0 ? ids : undefined;
+}
+
+function parseSubjectChangedScopeParam(
+  param: string | null
+): SubjectChangedSubjectScope | undefined {
+  if (param === "current" || param === "prior" || param === "either") {
+    return param;
+  }
+  return undefined;
+}
+
 export default function DocumentsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -102,6 +179,10 @@ export default function DocumentsPage() {
   const errorParam = searchParams.get("error") || "";
   const testTypeParam = searchParams.get("test_type");
   const testTypeChangedParam = searchParams.get("test_type_changed");
+  const subjectChangedParam = searchParams.get("subject_changed");
+  const paperChangedParam = searchParams.get("paper_changed");
+  const subjectChangedSubjectsParam = searchParams.get("subject_changed_subjects");
+  const subjectChangedScopeParam = searchParams.get("subject_changed_scope");
   const paperPairParam = searchParams.get("paper_pair");
   const examIdFromUrl = parseOptionalInt(examIdParam);
 
@@ -134,6 +215,20 @@ export default function DocumentsPage() {
     }
     if (testTypeChangedParam === "1" || testTypeChangedParam === "true") {
       initial.test_type_changed = true;
+    }
+    if (subjectChangedParam === "1" || subjectChangedParam === "true") {
+      initial.subject_changed = true;
+    }
+    if (paperChangedParam === "1" || paperChangedParam === "true") {
+      initial.paper_changed = true;
+    }
+    const subjectChangedSubjectIds = parseSubjectIdsParam(subjectChangedSubjectsParam);
+    if (subjectChangedSubjectIds) {
+      initial.subject_changed_subject_ids = subjectChangedSubjectIds;
+    }
+    const subjectChangedScope = parseSubjectChangedScopeParam(subjectChangedScopeParam);
+    if (subjectChangedScope && subjectChangedScope !== "either") {
+      initial.subject_changed_subject_scope = subjectChangedScope;
     }
     if (paperPairParam === "paired" || paperPairParam === "missing") {
       initial.paper_pair = paperPairParam;
@@ -192,6 +287,20 @@ export default function DocumentsPage() {
   const isOwnershipReview = ownershipQueue.length > 0;
   const scopeReady = !!filters.exam_id;
   const isErrorsView = filters.id_extraction_status === "error";
+  const sheetReassignment = sheetReassignmentFromFilters(filters);
+  const reassignmentEmpty = reassignmentEmptyCopy(
+    sheetReassignment,
+    filters.subject_changed_subject_ids,
+    filters.subject_changed_subject_scope ?? "either"
+  );
+  const subjectChangedToolbarPlaceholder =
+    filters.subject_changed && filters.subject_changed_subject_scope === "prior"
+      ? "Prior subject"
+      : filters.subject_changed && filters.subject_changed_subject_scope === "current"
+        ? "Current subject"
+        : filters.subject_changed
+          ? "Subject (current or prior)"
+          : undefined;
   const selectionEnabled = isErrorsView || bulkMode;
   const useInfiniteScroll = viewMode === "grid" && !isErrorsView;
 
@@ -398,6 +507,12 @@ export default function DocumentsPage() {
       prevFiltersRef.current?.id_extraction_error_code !== filters.id_extraction_error_code ||
       prevFiltersRef.current?.test_type !== filters.test_type ||
       prevFiltersRef.current?.test_type_changed !== filters.test_type_changed ||
+      prevFiltersRef.current?.subject_changed !== filters.subject_changed ||
+      prevFiltersRef.current?.paper_changed !== filters.paper_changed ||
+      JSON.stringify(prevFiltersRef.current?.subject_changed_subject_ids ?? []) !==
+        JSON.stringify(filters.subject_changed_subject_ids ?? []) ||
+      prevFiltersRef.current?.subject_changed_subject_scope !==
+        filters.subject_changed_subject_scope ||
       prevFiltersRef.current?.paper_pair !== filters.paper_pair ||
       prevFiltersRef.current?.q !== filters.q ||
       prevFilterParamRef.current !== filterParam;
@@ -441,6 +556,21 @@ export default function DocumentsPage() {
     if (filters.test_type_changed) {
       params.set("test_type_changed", "1");
     }
+    if (filters.subject_changed) {
+      params.set("subject_changed", "1");
+    }
+    if (filters.paper_changed) {
+      params.set("paper_changed", "1");
+    }
+    if (filters.subject_changed_subject_ids?.length) {
+      params.set("subject_changed_subjects", filters.subject_changed_subject_ids.join(","));
+    }
+    if (
+      filters.subject_changed_subject_scope &&
+      filters.subject_changed_subject_scope !== "either"
+    ) {
+      params.set("subject_changed_scope", filters.subject_changed_subject_scope);
+    }
     if (filters.paper_pair) {
       params.set("paper_pair", filters.paper_pair);
     }
@@ -454,6 +584,10 @@ export default function DocumentsPage() {
     filters.id_extraction_error_code,
     filters.test_type,
     filters.test_type_changed,
+    filters.subject_changed,
+    filters.paper_changed,
+    filters.subject_changed_subject_ids,
+    filters.subject_changed_subject_scope,
     filters.paper_pair,
     filterParam,
     examIdFromUrl,
@@ -1471,6 +1605,7 @@ export default function DocumentsPage() {
                     filters={filters}
                     onFiltersChange={handleFiltersChange}
                     hideExam
+                    subjectPlaceholder={subjectChangedToolbarPlaceholder}
                   />
                   <IdExtractionStatusPills
                     counts={statusCounts}
@@ -1506,7 +1641,9 @@ export default function DocumentsPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   <DocumentsSecondaryFilters
                     testType={filters.test_type}
-                    testTypeChanged={filters.test_type_changed}
+                    sheetReassignment={sheetReassignment}
+                    subjectChangedSubjectIds={filters.subject_changed_subject_ids}
+                    subjectChangedSubjectScope={filters.subject_changed_subject_scope ?? "either"}
                     recentActive={filterParam === "recent"}
                     onTestTypeChange={(value) => {
                       setSelectedIds(new Set());
@@ -1520,14 +1657,42 @@ export default function DocumentsPage() {
                         return next;
                       });
                     }}
-                    onTestTypeChangedToggle={() => {
+                    onSheetReassignmentChange={(value) => {
                       setSelectedIds(new Set());
                       setFilters((prev) => {
                         const next = { ...prev, page: 1 };
-                        if (prev.test_type_changed) {
-                          delete next.test_type_changed;
+                        delete next.test_type_changed;
+                        delete next.subject_changed;
+                        delete next.paper_changed;
+                        delete next.subject_changed_subject_ids;
+                        delete next.subject_changed_subject_scope;
+                        const fields = reassignmentFilterFields(value);
+                        if (fields.test_type_changed) next.test_type_changed = true;
+                        if (fields.subject_changed) next.subject_changed = true;
+                        if (fields.paper_changed) next.paper_changed = true;
+                        return next;
+                      });
+                    }}
+                    onSubjectChangedSubjectIdsChange={(ids) => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (ids.length > 0) {
+                          next.subject_changed_subject_ids = ids;
                         } else {
-                          next.test_type_changed = true;
+                          delete next.subject_changed_subject_ids;
+                        }
+                        return next;
+                      });
+                    }}
+                    onSubjectChangedSubjectScopeChange={(scope) => {
+                      setSelectedIds(new Set());
+                      setFilters((prev) => {
+                        const next = { ...prev, page: 1 };
+                        if (scope === "either") {
+                          delete next.subject_changed_subject_scope;
+                        } else {
+                          next.subject_changed_subject_scope = scope;
                         }
                         return next;
                       });
@@ -1541,6 +1706,10 @@ export default function DocumentsPage() {
                         const next = { ...prev, page: 1 };
                         delete next.test_type;
                         delete next.test_type_changed;
+                        delete next.subject_changed;
+                        delete next.paper_changed;
+                        delete next.subject_changed_subject_ids;
+                        delete next.subject_changed_subject_scope;
                         return next;
                       });
                       if (filterParam === "recent") {
@@ -1791,43 +1960,40 @@ export default function DocumentsPage() {
               hasMore={hasMore}
               hideEmptyState={!loading && total === 0}
               emptyTitle={
-                filters.test_type_changed
-                  ? "No sheets with a paper change"
-                  : filters.paper_pair === "paired"
-                    ? "No paired paper sheets"
-                    : filters.paper_pair === "missing"
-                      ? "No sheets missing a counterpart"
-                      : searchQuery.trim() ||
-                          filters.school_id ||
-                          filters.subject_id ||
-                          filters.id_extraction_status ||
-                          filters.test_type
-                        ? "No matching documents"
-                        : "No documents yet"
+                reassignmentEmpty?.title ??
+                (filters.paper_pair === "paired"
+                  ? "No paired paper sheets"
+                  : filters.paper_pair === "missing"
+                    ? "No sheets missing a counterpart"
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "No matching documents"
+                      : "No documents yet")
               }
               emptyDescription={
-                filters.test_type_changed
-                  ? "No sheets in this exam have been reclassified via Advanced Edit."
-                  : filters.paper_pair === "paired"
-                    ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
-                    : filters.paper_pair === "missing"
-                      ? "Every sheet with a complete ID already has its other paper."
-                      : searchQuery.trim() ||
-                          filters.school_id ||
-                          filters.subject_id ||
-                          filters.id_extraction_status ||
-                          filters.test_type
-                        ? "Try clearing search or filters."
-                        : "Upload scanned ICMs to get started."
+                reassignmentEmpty?.description ??
+                (filters.paper_pair === "paired"
+                  ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
+                  : filters.paper_pair === "missing"
+                    ? "Every sheet with a complete ID already has its other paper."
+                    : searchQuery.trim() ||
+                        filters.school_id ||
+                        filters.subject_id ||
+                        filters.id_extraction_status ||
+                        filters.test_type
+                      ? "Try clearing search or filters."
+                      : "Upload scanned ICMs to get started.")
               }
             />
 
             {!loading && total === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <p className="text-lg font-medium mb-2">
-                  {filters.test_type_changed
-                    ? "No sheets with a paper change"
-                    : filters.paper_pair === "paired"
+                  {reassignmentEmpty?.title ??
+                    (filters.paper_pair === "paired"
                       ? "No paired paper sheets"
                       : filters.paper_pair === "missing"
                         ? "No sheets missing a counterpart"
@@ -1837,12 +2003,11 @@ export default function DocumentsPage() {
                             filters.id_extraction_status ||
                             filters.test_type
                           ? "No matching documents"
-                          : "No documents yet"}
+                          : "No documents yet")}
                 </p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  {filters.test_type_changed
-                    ? "No sheets in this exam have been reclassified via Advanced Edit."
-                    : filters.paper_pair === "paired"
+                  {reassignmentEmpty?.description ??
+                    (filters.paper_pair === "paired"
                       ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
                       : filters.paper_pair === "missing"
                         ? "Every sheet with a complete ID already has its other paper."
@@ -1852,7 +2017,7 @@ export default function DocumentsPage() {
                             filters.id_extraction_status ||
                             filters.test_type
                           ? "Try clearing search or filters to see more results."
-                          : "Upload scanned ICMs to populate this exam."}
+                          : "Upload scanned ICMs to populate this exam.")}
                 </p>
                 {(searchQuery.trim() ||
                   filters.id_extraction_status ||

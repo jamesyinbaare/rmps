@@ -110,18 +110,24 @@ import type {
 
 /**
  * Resolve the public/internal API base URL.
- * - NEXT_PUBLIC_API_BASE_URL wins when set (build-time or runtime).
- * - In the browser, derive `sems-api.<parent>` from the current host (exam-tools pattern).
- * - On the server, prefer INTERNAL_API_BASE_URL (compose service name).
+ * - In the browser during development, use same-origin `/api` (Next.js rewrite proxy)
+ *   so LAN/WSL hostnames do not hit CORS or wrong ports.
+ * - NEXT_PUBLIC_API_BASE_URL wins in production browser when set.
+ * - On the server (SSR), prefer INTERNAL_API_BASE_URL (compose service name).
  */
 export function getApiBaseUrl(): string {
-  const envBase =
-    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL?.trim() : undefined;
-  if (envBase) return envBase.replace(/\/$/, "");
-
   if (typeof window !== "undefined") {
+    if (process.env.NODE_ENV === "development") {
+      return window.location.origin.replace(/\/$/, "");
+    }
+
+    const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    if (envBase) return envBase.replace(/\/$/, "");
+
     const { protocol, hostname } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return "http://localhost:8000";
+    }
 
     const parts = hostname.split(".");
     if (parts.length >= 3) {
@@ -130,12 +136,16 @@ export function getApiBaseUrl(): string {
       return `${protocol}//${apiSubdomain}.${rest.join(".")}`;
     }
 
-    return `${protocol}//${hostname}`;
+    return `${protocol}//${hostname}:8000`;
   }
 
   const internal =
     typeof process !== "undefined" ? process.env.INTERNAL_API_BASE_URL?.trim() : undefined;
   if (internal) return internal.replace(/\/$/, "");
+
+  const envBase =
+    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL?.trim() : undefined;
+  if (envBase) return envBase.replace(/\/$/, "");
 
   return "http://localhost:8000";
 }
@@ -442,6 +452,17 @@ export async function listDocuments(
   }
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.test_type_changed === true) params.append("test_type_changed", "true");
+  if (filters.subject_changed === true) params.append("subject_changed", "true");
+  if (filters.paper_changed === true) params.append("paper_changed", "true");
+  if (filters.subject_changed_subject_ids?.length) {
+    params.append("subject_changed_subject_ids", filters.subject_changed_subject_ids.join(","));
+  }
+  if (
+    filters.subject_changed_subject_scope &&
+    filters.subject_changed_subject_scope !== "either"
+  ) {
+    params.append("subject_changed_subject_scope", filters.subject_changed_subject_scope);
+  }
   if (filters.paper_pair) params.append("paper_pair", filters.paper_pair);
   if (filters.q) params.append("q", filters.q);
   if (filters.page) params.append("page", filters.page.toString());
