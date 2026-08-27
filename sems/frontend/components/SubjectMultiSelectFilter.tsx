@@ -76,6 +76,9 @@ export function SubjectMultiSelectFilter({
     return `${value.length} subjects`;
   }, [value, subjects]);
 
+  const typeCue =
+    subjectType === "CORE" ? "Core" : subjectType === "ELECTIVE" ? "Elective" : null;
+
   const allFilteredSelected =
     filteredSubjects.length > 0 &&
     filteredSubjects.every((subject) => value.includes(subject.id));
@@ -101,47 +104,55 @@ export function SubjectMultiSelectFilter({
   };
 
   return (
-    <div className={cn("flex items-center gap-1.5", className)}>
-      <Select
-        value={subjectType}
-        onValueChange={(next) => onSubjectTypeChange(next as SubjectTypeFilterValue)}
-        disabled={disabled}
-      >
-        <SelectTrigger size="sm" className="h-8 w-[110px]">
-          <SelectValue placeholder="Type" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="ALL">All types</SelectItem>
-          <SelectItem value="CORE">Core</SelectItem>
-          <SelectItem value="ELECTIVE">Elective</SelectItem>
-        </SelectContent>
-      </Select>
-
+    <div className={cn("inline-flex", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 min-w-[180px] max-w-[260px] justify-between gap-1.5 font-normal"
+            className="h-8 min-w-[180px] max-w-[280px] justify-between gap-1.5 font-normal"
             disabled={disabled}
           >
-            <span className="truncate">{triggerLabel}</span>
+            <span className="flex min-w-0 items-center gap-1.5 truncate">
+              <span className="truncate">{triggerLabel}</span>
+              {typeCue ? (
+                <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {typeCue}
+                </span>
+              ) : null}
+            </span>
             <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80 space-y-2 p-2">
-          <div className="flex items-center justify-between gap-2 px-1">
-            <p className="text-xs font-medium text-muted-foreground">Subjects</p>
-            {filteredSubjects.length > 0 && (
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-                <Checkbox
-                  checked={allFilteredSelected}
-                  onCheckedChange={(checked) => toggleSelectAllFiltered(checked === true)}
-                />
-                {allFilteredSelected ? "Deselect all" : "Select all"}
-              </label>
-            )}
+          <div className="flex items-center gap-2 px-1">
+            <Select
+              value={subjectType}
+              onValueChange={(next) => onSubjectTypeChange(next as SubjectTypeFilterValue)}
+              disabled={disabled}
+            >
+              <SelectTrigger size="sm" className="h-8 w-[118px] shrink-0">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All types</SelectItem>
+                <SelectItem value="CORE">Core</SelectItem>
+                <SelectItem value="ELECTIVE">Elective</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">Subjects</p>
+              {filteredSubjects.length > 0 && (
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                  <Checkbox
+                    checked={allFilteredSelected}
+                    onCheckedChange={(checked) => toggleSelectAllFiltered(checked === true)}
+                  />
+                  {allFilteredSelected ? "Deselect all" : "Select all"}
+                </label>
+              )}
+            </div>
           </div>
           <Input
             value={search}

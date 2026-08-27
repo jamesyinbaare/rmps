@@ -741,74 +741,93 @@ export default function ApplyScoresPage() {
               onRefresh={loadDocuments}
               refreshing={loading}
               onClear={handleClearFilters}
-              trailing={
-                <>
-                  <Tabs
-                    value={applyProvider}
-                    onValueChange={(value) => handleFilterChange("extraction_provider", value)}
-                  >
-                    <TabsList className="h-8" aria-label="Apply extraction provider">
-                      <TabsTrigger value="llama" className="h-7 px-3 text-xs">
-                        Llama Extract
-                      </TabsTrigger>
-                      <TabsTrigger value="reducto" className="h-7 px-3 text-xs">
-                        Reducto
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                  <Tabs
-                    value={view}
-                    onValueChange={(value) => handleViewChange(value as AppliedView)}
-                  >
-                    <TabsList className="h-8">
-                      <TabsTrigger value="ready" className="h-7 px-3 text-xs">
-                        Ready
-                        {view === "ready" ? ` (${total.toLocaleString()})` : ""}
-                      </TabsTrigger>
-                      <TabsTrigger value="applied" className="h-7 px-3 text-xs">
-                        Applied
-                        {view === "applied" ? ` (${total.toLocaleString()})` : ""}
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </>
+              trailingPlacement="none"
+              afterScope={
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Provider
+                    </p>
+                    <Tabs
+                      value={applyProvider}
+                      onValueChange={(value) =>
+                        handleFilterChange("extraction_provider", value)
+                      }
+                    >
+                      <TabsList className="h-8" aria-label="Apply extraction provider">
+                        <TabsTrigger value="llama" className="h-7 px-3 text-xs">
+                          Llama Extract
+                        </TabsTrigger>
+                        <TabsTrigger value="reducto" className="h-7 px-3 text-xs">
+                          Reducto
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+                  <div
+                    className="hidden h-8 w-px shrink-0 self-end bg-border sm:block"
+                    aria-hidden
+                  />
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Queue
+                    </p>
+                    <Tabs
+                      value={view}
+                      onValueChange={(value) => handleViewChange(value as AppliedView)}
+                    >
+                      <TabsList className="h-8" aria-label="Apply queue view">
+                        <TabsTrigger value="ready" className="h-7 px-3 text-xs">
+                          Ready
+                          {view === "ready" ? ` (${total.toLocaleString()})` : ""}
+                        </TabsTrigger>
+                        <TabsTrigger value="applied" className="h-7 px-3 text-xs">
+                          Applied
+                          {view === "applied" ? ` (${total.toLocaleString()})` : ""}
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+                </div>
               }
             />
           </div>
         </div>
 
-        <div className="mx-4 mb-4 mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
-          <ApplyScoresDataTable
-            documents={documents}
-            loading={loading}
-            error={error}
-            selectedDocuments={selectedDocuments}
-            onSelectDocument={handleSelectDocument}
-            onSelectAll={handleSelectAll}
-            onClearSelection={() => setSelectedDocuments(new Set())}
-            onRowClick={handleViewDocument}
-            onApplyRow={handleUpdateScores}
-            applyingDocumentId={updatingScores}
-            applyProvider={applyProvider}
-            view={view}
-            pageSize={filters.page_size || 50}
-            onPageSizeChange={(size) =>
-              setFilters((prev) => ({ ...prev, page_size: size, page: 1 }))
-            }
-            verifyEnabled={verifyEnabled}
-            onVerifyEnabledChange={setVerifyEnabled}
-            applying={applying}
-            applyProgress={applyProgress}
-            onApplySelected={() => setConfirmOpen(true)}
-            focusedRowIndex={focusedRowIndex}
-            onFocusedRowIndexChange={setFocusedRowIndex}
-            currentPage={currentPage}
-            totalPages={totalPages}
-            total={total}
-            onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
-            emptyReadyTitle={`No ${applyProviderLabel} results waiting`}
-            emptyReadyDescription="Switch provider, or go to Extract."
-          />
+        <div className="mx-auto mb-4 mt-3 flex min-h-0 w-full max-w-[2000px] flex-1 flex-col overflow-hidden px-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background">
+            <ApplyScoresDataTable
+              documents={documents}
+              loading={loading}
+              error={error}
+              selectedDocuments={selectedDocuments}
+              onSelectDocument={handleSelectDocument}
+              onSelectAll={handleSelectAll}
+              onClearSelection={() => setSelectedDocuments(new Set())}
+              onRowClick={handleViewDocument}
+              onApplyRow={handleUpdateScores}
+              applyingDocumentId={updatingScores}
+              applyProvider={applyProvider}
+              view={view}
+              pageSize={filters.page_size || 50}
+              onPageSizeChange={(size) =>
+                setFilters((prev) => ({ ...prev, page_size: size, page: 1 }))
+              }
+              verifyEnabled={verifyEnabled}
+              onVerifyEnabledChange={setVerifyEnabled}
+              applying={applying}
+              applyProgress={applyProgress}
+              onApplySelected={() => setConfirmOpen(true)}
+              focusedRowIndex={focusedRowIndex}
+              onFocusedRowIndexChange={setFocusedRowIndex}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              total={total}
+              onPageChange={(page) => setFilters((prev) => ({ ...prev, page }))}
+              emptyReadyTitle={`No ${applyProviderLabel} results waiting`}
+              emptyReadyDescription="Switch provider, or go to Extract."
+            />
+          </div>
         </div>
       </div>
 
