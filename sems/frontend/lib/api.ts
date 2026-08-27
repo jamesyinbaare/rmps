@@ -625,7 +625,8 @@ export type BulkReclassifyPaperResponse = {
 
 export async function bulkReclassifyPaper(
   documentIds: number[],
-  targetTestType: "1" | "2"
+  targetTestType: "1" | "2",
+  overwrite = false
 ): Promise<BulkReclassifyPaperResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/bulk-reclassify-paper`, {
     method: "POST",
@@ -633,8 +634,56 @@ export async function bulkReclassifyPaper(
     body: JSON.stringify({
       document_ids: documentIds,
       target_test_type: targetTestType,
+      overwrite,
     }),
   });
+  return handleResponse(response);
+}
+
+export type ScoreMigrationEndpointMeta = {
+  extracted_id: string | null;
+  subject_id: number | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  test_type: string | null;
+  paper_label: string | null;
+};
+
+export type ScoreMigrationConflictItem = {
+  index_number: string | null;
+  candidate_name: string | null;
+  existing_score: string | null;
+  existing_document_id: string | null;
+  subject_score_id: number | null;
+};
+
+export type ScoreMigrationPreviewResponse = {
+  requires_confirm: boolean;
+  subject_changed: boolean;
+  paper_changed: boolean;
+  scores_to_move: number;
+  from_meta: ScoreMigrationEndpointMeta;
+  to_meta: ScoreMigrationEndpointMeta;
+  conflicts: ScoreMigrationConflictItem[];
+  blocking_errors: string[];
+};
+
+export async function previewScoreMigration(
+  documentId: number,
+  payload: {
+    extracted_id: string;
+    school_id?: number;
+    subject_id?: number;
+  }
+): Promise<ScoreMigrationPreviewResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/${documentId}/score-migration-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
   return handleResponse(response);
 }
 
@@ -646,11 +695,12 @@ export async function updateDocumentId(
   documentId: number,
   extractedId: string,
   schoolId?: number,
-  subjectId?: number
+  subjectId?: number,
+  options?: { overwrite_scores?: boolean }
 ): Promise<Document> {
-  const body: any = {
+  const body: Record<string, unknown> = {
     extracted_id: extractedId,
-    id_extraction_status: "success"
+    id_extraction_status: "success",
   };
 
   if (schoolId !== undefined) {
@@ -659,6 +709,10 @@ export async function updateDocumentId(
 
   if (subjectId !== undefined) {
     body.subject_id = subjectId;
+  }
+
+  if (options?.overwrite_scores) {
+    body.overwrite_scores = true;
   }
 
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/id`, {

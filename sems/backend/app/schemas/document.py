@@ -50,6 +50,10 @@ class DocumentUpdate(BaseModel):
     scores_extraction_method: DataExtractionMethod | None = Field(
         None, description="Extraction method to add to the document's scores_extraction_methods array"
     )
+    overwrite_scores: bool = Field(
+        False,
+        description="When subject/paper change would overwrite existing target scores, allow replace",
+    )
 
 
 class DocumentResponse(DocumentBase):
@@ -89,6 +93,9 @@ class DocumentResponse(DocumentBase):
     test_type_changed_at: datetime | None = None
     test_type_changed_from: str | None = None
     extractions: list[ScoreExtractionItem] = Field(default_factory=list)
+    scores_moved: int | None = Field(
+        None, description="Applied score rows migrated on ID/subject/paper update"
+    )
 
     class Config:
         from_attributes = True
@@ -191,6 +198,10 @@ class BulkReclassifyPaperRequest(BaseModel):
 
     document_ids: list[int] = Field(..., min_length=1)
     target_test_type: str = Field(..., pattern="^[12]$", description="1=Objectives, 2=Essay")
+    overwrite: bool = Field(
+        False,
+        description="Replace existing scores on the target paper when conflicts exist",
+    )
 
 
 class BulkReclassifyPaperItem(BaseModel):
@@ -208,6 +219,42 @@ class BulkReclassifyPaperResponse(BaseModel):
     failed: int
     scores_moved: int = 0
     results: list[BulkReclassifyPaperItem] = Field(default_factory=list)
+
+
+class ScoreMigrationPreviewRequest(BaseModel):
+    """Proposed new sheet ID / metadata for score migration preview."""
+
+    extracted_id: str = Field(..., min_length=1)
+    school_id: int | None = None
+    subject_id: int | None = None
+
+
+class ScoreMigrationEndpointMeta(BaseModel):
+    extracted_id: str | None = None
+    subject_id: int | None = None
+    subject_code: str | None = None
+    subject_name: str | None = None
+    test_type: str | None = None
+    paper_label: str | None = None
+
+
+class ScoreMigrationConflictItem(BaseModel):
+    index_number: str | None = None
+    candidate_name: str | None = None
+    existing_score: str | None = None
+    existing_document_id: str | None = None
+    subject_score_id: int | None = None
+
+
+class ScoreMigrationPreviewResponse(BaseModel):
+    requires_confirm: bool
+    subject_changed: bool
+    paper_changed: bool
+    scores_to_move: int = 0
+    from_meta: ScoreMigrationEndpointMeta
+    to_meta: ScoreMigrationEndpointMeta
+    conflicts: list[ScoreMigrationConflictItem] = Field(default_factory=list)
+    blocking_errors: list[str] = Field(default_factory=list)
 
 
 class BulkExtractIdResponse(BaseModel):

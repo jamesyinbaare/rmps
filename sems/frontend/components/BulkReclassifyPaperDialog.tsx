@@ -9,16 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -27,7 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { bulkReclassifyPaper } from "@/lib/api";
+import { ScoreMigrationConfirmDialog } from "@/components/ScoreMigrationConfirmDialog";
+import {
+  bulkReclassifyPaper,
+  type ScoreMigrationPreviewResponse,
+} from "@/lib/api";
 import type { Document } from "@/types/document";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -43,6 +37,12 @@ function rewriteExtractedIdTestType(
 function paperName(testType: string | null | undefined): string {
   if (testType === "1") return "Objectives (1)";
   if (testType === "2") return "Essay (2)";
+  return testType ? `Paper ${testType}` : "—";
+}
+
+function paperLabel(testType: string | null | undefined): string {
+  if (testType === "1") return "Objectives";
+  if (testType === "2") return "Essay";
   return testType ? `Paper ${testType}` : "—";
 }
 
@@ -62,6 +62,8 @@ export function BulkReclassifyPaperDialog({
   const [targetTestType, setTargetTestType] = useState<"1" | "2">("2");
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmPreview, setConfirmPreview] =
+    useState<ScoreMigrationPreviewResponse | null>(null);
 
   const preview = useMemo(() => {
     return documents.map((doc) => {
@@ -97,7 +99,41 @@ export function BulkReclassifyPaperDialog({
   const appliedCount = actionable.filter((p) => p.hasAppliedScores).length;
   const skippedCount = preview.length - actionable.length;
 
-  const runReclassify = async () => {
+  const buildBulkConfirmPreview = (): ScoreMigrationPreviewResponse => {
+    const sample = actionable[0];
+    const oldId = sample?.oldId ?? null;
+    const newId = sample?.newId ?? null;
+    const oldType = sample?.doc.test_type || (oldId && oldId.length === 13 ? oldId[10] : null);
+    return {
+      requires_confirm: true,
+      subject_changed: false,
+      paper_changed: true,
+      scores_to_move: actionable.reduce(
+        (sum, row) => sum + (row.doc.scores_applied_count ?? (row.hasAppliedScores ? 1 : 0)),
+        0
+      ),
+      from_meta: {
+        extracted_id: oldId,
+        subject_id: sample?.doc.subject_id ?? null,
+        subject_code: sample?.doc.subject_code ?? null,
+        subject_name: sample?.doc.subject_name ?? null,
+        test_type: oldType,
+        paper_label: paperLabel(oldType),
+      },
+      to_meta: {
+        extracted_id: newId,
+        subject_id: sample?.doc.subject_id ?? null,
+        subject_code: sample?.doc.subject_code ?? null,
+        subject_name: sample?.doc.subject_name ?? null,
+        test_type: targetTestType,
+        paper_label: paperLabel(targetTestType),
+      },
+      conflicts: [],
+      blocking_errors: [],
+    };
+  };
+
+  const runReclassify = async (overwrite: boolean) => {
     if (actionable.length === 0) {
       toast.error("No documents eligible to reclassify");
       return;
@@ -106,7 +142,8 @@ export function BulkReclassifyPaperDialog({
     try {
       const result = await bulkReclassifyPaper(
         actionable.map((p) => p.doc.id),
-        targetTestType
+        targetTestType,
+        overwrite
       );
       if (result.updated > 0) {
         const moved =
@@ -123,11 +160,11 @@ export function BulkReclassifyPaperDialog({
       }
       onSuccess?.();
       onOpenChange(false);
+      setConfirmOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk reclassify failed");
     } finally {
       setLoading(false);
-      setConfirmOpen(false);
     }
   };
 
@@ -136,11 +173,8 @@ export function BulkReclassifyPaperDialog({
       toast.error("No documents eligible to reclassify");
       return;
     }
-    if (appliedCount > 0) {
-      setConfirmOpen(true);
-      return;
-    }
-    void runReclassify();
+    setConfirmPreview(buildBulkConfirmPreview());
+    setConfirmOpen(true);
   };
 
   return (
@@ -236,31 +270,18 @@ export function BulkReclassifyPaperDialog({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Move applied scores?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {appliedCount} document(s) already have scores applied under their current
-              paper. Continuing will move those scores to {paperName(targetTestType)} and
-              mark the sheets as paper-changed. This cannot be undone from this dialog.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={loading}
-              onClick={(e) => {
-                e.preventDefault();
-                void runReclassify();
-              }}
-            >
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Continue
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ScoreMigrationConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        preview={confirmPreview}
+        bulkSummary={{
+          documentCount: actionable.length,
+          appliedCount,
+          targetPaperLabel: paperLabel(targetTestType),
+        }}
+        loading={loading}
+        onConfirm={(overwrite) => void runReclassify(overwrite)}
+      />
     </>
   );
 }

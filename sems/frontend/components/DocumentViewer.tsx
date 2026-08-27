@@ -46,7 +46,8 @@ import {
   parseDuplicateConflictDocumentId,
 } from "@/lib/id-extraction-errors";
 import { DocumentIdBreakdown } from "@/components/DocumentIdBreakdown";
-import { validateDocumentId } from "@/lib/document-id";
+import { ScoreMigrationConfirmDialog } from "@/components/ScoreMigrationConfirmDialog";
+import { parseDocumentIdParts, validateDocumentId } from "@/lib/document-id";
 import {
   API_BASE_URL,
   downloadDocument,
@@ -59,7 +60,9 @@ import {
   getReductoData,
   listSchools,
   listSubjects,
+  previewScoreMigration,
   updateDocumentId,
+  type ScoreMigrationPreviewResponse,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { DuplicateConflictPanel } from "./DuplicateConflictPanel";
@@ -78,7 +81,7 @@ interface DocumentViewerProps {
     extractedId: string,
     schoolId?: number,
     subjectId?: number,
-    options?: { advance?: boolean }
+    options?: { advance?: boolean; overwrite_scores?: boolean }
   ) => Promise<void>;
   onDelete?: (documentId: number) => Promise<void>;
   /** Show Preview Data toggle that opens extraction panel inside this viewer */
@@ -197,6 +200,15 @@ export function DocumentViewer({
   const [manualId, setManualId] = useState("");
   const [editingId, setEditingId] = useState(false);
   const [savingId, setSavingId] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
+  const [migrationPreview, setMigrationPreview] =
+    useState<ScoreMigrationPreviewResponse | null>(null);
+  const [pendingMigration, setPendingMigration] = useState<{
+    extractedId: string;
+    schoolId?: number;
+    subjectId?: number;
+    advance?: boolean;
+  } | null>(null);
   const [retryingExtract, setRetryingExtract] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
@@ -644,6 +656,32 @@ export function DocumentViewer({
     }
   };
 
+  const commitIdUpdate = async (
+    extractedId: string,
+    schoolId: number | undefined,
+    subjectId: number | undefined,
+    options?: { advance?: boolean; overwrite_scores?: boolean }
+  ) => {
+    if (onUpdateId) {
+      await onUpdateId(document.id, extractedId, schoolId, subjectId, options);
+    } else {
+      const updated = await updateDocumentId(
+        document.id,
+        extractedId,
+        schoolId,
+        subjectId,
+        { overwrite_scores: options?.overwrite_scores }
+      );
+      const moved = updated.scores_moved ?? 0;
+      toast.success(
+        moved > 0
+          ? `Document ID updated. Moved scores for ${moved} candidate row(s).`
+          : "Document ID updated successfully"
+      );
+    }
+    setEditingId(false);
+  };
+
   const handleSaveId = async () => {
     const trimmedId = manualId.trim();
 
@@ -656,7 +694,6 @@ export function DocumentViewer({
       return;
     }
 
-    // Validate before saving
     const validation = validateId(trimmedId);
     if (validation.error) {
       setIdError(validation.error);
@@ -664,27 +701,82 @@ export function DocumentViewer({
       return;
     }
 
+    const advanceOpt =
+      editingId && !needsManualId ? false : undefined;
+
+    const oldId = document.extracted_id || "";
+    const oldParts = parseDocumentIdParts(oldId);
+    const newParts = parseDocumentIdParts(trimmedId);
+    const subjectChanged =
+      Boolean(oldParts.subjectCode || newParts.subjectCode) &&
+      oldParts.subjectCode !== newParts.subjectCode;
+    const oldPaper = document.test_type || oldParts.testType;
+    const paperChanged =
+      Boolean(oldPaper || newParts.testType) && oldPaper !== newParts.testType;
+
     setSavingId(true);
     setIdError(null);
     try {
-      if (onUpdateId) {
-        await onUpdateId(
-          document.id,
-          trimmedId,
-          validation.schoolId,
-          validation.subjectId,
-          editingId && !needsManualId ? { advance: false } : undefined
-        );
-      } else {
-        await updateDocumentId(document.id, trimmedId, validation.schoolId, validation.subjectId);
-        toast.success("Document ID updated successfully");
+      if (subjectChanged || paperChanged) {
+        const preview = await previewScoreMigration(document.id, {
+          extracted_id: trimmedId,
+          school_id: validation.schoolId,
+          subject_id: validation.subjectId,
+        });
+        if (preview.blocking_errors.length > 0) {
+          const msg = preview.blocking_errors.join("; ");
+          setIdError(msg);
+          toast.error(msg);
+          return;
+        }
+        if (preview.requires_confirm) {
+          setMigrationPreview(preview);
+          setPendingMigration({
+            extractedId: trimmedId,
+            schoolId: validation.schoolId,
+            subjectId: validation.subjectId,
+            advance: advanceOpt,
+          });
+          setMigrationOpen(true);
+          return;
+        }
       }
-      setEditingId(false);
+
+      await commitIdUpdate(trimmedId, validation.schoolId, validation.subjectId, {
+        advance: advanceOpt,
+      });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to update document ID";
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update document ID";
       setIdError(errorMessage);
       toast.error(errorMessage);
       console.error("Error updating document ID:", error);
+    } finally {
+      setSavingId(false);
+    }
+  };
+
+  const handleConfirmMigration = async (overwrite: boolean) => {
+    if (!pendingMigration) return;
+    setSavingId(true);
+    try {
+      await commitIdUpdate(
+        pendingMigration.extractedId,
+        pendingMigration.schoolId,
+        pendingMigration.subjectId,
+        {
+          advance: pendingMigration.advance,
+          overwrite_scores: overwrite,
+        }
+      );
+      setMigrationOpen(false);
+      setPendingMigration(null);
+      setMigrationPreview(null);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update document ID";
+      setIdError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setSavingId(false);
     }
@@ -927,6 +1019,7 @@ export function DocumentViewer({
   );
 
   return (
+    <>
     <Dialog open={open !== false} onOpenChange={onClose}>
       <DialogContent
         className="flex h-[95vh] max-h-[95vh] w-screen min-w-[80vw] flex-col overflow-hidden p-0"
@@ -1414,5 +1507,20 @@ export function DocumentViewer({
         )}
       </DialogContent>
     </Dialog>
+
+    <ScoreMigrationConfirmDialog
+      open={migrationOpen}
+      onOpenChange={(open) => {
+        setMigrationOpen(open);
+        if (!open) {
+          setPendingMigration(null);
+          setMigrationPreview(null);
+        }
+      }}
+      preview={migrationPreview}
+      loading={savingId}
+      onConfirm={handleConfirmMigration}
+    />
+    </>
   );
 }

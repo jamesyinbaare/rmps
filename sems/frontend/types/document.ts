@@ -36,6 +36,8 @@ export interface Document {
   test_type_changed_at?: string | null; // When paper/test_type was reclassified via Advanced Edit
   test_type_changed_from?: string | null; // Previous paper digit before last reclassify
   extractions?: DocumentScoreExtraction[];
+  /** Present on ID update responses when applied scores were migrated */
+  scores_moved?: number | null;
 }
 
 export interface DocumentListResponse {

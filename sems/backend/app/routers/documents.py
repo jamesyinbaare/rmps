@@ -46,6 +46,10 @@ from app.schemas.document import (
     ReductoDequeueRequest,
     ReductoDequeueResponse,
     ReductoStatusResponse,
+    ScoreMigrationConflictItem,
+    ScoreMigrationEndpointMeta,
+    ScoreMigrationPreviewRequest,
+    ScoreMigrationPreviewResponse,
     UploadConfirmItem,
     UploadConfirmRequest,
     UploadConfirmResponse,
@@ -70,7 +74,11 @@ from app.services.id_extraction import (
     mark_id_extraction_failure,
     resolve_id_extraction_conflicts,
 )
-from app.services.paper_reclassify import find_paper_counterpart, reclassify_document_paper
+from app.services.paper_reclassify import (
+    find_paper_counterpart,
+    migrate_applied_scores_for_id_change,
+    reclassify_document_paper,
+)
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import (
     apply_extract_result,
@@ -877,7 +885,7 @@ async def bulk_reclassify_paper(
 
         try:
             outcome = await reclassify_document_paper(
-                session, document, body.target_test_type
+                session, document, body.target_test_type, overwrite=body.overwrite
             )
             item = BulkReclassifyPaperItem(
                 document_id=outcome.document_id,
@@ -1529,12 +1537,19 @@ async def parse_content(
 
 @router.patch("/{document_id}/id", response_model=DocumentResponse)
 async def update_document_id(document_id: int, update: DocumentUpdate, session: DBSessionDep) -> DocumentResponse:
-    """Manually correct document ID and metadata."""
+    """Manually correct document ID and metadata; migrate applied scores on subject/paper change."""
     stmt = select(Document).where(Document.id == document_id)
     result = await session.execute(stmt)
     document = result.scalar_one_or_none()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    old_extracted_id = document.extracted_id
+    old_test_type = document.test_type or (
+        old_extracted_id[10:11] if old_extracted_id and len(old_extracted_id) == 13 else None
+    )
+    old_subject_id = document.subject_id
+    scores_moved = 0
 
     # Update fields
     if update.school_id is not None:
@@ -1574,6 +1589,13 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
                     document.subject_series = validation_result.subject_series
                 if update.sheet_number is None:
                     document.sheet_number = validation_result.sheet_number
+                if update.subject_id is None and validation_result.subject_code:
+                    subj_result = await session.execute(
+                        select(Subject).where(Subject.code == validation_result.subject_code)
+                    )
+                    subject = subj_result.scalar_one_or_none()
+                    if subject:
+                        document.subject_id = subject.id
         except Exception as e:
             # Log warning but don't fail the update
             logger.warning(f"Failed to parse extracted_id {update.extracted_id}: {e}")
@@ -1602,10 +1624,173 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             document.id_extraction_status = "success"
         clear_id_extraction_error(document)
 
+    new_extracted_id = document.extracted_id
+    new_test_type = document.test_type
+    new_subject_id = document.subject_id
+
+    subject_or_paper_changed = (
+        old_subject_id != new_subject_id
+        or (old_test_type and new_test_type and old_test_type != new_test_type)
+    )
+    id_changed = bool(old_extracted_id and new_extracted_id and old_extracted_id != new_extracted_id)
+
+    if old_extracted_id and new_extracted_id and (subject_or_paper_changed or id_changed):
+        # Block if another uploaded doc already owns the new ID
+        if id_changed:
+            conflict_stmt = select(Document).where(
+                Document.extracted_id == new_extracted_id,
+                Document.exam_id == document.exam_id,
+                Document.id != document.id,
+                Document.upload_status == "uploaded",
+            )
+            conflict_doc = (await session.execute(conflict_stmt)).scalar_one_or_none()
+            if conflict_doc:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Another document (#{conflict_doc.id}) already uses ID {new_extracted_id}",
+                )
+
+        migration = await migrate_applied_scores_for_id_change(
+            session,
+            exam_id=document.exam_id,
+            old_extracted_id=old_extracted_id,
+            new_extracted_id=new_extracted_id,
+            old_test_type=old_test_type,
+            new_test_type=new_test_type,
+            old_subject_id=old_subject_id,
+            new_subject_id=new_subject_id,
+            overwrite=update.overwrite_scores,
+            dry_run=False,
+        )
+        if migration.conflicts and not update.overwrite_scores:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Target already has scores; confirm overwrite to replace them",
+                    "conflicts": [
+                        {
+                            "index_number": c.index_number,
+                            "candidate_name": c.candidate_name,
+                            "existing_score": c.existing_score,
+                            "existing_document_id": c.existing_document_id,
+                            "subject_score_id": c.subject_score_id,
+                        }
+                        for c in migration.conflicts
+                    ],
+                },
+            )
+        if migration.blocking_errors:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="; ".join(migration.blocking_errors),
+            )
+        scores_moved = migration.scores_moved
+
+        if old_test_type and new_test_type and old_test_type != new_test_type:
+            document.test_type_changed_from = old_test_type
+            document.test_type_changed_at = datetime.utcnow()
+
     await session.commit()
     await session.refresh(document)
 
-    return DocumentResponse.model_validate(document)
+    response = DocumentResponse.model_validate(document)
+    response.scores_moved = scores_moved
+    return response
+
+
+@router.post(
+    "/{document_id}/score-migration-preview",
+    response_model=ScoreMigrationPreviewResponse,
+)
+async def score_migration_preview(
+    document_id: int,
+    body: ScoreMigrationPreviewRequest,
+    session: DBSessionDep,
+) -> ScoreMigrationPreviewResponse:
+    """Preview applied-score migration for a proposed sheet ID / subject change."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    old_extracted_id = document.extracted_id
+    if not old_extracted_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Document has no extracted_id to migrate from",
+        )
+
+    old_test_type = document.test_type or (
+        old_extracted_id[10:11] if len(old_extracted_id) == 13 else None
+    )
+    old_subject_id = document.subject_id
+
+    new_extracted_id = body.extracted_id
+    new_subject_id = body.subject_id if body.subject_id is not None else document.subject_id
+    new_test_type = document.test_type
+
+    parsed = IDValidator.parse_id(new_extracted_id)
+    if parsed.is_valid:
+        new_test_type = parsed.test_type
+        if body.subject_id is None and parsed.subject_code:
+            subj = (
+                await session.execute(select(Subject).where(Subject.code == parsed.subject_code))
+            ).scalar_one_or_none()
+            if subj:
+                new_subject_id = subj.id
+
+    migration = await migrate_applied_scores_for_id_change(
+        session,
+        exam_id=document.exam_id,
+        old_extracted_id=old_extracted_id,
+        new_extracted_id=new_extracted_id,
+        old_test_type=old_test_type,
+        new_test_type=new_test_type,
+        old_subject_id=old_subject_id,
+        new_subject_id=new_subject_id,
+        overwrite=False,
+        dry_run=True,
+    )
+
+    from_meta = migration.from_meta
+    to_meta = migration.to_meta
+    return ScoreMigrationPreviewResponse(
+        requires_confirm=migration.requires_confirm,
+        subject_changed=migration.subject_changed,
+        paper_changed=migration.paper_changed,
+        scores_to_move=migration.scores_to_move,
+        from_meta=ScoreMigrationEndpointMeta(
+            extracted_id=from_meta.extracted_id if from_meta else old_extracted_id,
+            subject_id=from_meta.subject_id if from_meta else old_subject_id,
+            subject_code=from_meta.subject_code if from_meta else None,
+            subject_name=from_meta.subject_name if from_meta else None,
+            test_type=from_meta.test_type if from_meta else old_test_type,
+            paper_label=from_meta.paper_label if from_meta else None,
+        ),
+        to_meta=ScoreMigrationEndpointMeta(
+            extracted_id=to_meta.extracted_id if to_meta else new_extracted_id,
+            subject_id=to_meta.subject_id if to_meta else new_subject_id,
+            subject_code=to_meta.subject_code if to_meta else None,
+            subject_name=to_meta.subject_name if to_meta else None,
+            test_type=to_meta.test_type if to_meta else new_test_type,
+            paper_label=to_meta.paper_label if to_meta else None,
+        ),
+        conflicts=[
+            ScoreMigrationConflictItem(
+                index_number=c.index_number,
+                candidate_name=c.candidate_name,
+                existing_score=c.existing_score,
+                existing_document_id=c.existing_document_id,
+                subject_score_id=c.subject_score_id,
+            )
+            for c in migration.conflicts
+        ],
+        blocking_errors=migration.blocking_errors,
+    )
 
 
 @router.get("/reducto-queue/status", response_model=ReductoQueueStatusResponse)

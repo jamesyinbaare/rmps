@@ -1008,11 +1008,18 @@ export default function DocumentsPage() {
     extractedId: string,
     schoolId?: number,
     subjectId?: number,
-    options?: { advance?: boolean }
+    options?: { advance?: boolean; overwrite_scores?: boolean }
   ) => {
     try {
-      const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId);
-      toast.success("Document ID updated successfully");
+      const updated = await updateDocumentId(documentId, extractedId, schoolId, subjectId, {
+        overwrite_scores: options?.overwrite_scores,
+      });
+      const moved = updated.scores_moved ?? 0;
+      toast.success(
+        moved > 0
+          ? `Document ID updated. Moved scores for ${moved} candidate row(s).`
+          : "Document ID updated successfully"
+      );
       void loadStatusCounts();
       void loadPaperPairCounts();
 
