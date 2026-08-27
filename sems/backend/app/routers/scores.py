@@ -1504,6 +1504,19 @@ async def batch_update_scores_manual_entry(
     failed = 0
     errors: list[dict[str, str]] = []
 
+    async def _touch_document_for_field(
+        document_id: str | None,
+        method: DataExtractionMethod,
+    ) -> Document | None:
+        if not document_id:
+            return None
+        doc_stmt = select(Document).where(Document.extracted_id == document_id)
+        doc_result = await session.execute(doc_stmt)
+        doc = doc_result.scalar_one_or_none()
+        if doc:
+            add_extraction_method_to_document(doc, method)
+        return doc
+
     for score_item in batch_update.scores:
         try:
             if score_item.score_id is None:
@@ -1532,45 +1545,53 @@ async def batch_update_scores_manual_entry(
                 errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
                 continue
 
-            # Track documents that need status updates
+            fields_set = score_item.model_fields_set
             documents_to_update_status: set[Document] = set()
+            applied_any = False
 
-            # Update fields and set extraction methods per field
-            if score_item.obj_raw_score is not None:
+            # Explicitly set fields: null clears; omitted fields are left alone
+            if "obj_raw_score" in fields_set:
                 subject_score.obj_raw_score = score_item.obj_raw_score
-                subject_score.obj_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.obj_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.obj_raw_score is not None:
+                    subject_score.obj_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.obj_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
 
-            if score_item.essay_raw_score is not None:
+            if "essay_raw_score" in fields_set:
                 subject_score.essay_raw_score = score_item.essay_raw_score
-                subject_score.essay_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.essay_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.essay_raw_score is not None:
+                    subject_score.essay_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.essay_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
 
-            if score_item.pract_raw_score is not None:
+            if "pract_raw_score" in fields_set:
                 subject_score.pract_raw_score = score_item.pract_raw_score
-                subject_score.pract_extraction_method = extraction_method
-                # Update document's extraction methods array
-                if subject_score.pract_document_id:
-                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
-                    doc_result = await session.execute(doc_stmt)
-                    doc = doc_result.scalar_one_or_none()
+                applied_any = True
+                if score_item.pract_raw_score is not None:
+                    subject_score.pract_extraction_method = extraction_method
+                    doc = await _touch_document_for_field(
+                        subject_score.pract_document_id, extraction_method
+                    )
                     if doc:
-                        add_extraction_method_to_document(doc, extraction_method)
                         documents_to_update_status.add(doc)
+
+            if not applied_any:
+                failed += 1
+                errors.append(
+                    {
+                        "score_id": str(score_item.score_id),
+                        "error": "No score fields provided to update",
+                    }
+                )
+                continue
 
             # Update document extraction status to success when scores are manually entered/transcribed
             current_time = datetime.utcnow()
