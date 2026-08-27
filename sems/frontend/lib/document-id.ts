@@ -156,6 +156,23 @@ export function resolveDocumentIdParts(
   ];
 }
 
+/** True when the document already has a fully resolved sheet identity for migration. */
+export function documentHasCompleteSheetIdentity(doc: {
+  extracted_id?: string | null;
+  school_id?: number | null;
+  subject_id?: number | null;
+  test_type?: string | null;
+  sheet_number?: string | null;
+}): boolean {
+  return Boolean(
+    doc.extracted_id &&
+      doc.school_id &&
+      doc.subject_id &&
+      (doc.test_type === "1" || doc.test_type === "2") &&
+      doc.sheet_number
+  );
+}
+
 export function validateDocumentId(
   id: string,
   schools: School[],

@@ -104,6 +104,17 @@ ID_EXTRACTION_CONCURRENCY = 4
 THUMBNAIL_MAX_SIZE = 320
 
 
+def _has_complete_sheet_identity(document: Document) -> bool:
+    """True when the document has a fully resolved sheet identity for score migration."""
+    return bool(
+        document.extracted_id
+        and document.school_id is not None
+        and document.subject_id is not None
+        and document.test_type in ("1", "2")
+        and document.sheet_number
+    )
+
+
 def _apply_reassignment_filters(
     stmt: Any,
     *,
@@ -1719,6 +1730,7 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
         old_extracted_id[10:11] if old_extracted_id and len(old_extracted_id) == 13 else None
     )
     old_subject_id = document.subject_id
+    prior_identity_complete = _has_complete_sheet_identity(document)
     scores_moved = 0
 
     # Update fields
@@ -1804,30 +1816,35 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
     )
     id_changed = bool(old_extracted_id and new_extracted_id and old_extracted_id != new_extracted_id)
 
-    if old_extracted_id and new_extracted_id and (subject_or_paper_changed or id_changed):
-        # Block if another uploaded doc already owns the new ID
-        if id_changed:
-            conflict_stmt = select(Document).where(
-                Document.extracted_id == new_extracted_id,
-                Document.exam_id == document.exam_id,
-                Document.id != document.id,
-                Document.upload_status == "uploaded",
+    # Always block ownership collisions when assigning a different extracted_id
+    if new_extracted_id and new_extracted_id != old_extracted_id:
+        conflict_stmt = select(Document).where(
+            Document.extracted_id == new_extracted_id,
+            Document.exam_id == document.exam_id,
+            Document.id != document.id,
+            Document.upload_status == "uploaded",
+        )
+        conflict_doc = (await session.execute(conflict_stmt)).scalar_one_or_none()
+        if conflict_doc:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": (
+                        f"Another document (#{conflict_doc.id}) already uses ID "
+                        f"{new_extracted_id}"
+                    ),
+                    "error_code": "id_ownership",
+                    "conflict_document_id": conflict_doc.id,
+                },
             )
-            conflict_doc = (await session.execute(conflict_stmt)).scalar_one_or_none()
-            if conflict_doc:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "message": (
-                            f"Another document (#{conflict_doc.id}) already uses ID "
-                            f"{new_extracted_id}"
-                        ),
-                        "error_code": "id_ownership",
-                        "conflict_document_id": conflict_doc.id,
-                    },
-                )
 
+    if (
+        prior_identity_complete
+        and old_extracted_id
+        and new_extracted_id
+        and (subject_or_paper_changed or id_changed)
+    ):
         migration = await migrate_applied_scores_for_id_change(
             session,
             exam_id=document.exam_id,
@@ -1872,13 +1889,13 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
             )
         scores_moved = migration.scores_moved
 
-    if old_test_type and new_test_type and old_test_type != new_test_type:
+    if prior_identity_complete and old_test_type and new_test_type and old_test_type != new_test_type:
         apply_test_type_change_markers(
             document,
             old_test_type=old_test_type,
             new_test_type=new_test_type,
         )
-    if old_subject_id != new_subject_id:
+    if prior_identity_complete and old_subject_id != new_subject_id:
         apply_subject_change_markers(
             document,
             old_subject_id=old_subject_id,
@@ -1926,14 +1943,8 @@ async def score_migration_preview(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     old_extracted_id = document.extracted_id
-    if not old_extracted_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Document has no extracted_id to migrate from",
-        )
-
     old_test_type = document.test_type or (
-        old_extracted_id[10:11] if len(old_extracted_id) == 13 else None
+        old_extracted_id[10:11] if old_extracted_id and len(old_extracted_id) == 13 else None
     )
     old_subject_id = document.subject_id
 
@@ -1951,6 +1962,55 @@ async def score_migration_preview(
             if subj:
                 new_subject_id = subj.id
 
+    ownership_conflict_id: int | None = None
+    if new_extracted_id and new_extracted_id != old_extracted_id:
+        ownership_stmt = select(Document).where(
+            Document.extracted_id == new_extracted_id,
+            Document.exam_id == document.exam_id,
+            Document.id != document.id,
+            Document.upload_status == "uploaded",
+        )
+        ownership_doc = (await session.execute(ownership_stmt)).scalar_one_or_none()
+        if ownership_doc:
+            ownership_conflict_id = ownership_doc.id
+
+    # Incomplete prior identity: correction / first assignment — no scores to migrate
+    if not _has_complete_sheet_identity(document) or not old_extracted_id:
+        to_subject = None
+        if new_subject_id is not None:
+            to_subject = (
+                await session.execute(select(Subject).where(Subject.id == new_subject_id))
+            ).scalar_one_or_none()
+        return ScoreMigrationPreviewResponse(
+            requires_confirm=False,
+            subject_changed=False,
+            paper_changed=False,
+            scores_to_move=0,
+            from_meta=ScoreMigrationEndpointMeta(
+                extracted_id=old_extracted_id,
+                subject_id=old_subject_id,
+                test_type=old_test_type,
+            ),
+            to_meta=ScoreMigrationEndpointMeta(
+                extracted_id=new_extracted_id,
+                subject_id=new_subject_id,
+                subject_code=to_subject.code if to_subject else None,
+                subject_name=to_subject.name if to_subject else None,
+                test_type=new_test_type,
+                paper_label=(
+                    "Objectives"
+                    if new_test_type == "1"
+                    else "Essay"
+                    if new_test_type == "2"
+                    else None
+                ),
+            ),
+            conflicts=[],
+            unregistered=[],
+            blocking_errors=[],
+            conflict_document_id=ownership_conflict_id,
+        )
+
     migration = await migrate_applied_scores_for_id_change(
         session,
         exam_id=document.exam_id,
@@ -1964,23 +2024,12 @@ async def score_migration_preview(
         dry_run=True,
     )
 
-    ownership_conflict_id: int | None = None
     # Keep hard blockers separate from ownership (surfaced via conflict_document_id)
     blocking_errors = [
         e
         for e in migration.blocking_errors
         if "already uses ID" not in e
     ]
-    if new_extracted_id != old_extracted_id:
-        ownership_stmt = select(Document).where(
-            Document.extracted_id == new_extracted_id,
-            Document.exam_id == document.exam_id,
-            Document.id != document.id,
-            Document.upload_status == "uploaded",
-        )
-        ownership_doc = (await session.execute(ownership_stmt)).scalar_one_or_none()
-        if ownership_doc:
-            ownership_conflict_id = ownership_doc.id
 
     from_meta = migration.from_meta
     to_meta = migration.to_meta
