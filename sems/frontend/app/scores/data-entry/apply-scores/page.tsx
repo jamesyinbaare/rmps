@@ -61,12 +61,33 @@ import {
   readResumeScope,
   writeResumeScope,
 } from "@/lib/extraction-scope";
+import type { SubjectTypeFilterValue } from "@/components/SubjectMultiSelectFilter";
+import { useRouter } from "next/navigation";
+
+function parseSubjectIdsParam(value: string | null): number[] | undefined {
+  if (!value) return undefined;
+  const ids = value
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+  return ids.length > 0 ? ids : undefined;
+}
+
+function parseSubjectTypeParam(value: string | null): "CORE" | "ELECTIVE" | undefined {
+  if (value === "CORE" || value === "ELECTIVE") return value;
+  return undefined;
+}
 
 export default function ApplyScoresPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const examIdFromUrl = parseOptionalInt(searchParams.get("exam_id"));
   const subjectIdFromUrl = parseOptionalInt(searchParams.get("subject_id"));
+  const subjectIdsParam = searchParams.get("subject_ids");
+  const subjectIdsFromUrl = parseSubjectIdsParam(subjectIdsParam);
+  const subjectTypeFromUrl = parseSubjectTypeParam(searchParams.get("subject_type"));
   const providerFromUrl = parseProvider(searchParams.get("provider"));
+  const lastUrlQueryRef = useRef<string | null>(null);
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
@@ -80,7 +101,14 @@ export default function ApplyScoresPage() {
       extraction_provider: providerFromUrl ?? DEFAULT_EXTRACTION_PROVIDER,
     };
     if (examIdFromUrl) initial.exam_id = examIdFromUrl;
-    if (subjectIdFromUrl) initial.subject_id = subjectIdFromUrl;
+    if (subjectIdsFromUrl?.length) {
+      initial.subject_ids = subjectIdsFromUrl;
+      if (subjectIdsFromUrl.length === 1) initial.subject_id = subjectIdsFromUrl[0];
+    } else if (subjectIdFromUrl) {
+      initial.subject_id = subjectIdFromUrl;
+      initial.subject_ids = [subjectIdFromUrl];
+    }
+    if (subjectTypeFromUrl) initial.subject_type = subjectTypeFromUrl;
     return initial;
   });
   const [totalPages, setTotalPages] = useState(1);
@@ -137,15 +165,29 @@ export default function ApplyScoresPage() {
 
   useEffect(() => {
     if (resumeHydratedRef.current) return;
-    if (examIdFromUrl != null || subjectIdFromUrl != null || providerFromUrl) {
+    if (
+      examIdFromUrl != null ||
+      subjectIdFromUrl != null ||
+      subjectIdsFromUrl?.length ||
+      subjectTypeFromUrl ||
+      providerFromUrl
+    ) {
       resumeHydratedRef.current = true;
       if (examIdFromUrl != null) setSelectedExamId(examIdFromUrl);
-      if (subjectIdFromUrl != null) {
-        setFilters((prev) => ({ ...prev, subject_id: subjectIdFromUrl, page: 1 }));
-      }
-      if (providerFromUrl) {
-        setFilters((prev) => ({ ...prev, extraction_provider: providerFromUrl }));
-      }
+      setFilters((prev) => {
+        const next = { ...prev, page: 1 };
+        if (subjectIdsFromUrl?.length) {
+          next.subject_ids = subjectIdsFromUrl;
+          if (subjectIdsFromUrl.length === 1) next.subject_id = subjectIdsFromUrl[0];
+          else delete next.subject_id;
+        } else if (subjectIdFromUrl != null) {
+          next.subject_id = subjectIdFromUrl;
+          next.subject_ids = [subjectIdFromUrl];
+        }
+        if (subjectTypeFromUrl) next.subject_type = subjectTypeFromUrl;
+        if (providerFromUrl) next.extraction_provider = providerFromUrl;
+        return next;
+      });
       return;
     }
     const resume = readResumeScope();
@@ -156,9 +198,10 @@ export default function ApplyScoresPage() {
       ...prev,
       exam_id: resume.exam_id,
       subject_id: resume.subject_id,
+      subject_ids: [resume.subject_id],
       page: 1,
     }));
-  }, [examIdFromUrl, subjectIdFromUrl, providerFromUrl]);
+  }, [examIdFromUrl, subjectIdFromUrl, subjectIdsParam, subjectTypeFromUrl, providerFromUrl]);
 
   useEffect(() => {
     async function loadFilterOptions() {
@@ -202,6 +245,34 @@ export default function ApplyScoresPage() {
     loadDocuments();
   }, [loadDocuments]);
 
+  // Keep scope filters in the URL for refresh
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (filters.exam_id) params.set("exam_id", String(filters.exam_id));
+    if (filters.subject_ids?.length) {
+      params.set("subject_ids", filters.subject_ids.join(","));
+    } else if (filters.subject_id) {
+      params.set("subject_id", String(filters.subject_id));
+    }
+    if (filters.subject_type) params.set("subject_type", filters.subject_type);
+    if (applyProvider && applyProvider !== DEFAULT_EXTRACTION_PROVIDER) {
+      params.set("provider", applyProvider);
+    }
+    const next = params.toString();
+    if (lastUrlQueryRef.current === next) return;
+    lastUrlQueryRef.current = next;
+    router.replace(`/scores/data-entry/apply-scores${next ? `?${next}` : ""}`, {
+      scroll: false,
+    });
+  }, [
+    filters.exam_id,
+    filters.subject_id,
+    filters.subject_ids,
+    filters.subject_type,
+    applyProvider,
+    router,
+  ]);
+
   useEffect(() => {
     const newFilters: ScoreDocumentFilters = { ...filters };
 
@@ -227,30 +298,43 @@ export default function ApplyScoresPage() {
   }, [selectedExamId, exams]);
 
   useEffect(() => {
-    if (filters.exam_id && filters.subject_id) {
-      writeResumeScope(filters.exam_id, filters.subject_id);
+    const singleSubjectId =
+      filters.subject_ids?.length === 1
+        ? filters.subject_ids[0]
+        : filters.subject_ids?.length
+          ? undefined
+          : filters.subject_id;
+    if (filters.exam_id && singleSubjectId) {
+      writeResumeScope(filters.exam_id, singleSubjectId);
     }
-  }, [filters.exam_id, filters.subject_id]);
+  }, [filters.exam_id, filters.subject_id, filters.subject_ids]);
+
+  const pipelineSubjectId =
+    filters.subject_ids?.length === 1
+      ? filters.subject_ids[0]
+      : filters.subject_ids?.length
+        ? undefined
+        : filters.subject_id;
 
   const pipelineScope = useMemo(
     () =>
       filters.exam_id
         ? {
             exam_id: filters.exam_id,
-            subject_id: filters.subject_id,
+            subject_id: pipelineSubjectId,
             provider: applyProvider,
           }
         : null,
-    [filters.exam_id, filters.subject_id, applyProvider]
+    [filters.exam_id, pipelineSubjectId, applyProvider]
   );
 
   const extractHref = useMemo(
     () =>
       appendScopeToHref("/scores/data-entry/extraction", {
         exam_id: filters.exam_id,
-        subject_id: filters.subject_id,
+        subject_id: pipelineSubjectId,
       }),
-    [filters.exam_id, filters.subject_id]
+    [filters.exam_id, pipelineSubjectId]
   );
 
   const handleFilterChange = (key: keyof ScoreDocumentFilters, value: number | string | undefined) => {
@@ -260,6 +344,49 @@ export default function ApplyScoresPage() {
         delete next[key];
       } else {
         (next as Record<string, unknown>)[key] = value;
+      }
+      return next;
+    });
+    setSelectedDocuments(new Set());
+  };
+
+  const handleSubjectIdsChange = (ids: number[]) => {
+    setFilters((prev) => {
+      const next = { ...prev, page: 1 };
+      if (ids.length > 0) {
+        next.subject_ids = ids;
+        if (ids.length === 1) next.subject_id = ids[0];
+        else delete next.subject_id;
+      } else {
+        delete next.subject_ids;
+        delete next.subject_id;
+      }
+      return next;
+    });
+    setSelectedDocuments(new Set());
+  };
+
+  const handleSubjectTypeFilterChange = (value: SubjectTypeFilterValue) => {
+    setFilters((prev) => {
+      const next = { ...prev, page: 1 };
+      if (value === "ALL") {
+        delete next.subject_type;
+      } else {
+        next.subject_type = value;
+        if (next.subject_ids?.length) {
+          const allowed = new Set(
+            subjects.filter((s) => s.subject_type === value).map((s) => s.id)
+          );
+          const pruned = next.subject_ids.filter((id) => allowed.has(id));
+          if (pruned.length > 0) {
+            next.subject_ids = pruned;
+            if (pruned.length === 1) next.subject_id = pruned[0];
+            else delete next.subject_id;
+          } else {
+            delete next.subject_ids;
+            delete next.subject_id;
+          }
+        }
       }
       return next;
     });
@@ -512,6 +639,8 @@ export default function ApplyScoresPage() {
   const handleClearFilters = () => {
     setSelectedExamId(undefined);
     clearResumeScope();
+    lastUrlQueryRef.current = "";
+    router.replace("/scores/data-entry/apply-scores", { scroll: false });
     setFilters({
       page: 1,
       page_size: filters.page_size || 50,
@@ -595,6 +724,11 @@ export default function ApplyScoresPage() {
               subjects={subjects}
               schoolId={filters.school_id}
               subjectId={filters.subject_id}
+              multiSubject
+              subjectIds={filters.subject_ids ?? []}
+              onSubjectIdsChange={handleSubjectIdsChange}
+              subjectTypeFilter={filters.subject_type ?? "ALL"}
+              onSubjectTypeFilterChange={handleSubjectTypeFilterChange}
               testType={filters.test_type}
               extractionProvider={applyProvider}
               onSchoolChange={(value) => handleFilterChange("school_id", parseNumericFilter(value))}

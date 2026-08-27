@@ -217,6 +217,12 @@ async def get_filtered_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id when set)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_status: str | None = Query(
         None,
@@ -293,8 +299,13 @@ async def get_filtered_documents(
 
     if school_id is not None:
         base_stmt = base_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    subject_id_list = _parse_subject_ids(subject_ids)
+    if subject_id_list:
+        base_stmt = base_stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == test_type)
     if extraction_method is not None:
@@ -320,6 +331,8 @@ async def get_filtered_documents(
     # Join with Exam table if filtering by exam_type, series, or year (and not using exam_id)
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         count_stmt = count_stmt.join(Exam, Document.exam_id == Exam.id)
+    if subject_type is not None:
+        count_stmt = count_stmt.join(Subject, Document.subject_id == Subject.id)
 
     # Apply exam filters
     if exam_id is not None:
@@ -335,8 +348,12 @@ async def get_filtered_documents(
 
     if school_id is not None:
         count_stmt = count_stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    if subject_id_list:
+        count_stmt = count_stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        count_stmt = count_stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == test_type)
     if extraction_method is not None:
@@ -418,6 +435,12 @@ async def get_scores_extraction_status_counts(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id when set)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_method: DataExtractionMethod | None = Query(
         None, description="Filter by extraction method in scores_extraction_methods array"
@@ -466,6 +489,8 @@ async def get_scores_extraction_status_counts(
 
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
         stmt = stmt.join(Exam, Document.exam_id == Exam.id)
+    if subject_type is not None:
+        stmt = stmt.join(Subject, Document.subject_id == Subject.id)
 
     if exam_id is not None:
         stmt = stmt.where(Document.exam_id == exam_id)
@@ -479,8 +504,13 @@ async def get_scores_extraction_status_counts(
 
     if school_id is not None:
         stmt = stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    subject_id_list = _parse_subject_ids(subject_ids)
+    if subject_id_list:
+        stmt = stmt.where(Document.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         stmt = stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        stmt = stmt.where(Subject.subject_type == subject_type)
     if test_type is not None:
         stmt = stmt.where(Document.test_type == test_type)
     if extraction_method is not None:

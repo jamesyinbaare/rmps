@@ -670,6 +670,9 @@ export interface ScoreDocumentFilters {
   year?: number;
   school_id?: number;
   subject_id?: number;
+  /** Multi-subject filter (Apply Scores); preferred over subject_id when set */
+  subject_ids?: number[];
+  subject_type?: "CORE" | "ELECTIVE";
   test_type?: string;
   extraction_status?: string; // Single or comma-separated: pending,queued,processing,success,error
   extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL

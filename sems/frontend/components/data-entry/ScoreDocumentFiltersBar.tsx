@@ -17,6 +17,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import {
+  SubjectMultiSelectFilter,
+  type SubjectTypeFilterValue,
+} from "@/components/SubjectMultiSelectFilter";
 import type { ExtractionProviderFilter, School, Subject } from "@/types/document";
 import { DEFAULT_EXTRACTION_PROVIDER, extractionProviderFilterLabel } from "@/types/document";
 import { cn } from "@/lib/utils";
@@ -31,6 +35,12 @@ interface ScoreDocumentFiltersBarProps {
   subjects: Subject[];
   schoolId?: number;
   subjectId?: number;
+  /** Apply Scores multi-select mode */
+  multiSubject?: boolean;
+  subjectIds?: number[];
+  onSubjectIdsChange?: (ids: number[]) => void;
+  subjectTypeFilter?: SubjectTypeFilterValue;
+  onSubjectTypeFilterChange?: (value: SubjectTypeFilterValue) => void;
   testType?: string;
   extractionProvider?: ExtractionProviderFilter;
   onSchoolChange: (value: string | number | "all" | "") => void;
@@ -69,6 +79,11 @@ export function ScoreDocumentFiltersBar({
   subjects,
   schoolId,
   subjectId,
+  multiSubject = false,
+  subjectIds = [],
+  onSubjectIdsChange,
+  subjectTypeFilter = "ALL",
+  onSubjectTypeFilterChange,
   testType,
   extractionProvider,
   onSchoolChange,
@@ -113,7 +128,29 @@ export function ScoreDocumentFiltersBar({
       onRemove: () => onSchoolChange("all"),
     });
   }
-  if (!hideExamSubject && subjectId) {
+  if (!hideExamSubject && multiSubject) {
+    if (subjectTypeFilter !== "ALL") {
+      chips.push({
+        key: "subject-type",
+        label: `Type: ${subjectTypeFilter === "CORE" ? "Core" : "Elective"}`,
+        onRemove: () => onSubjectTypeFilterChange?.("ALL"),
+      });
+    }
+    if (subjectIds.length === 1) {
+      const subject = subjects.find((s) => s.id === subjectIds[0]);
+      chips.push({
+        key: "subject",
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : subjectIds[0]}`,
+        onRemove: () => onSubjectIdsChange?.([]),
+      });
+    } else if (subjectIds.length > 1) {
+      chips.push({
+        key: "subjects",
+        label: `Subjects: ${subjectIds.length}`,
+        onRemove: () => onSubjectIdsChange?.([]),
+      });
+    }
+  } else if (!hideExamSubject && subjectId) {
     const subject = subjects.find((s) => s.id === subjectId);
     chips.push({
       key: "subject",
@@ -162,63 +199,74 @@ export function ScoreDocumentFiltersBar({
               />
             </div>
 
-            <div className="flex items-center gap-1">
-              <div className="w-[240px]">
-                <SearchableSelect
-                  options={subjects.map((subject) => ({
-                    value: subject.id,
-                    label: `${subject.code} - ${subject.name}`,
-                  }))}
-                  value={subjectId != null ? subjectId : !requireSubject ? "all" : ""}
-                  onValueChange={onSubjectChange}
-                  placeholder={
-                    requireSubject
-                      ? selectedExamId
-                        ? "Select subject…"
-                        : "Select examination first"
-                      : "Subject"
-                  }
-                  disabled={loading || subjectDisabled || (requireSubject && !selectedExamId)}
-                  allowAll={!requireSubject}
-                  allLabel="All subjects"
-                  searchPlaceholder="Search subject code or name..."
-                  emptyMessage={
-                    requireSubject && !selectedExamId
-                      ? "Select an examination first"
-                      : "No subjects found"
-                  }
-                  triggerClassName="h-8"
-                />
-              </div>
-              {showSubjectNav && (
-                <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={!canPrevSubject || loading || subjectDisabled}
-                    onClick={onPrevSubject}
-                    aria-label="Previous subject"
-                    title="Previous subject"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={!canNextSubject || loading || subjectDisabled}
-                    onClick={onNextSubject}
-                    aria-label="Next subject"
-                    title="Next subject"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
+            {multiSubject && onSubjectIdsChange && onSubjectTypeFilterChange ? (
+              <SubjectMultiSelectFilter
+                subjects={subjects}
+                value={subjectIds}
+                onChange={onSubjectIdsChange}
+                subjectType={subjectTypeFilter}
+                onSubjectTypeChange={onSubjectTypeFilterChange}
+                disabled={loading || subjectDisabled}
+              />
+            ) : (
+              <div className="flex items-center gap-1">
+                <div className="w-[240px]">
+                  <SearchableSelect
+                    options={subjects.map((subject) => ({
+                      value: subject.id,
+                      label: `${subject.code} - ${subject.name}`,
+                    }))}
+                    value={subjectId != null ? subjectId : !requireSubject ? "all" : ""}
+                    onValueChange={onSubjectChange}
+                    placeholder={
+                      requireSubject
+                        ? selectedExamId
+                          ? "Select subject…"
+                          : "Select examination first"
+                        : "Subject"
+                    }
+                    disabled={loading || subjectDisabled || (requireSubject && !selectedExamId)}
+                    allowAll={!requireSubject}
+                    allLabel="All subjects"
+                    searchPlaceholder="Search subject code or name..."
+                    emptyMessage={
+                      requireSubject && !selectedExamId
+                        ? "Select an examination first"
+                        : "No subjects found"
+                    }
+                    triggerClassName="h-8"
+                  />
                 </div>
-              )}
-            </div>
+                {showSubjectNav && (
+                  <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={!canPrevSubject || loading || subjectDisabled}
+                      onClick={onPrevSubject}
+                      aria-label="Previous subject"
+                      title="Previous subject"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={!canNextSubject || loading || subjectDisabled}
+                      onClick={onNextSubject}
+                      aria-label="Next subject"
+                      title="Next subject"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 

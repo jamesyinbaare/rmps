@@ -2336,7 +2336,12 @@ export async function getFilteredDocuments(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_status) params.append("extraction_status", filters.extraction_status);
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
@@ -2365,7 +2370,12 @@ export async function getScoresExtractionStatusCounts(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
   if (filters.extraction_provider) params.append("extraction_provider", filters.extraction_provider);
