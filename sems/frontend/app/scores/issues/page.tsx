@@ -10,7 +10,7 @@ import {
   getCurrentUser,
   getValidationIssues,
   getAllExams,
-  listSchools,
+  getAllSchools,
   getAllSubjects,
   getBatchSummary,
 } from "@/lib/api";
@@ -305,7 +305,7 @@ export default function ValidationIssuesPage() {
     try {
       const [examsData, schoolsData, subjectsData] = await Promise.all([
         getAllExams().catch(() => []),
-        listSchools(1, 100).catch(() => []),
+        getAllSchools().catch(() => []),
         getAllSubjects().catch(() => []),
       ]);
       setExams(Array.isArray(examsData) ? examsData : []);

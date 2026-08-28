@@ -3,11 +3,12 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-export type PaperPairFilter = "paired" | "missing";
+export type PaperPairFilter = "paired" | "missing_1" | "missing_2";
 
 export type PaperPairCounts = {
   paired: number;
-  missing: number;
+  missing_1: number;
+  missing_2: number;
 };
 
 const PILLS: Array<{
@@ -18,12 +19,13 @@ const PILLS: Array<{
 }> = [
   { key: "all", label: "All", dot: "bg-muted-foreground" },
   { key: "paired", label: "Paired", filter: "paired", dot: "bg-primary" },
-  { key: "missing", label: "Missing", filter: "missing", dot: "bg-amber-500" },
+  { key: "missing_1", label: "Objectives only", filter: "missing_1", dot: "bg-amber-500" },
+  { key: "missing_2", label: "Essay only", filter: "missing_2", dot: "bg-orange-500" },
 ];
 
 interface PaperPairPillsProps {
   counts: PaperPairCounts;
-  selected?: PaperPairFilter;
+  selected?: PaperPairFilter | "missing";
   onSelect: (value: PaperPairFilter | undefined) => void;
   loading?: boolean;
   dense?: boolean;
@@ -66,7 +68,9 @@ export function PaperPairPills({
             ? null
             : pill.key === "paired"
               ? counts.paired
-              : counts.missing;
+              : pill.key === "missing_1"
+                ? counts.missing_1
+                : counts.missing_2;
         return (
           <button
             key={pill.key}

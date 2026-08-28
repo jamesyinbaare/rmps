@@ -216,6 +216,9 @@ export interface DocumentFilters {
   year?: number;
   school_id?: number;
   subject_id?: number;
+  /** Multi-subject filter; preferred over subject_id when set */
+  subject_ids?: number[];
+  subject_type?: "CORE" | "ELECTIVE";
   id_extraction_status?: string;
   id_extraction_error_code?: string;
   test_type?: string;
@@ -229,8 +232,8 @@ export interface DocumentFilters {
   subject_changed_subject_ids?: number[];
   /** With subject_changed, match current subject, prior subject, or either (default) */
   subject_changed_subject_scope?: SubjectChangedSubjectScope;
-  /** Filter by other-paper counterpart: paired | missing */
-  paper_pair?: "paired" | "missing";
+  /** Filter by other-paper counterpart: paired | missing | missing_1 | missing_2 */
+  paper_pair?: "paired" | "missing" | "missing_1" | "missing_2";
   q?: string;
   page?: number;
   page_size?: number;

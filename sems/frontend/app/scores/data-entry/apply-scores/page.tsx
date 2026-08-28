@@ -36,7 +36,7 @@ import {
   getAllExams,
   getFilteredDocuments,
   getUnmatchedRecords,
-  listSchools,
+  getAllSchools,
   getAllSubjects,
   updateScoresFromReducto,
 } from "@/lib/api";
@@ -209,7 +209,7 @@ export default function ApplyScoresPage() {
       try {
         const [examsData, schoolsData, subjectsData] = await Promise.all([
           getAllExams(),
-          listSchools(1, 100),
+          getAllSchools(),
           getAllSubjects(),
         ]);
         setExams(examsData);

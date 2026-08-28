@@ -451,7 +451,12 @@ export async function listDocuments(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.id_extraction_status) params.append("id_extraction_status", filters.id_extraction_status);
   if (filters.id_extraction_error_code) {
     params.append("id_extraction_error_code", filters.id_extraction_error_code);
@@ -487,7 +492,12 @@ export async function getIdExtractionStatusCounts(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.q) params.append("q", filters.q);
 
   const response = await fetch(
@@ -870,6 +880,18 @@ export async function listSchools(page = 1, pageSize = 100): Promise<School[]> {
 
   const response = await fetch(`${API_BASE_URL}/api/v1/schools?${params.toString()}`);
   return handleResponse<School[]>(response);
+}
+
+export async function getAllSchools(): Promise<School[]> {
+  const all: School[] = [];
+  let page = 1;
+  while (page <= 20) {
+    const chunk = await listSchools(page, 100);
+    all.push(...chunk);
+    if (chunk.length < 100) break;
+    page += 1;
+  }
+  return all;
 }
 
 export async function getSchoolById(id: number): Promise<School | null> {

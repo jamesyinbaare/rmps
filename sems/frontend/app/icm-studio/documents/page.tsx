@@ -39,6 +39,7 @@ import {
   BookOpen,
   Sparkles,
   Pencil,
+  X,
 } from "lucide-react";
 import {
   listDocuments,
@@ -183,6 +184,8 @@ export default function DocumentsPage() {
   const paperChangedParam = searchParams.get("paper_changed");
   const subjectChangedSubjectsParam = searchParams.get("subject_changed_subjects");
   const subjectChangedScopeParam = searchParams.get("subject_changed_scope");
+  const subjectIdsParam = searchParams.get("subject_ids");
+  const subjectTypeParam = searchParams.get("subject_type");
   const paperPairParam = searchParams.get("paper_pair");
   const examIdFromUrl = parseOptionalInt(examIdParam);
 
@@ -230,7 +233,22 @@ export default function DocumentsPage() {
     if (subjectChangedScope && subjectChangedScope !== "either") {
       initial.subject_changed_subject_scope = subjectChangedScope;
     }
-    if (paperPairParam === "paired" || paperPairParam === "missing") {
+    const subjectIds = parseSubjectIdsParam(subjectIdsParam);
+    if (subjectIds) {
+      initial.subject_ids = subjectIds;
+      if (subjectIds.length === 1) {
+        initial.subject_id = subjectIds[0];
+      }
+    }
+    if (subjectTypeParam === "CORE" || subjectTypeParam === "ELECTIVE") {
+      initial.subject_type = subjectTypeParam;
+    }
+    if (
+      paperPairParam === "paired" ||
+      paperPairParam === "missing" ||
+      paperPairParam === "missing_1" ||
+      paperPairParam === "missing_2"
+    ) {
       initial.paper_pair = paperPairParam;
     }
     return initial;
@@ -268,7 +286,11 @@ export default function DocumentsPage() {
     error_codes: [],
   });
   const [countsLoading, setCountsLoading] = useState(true);
-  const [paperPairCounts, setPaperPairCounts] = useState({ paired: 0, missing: 0 });
+  const [paperPairCounts, setPaperPairCounts] = useState({
+    paired: 0,
+    missing_1: 0,
+    missing_2: 0,
+  });
   const [paperPairCountsLoading, setPaperPairCountsLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -293,14 +315,6 @@ export default function DocumentsPage() {
     filters.subject_changed_subject_ids,
     filters.subject_changed_subject_scope ?? "either"
   );
-  const subjectChangedToolbarPlaceholder =
-    filters.subject_changed && filters.subject_changed_subject_scope === "prior"
-      ? "Prior subject"
-      : filters.subject_changed && filters.subject_changed_subject_scope === "current"
-        ? "Current subject"
-        : filters.subject_changed
-          ? "Subject (current or prior)"
-          : undefined;
   const selectionEnabled = isErrorsView || bulkMode;
   const useInfiniteScroll = viewMode === "grid" && !isErrorsView;
 
@@ -503,6 +517,9 @@ export default function DocumentsPage() {
       prevFiltersRef.current?.year !== filters.year ||
       prevFiltersRef.current?.school_id !== filters.school_id ||
       prevFiltersRef.current?.subject_id !== filters.subject_id ||
+      JSON.stringify(prevFiltersRef.current?.subject_ids ?? []) !==
+        JSON.stringify(filters.subject_ids ?? []) ||
+      prevFiltersRef.current?.subject_type !== filters.subject_type ||
       prevFiltersRef.current?.id_extraction_status !== filters.id_extraction_status ||
       prevFiltersRef.current?.id_extraction_error_code !== filters.id_extraction_error_code ||
       prevFiltersRef.current?.test_type !== filters.test_type ||
@@ -571,6 +588,12 @@ export default function DocumentsPage() {
     ) {
       params.set("subject_changed_scope", filters.subject_changed_subject_scope);
     }
+    if (filters.subject_ids?.length) {
+      params.set("subject_ids", filters.subject_ids.join(","));
+    }
+    if (filters.subject_type) {
+      params.set("subject_type", filters.subject_type);
+    }
     if (filters.paper_pair) {
       params.set("paper_pair", filters.paper_pair);
     }
@@ -588,6 +611,8 @@ export default function DocumentsPage() {
     filters.paper_changed,
     filters.subject_changed_subject_ids,
     filters.subject_changed_subject_scope,
+    filters.subject_ids,
+    filters.subject_type,
     filters.paper_pair,
     filterParam,
     examIdFromUrl,
@@ -707,6 +732,8 @@ export default function DocumentsPage() {
         year: filters.year,
         school_id: filters.school_id,
         subject_id: filters.subject_id,
+        subject_ids: filters.subject_ids,
+        subject_type: filters.subject_type,
         q: filters.q,
       });
       setStatusCounts(counts);
@@ -722,12 +749,14 @@ export default function DocumentsPage() {
     filters.year,
     filters.school_id,
     filters.subject_id,
+    filters.subject_ids,
+    filters.subject_type,
     filters.q,
   ]);
 
   const loadPaperPairCounts = useCallback(async () => {
     if (!filters.exam_id) {
-      setPaperPairCounts({ paired: 0, missing: 0 });
+      setPaperPairCounts({ paired: 0, missing_1: 0, missing_2: 0 });
       setPaperPairCountsLoading(false);
       return;
     }
@@ -740,17 +769,21 @@ export default function DocumentsPage() {
         year: filters.year,
         school_id: filters.school_id,
         subject_id: filters.subject_id,
+        subject_ids: filters.subject_ids,
+        subject_type: filters.subject_type,
         q: filters.q,
         page: 1,
         page_size: 1,
       };
-      const [pairedRes, missingRes] = await Promise.all([
+      const [pairedRes, missing1Res, missing2Res] = await Promise.all([
         listDocuments({ ...scope, paper_pair: "paired" }),
-        listDocuments({ ...scope, paper_pair: "missing" }),
+        listDocuments({ ...scope, paper_pair: "missing_1" }),
+        listDocuments({ ...scope, paper_pair: "missing_2" }),
       ]);
       setPaperPairCounts({
         paired: pairedRes.total,
-        missing: missingRes.total,
+        missing_1: missing1Res.total,
+        missing_2: missing2Res.total,
       });
     } catch (err) {
       console.error("Error loading paper pair counts:", err);
@@ -764,6 +797,8 @@ export default function DocumentsPage() {
     filters.year,
     filters.school_id,
     filters.subject_id,
+    filters.subject_ids,
+    filters.subject_type,
     filters.q,
   ]);
 
@@ -807,6 +842,8 @@ export default function DocumentsPage() {
       };
       delete next.school_id;
       delete next.subject_id;
+      delete next.subject_ids;
+      delete next.subject_type;
       if (exam) {
         next.exam_type = exam.exam_type as ExamType;
         next.series = exam.series as ExamSeries;
@@ -846,12 +883,14 @@ export default function DocumentsPage() {
     });
   };
 
-  const handlePaperPairSelect = (value: "paired" | "missing" | undefined) => {
+  const handlePaperPairSelect = (value: "paired" | "missing_1" | "missing_2" | undefined) => {
     setSelectedIds(new Set());
     setFilters((prev) => {
       const next = { ...prev, page: 1 };
       if (value) {
         next.paper_pair = value;
+        // Pair filter implies paper; drop redundant secondary test_type.
+        delete next.test_type;
       } else {
         delete next.paper_pair;
       }
@@ -1260,8 +1299,92 @@ export default function DocumentsPage() {
     statusCounts.error_codes.find((c) => c.code === "duplicate")?.count ?? 0;
   const isDuplicateFilter = filters.id_extraction_error_code === "duplicate";
   const isPaperPairFilter = filters.paper_pair === "paired";
-  const isMissingCounterpartFilter = filters.paper_pair === "missing";
-  const isPaperCompareView = isPaperPairFilter || isMissingCounterpartFilter;
+  // Split compare only for true pairs — missing_1/missing_2 use single-pane viewer.
+  const isPaperCompareView = isPaperPairFilter;
+
+  const paperPairEmptyTitle =
+    filters.paper_pair === "paired"
+      ? "No paired paper sheets"
+      : filters.paper_pair === "missing_1"
+        ? "No Objectives-only sheets"
+        : filters.paper_pair === "missing_2"
+          ? "No Essay-only sheets"
+          : filters.paper_pair === "missing"
+            ? "No sheets missing a counterpart"
+            : null;
+  const paperPairEmptyDescription =
+    filters.paper_pair === "paired"
+      ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
+      : filters.paper_pair === "missing_1"
+        ? "Every Objectives sheet with a complete ID already has its Essay pair."
+        : filters.paper_pair === "missing_2"
+          ? "Every Essay sheet with a complete ID already has its Objectives pair."
+          : filters.paper_pair === "missing"
+            ? "Every sheet with a complete ID already has its other paper."
+            : null;
+  const hasSubjectScope =
+    !!filters.subject_id || !!filters.subject_ids?.length || !!filters.subject_type;
+  const hasMatchingFilters =
+    !!searchQuery.trim() ||
+    !!filters.school_id ||
+    hasSubjectScope ||
+    !!filters.id_extraction_status ||
+    !!filters.test_type ||
+    !!filters.paper_pair;
+
+  const paperImpliedByPair =
+    filters.paper_pair === "paired" ||
+    filters.paper_pair === "missing_1" ||
+    filters.paper_pair === "missing_2";
+
+  const secondaryActiveChips: Array<{ key: string; label: string; onClear: () => void }> = [];
+  if (!paperImpliedByPair && filters.test_type) {
+    secondaryActiveChips.push({
+      key: "test_type",
+      label: filters.test_type === "1" ? "Paper: Objectives" : "Paper: Essay",
+      onClear: () => {
+        setSelectedIds(new Set());
+        setFilters((prev) => {
+          const next = { ...prev, page: 1 };
+          delete next.test_type;
+          return next;
+        });
+      },
+    });
+  }
+  if (sheetReassignment) {
+    const reassignmentLabel =
+      sheetReassignment === "all"
+        ? "Reassigned"
+        : sheetReassignment === "subject"
+          ? filters.subject_changed_subject_ids?.length
+            ? `Subject changed · ${filters.subject_changed_subject_ids.length}`
+            : "Subject changed"
+          : "Paper changed";
+    secondaryActiveChips.push({
+      key: "reassignment",
+      label: reassignmentLabel,
+      onClear: () => {
+        setSelectedIds(new Set());
+        setFilters((prev) => {
+          const next = { ...prev, page: 1 };
+          delete next.test_type_changed;
+          delete next.subject_changed;
+          delete next.paper_changed;
+          delete next.subject_changed_subject_ids;
+          delete next.subject_changed_subject_scope;
+          return next;
+        });
+      },
+    });
+  }
+  if (filterParam === "recent") {
+    secondaryActiveChips.push({
+      key: "recent",
+      label: "Recents",
+      onClear: () => handleFilterChange(""),
+    });
+  }
 
   const handleUpdateId = async (
     documentId: number,
@@ -1585,8 +1708,9 @@ export default function DocumentsPage() {
             </div>
           ) : (
           <main className="min-h-0 flex-1 overflow-y-auto w-full">
-            {/* Dense control strip */}
+            {/* Two-tier filter chrome: scope + actions, then triage */}
             <div className="sticky top-0 z-10 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+              {/* Tier A — Scope + actions */}
               <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <div className="w-[180px] sm:w-[240px]">
@@ -1605,42 +1729,13 @@ export default function DocumentsPage() {
                     filters={filters}
                     onFiltersChange={handleFiltersChange}
                     hideExam
-                    subjectPlaceholder={subjectChangedToolbarPlaceholder}
                   />
-                  <IdExtractionStatusPills
-                    counts={statusCounts}
-                    selected={filters.id_extraction_status}
-                    onSelect={handleStatusSelect}
-                    loading={countsLoading}
-                    dense
-                  />
-                  <span
-                    className="mx-0.5 hidden h-5 w-px bg-border sm:inline-block"
-                    aria-hidden
-                  />
-                  <PaperPairPills
-                    counts={paperPairCounts}
-                    selected={filters.paper_pair}
-                    onSelect={handlePaperPairSelect}
-                    loading={paperPairCountsLoading}
-                    dense
-                  />
-                  {isPaperPairFilter && total > 0 && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={handleStartComparePaperPairs}
-                      disabled={documents.length === 0}
-                    >
-                      Compare ({total.toLocaleString()})
-                    </Button>
-                  )}
                 </div>
 
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   <DocumentsSecondaryFilters
                     testType={filters.test_type}
+                    paperPair={filters.paper_pair}
                     sheetReassignment={sheetReassignment}
                     subjectChangedSubjectIds={filters.subject_changed_subject_ids}
                     subjectChangedSubjectScope={filters.subject_changed_subject_scope ?? "either"}
@@ -1797,6 +1892,71 @@ export default function DocumentsPage() {
                     </Button>
                   </div>
                 </div>
+              </div>
+
+              {/* Tier B — Triage: labelled Status + Papers + active chips */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border/60 px-4 py-1.5">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Status
+                  </span>
+                  <IdExtractionStatusPills
+                    counts={statusCounts}
+                    selected={filters.id_extraction_status}
+                    onSelect={handleStatusSelect}
+                    loading={countsLoading}
+                    dense
+                  />
+                </div>
+                <span
+                  className="hidden h-5 w-px bg-border sm:inline-block"
+                  aria-hidden
+                />
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Papers
+                  </span>
+                  <PaperPairPills
+                    counts={paperPairCounts}
+                    selected={filters.paper_pair}
+                    onSelect={handlePaperPairSelect}
+                    loading={paperPairCountsLoading}
+                    dense
+                  />
+                  {isPaperPairFilter && total > 0 && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={handleStartComparePaperPairs}
+                      disabled={documents.length === 0}
+                    >
+                      Compare ({total.toLocaleString()})
+                    </Button>
+                  )}
+                </div>
+                {secondaryActiveChips.length > 0 && (
+                  <>
+                    <span
+                      className="hidden h-5 w-px bg-border sm:inline-block"
+                      aria-hidden
+                    />
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      {secondaryActiveChips.map((chip) => (
+                        <button
+                          key={chip.key}
+                          type="button"
+                          onClick={chip.onClear}
+                          className="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-muted/50 px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                          aria-label={`Clear ${chip.label}`}
+                        >
+                          <span className="max-w-[160px] truncate">{chip.label}</span>
+                          <X className="h-3 w-3 shrink-0 opacity-60" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
               {isErrorsView && (
@@ -1961,31 +2121,15 @@ export default function DocumentsPage() {
               hideEmptyState={!loading && total === 0}
               emptyTitle={
                 reassignmentEmpty?.title ??
-                (filters.paper_pair === "paired"
-                  ? "No paired paper sheets"
-                  : filters.paper_pair === "missing"
-                    ? "No sheets missing a counterpart"
-                    : searchQuery.trim() ||
-                        filters.school_id ||
-                        filters.subject_id ||
-                        filters.id_extraction_status ||
-                        filters.test_type
-                      ? "No matching documents"
-                      : "No documents yet")
+                paperPairEmptyTitle ??
+                (hasMatchingFilters ? "No matching documents" : "No documents yet")
               }
               emptyDescription={
                 reassignmentEmpty?.description ??
-                (filters.paper_pair === "paired"
-                  ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
-                  : filters.paper_pair === "missing"
-                    ? "Every sheet with a complete ID already has its other paper."
-                    : searchQuery.trim() ||
-                        filters.school_id ||
-                        filters.subject_id ||
-                        filters.id_extraction_status ||
-                        filters.test_type
-                      ? "Try clearing search or filters."
-                      : "Upload scanned ICMs to get started.")
+                paperPairEmptyDescription ??
+                (hasMatchingFilters
+                  ? "Try clearing search or filters."
+                  : "Upload scanned ICMs to get started.")
               }
             />
 
@@ -1993,31 +2137,15 @@ export default function DocumentsPage() {
               <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <p className="text-lg font-medium mb-2">
                   {reassignmentEmpty?.title ??
-                    (filters.paper_pair === "paired"
-                      ? "No paired paper sheets"
-                      : filters.paper_pair === "missing"
-                        ? "No sheets missing a counterpart"
-                        : searchQuery.trim() ||
-                            filters.school_id ||
-                            filters.subject_id ||
-                            filters.id_extraction_status ||
-                            filters.test_type
-                          ? "No matching documents"
-                          : "No documents yet")}
+                    paperPairEmptyTitle ??
+                    (hasMatchingFilters ? "No matching documents" : "No documents yet")}
                 </p>
                 <p className="text-sm text-muted-foreground mb-4">
                   {reassignmentEmpty?.description ??
-                    (filters.paper_pair === "paired"
-                      ? "No sheets in this exam have both Paper 1 and Paper 2 for the same page."
-                      : filters.paper_pair === "missing"
-                        ? "Every sheet with a complete ID already has its other paper."
-                        : searchQuery.trim() ||
-                            filters.school_id ||
-                            filters.subject_id ||
-                            filters.id_extraction_status ||
-                            filters.test_type
-                          ? "Try clearing search or filters to see more results."
-                          : "Upload scanned ICMs to populate this exam.")}
+                    paperPairEmptyDescription ??
+                    (hasMatchingFilters
+                      ? "Try clearing search or filters to see more results."
+                      : "Upload scanned ICMs to populate this exam.")}
                 </p>
                 {(searchQuery.trim() ||
                   filters.id_extraction_status ||
@@ -2136,9 +2264,7 @@ export default function DocumentsPage() {
                 isOwnershipReview
                   ? "ID conflict"
                   : isPaperCompareView
-                    ? isPaperPairFilter
-                      ? "Paper pair"
-                      : "Missing pair"
+                    ? "Paper pair"
                     : isDuplicateFilter ||
                         selectedDocument.id_extraction_error_code === "duplicate"
                       ? "Duplicate"
