@@ -28,6 +28,8 @@ import { cn } from "@/lib/utils";
 
 interface DocumentsSecondaryFiltersProps {
   testType?: string;
+  /** When set to paired/missing_*, Paper (test_type) is implied by the pair filter. */
+  paperPair?: "paired" | "missing" | "missing_1" | "missing_2";
   sheetReassignment?: SheetReassignmentFilter;
   subjectChangedSubjectIds?: number[];
   subjectChangedSubjectScope?: SubjectChangedSubjectScope;
@@ -42,6 +44,7 @@ interface DocumentsSecondaryFiltersProps {
 
 export function DocumentsSecondaryFilters({
   testType,
+  paperPair,
   sheetReassignment,
   subjectChangedSubjectIds = [],
   subjectChangedSubjectScope = "either",
@@ -57,6 +60,11 @@ export function DocumentsSecondaryFilters({
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [subjectSearch, setSubjectSearch] = useState("");
+
+  const paperImpliedByPair =
+    paperPair === "paired" ||
+    paperPair === "missing_1" ||
+    paperPair === "missing_2";
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +117,7 @@ export function DocumentsSecondaryFilters({
   }, [subjectChangedSubjectScope]);
 
   const activeCount =
-    (testType ? 1 : 0) +
+    (!paperImpliedByPair && testType ? 1 : 0) +
     (sheetReassignment ? 1 : 0) +
     (sheetReassignment === "subject" && subjectChangedSubjectIds.length > 0 ? 1 : 0) +
     (sheetReassignment === "subject" && subjectChangedSubjectScope !== "either" ? 1 : 0) +
@@ -125,6 +133,15 @@ export function DocumentsSecondaryFilters({
       subjectChangedSubjectIds.filter((id) => id !== subjectId)
     );
   };
+
+  const paperHint =
+    paperPair === "paired"
+      ? "Papers already limits to Objectives (one row per pair)."
+      : paperPair === "missing_1"
+        ? "Papers already shows Objectives-only sheets."
+        : paperPair === "missing_2"
+          ? "Papers already shows Essay-only sheets."
+          : null;
 
   return (
     <Popover>
@@ -168,26 +185,32 @@ export function DocumentsSecondaryFilters({
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="documents-paper-filter" className="text-xs text-muted-foreground">
-            Paper
-          </Label>
-          <Select
-            value={testType ?? "all"}
-            onValueChange={(value) =>
-              onTestTypeChange(value === "all" ? undefined : value)
-            }
-          >
-            <SelectTrigger id="documents-paper-filter" size="sm" className="h-8 w-full">
-              <SelectValue placeholder="Paper" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All papers</SelectItem>
-              <SelectItem value="1">Objectives</SelectItem>
-              <SelectItem value="2">Essay</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        {paperImpliedByPair ? (
+          <p className="rounded-md border border-border/70 bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+            {paperHint}
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="documents-paper-filter" className="text-xs text-muted-foreground">
+              Paper
+            </Label>
+            <Select
+              value={testType ?? "all"}
+              onValueChange={(value) =>
+                onTestTypeChange(value === "all" ? undefined : value)
+              }
+            >
+              <SelectTrigger id="documents-paper-filter" size="sm" className="h-8 w-full">
+                <SelectValue placeholder="Paper" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All papers</SelectItem>
+                <SelectItem value="1">Objectives</SelectItem>
+                <SelectItem value="2">Essay</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <Label htmlFor="documents-reassignment-filter" className="text-xs text-muted-foreground">

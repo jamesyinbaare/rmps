@@ -14,7 +14,16 @@ from sqlalchemy.orm import aliased, selectinload
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
 from app.dependencies.auth import DataClerkDep, RegistrarDep
-from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod, School, Subject
+from app.models import (
+    Document,
+    Exam,
+    ExamType,
+    ExamSeries,
+    DataExtractionMethod,
+    School,
+    Subject,
+    SubjectType,
+)
 from app.schemas.document import (
     AbandonedUploadCleanupResponse,
     BackfillTestTypeResponse,
@@ -155,8 +164,13 @@ def _parse_csv_ints(value: str | None) -> list[int]:
 def _subject_changed_scope_ids(
     subject_id: int | None,
     subject_changed_subject_ids: str | None,
+    subject_ids: list[int] | None = None,
 ) -> list[int]:
     ids = _parse_csv_ints(subject_changed_subject_ids)
+    if subject_ids:
+        for sid in subject_ids:
+            if sid not in ids:
+                ids.append(sid)
     if subject_id is not None and subject_id not in ids:
         ids.append(subject_id)
     return ids
@@ -166,12 +180,15 @@ def _apply_subject_filter(
     stmt: Any,
     *,
     subject_id: int | None,
+    subject_ids: list[int] | None = None,
     subject_changed: bool | None,
     subject_changed_subject_ids: str | None,
     subject_changed_subject_scope: str | None,
 ) -> Any:
     if subject_changed is True:
-        scope_ids = _subject_changed_scope_ids(subject_id, subject_changed_subject_ids)
+        scope_ids = _subject_changed_scope_ids(
+            subject_id, subject_changed_subject_ids, subject_ids
+        )
         if scope_ids:
             scope = (subject_changed_subject_scope or "either").lower()
             if scope == "current":
@@ -185,9 +202,48 @@ def _apply_subject_filter(
                 )
             )
         return stmt
+    if subject_ids:
+        return stmt.where(Document.subject_id.in_(subject_ids))
     if subject_id is not None:
         return stmt.where(Document.subject_id == subject_id)
     return stmt
+
+
+def _parse_subject_ids_param(subject_ids: str | None) -> list[int] | None:
+    ids = _parse_csv_ints(subject_ids)
+    return ids or None
+
+
+PAPER_PAIR_VALUES = frozenset({"paired", "missing", "missing_1", "missing_2"})
+
+
+def _apply_paper_pair_filter(stmt: Any, paper_pair: str) -> Any:
+    """Filter documents by presence/absence of the other-paper counterpart."""
+    Counterpart = aliased(Document)
+    flipped = case((Document.test_type == "1", "2"), else_="1")
+    has_sheet_key = and_(
+        Document.school_id.isnot(None),
+        Document.subject_id.isnot(None),
+        Document.subject_series.isnot(None),
+        Document.sheet_number.isnot(None),
+        Document.test_type.in_(("1", "2")),
+    )
+    counterpart_exists = exists(
+        select(Counterpart.id).where(
+            Counterpart.exam_id == Document.exam_id,
+            Counterpart.school_id == Document.school_id,
+            Counterpart.subject_id == Document.subject_id,
+            Counterpart.subject_series == Document.subject_series,
+            Counterpart.sheet_number == Document.sheet_number,
+            Counterpart.test_type == flipped,
+            Counterpart.upload_status == "uploaded",
+            Counterpart.id != Document.id,
+        )
+    )
+    stmt = stmt.where(has_sheet_key)
+    if paper_pair == "paired":
+        return stmt.where(counterpart_exists)
+    return stmt.where(~counterpart_exists)
 
 
 def _document_to_list_item(
@@ -1033,6 +1089,8 @@ def _apply_document_scope_filters(
     year: int | None,
     school_id: int | None,
     subject_id: int | None,
+    subject_ids: list[int] | None = None,
+    subject_type: SubjectType | None = None,
     q: str | None,
 ) -> Any:
     if exam_id is not None:
@@ -1046,8 +1104,12 @@ def _apply_document_scope_filters(
             stmt = stmt.where(Exam.year == year)
     if school_id is not None:
         stmt = stmt.where(Document.school_id == school_id)
-    if subject_id is not None:
+    if subject_ids:
+        stmt = stmt.where(Document.subject_id.in_(subject_ids))
+    elif subject_id is not None:
         stmt = stmt.where(Document.subject_id == subject_id)
+    if subject_type is not None:
+        stmt = stmt.where(Subject.subject_type == subject_type)
     if q and q.strip():
         search = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -1065,25 +1127,42 @@ async def get_id_extraction_status_counts(
     year: int | None = Query(None, ge=1900, le=2100),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     q: str | None = Query(None, description="Search file_name or extracted_id (case-insensitive)"),
 ) -> IdExtractionStatusCounts:
     """Return ID extraction status and error-type counts for the current document scope.
 
     Ignores id_extraction_status / error-code filters so the pills stay accurate.
     """
+    subject_id_list = _parse_subject_ids_param(subject_ids)
     join_exam = (exam_type is not None or series is not None or year is not None) and exam_id is None
-    status_stmt = select(Document.id_extraction_status, func.count(Document.id)).select_from(Document)
-    if join_exam:
-        status_stmt = status_stmt.join(Exam, Document.exam_id == Exam.id)
-    status_stmt = _apply_document_scope_filters(
-        status_stmt,
-        exam_id=exam_id,
-        exam_type=exam_type,
-        series=series,
-        year=year,
-        school_id=school_id,
-        subject_id=subject_id,
-        q=q,
+    join_subject = subject_type is not None
+
+    def _scoped_from(stmt: Any) -> Any:
+        if join_exam:
+            stmt = stmt.join(Exam, Document.exam_id == Exam.id)
+        if join_subject:
+            stmt = stmt.join(Subject, Document.subject_id == Subject.id)
+        return _apply_document_scope_filters(
+            stmt,
+            exam_id=exam_id,
+            exam_type=exam_type,
+            series=series,
+            year=year,
+            school_id=school_id,
+            subject_id=subject_id,
+            subject_ids=subject_id_list,
+            subject_type=subject_type,
+            q=q,
+        )
+
+    status_stmt = _scoped_from(
+        select(Document.id_extraction_status, func.count(Document.id)).select_from(Document)
     ).group_by(Document.id_extraction_status)
 
     status_result = await session.execute(status_stmt)
@@ -1097,18 +1176,8 @@ async def get_id_extraction_status_counts(
         elif status_value == "error":
             counts.error = n
 
-    code_stmt = select(Document.id_extraction_error_code, func.count(Document.id)).select_from(Document)
-    if join_exam:
-        code_stmt = code_stmt.join(Exam, Document.exam_id == Exam.id)
-    code_stmt = _apply_document_scope_filters(
-        code_stmt,
-        exam_id=exam_id,
-        exam_type=exam_type,
-        series=series,
-        year=year,
-        school_id=school_id,
-        subject_id=subject_id,
-        q=q,
+    code_stmt = _scoped_from(
+        select(Document.id_extraction_error_code, func.count(Document.id)).select_from(Document)
     ).where(Document.id_extraction_status == "error").group_by(Document.id_extraction_error_code)
 
     code_result = await session.execute(code_stmt)
@@ -1258,6 +1327,12 @@ async def list_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(
+        None, description="Comma-separated subject IDs (preferred over subject_id)"
+    ),
+    subject_type: SubjectType | None = Query(
+        None, description="Filter by subject type: CORE or ELECTIVE"
+    ),
     id_extraction_status: str | None = Query(
         None, description="Filter by ID extraction status: pending, success, error"
     ),
@@ -1300,7 +1375,10 @@ async def list_documents(
     ),
     paper_pair: str | None = Query(
         None,
-        description="Filter by other-paper counterpart: paired | missing",
+        description=(
+            "Filter by other-paper counterpart: paired | missing | missing_1 | missing_2 "
+            "(missing_1 = Objectives without Essay, missing_2 = Essay without Objectives)"
+        ),
     ),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
@@ -1315,17 +1393,32 @@ async def list_documents(
             )
         subject_changed_subject_scope = normalized_scope
 
+    if paper_pair is not None and paper_pair not in PAPER_PAIR_VALUES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="paper_pair must be paired, missing, missing_1, or missing_2",
+        )
+
+    subject_id_list = _parse_subject_ids_param(subject_ids)
+
     effective_test_type = test_type
     if paper_pair == "paired" and effective_test_type is None:
         # One row per pair when browsing paired sheets without a paper filter.
         effective_test_type = "1"
+    elif paper_pair == "missing_1":
+        effective_test_type = "1"
+    elif paper_pair == "missing_2":
+        effective_test_type = "2"
+
+    join_exam = (exam_type is not None or series is not None or year is not None) and exam_id is None
+    join_subject = subject_type is not None
 
     # Build base query with filters
-    # If filtering by exam_type, series, or year (and not using exam_id), join with Exam table
-    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
-        base_stmt = select(Document).join(Exam, Document.exam_id == Exam.id)
-    else:
-        base_stmt = select(Document)
+    base_stmt = select(Document)
+    if join_exam:
+        base_stmt = base_stmt.join(Exam, Document.exam_id == Exam.id)
+    if join_subject:
+        base_stmt = base_stmt.join(Subject, Document.subject_id == Subject.id)
 
     # Apply filters
     if exam_id is not None:
@@ -1344,10 +1437,13 @@ async def list_documents(
     base_stmt = _apply_subject_filter(
         base_stmt,
         subject_id=subject_id,
+        subject_ids=subject_id_list,
         subject_changed=subject_changed,
         subject_changed_subject_ids=subject_changed_subject_ids,
         subject_changed_subject_scope=subject_changed_subject_scope,
     )
+    if subject_type is not None:
+        base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if id_extraction_status is not None:
         base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
     if effective_test_type is not None:
@@ -1377,39 +1473,15 @@ async def list_documents(
     # Incomplete direct uploads are not listed until confirm succeeds
     base_stmt = base_stmt.where(Document.upload_status == "uploaded")
 
-    if paper_pair in ("paired", "missing"):
-        Counterpart = aliased(Document)
-        flipped = case((Document.test_type == "1", "2"), else_="1")
-        has_sheet_key = and_(
-            Document.school_id.isnot(None),
-            Document.subject_id.isnot(None),
-            Document.subject_series.isnot(None),
-            Document.sheet_number.isnot(None),
-            Document.test_type.in_(("1", "2")),
-        )
-        counterpart_exists = exists(
-            select(Counterpart.id).where(
-                Counterpart.exam_id == Document.exam_id,
-                Counterpart.school_id == Document.school_id,
-                Counterpart.subject_id == Document.subject_id,
-                Counterpart.subject_series == Document.subject_series,
-                Counterpart.sheet_number == Document.sheet_number,
-                Counterpart.test_type == flipped,
-                Counterpart.upload_status == "uploaded",
-                Counterpart.id != Document.id,
-            )
-        )
-        base_stmt = base_stmt.where(has_sheet_key)
-        if paper_pair == "paired":
-            base_stmt = base_stmt.where(counterpart_exists)
-        else:
-            base_stmt = base_stmt.where(~counterpart_exists)
+    if paper_pair in PAPER_PAIR_VALUES:
+        base_stmt = _apply_paper_pair_filter(base_stmt, paper_pair)
 
     # Get total count with same filters
-    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
-        count_stmt = select(func.count(Document.id)).select_from(Document).join(Exam, Document.exam_id == Exam.id)
-    else:
-        count_stmt = select(func.count(Document.id))
+    count_stmt = select(func.count(Document.id)).select_from(Document)
+    if join_exam:
+        count_stmt = count_stmt.join(Exam, Document.exam_id == Exam.id)
+    if join_subject:
+        count_stmt = count_stmt.join(Subject, Document.subject_id == Subject.id)
 
     # Apply filters
     if exam_id is not None:
@@ -1428,10 +1500,13 @@ async def list_documents(
     count_stmt = _apply_subject_filter(
         count_stmt,
         subject_id=subject_id,
+        subject_ids=subject_id_list,
         subject_changed=subject_changed,
         subject_changed_subject_ids=subject_changed_subject_ids,
         subject_changed_subject_scope=subject_changed_subject_scope,
     )
+    if subject_type is not None:
+        count_stmt = count_stmt.where(Subject.subject_type == subject_type)
     if id_extraction_status is not None:
         count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
     if effective_test_type is not None:
@@ -1454,33 +1529,8 @@ async def list_documents(
 
     count_stmt = count_stmt.where(Document.upload_status == "uploaded")
 
-    if paper_pair in ("paired", "missing"):
-        Counterpart = aliased(Document)
-        flipped = case((Document.test_type == "1", "2"), else_="1")
-        has_sheet_key = and_(
-            Document.school_id.isnot(None),
-            Document.subject_id.isnot(None),
-            Document.subject_series.isnot(None),
-            Document.sheet_number.isnot(None),
-            Document.test_type.in_(("1", "2")),
-        )
-        counterpart_exists = exists(
-            select(Counterpart.id).where(
-                Counterpart.exam_id == Document.exam_id,
-                Counterpart.school_id == Document.school_id,
-                Counterpart.subject_id == Document.subject_id,
-                Counterpart.subject_series == Document.subject_series,
-                Counterpart.sheet_number == Document.sheet_number,
-                Counterpart.test_type == flipped,
-                Counterpart.upload_status == "uploaded",
-                Counterpart.id != Document.id,
-            )
-        )
-        count_stmt = count_stmt.where(has_sheet_key)
-        if paper_pair == "paired":
-            count_stmt = count_stmt.where(counterpart_exists)
-        else:
-            count_stmt = count_stmt.where(~counterpart_exists)
+    if paper_pair in PAPER_PAIR_VALUES:
+        count_stmt = _apply_paper_pair_filter(count_stmt, paper_pair)
 
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0

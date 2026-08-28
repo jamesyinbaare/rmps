@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { getAllExams, listSchools, listSubjects } from "@/lib/api";
+import {
+  SubjectMultiSelectFilter,
+  type SubjectTypeFilterValue,
+} from "@/components/SubjectMultiSelectFilter";
+import { getAllExams, getAllSchools, getAllSubjects } from "@/lib/api";
 import type { DocumentFilters, Exam, ExamSeries, ExamType, School, Subject } from "@/types/document";
 import { X } from "lucide-react";
 
@@ -12,14 +16,12 @@ interface CompactFiltersProps {
   onFiltersChange: (filters: DocumentFilters) => void;
   /** When true, exam is controlled elsewhere — only school/subject show. */
   hideExam?: boolean;
-  subjectPlaceholder?: string;
 }
 
 export function CompactFilters({
   filters,
   onFiltersChange,
   hideExam = false,
-  subjectPlaceholder,
 }: CompactFiltersProps) {
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
@@ -29,30 +31,11 @@ export function CompactFilters({
   useEffect(() => {
     async function loadFilterOptions() {
       try {
-        const allExams = await getAllExams();
-
-        let allSchools: School[] = [];
-        let schoolPage = 1;
-        let schoolHasMore = true;
-        while (schoolHasMore) {
-          const schoolsData = await listSchools(schoolPage, 100);
-          const pageSchools = Array.isArray(schoolsData) ? schoolsData : [];
-          allSchools = [...allSchools, ...pageSchools];
-          schoolHasMore = pageSchools.length === 100;
-          schoolPage++;
-        }
-
-        let allSubjects: Subject[] = [];
-        let subjectPage = 1;
-        let subjectHasMore = true;
-        while (subjectHasMore) {
-          const subjectsData = await listSubjects(subjectPage, 100);
-          const pageSubjects = Array.isArray(subjectsData) ? subjectsData : [];
-          allSubjects = [...allSubjects, ...pageSubjects];
-          subjectHasMore = pageSubjects.length === 100;
-          subjectPage++;
-        }
-
+        const [allExams, allSchools, allSubjects] = await Promise.all([
+          getAllExams(),
+          getAllSchools(),
+          getAllSubjects(),
+        ]);
         setExams(allExams);
         setSchools(allSchools);
         setSubjects(allSubjects);
@@ -89,6 +72,13 @@ export function CompactFilters({
     [exams]
   );
 
+  const subjectTypeFilter: SubjectTypeFilterValue = filters.subject_type ?? "ALL";
+  const subjectIds = filters.subject_ids?.length
+    ? filters.subject_ids
+    : filters.subject_id
+      ? [filters.subject_id]
+      : [];
+
   const patchFilters = (patch: Partial<DocumentFilters>, clearKeys: (keyof DocumentFilters)[] = []) => {
     const next: DocumentFilters = { ...filters, ...patch, page: 1 };
     for (const key of clearKeys) {
@@ -116,29 +106,74 @@ export function CompactFilters({
     });
   };
 
-  const handleFilterChange = (key: "school_id" | "subject_id", value: string | number | "all" | "") => {
+  const handleSchoolChange = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") {
-      patchFilters({}, [key]);
+      patchFilters({}, ["school_id"]);
       return;
     }
     const numValue = typeof value === "number" ? value : parseInt(String(value), 10);
     if (Number.isNaN(numValue)) {
-      patchFilters({}, [key]);
+      patchFilters({}, ["school_id"]);
       return;
     }
-    patchFilters({ [key]: numValue });
+    patchFilters({ school_id: numValue });
+  };
+
+  const handleSubjectIdsChange = (ids: number[]) => {
+    const next: DocumentFilters = { ...filters, page: 1 };
+    if (ids.length > 0) {
+      next.subject_ids = ids;
+      if (ids.length === 1) {
+        next.subject_id = ids[0];
+      } else {
+        delete next.subject_id;
+      }
+    } else {
+      delete next.subject_ids;
+      delete next.subject_id;
+    }
+    onFiltersChange(next);
+  };
+
+  const handleSubjectTypeFilterChange = (value: SubjectTypeFilterValue) => {
+    const next: DocumentFilters = { ...filters, page: 1 };
+    if (value === "ALL") {
+      delete next.subject_type;
+    } else {
+      next.subject_type = value;
+      if (next.subject_ids?.length) {
+        const allowed = new Set(
+          subjects.filter((s) => s.subject_type === value).map((s) => s.id)
+        );
+        const pruned = next.subject_ids.filter((id) => allowed.has(id));
+        if (pruned.length > 0) {
+          next.subject_ids = pruned;
+          if (pruned.length === 1) {
+            next.subject_id = pruned[0];
+          } else {
+            delete next.subject_id;
+          }
+        } else {
+          delete next.subject_ids;
+          delete next.subject_id;
+        }
+      } else if (next.subject_id != null) {
+        const subject = subjects.find((s) => s.id === next.subject_id);
+        if (!subject || subject.subject_type !== value) {
+          delete next.subject_id;
+        }
+      }
+    }
+    onFiltersChange(next);
   };
 
   const handleClearFilters = () => {
     if (hideExam) {
-      const next: DocumentFilters = {
-        page: 1,
-        page_size: filters.page_size,
-        exam_id: filters.exam_id,
-        exam_type: filters.exam_type,
-        series: filters.series,
-        year: filters.year,
-      };
+      const next: DocumentFilters = { ...filters, page: 1 };
+      delete next.school_id;
+      delete next.subject_id;
+      delete next.subject_ids;
+      delete next.subject_type;
       onFiltersChange(next);
       return;
     }
@@ -146,8 +181,15 @@ export function CompactFilters({
   };
 
   const hasActiveFilters = hideExam
-    ? !!filters.school_id || !!filters.subject_id
-    : !!filters.exam_id || !!filters.school_id || !!filters.subject_id;
+    ? !!filters.school_id ||
+      !!filters.subject_id ||
+      !!filters.subject_ids?.length ||
+      !!filters.subject_type
+    : !!filters.exam_id ||
+      !!filters.school_id ||
+      !!filters.subject_id ||
+      !!filters.subject_ids?.length ||
+      !!filters.subject_type;
 
   return (
     <div
@@ -180,7 +222,7 @@ export function CompactFilters({
             label: `${school.code} - ${school.name}`,
           }))}
           value={filters.school_id || "all"}
-          onValueChange={(value) => handleFilterChange("school_id", value)}
+          onValueChange={handleSchoolChange}
           placeholder="School"
           disabled={loading}
           allowAll
@@ -191,23 +233,15 @@ export function CompactFilters({
         />
       </div>
 
-      <div className={hideExam ? "w-[160px] sm:w-[200px]" : "w-full sm:w-[280px]"}>
-        <SearchableSelect
-          options={subjects.map((subject) => ({
-            value: subject.id,
-            label: `${subject.code} - ${subject.name}`,
-          }))}
-          value={filters.subject_id || "all"}
-          onValueChange={(value) => handleFilterChange("subject_id", value)}
-          placeholder={subjectPlaceholder ?? "Subject"}
-          disabled={loading}
-          allowAll
-          allLabel="All subjects"
-          searchPlaceholder="Search subjects..."
-          emptyMessage="No subjects found"
-          triggerClassName={hideExam ? "h-8" : undefined}
-        />
-      </div>
+      <SubjectMultiSelectFilter
+        subjects={subjects}
+        value={subjectIds}
+        onChange={handleSubjectIdsChange}
+        subjectType={subjectTypeFilter}
+        onSubjectTypeChange={handleSubjectTypeFilterChange}
+        disabled={loading}
+        className={hideExam ? "min-w-[220px]" : "w-full sm:min-w-[280px]"}
+      />
 
       {hasActiveFilters ? (
         <Button
@@ -220,7 +254,7 @@ export function CompactFilters({
               ? "h-8 w-8 shrink-0 p-0"
               : "h-8 w-full gap-1 sm:w-auto"
           }
-          aria-label="Clear filters"
+          aria-label="Clear school and subject filters"
         >
           <X className="h-3 w-3" />
           {!hideExam ? "Clear" : null}
