@@ -932,6 +932,8 @@ export interface RunValidationRequest {
   exam_id?: number | null;
   school_id?: number | null;
   subject_id?: number | null;
+  subject_type?: string | null;
+  test_types?: number[] | null;
 }
 
 export interface RunValidationResponse {
@@ -947,6 +949,7 @@ export interface ValidationIssuesFilters {
   exam_id?: number;
   school_id?: number;
   subject_id?: number;
+  subject_ids?: number[];
   status?: ValidationIssueStatus;
   issue_type?: ValidationIssueType;
   test_type?: number;

@@ -58,14 +58,6 @@ interface ValidationIssuesDataTableProps {
   totalPages: number;
   total: number;
   onPageChange: (page: number) => void;
-  statusFilter: ValidationIssueStatus | null;
-  onStatusFilterChange: (value: ValidationIssueStatus | null) => void;
-  issueTypeFilter: ValidationIssueType | null;
-  onIssueTypeFilterChange: (value: ValidationIssueType | null) => void;
-  testTypeFilter: number | null;
-  onTestTypeFilterChange: (value: number | null) => void;
-  subjectTypeFilter: string | null;
-  onSubjectTypeFilterChange: (value: string | null) => void;
 }
 
 function SortIcon({ sorted }: { sorted: false | "asc" | "desc" }) {
@@ -165,14 +157,6 @@ export function ValidationIssuesDataTable({
   totalPages,
   total,
   onPageChange,
-  statusFilter,
-  onStatusFilterChange,
-  issueTypeFilter,
-  onIssueTypeFilterChange,
-  testTypeFilter,
-  onTestTypeFilterChange,
-  subjectTypeFilter,
-  onSubjectTypeFilterChange,
 }: ValidationIssuesDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -233,6 +217,15 @@ export function ValidationIssuesDataTable({
         ),
       },
       {
+        accessorKey: "batch_name",
+        header: "Batch",
+        cell: ({ row }) => (
+          <span className="max-w-[120px] truncate text-sm text-muted-foreground">
+            {row.original.batch_name ?? "—"}
+          </span>
+        ),
+      },
+      {
         accessorKey: "created_at",
         header: "Created",
         cell: ({ row }) => (
@@ -261,6 +254,7 @@ export function ValidationIssuesDataTable({
         (issue.candidate_name?.toLowerCase().includes(searchValue) ?? false) ||
         (issue.message?.toLowerCase().includes(searchValue) ?? false) ||
         (issue.field_name?.toLowerCase().includes(searchValue) ?? false) ||
+        (issue.batch_name?.toLowerCase().includes(searchValue) ?? false) ||
         getFieldNameLabel(issue.field_name).toLowerCase().includes(searchValue)
       );
     },
@@ -269,16 +263,16 @@ export function ValidationIssuesDataTable({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-[240px]">
-            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-muted/10 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-[280px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search index, name, message..."
+              placeholder="Search index, name, batch, message…"
               value={globalFilter}
               onChange={(e) => setGlobalFilter(e.target.value)}
-              className="h-8 pl-8 pr-8"
+              className="h-9 border-border/70 bg-background pl-9 pr-9 shadow-sm"
             />
             {globalFilter && (
               <Button
@@ -292,78 +286,13 @@ export function ValidationIssuesDataTable({
             )}
           </div>
 
-          <Select
-            value={statusFilter ?? "all"}
-            onValueChange={(value) =>
-              onStatusFilterChange(value === "all" ? null : (value as ValidationIssueStatus))
-            }
-          >
-            <SelectTrigger className="h-8 w-[120px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="pending">Open</SelectItem>
-              <SelectItem value="resolved">Resolved</SelectItem>
-              <SelectItem value="ignored">Ignored</SelectItem>
-              <SelectItem value="skipped">Skipped</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={issueTypeFilter ?? "all"}
-            onValueChange={(value) =>
-              onIssueTypeFilterChange(value === "all" ? null : (value as ValidationIssueType))
-            }
-          >
-            <SelectTrigger className="h-8 w-[140px]">
-              <SelectValue placeholder="Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All types</SelectItem>
-              <SelectItem value="missing_score">Missing Score</SelectItem>
-              <SelectItem value="invalid_score">Invalid Score</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={testTypeFilter?.toString() ?? "all"}
-            onValueChange={(value) =>
-              onTestTypeFilterChange(value === "all" ? null : parseInt(value, 10))
-            }
-          >
-            <SelectTrigger className="h-8 w-[130px]">
-              <SelectValue placeholder="Test type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All tests</SelectItem>
-              <SelectItem value="1">Objectives</SelectItem>
-              <SelectItem value="2">Essay</SelectItem>
-              <SelectItem value="3">Practical</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={subjectTypeFilter ?? "all"}
-            onValueChange={(value) => onSubjectTypeFilterChange(value === "all" ? null : value)}
-          >
-            <SelectTrigger className="h-8 w-[140px]">
-              <SelectValue placeholder="Subject type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All subject types</SelectItem>
-              <SelectItem value="CORE">Core</SelectItem>
-              <SelectItem value="ELECTIVE">Elective</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Show</span>
+          <div className="flex items-center gap-2 rounded-md border border-border/70 bg-background px-2.5 py-1 shadow-sm">
+            <span className="text-xs font-medium text-muted-foreground">Rows</span>
             <Select
               value={pageSize.toString()}
               onValueChange={(value) => onPageSizeChange(parseInt(value, 10))}
             >
-              <SelectTrigger className="h-8 w-[90px]">
+              <SelectTrigger className="h-7 w-[72px] border-0 bg-transparent px-1 shadow-none">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -377,9 +306,9 @@ export function ValidationIssuesDataTable({
           </div>
         </div>
 
-        <div className="text-sm text-muted-foreground">
-          Showing {issues.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
-          {Math.min(currentPage * pageSize, total)} of {total}
+        <div className="rounded-md bg-muted/40 px-2.5 py-1 text-xs tabular-nums text-muted-foreground">
+          {issues.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
+          {Math.min(currentPage * pageSize, total)} of {total.toLocaleString()}
         </div>
       </div>
 

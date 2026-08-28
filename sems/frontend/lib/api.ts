@@ -3186,7 +3186,11 @@ export async function getValidationIssues(
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
   if (filters.status) params.append("status_filter", filters.status);
   if (filters.issue_type) params.append("issue_type", filters.issue_type);
   if (filters.test_type) params.append("test_type", filters.test_type.toString());

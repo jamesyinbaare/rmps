@@ -1,26 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Card, CardContent } from "@/components/ui/card";
-import {
   getCurrentUser,
   getValidationIssues,
-  runValidation,
   getAllExams,
   listSchools,
-  listSubjects,
+  getAllSubjects,
 } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import type {
@@ -31,21 +22,57 @@ import type {
   School,
   Subject,
 } from "@/types/document";
-import { Loader2, Play } from "lucide-react";
-import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Play, AlertCircle, ArrowRight, Layers } from "lucide-react";
 import { ValidationIssueWorkspace } from "@/components/ValidationIssueWorkspace";
 import { ValidationIssuesDataTable } from "@/components/ValidationIssuesDataTable";
+import { ValidationScopeFiltersBar } from "@/components/validation/ValidationScopeFiltersBar";
+import {
+  RunValidationDialog,
+  type ValidationRunScope,
+} from "@/components/validation/RunValidationDialog";
+import type { SubjectTypeFilterValue } from "@/components/SubjectMultiSelectFilter";
+
+function parseSubjectIdsParam(value: string | null): number[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+}
+
+function parseOptionalInt(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function parseSubjectTypeParam(value: string | null): SubjectTypeFilterValue {
+  if (value === "CORE" || value === "ELECTIVE") return value;
+  return "ALL";
+}
+
+function parseStatusParam(value: string | null): ValidationIssueStatus | null {
+  if (
+    value === "pending" ||
+    value === "resolved" ||
+    value === "ignored" ||
+    value === "skipped"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function parseIssueTypeParam(value: string | null): ValidationIssueType | null {
+  if (value === "missing_score" || value === "invalid_score") return value;
+  return null;
+}
 
 export default function ValidationIssuesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const lastUrlQueryRef = useRef<string | null>(null);
+
   const [authorized, setAuthorized] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -57,20 +84,32 @@ export default function ValidationIssuesPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
-  const [statusFilter, setStatusFilter] = useState<ValidationIssueStatus | null>(null);
-  const [issueTypeFilter, setIssueTypeFilter] = useState<ValidationIssueType | null>(null);
-  const [examIdFilter, setExamIdFilter] = useState<number | null>(null);
-  const [schoolIdFilter, setSchoolIdFilter] = useState<number | null>(null);
-  const [subjectIdFilter, setSubjectIdFilter] = useState<number | null>(null);
-  const [testTypeFilter, setTestTypeFilter] = useState<number | null>(null);
-  const [subjectTypeFilter, setSubjectTypeFilter] = useState<string | null>(null);
+  const [selectedExamId, setSelectedExamId] = useState<number | undefined>(
+    parseOptionalInt(searchParams.get("exam_id"))
+  );
+  const [schoolId, setSchoolId] = useState<number | undefined>(
+    parseOptionalInt(searchParams.get("school_id"))
+  );
+  const [subjectIds, setSubjectIds] = useState<number[]>(
+    parseSubjectIdsParam(searchParams.get("subject_ids"))
+  );
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>(
+    parseSubjectTypeParam(searchParams.get("subject_type"))
+  );
+  const [testTypeFilter, setTestTypeFilter] = useState<number | undefined>(
+    parseOptionalInt(searchParams.get("test_type"))
+  );
+  const [statusFilter, setStatusFilter] = useState<ValidationIssueStatus | null>(
+    parseStatusParam(searchParams.get("status")) ?? "pending"
+  );
+  const [issueTypeFilter, setIssueTypeFilter] = useState<ValidationIssueType | null>(
+    parseIssueTypeParam(searchParams.get("issue_type"))
+  );
+  const [batchIdFilter, setBatchIdFilter] = useState<number | undefined>(
+    parseOptionalInt(searchParams.get("batch_id"))
+  );
 
   const [runDialogOpen, setRunDialogOpen] = useState(false);
-  const [runningValidation, setRunningValidation] = useState(false);
-
-  const [validationExamId, setValidationExamId] = useState<number | null>(null);
-  const [validationSchoolId, setValidationSchoolId] = useState<number | null>(null);
-  const [validationSubjectId, setValidationSubjectId] = useState<number | null>(null);
 
   const [exams, setExams] = useState<Exam[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
@@ -100,34 +139,33 @@ export default function ValidationIssuesPage() {
     [exams]
   );
 
+  const validationRunScope = useMemo<Partial<ValidationRunScope>>(
+    () => ({
+      examId: selectedExamId ?? null,
+      schoolId: schoolId ?? null,
+      subjectIds,
+      subjectType: subjectTypeFilter,
+      testTypes: testTypeFilter ? [testTypeFilter] : [1, 2, 3],
+    }),
+    [selectedExamId, schoolId, subjectIds, subjectTypeFilter, testTypeFilter]
+  );
+
   const loadIssues = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const filters: {
-        page: number;
-        page_size: number;
-        status?: ValidationIssueStatus;
-        issue_type?: ValidationIssueType;
-        exam_id?: number;
-        school_id?: number;
-        subject_id?: number;
-        test_type?: number;
-        subject_type?: string;
-      } = {
+      const response = await getValidationIssues({
         page,
         page_size: pageSize,
-      };
-
-      if (statusFilter) filters.status = statusFilter;
-      if (issueTypeFilter) filters.issue_type = issueTypeFilter;
-      if (examIdFilter) filters.exam_id = examIdFilter;
-      if (schoolIdFilter) filters.school_id = schoolIdFilter;
-      if (subjectIdFilter) filters.subject_id = subjectIdFilter;
-      if (testTypeFilter) filters.test_type = testTypeFilter;
-      if (subjectTypeFilter) filters.subject_type = subjectTypeFilter;
-
-      const response = await getValidationIssues(filters);
+        exam_id: selectedExamId,
+        school_id: schoolId,
+        subject_ids: subjectIds.length > 0 ? subjectIds : undefined,
+        status: statusFilter ?? undefined,
+        issue_type: issueTypeFilter ?? undefined,
+        test_type: testTypeFilter,
+        subject_type: subjectTypeFilter !== "ALL" ? subjectTypeFilter : undefined,
+        batch_id: batchIdFilter,
+      });
       setIssues(response.issues);
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / pageSize));
@@ -147,13 +185,14 @@ export default function ValidationIssuesPage() {
   }, [
     page,
     pageSize,
+    selectedExamId,
+    schoolId,
+    subjectIds,
     statusFilter,
     issueTypeFilter,
-    examIdFilter,
-    schoolIdFilter,
-    subjectIdFilter,
     testTypeFilter,
     subjectTypeFilter,
+    batchIdFilter,
   ]);
 
   useEffect(() => {
@@ -176,45 +215,22 @@ export default function ValidationIssuesPage() {
 
   useEffect(() => {
     if (!authorized) return;
-    loadIssues();
+    void loadIssues();
   }, [authorized, loadIssues]);
 
   const loadFilterOptions = useCallback(async () => {
     setLoadingFilterOptions(true);
     try {
-      const allSubjects: Subject[] = [];
-      let subjectsPage = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        try {
-          const subjectsData = await listSubjects(subjectsPage, 100);
-          allSubjects.push(...subjectsData);
-          hasMore = subjectsData.length === 100;
-          subjectsPage++;
-        } catch (err) {
-          console.error("Error loading subjects page:", err);
-          hasMore = false;
-        }
-      }
-
-      const [examsData, schoolsData] = await Promise.all([
-        getAllExams().catch((err) => {
-          console.error("Error loading exams:", err);
-          return [];
-        }),
-        listSchools(1, 100).catch((err) => {
-          console.error("Error loading schools:", err);
-          return [];
-        }),
+      const [examsData, schoolsData, subjectsData] = await Promise.all([
+        getAllExams().catch(() => []),
+        listSchools(1, 100).catch(() => []),
+        getAllSubjects().catch(() => []),
       ]);
-
       setExams(Array.isArray(examsData) ? examsData : []);
       setSchools(Array.isArray(schoolsData) ? schoolsData : []);
-      setSubjects(allSubjects);
+      setSubjects(Array.isArray(subjectsData) ? subjectsData : []);
     } catch (err) {
       console.error("Error loading filter options:", err);
-      toast.error("Failed to load filter options");
     } finally {
       setLoadingFilterOptions(false);
     }
@@ -226,43 +242,62 @@ export default function ValidationIssuesPage() {
   }, [authorized, loadFilterOptions]);
 
   useEffect(() => {
-    if (runDialogOpen) {
-      void loadFilterOptions();
-    }
-  }, [runDialogOpen, loadFilterOptions]);
+    if (!authorized) return;
+    const params = new URLSearchParams();
+    if (selectedExamId) params.set("exam_id", String(selectedExamId));
+    if (schoolId) params.set("school_id", String(schoolId));
+    if (subjectIds.length) params.set("subject_ids", subjectIds.join(","));
+    if (subjectTypeFilter !== "ALL") params.set("subject_type", subjectTypeFilter);
+    if (testTypeFilter) params.set("test_type", String(testTypeFilter));
+    if (statusFilter) params.set("status", statusFilter);
+    if (issueTypeFilter) params.set("issue_type", issueTypeFilter);
+    if (batchIdFilter) params.set("batch_id", String(batchIdFilter));
+    const next = params.toString();
+    if (lastUrlQueryRef.current === next) return;
+    lastUrlQueryRef.current = next;
+    router.replace(`/scores/issues${next ? `?${next}` : ""}`, { scroll: false });
+  }, [
+    authorized,
+    selectedExamId,
+    schoolId,
+    subjectIds,
+    subjectTypeFilter,
+    testTypeFilter,
+    statusFilter,
+    issueTypeFilter,
+    batchIdFilter,
+    router,
+  ]);
 
-  const handleRunValidation = async () => {
-    setRunningValidation(true);
-    try {
-      const request = {
-        exam_id: validationExamId || null,
-        school_id: validationSchoolId || null,
-        subject_id: validationSubjectId || null,
-      };
+  const resetPage = () => setPage(1);
 
-      const result = await runValidation(request);
-      toast.success(result.message);
-      setRunDialogOpen(false);
-      setValidationExamId(null);
-      setValidationSchoolId(null);
-      setValidationSubjectId(null);
-      await loadIssues();
-    } catch (err) {
-      console.error("Error running validation:", err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to run validation";
-      toast.error(errorMessage);
-    } finally {
-      setRunningValidation(false);
-    }
+  const parseNumericFilter = (value: string | number | "all" | "") => {
+    if (value === "all" || value === "") return undefined;
+    return typeof value === "number" ? value : parseInt(String(value), 10);
   };
 
-  const handleDialogClose = (open: boolean) => {
-    setRunDialogOpen(open);
-    if (!open) {
-      setValidationExamId(null);
-      setValidationSchoolId(null);
-      setValidationSubjectId(null);
+  const handleSubjectTypeFilterChange = (value: SubjectTypeFilterValue) => {
+    setSubjectTypeFilter(value);
+    if (value !== "ALL" && subjectIds.length > 0) {
+      const allowed = new Set(subjects.filter((s) => s.subject_type === value).map((s) => s.id));
+      const pruned = subjectIds.filter((id) => allowed.has(id));
+      setSubjectIds(pruned);
     }
+    resetPage();
+  };
+
+  const handleClearFilters = () => {
+    setSelectedExamId(undefined);
+    setSchoolId(undefined);
+    setSubjectIds([]);
+    setSubjectTypeFilter("ALL");
+    setTestTypeFilter(undefined);
+    setStatusFilter("pending");
+    setIssueTypeFilter(null);
+    setBatchIdFilter(undefined);
+    resetPage();
+    lastUrlQueryRef.current = "";
+    router.replace("/scores/issues?status=pending", { scroll: false });
   };
 
   const handleOpenIssueModal = (_issue: SubjectScoreValidationIssue, index: number) => {
@@ -275,7 +310,10 @@ export default function ValidationIssuesPage() {
     setTotal((prev) => Math.max(0, prev - 1));
   };
 
-  const resetPage = () => setPage(1);
+  const openIssuesInScope = statusFilter === "pending" ? total : null;
+  const batchesHref = selectedExamId
+    ? `/clerk/batches?exam_id=${selectedExamId}`
+    : "/clerk/batches";
 
   if (!authChecked || !authorized) {
     return null;
@@ -283,114 +321,120 @@ export default function ValidationIssuesPage() {
 
   return (
     <DashboardLayout>
-      <div className="flex h-full flex-col">
-        <TopBar title="Validation Issues" />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TopBar
+          title={
+            <div className="flex min-w-0 items-baseline gap-3">
+              <span>Validation Issues</span>
+              <span className="hidden truncate text-sm font-normal text-muted-foreground lg:inline">
+                Review missing and invalid scores, then route work to clerks.
+              </span>
+            </div>
+          }
+        />
 
-        <div className="flex flex-1 flex-col gap-4 overflow-hidden p-6">
-          <div className="flex items-center justify-end">
-            <Button variant="outline" onClick={() => setRunDialogOpen(true)} className="gap-2">
-              <Play className="h-4 w-4" />
-              Check missing & invalid scores
-            </Button>
-          </div>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="relative min-w-[280px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Examination
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={examOptions}
-                      value={examIdFilter ? examIdFilter : "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setExamIdFilter(null);
-                        } else {
-                          setExamIdFilter(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                        resetPage();
-                      }}
-                      placeholder="Select an examination"
-                      disabled={loadingFilterOptions}
-                      allowAll={true}
-                      allLabel="All examinations"
-                      searchPlaceholder="Search examinations..."
-                      emptyMessage="No examinations found"
-                    />
+        <div className="mx-auto flex w-full max-w-[2000px] min-h-0 flex-1 flex-col gap-4 overflow-hidden px-4 py-4 sm:px-6 sm:py-5">
+          <section className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
+            <div className="border-b border-border/70 bg-gradient-to-r from-muted/50 via-background to-background px-4 py-4 sm:px-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex min-w-[140px] flex-col rounded-lg border border-border/70 bg-background/90 px-4 py-3 shadow-sm">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {openIssuesInScope != null ? "Open in scope" : "Issues in scope"}
+                    </span>
+                    <span className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight">
+                      {(openIssuesInScope ?? total).toLocaleString()}
+                    </span>
                   </div>
+                  <div className="flex min-w-[120px] flex-col rounded-lg border border-border/70 bg-background/60 px-4 py-3">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Showing
+                    </span>
+                    <span className="mt-0.5 text-lg font-medium tabular-nums">
+                      {issues.length.toLocaleString()}
+                      <span className="text-sm font-normal text-muted-foreground"> / page</span>
+                    </span>
+                  </div>
+                  {selectedExamId && openIssuesInScope != null && openIssuesInScope > 0 && (
+                    <Link
+                      href={batchesHref}
+                      className="group inline-flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+                    >
+                      <Layers className="h-4 w-4" />
+                      Prepare batches
+                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                    </Link>
+                  )}
                 </div>
 
-                <div className="relative min-w-[280px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    School
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={schools.map((school) => ({
-                        value: school.id,
-                        label: `${school.code} - ${school.name}`,
-                      }))}
-                      value={schoolIdFilter ? schoolIdFilter : "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setSchoolIdFilter(null);
-                        } else {
-                          setSchoolIdFilter(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                        resetPage();
-                      }}
-                      placeholder="Select a school"
-                      disabled={loadingFilterOptions}
-                      allowAll={true}
-                      allLabel="All schools"
-                      searchPlaceholder="Search schools..."
-                      emptyMessage="No schools found"
-                    />
-                  </div>
-                </div>
-
-                <div className="relative min-w-[280px] flex-1">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Subject
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={subjects.map((subject) => ({
-                        value: subject.id,
-                        label: `${subject.code} - ${subject.name}`,
-                      }))}
-                      value={subjectIdFilter ? subjectIdFilter : "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setSubjectIdFilter(null);
-                        } else {
-                          setSubjectIdFilter(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                        resetPage();
-                      }}
-                      placeholder="Select a subject"
-                      disabled={loadingFilterOptions}
-                      allowAll={true}
-                      allLabel="All subjects"
-                      searchPlaceholder="Search subjects..."
-                      emptyMessage="No subjects found"
-                    />
-                  </div>
-                </div>
+                <Button
+                  onClick={() => setRunDialogOpen(true)}
+                  className="h-10 shrink-0 gap-2 shadow-sm"
+                >
+                  <Play className="h-4 w-4" />
+                  Run validation
+                </Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="px-4 py-4 sm:px-5">
+              <ValidationScopeFiltersBar
+                examOptions={examOptions}
+                selectedExamId={selectedExamId}
+                onExamChange={(value) => {
+                  setSelectedExamId(parseNumericFilter(value));
+                  resetPage();
+                }}
+                schools={schools}
+                subjects={subjects}
+                schoolId={schoolId}
+                onSchoolChange={(value) => {
+                  setSchoolId(parseNumericFilter(value));
+                  resetPage();
+                }}
+                subjectIds={subjectIds}
+                onSubjectIdsChange={(ids) => {
+                  setSubjectIds(ids);
+                  resetPage();
+                }}
+                subjectTypeFilter={subjectTypeFilter}
+                onSubjectTypeFilterChange={handleSubjectTypeFilterChange}
+                testType={testTypeFilter}
+                onTestTypeChange={(value) => {
+                  setTestTypeFilter(value);
+                  resetPage();
+                }}
+                statusFilter={statusFilter}
+                onStatusFilterChange={(value) => {
+                  setStatusFilter(value);
+                  resetPage();
+                }}
+                issueTypeFilter={issueTypeFilter}
+                onIssueTypeFilterChange={(value) => {
+                  setIssueTypeFilter(value);
+                  resetPage();
+                }}
+                batchId={batchIdFilter}
+                onBatchIdChange={(value) => {
+                  setBatchIdFilter(value);
+                  resetPage();
+                }}
+                loading={loadingFilterOptions}
+                onRefresh={() => void loadIssues()}
+                refreshing={loading}
+                onClear={handleClearFilters}
+              />
+            </div>
+          </section>
+
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
+            {!loading && !error && issues.length === 0 && (
+              <div className="flex items-center gap-2 border-b border-border/70 bg-muted/20 px-4 py-2.5 text-sm text-muted-foreground">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                No issues match the current filters. Adjust scope above or run validation to scan for
+                new problems.
+              </div>
+            )}
             <ValidationIssuesDataTable
               issues={issues}
               loading={loading}
@@ -405,173 +449,20 @@ export default function ValidationIssuesPage() {
               totalPages={totalPages}
               total={total}
               onPageChange={setPage}
-              statusFilter={statusFilter}
-              onStatusFilterChange={(value) => {
-                setStatusFilter(value);
-                resetPage();
-              }}
-              issueTypeFilter={issueTypeFilter}
-              onIssueTypeFilterChange={(value) => {
-                setIssueTypeFilter(value);
-                resetPage();
-              }}
-              testTypeFilter={testTypeFilter}
-              onTestTypeFilterChange={(value) => {
-                setTestTypeFilter(value);
-                resetPage();
-              }}
-              subjectTypeFilter={subjectTypeFilter}
-              onSubjectTypeFilterChange={(value) => {
-                setSubjectTypeFilter(value);
-                resetPage();
-              }}
             />
-          </Card>
+          </section>
         </div>
 
-        <Dialog open={runDialogOpen} onOpenChange={handleDialogClose}>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Run Validation</DialogTitle>
-              <DialogDescription>
-                Run validation to check for issues in candidate&apos;s subject scores. You can
-                optionally filter by exam, school, or subject.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="mx-auto max-w-md">
-                <div className="relative">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Exam (Optional)
-                  </label>
-                  <div className="pt-4">
-                    <Select
-                      value={validationExamId?.toString() || "all"}
-                      onValueChange={(value) => {
-                        if (value === "all") {
-                          setValidationExamId(null);
-                        } else {
-                          const numValue = parseInt(value, 10);
-                          setValidationExamId(isNaN(numValue) ? null : numValue);
-                        }
-                      }}
-                      disabled={runningValidation || loadingFilterOptions}
-                    >
-                      <SelectTrigger className="h-11 w-full">
-                        <SelectValue placeholder="Select an exam" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All exams</SelectItem>
-                        {exams.map((exam) => (
-                          <SelectItem key={exam.id} value={exam.id.toString()}>
-                            {exam.exam_type} - {exam.series} {exam.year}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mx-auto max-w-md">
-                <div className="relative">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    School (Optional)
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={schools.map((school) => ({
-                        value: school.id,
-                        label: `${school.code} - ${school.name}`,
-                      }))}
-                      value={validationSchoolId ? validationSchoolId : "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setValidationSchoolId(null);
-                        } else {
-                          setValidationSchoolId(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                      }}
-                      placeholder="Select a school"
-                      disabled={runningValidation || loadingFilterOptions}
-                      allowAll={true}
-                      allLabel="All schools"
-                      searchPlaceholder="Search schools..."
-                      emptyMessage="No schools found"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="mx-auto max-w-md">
-                <div className="relative">
-                  <label className="pointer-events-none absolute left-3 top-2 z-10 bg-background px-1 text-xs text-muted-foreground">
-                    Subject (Optional)
-                  </label>
-                  <div className="pt-4">
-                    <SearchableSelect
-                      options={subjects.map((subject) => ({
-                        value: subject.id,
-                        label: `${subject.code} - ${subject.name}`,
-                      }))}
-                      value={validationSubjectId ? validationSubjectId : "all"}
-                      onValueChange={(value) => {
-                        if (value === "all" || value === "") {
-                          setValidationSubjectId(null);
-                        } else {
-                          setValidationSubjectId(
-                            typeof value === "number" ? value : parseInt(String(value), 10)
-                          );
-                        }
-                      }}
-                      placeholder="Select a subject"
-                      disabled={runningValidation || loadingFilterOptions}
-                      allowAll={true}
-                      allLabel="All subjects"
-                      searchPlaceholder="Search subjects..."
-                      emptyMessage="No subjects found"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {loadingFilterOptions && (
-                <div className="flex items-center justify-center py-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  <span className="ml-2 text-sm text-muted-foreground">Loading options...</span>
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => handleDialogClose(false)}
-                disabled={runningValidation}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleRunValidation}
-                disabled={runningValidation || loadingFilterOptions}
-                className="gap-2"
-              >
-                {runningValidation ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Running...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Run Validation
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <RunValidationDialog
+          open={runDialogOpen}
+          onOpenChange={setRunDialogOpen}
+          exams={exams}
+          schools={schools}
+          subjects={subjects}
+          loadingOptions={loadingFilterOptions}
+          initialScope={validationRunScope}
+          onCompleted={() => loadIssues()}
+        />
 
         <ValidationIssueWorkspace
           open={issueModalOpen}
