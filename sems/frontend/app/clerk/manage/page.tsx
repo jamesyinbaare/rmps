@@ -30,9 +30,13 @@ export default function OverviewPage() {
   const [digitalLoaded, setDigitalLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (!examId) {
+      setSummary(null);
+      return;
+    }
     setRefreshing(true);
     try {
-      const summaryData = await getBatchSummary(examId || undefined);
+      const summaryData = await getBatchSummary(examId, { includeUnbatched: false });
       setSummary(summaryData);
     } finally {
       setRefreshing(false);

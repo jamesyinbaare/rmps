@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import case, func, select
+from sqlalchemy import case, exists, func, select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import CurrentUserDep, RegistrarDep
@@ -21,6 +21,7 @@ from app.models import (
     Subject,
     SubjectScore,
     SubjectScoreValidationIssue,
+    SubjectType,
     User,
     UserRole,
     ValidationIssueStatus,
@@ -48,11 +49,23 @@ from app.schemas.validation import (
     ReleaseBatchesRequest,
     ReleaseBatchesResponse,
 )
-from app.services.issue_batch_service import clear_batches, create_batches, get_score_document_id
+from app.services.issue_batch_service import clear_batches, create_batches
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/validation", tags=["validation-batches"])
+
+
+def _parse_subject_ids(subject_ids: str | None) -> list[int] | None:
+    if not subject_ids:
+        return None
+    try:
+        return [int(sid.strip()) for sid in subject_ids.split(",") if sid.strip()]
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject_ids must be comma-separated integers",
+        ) from e
 
 
 def _pending_per_batch_subquery():
@@ -465,15 +478,27 @@ async def list_issue_batches(
     _: RegistrarDep,
     exam_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_ids: str | None = Query(None, description="Comma-separated subject IDs"),
+    subject_type: str | None = Query(None, description="Filter by subject type (CORE, ELECTIVE)"),
     test_type: int | None = Query(None),
     has_document: bool | None = Query(None),
     assigned_to: str | None = Query(None, description="User UUID or 'unassigned'"),
     unassigned_only: bool = Query(False),
 ) -> IssueBatchListResponse:
+    subject_id_list = _parse_subject_ids(subject_ids)
     stmt = select(IssueBatch).options(selectinload(IssueBatch.assigned_to))
     if exam_id is not None:
         stmt = stmt.where(IssueBatch.exam_id == exam_id)
-    if subject_id is not None:
+    if subject_type is not None:
+        stmt = stmt.join(Subject, IssueBatch.subject_id == Subject.id)
+        try:
+            subject_type_enum = SubjectType(subject_type)
+            stmt = stmt.where(Subject.subject_type == subject_type_enum)
+        except ValueError:
+            stmt = stmt.where(False)
+    if subject_id_list is not None:
+        stmt = stmt.where(IssueBatch.subject_id.in_(subject_id_list))
+    elif subject_id is not None:
         stmt = stmt.where(IssueBatch.subject_id == subject_id)
     if test_type is not None:
         stmt = stmt.where(IssueBatch.test_type == test_type)
@@ -590,6 +615,99 @@ async def release_batches(
     return ReleaseBatchesResponse(released_count=len(batches))
 
 
+async def _pending_unbatched_count(
+    session: DBSessionDep,
+    exam_id: int | None,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(SubjectScoreValidationIssue)
+        .where(
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            SubjectScoreValidationIssue.batch_id.is_(None),
+        )
+    )
+    if exam_id is not None:
+        stmt = stmt.join(
+            ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id
+        ).where(ExamSubject.exam_id == exam_id)
+    return int((await session.execute(stmt)).scalar() or 0)
+
+
+async def _build_unbatched_breakdown(
+    session: DBSessionDep,
+    exam_id: int | None,
+) -> tuple[list[BatchSummaryUnbatchedItem], int]:
+    score_doc_id = case(
+        (SubjectScoreValidationIssue.test_type == 1, SubjectScore.obj_document_id),
+        (SubjectScoreValidationIssue.test_type == 2, SubjectScore.essay_document_id),
+        (SubjectScoreValidationIssue.test_type == 3, SubjectScore.pract_document_id),
+        else_=None,
+    )
+    has_document = case(
+        (
+            score_doc_id.isnot(None),
+            exists(
+                select(1).where(
+                    Document.exam_id == ExamSubject.exam_id,
+                    Document.id_extraction_status == "success",
+                    Document.extracted_id == score_doc_id,
+                )
+            ),
+        ),
+        else_=False,
+    ).label("has_document")
+
+    stmt = (
+        select(
+            ExamSubject.exam_id,
+            Subject.id.label("subject_id"),
+            Subject.code.label("subject_code"),
+            SubjectScoreValidationIssue.test_type,
+            has_document,
+            func.count().label("pending_count"),
+        )
+        .select_from(SubjectScoreValidationIssue)
+        .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
+        .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .where(
+            SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
+            SubjectScoreValidationIssue.batch_id.is_(None),
+        )
+        .group_by(
+            ExamSubject.exam_id,
+            Subject.id,
+            Subject.code,
+            SubjectScoreValidationIssue.test_type,
+            has_document,
+        )
+        .order_by(
+            ExamSubject.exam_id,
+            Subject.code,
+            SubjectScoreValidationIssue.test_type,
+            has_document.desc(),
+        )
+    )
+    if exam_id is not None:
+        stmt = stmt.where(ExamSubject.exam_id == exam_id)
+
+    rows = (await session.execute(stmt)).all()
+    unbatched = [
+        BatchSummaryUnbatchedItem(
+            exam_id=row.exam_id,
+            subject_id=row.subject_id,
+            subject_code=row.subject_code,
+            test_type=row.test_type,
+            has_document=bool(row.has_document),
+            pending_count=int(row.pending_count),
+        )
+        for row in rows
+    ]
+    pending_unbatched = sum(item.pending_count for item in unbatched)
+    return unbatched, pending_unbatched
+
+
 @router.get("/batches/summary", response_model=BatchSummaryResponse)
 async def batches_summary(
     session: DBSessionDep,
@@ -598,56 +716,10 @@ async def batches_summary(
     include_unbatched: bool = Query(True),
 ) -> BatchSummaryResponse:
     unbatched: list[BatchSummaryUnbatchedItem] = []
-    pending_unbatched = 0
     if include_unbatched:
-        # Unbatched pending: classify DOC/NOD in Python for accuracy
-        stmt = (
-            select(SubjectScoreValidationIssue, SubjectScore, ExamSubject, Subject)
-            .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
-            .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
-            .join(Subject, ExamSubject.subject_id == Subject.id)
-            .where(
-                SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING,
-                SubjectScoreValidationIssue.batch_id.is_(None),
-            )
-        )
-        if exam_id is not None:
-            stmt = stmt.where(ExamSubject.exam_id == exam_id)
-
-        rows = (await session.execute(stmt)).all()
-        exam_ids = {es.exam_id for _, _, es, _ in rows}
-        success_by_exam: dict[int, set[str]] = {}
-        for eid in exam_ids:
-            docs = (
-                await session.execute(
-                    select(Document.extracted_id).where(
-                        Document.exam_id == eid,
-                        Document.id_extraction_status == "success",
-                        Document.extracted_id.is_not(None),
-                    )
-                )
-            ).scalars().all()
-            success_by_exam[eid] = {d for d in docs if d}
-
-        counts: dict[tuple[int, int, str, int, bool], int] = {}
-        for issue, score, es, subject in rows:
-            doc_id = get_score_document_id(score, issue.test_type)
-            has_doc = bool(doc_id and doc_id in success_by_exam.get(es.exam_id, set()))
-            key = (es.exam_id, subject.id, subject.code, issue.test_type, has_doc)
-            counts[key] = counts.get(key, 0) + 1
-
-        unbatched = [
-            BatchSummaryUnbatchedItem(
-                exam_id=k[0],
-                subject_id=k[1],
-                subject_code=k[2],
-                test_type=k[3],
-                has_document=k[4],
-                pending_count=v,
-            )
-            for k, v in sorted(counts.items(), key=lambda x: (x[0][0], x[0][2], x[0][3], not x[0][4]))
-        ]
-        pending_unbatched = sum(item.pending_count for item in unbatched)
+        unbatched, pending_unbatched = await _build_unbatched_breakdown(session, exam_id)
+    else:
+        pending_unbatched = await _pending_unbatched_count(session, exam_id)
 
     clerks = await _build_batch_summary_clerks(session, exam_id)
 

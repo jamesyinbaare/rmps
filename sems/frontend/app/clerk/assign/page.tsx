@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
+import {
+  AssignWorkFiltersBar,
+  type AssignStreamFilter,
+} from "@/components/clerk/AssignWorkFiltersBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,15 +33,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -53,11 +48,30 @@ import {
   releaseIssueBatches,
 } from "@/lib/api";
 import { useDataEntryExamScope } from "@/hooks/useDataEntryExamScope";
+import type { SubjectTypeFilterValue } from "@/components/SubjectMultiSelectFilter";
 import { cn } from "@/lib/utils";
 import type { ClerkAssignPanelItem, IssueBatch } from "@/types/document";
 
-type DocFilter = "all" | "doc" | "nod";
 type AssignTab = "all" | "unassigned" | "assigned";
+
+function parseSubjectIdsParam(value: string | null): number[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+}
+
+function parseSubjectTypeParam(value: string | null): SubjectTypeFilterValue {
+  if (value === "CORE" || value === "ELECTIVE") return value;
+  return "ALL";
+}
+
+function parseOptionalInt(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 function testTypeLabel(testType: number) {
   if (testType === 1) return "Paper 1";
@@ -67,12 +81,16 @@ function testTypeLabel(testType: number) {
 }
 
 export default function AssignWorkPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const lastUrlQueryRef = useRef<string | null>(null);
   const { loading, authorized, exams, subjects, examId, applyExamId } =
     useDataEntryExamScope({ path: "/clerk/assign" });
-  const [subjectId, setSubjectId] = useState<number | null>(null);
+
+  const [subjectIds, setSubjectIds] = useState<number[]>([]);
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>("ALL");
   const [testType, setTestType] = useState<number | null>(null);
-  const [hasDocFilter, setHasDocFilter] = useState<DocFilter>("all");
+  const [streamFilter, setStreamFilter] = useState<AssignStreamFilter>("all");
   const [tab, setTab] = useState<AssignTab>("all");
   const [batches, setBatches] = useState<IssueBatch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
@@ -86,27 +104,77 @@ export default function AssignWorkPage() {
   const [confirmReleaseOpen, setConfirmReleaseOpen] = useState(false);
   const [filtersHydrated, setFiltersHydrated] = useState(false);
 
+  const examOptions = useMemo(
+    () =>
+      exams
+        .slice()
+        .sort((a, b) => {
+          if (b.year !== a.year) return b.year - a.year;
+          if (a.series !== b.series) return a.series.localeCompare(b.series);
+          return (a.exam_type || "").localeCompare(b.exam_type || "");
+        })
+        .map((exam) => {
+          const typeLabel =
+            exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+          return {
+            value: exam.id,
+            label: `${exam.year} ${exam.series} ${typeLabel}`,
+          };
+        }),
+    [exams]
+  );
+
   useEffect(() => {
     if (filtersHydrated || loading) return;
-    const subjectFromQuery = searchParams.get("subject_id");
-    const testTypeFromQuery = searchParams.get("test_type");
+
+    const subjectIdsFromQuery = parseSubjectIdsParam(searchParams.get("subject_ids"));
+    const legacySubjectId = parseOptionalInt(searchParams.get("subject_id"));
+    const testTypeFromQuery = parseOptionalInt(searchParams.get("test_type"));
     const streamFromQuery = searchParams.get("stream");
     const clerkFromQuery = searchParams.get("clerk_id");
 
-    if (subjectFromQuery) {
-      const id = Number(subjectFromQuery);
-      if (!Number.isNaN(id)) setSubjectId(id);
-    }
-    if (testTypeFromQuery) {
-      const id = Number(testTypeFromQuery);
-      if (!Number.isNaN(id)) setTestType(id);
-    }
+    setSubjectIds(
+      subjectIdsFromQuery.length > 0
+        ? subjectIdsFromQuery
+        : legacySubjectId
+          ? [legacySubjectId]
+          : []
+    );
+    setSubjectTypeFilter(parseSubjectTypeParam(searchParams.get("subject_type")));
+    setTestType(testTypeFromQuery);
     if (streamFromQuery === "doc" || streamFromQuery === "nod") {
-      setHasDocFilter(streamFromQuery);
+      setStreamFilter(streamFromQuery);
     }
     if (clerkFromQuery) setAssignClerkId(clerkFromQuery);
     setFiltersHydrated(true);
   }, [filtersHydrated, loading, searchParams]);
+
+  useEffect(() => {
+    if (!authorized || !filtersHydrated) return;
+
+    const params = new URLSearchParams();
+    if (examId) params.set("exam_id", String(examId));
+    if (subjectIds.length) params.set("subject_ids", subjectIds.join(","));
+    if (subjectTypeFilter !== "ALL") params.set("subject_type", subjectTypeFilter);
+    if (testType) params.set("test_type", String(testType));
+    if (streamFilter !== "all") params.set("stream", streamFilter);
+    if (assignClerkId) params.set("clerk_id", assignClerkId);
+
+    const next = params.toString();
+    if (lastUrlQueryRef.current === next) return;
+    lastUrlQueryRef.current = next;
+    router.replace(`/clerk/assign${next ? `?${next}` : ""}`, { scroll: false });
+  }, [
+    authorized,
+    filtersHydrated,
+    examId,
+    subjectIds,
+    subjectTypeFilter,
+    testType,
+    streamFilter,
+    assignClerkId,
+    router,
+  ]);
 
   const refreshBatches = useCallback(async () => {
     if (!examId) {
@@ -117,16 +185,17 @@ export default function AssignWorkPage() {
     try {
       const data = await listIssueBatches({
         exam_id: examId,
-        subject_id: subjectId || undefined,
+        subject_ids: subjectIds.length > 0 ? subjectIds : undefined,
+        subject_type: subjectTypeFilter !== "ALL" ? subjectTypeFilter : undefined,
         test_type: testType || undefined,
-        has_document: hasDocFilter === "all" ? undefined : hasDocFilter === "doc",
+        has_document: streamFilter === "all" ? undefined : streamFilter === "doc",
       });
       setBatches(data.batches);
       setSelectedBatchIds(new Set());
     } finally {
       setLoadingBatches(false);
     }
-  }, [examId, subjectId, testType, hasDocFilter]);
+  }, [examId, subjectIds, subjectTypeFilter, testType, streamFilter]);
 
   const refreshClerks = useCallback(async () => {
     setLoadingClerks(true);
@@ -151,6 +220,25 @@ export default function AssignWorkPage() {
       toast.error(err instanceof Error ? err.message : "Failed to refresh clerks")
     );
   }, [authorized, examId, refreshClerks]);
+
+  const handleSubjectTypeFilterChange = (value: SubjectTypeFilterValue) => {
+    setSubjectTypeFilter(value);
+    if (value !== "ALL" && subjectIds.length > 0) {
+      const allowed = new Set(subjects.filter((s) => s.subject_type === value).map((s) => s.id));
+      setSubjectIds(subjectIds.filter((id) => allowed.has(id)));
+    }
+  };
+
+  const handleClearFilters = () => {
+    setSubjectIds([]);
+    setSubjectTypeFilter("ALL");
+    setTestType(null);
+    setStreamFilter("all");
+    lastUrlQueryRef.current = examId ? `exam_id=${examId}` : "";
+    router.replace(examId ? `/clerk/assign?exam_id=${examId}` : "/clerk/assign", {
+      scroll: false,
+    });
+  };
 
   const filteredBatches = useMemo(() => {
     if (tab === "unassigned") return batches.filter((b) => !b.assigned_to_user_id);
@@ -302,72 +390,29 @@ export default function AssignWorkPage() {
               </div>
             </header>
 
-            <section className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[200px] flex-1">
-                <Label className="text-xs text-muted-foreground">Examination</Label>
-                <SearchableSelect
-                  options={exams.map((e) => ({
-                    value: e.id,
-                    label: `${e.exam_type} · ${e.series} ${e.year}`,
-                  }))}
-                  value={examId ?? "all"}
-                  onValueChange={(v) =>
-                    applyExamId(v === "all" || v === "" ? null : Number(v))
-                  }
-                  placeholder="Select exam"
-                  allowAll
-                  allLabel="Select exam"
-                />
-              </div>
-              <div className="min-w-[160px] flex-1">
-                <Label className="text-xs text-muted-foreground">Subject</Label>
-                <SearchableSelect
-                  options={subjects.map((s) => ({
-                    value: s.id,
-                    label: `${s.code} · ${s.name}`,
-                  }))}
-                  value={subjectId ?? "all"}
-                  onValueChange={(v) =>
-                    setSubjectId(v === "all" || v === "" ? null : Number(v))
-                  }
-                  placeholder="All subjects"
-                  allowAll
-                  allLabel="All subjects"
-                />
-              </div>
-              <div className="w-[140px]">
-                <Label className="text-xs text-muted-foreground">Paper</Label>
-                <Select
-                  value={testType == null ? "all" : String(testType)}
-                  onValueChange={(v) => setTestType(v === "all" ? null : Number(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All papers</SelectItem>
-                    <SelectItem value="1">Paper 1</SelectItem>
-                    <SelectItem value="2">Paper 2</SelectItem>
-                    <SelectItem value="3">Paper 3</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-[140px]">
-                <Label className="text-xs text-muted-foreground">Stream</Label>
-                <Select
-                  value={hasDocFilter}
-                  onValueChange={(v) => setHasDocFilter(v as DocFilter)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All streams</SelectItem>
-                    <SelectItem value="doc">DOC only</SelectItem>
-                    <SelectItem value="nod">NOD only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <section className="rounded-xl border border-border/80 bg-card px-4 py-4 shadow-sm sm:px-5">
+              <AssignWorkFiltersBar
+                examOptions={examOptions}
+                selectedExamId={examId}
+                onExamChange={(value) => {
+                  setSubjectIds([]);
+                  setSubjectTypeFilter("ALL");
+                  applyExamId(value === "all" || value === "" ? null : Number(value));
+                }}
+                subjects={subjects}
+                subjectIds={subjectIds}
+                onSubjectIdsChange={setSubjectIds}
+                subjectTypeFilter={subjectTypeFilter}
+                onSubjectTypeFilterChange={handleSubjectTypeFilterChange}
+                testType={testType}
+                onTestTypeChange={setTestType}
+                streamFilter={streamFilter}
+                onStreamFilterChange={setStreamFilter}
+                loading={loading}
+                onRefresh={() => void refreshBatches()}
+                refreshing={loadingBatches}
+                onClear={handleClearFilters}
+              />
             </section>
 
             {!examId ? (

@@ -56,4 +56,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # Run the application.
-CMD ["fastapi", "run", "app/main.py", "--port", "80"]
+CMD ["fastapi", "run", "app/main.py", "--port", "80", "--workers", "2"]

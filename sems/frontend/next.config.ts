@@ -37,6 +37,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // SSR rewrites still proxy through Next; allow long validation/batch-summary calls.
+  experimental: {
+    proxyTimeout: 600_000,
+  },
 };
 
 export default nextConfig;

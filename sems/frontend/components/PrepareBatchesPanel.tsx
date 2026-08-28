@@ -45,8 +45,12 @@ import {
   clearIssueBatches,
   createIssueBatches,
   listDocuments,
-  runValidation,
 } from "@/lib/api";
+import {
+  runValidationForScope,
+  type AggregatedValidationResult,
+  type ValidationScopeFailure,
+} from "@/lib/run-validation-scope";
 import { cn } from "@/lib/utils";
 import type {
   BatchSummaryUnbatchedItem,
@@ -58,22 +62,7 @@ type PrepareStep = 1 | 2 | 3;
 type StreamChoice = "doc" | "nod" | "both";
 type SubjectTypeFilter = "ALL" | "CORE" | "ELECTIVE";
 
-type ScopeFailure = {
-  subject_id: number;
-  subject_code?: string;
-  test_type?: number;
-  message: string;
-};
-
-type AggregatedValidationResult = {
-  subjectsSucceeded: number;
-  subjectsFailed: number;
-  total_scores_checked: number;
-  issues_found: number;
-  issues_created: number;
-  issues_reopened: number;
-  failures: ScopeFailure[];
-};
+type ScopeFailure = ValidationScopeFailure;
 
 type AggregatedClearResult = {
   scopesSucceeded: number;
@@ -329,60 +318,36 @@ export function PrepareBatchesPanel({
     }
     setRunningValidation(true);
     setValidationProgress(null);
-    const failures: ScopeFailure[] = [];
-    let total_scores_checked = 0;
-    let issues_found = 0;
-    let issues_created = 0;
-    let issues_reopened = 0;
-    let subjectsSucceeded = 0;
 
     try {
-      for (let i = 0; i < selectedSubjectIds.length; i++) {
-        const subjectId = selectedSubjectIds[i];
-        setValidationProgress(`Validating ${i + 1}/${selectedSubjectIds.length}…`);
-        try {
-          const result = await runValidation({
-            exam_id: examId,
-            subject_id: subjectId,
-          });
-          subjectsSucceeded += 1;
-          total_scores_checked += result.total_scores_checked;
-          issues_found += result.issues_found;
-          issues_created += result.issues_created;
-          issues_reopened += result.issues_reopened ?? 0;
-        } catch (err) {
-          failures.push({
-            subject_id: subjectId,
-            subject_code: codesById.get(subjectId),
-            message: err instanceof Error ? err.message : "Validation failed",
-          });
-        }
-      }
+      const aggregated = await runValidationForScope({
+        examId,
+        subjectIds: selectedSubjectIds,
+        subjects,
+        onProgress: (update) =>
+          setValidationProgress(
+            update.phase === "start"
+              ? `Validating ${update.current}/${update.total} — ${update.label}…`
+              : update.phase === "complete"
+                ? `Done ${update.current}/${update.total} — ${update.label}`
+                : `Failed ${update.current}/${update.total} — ${update.label}`
+          ),
+      });
 
-      const subjectsFailed = failures.length;
-      const aggregated: AggregatedValidationResult = {
-        subjectsSucceeded,
-        subjectsFailed,
-        total_scores_checked,
-        issues_found,
-        issues_created,
-        issues_reopened,
-        failures,
-      };
       setValidationResult(aggregated);
 
-      if (subjectsSucceeded > 0) {
+      if (aggregated.subjectsSucceeded > 0) {
         setValidationRanForScope(true);
         setPrepareStep(2);
       }
 
-      if (subjectsFailed === 0) {
+      if (aggregated.subjectsFailed === 0) {
         toast.success(
-          `Validation done · ${issues_found} issue(s), ${issues_created} created across ${subjectsSucceeded} subject(s)`
+          `Validation done · ${aggregated.issues_found} issue(s), ${aggregated.issues_created} created across ${aggregated.subjectsSucceeded} subject(s)`
         );
-      } else if (subjectsSucceeded > 0) {
+      } else if (aggregated.subjectsSucceeded > 0) {
         toast.warning(
-          `Validation partial · ${subjectsSucceeded} ok, ${subjectsFailed} failed`
+          `Validation partial · ${aggregated.subjectsSucceeded} ok, ${aggregated.subjectsFailed} failed`
         );
       } else {
         toast.error("Validation failed for all selected subjects");

@@ -20,9 +20,13 @@ export default function PrepareBatchesPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (!examId) {
+      setSummary(null);
+      return;
+    }
     setRefreshing(true);
     try {
-      const summaryData = await getBatchSummary(examId || undefined);
+      const summaryData = await getBatchSummary(examId);
       setSummary(summaryData);
     } finally {
       setRefreshing(false);

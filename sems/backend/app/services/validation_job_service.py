@@ -12,9 +12,11 @@ from app.models import (
     Candidate,
     ExamRegistration,
     ExamSubject,
+    Subject,
     SubjectRegistration,
     SubjectScore,
     SubjectScoreValidationIssue,
+    SubjectType,
     ValidationIssueStatus,
 )
 from app.services.subject_score_validation import validate_subject_score
@@ -22,11 +24,22 @@ from app.services.subject_score_validation import validate_subject_score
 logger = logging.getLogger(__name__)
 
 
+def _field_test_type(field_name: str) -> int | None:
+    if field_name == "obj_raw_score":
+        return 1
+    if field_name == "essay_raw_score":
+        return 2
+    if field_name == "pract_raw_score":
+        return 3
+    return None
+
+
 def _apply_validation_scope_filters(
     stmt: Select,
     exam_id: int | None = None,
     school_id: int | None = None,
     subject_id: int | None = None,
+    subject_type: str | None = None,
 ) -> Select:
     """Apply exam/subject/school filters shared by score and issue queries."""
     if exam_id is not None:
@@ -34,6 +47,14 @@ def _apply_validation_scope_filters(
 
     if subject_id is not None:
         stmt = stmt.where(ExamSubject.subject_id == subject_id)
+
+    if subject_type is not None:
+        stmt = stmt.join(Subject, ExamSubject.subject_id == Subject.id)
+        try:
+            subject_type_enum = SubjectType(subject_type)
+            stmt = stmt.where(Subject.subject_type == subject_type_enum)
+        except ValueError:
+            stmt = stmt.where(False)
 
     if school_id is not None:
         stmt = stmt.where(Candidate.school_id == school_id)
@@ -56,6 +77,8 @@ async def process_validation(
     exam_id: int | None = None,
     school_id: int | None = None,
     subject_id: int | None = None,
+    subject_type: str | None = None,
+    test_types: list[int] | None = None,
 ) -> dict[str, Any]:
     """
     Run validation for specified scope.
@@ -73,11 +96,14 @@ async def process_validation(
         - issues_created: int (brand-new rows)
         - issues_reopened: int (resolved/ignored/skipped → pending)
     """
+    test_type_set = set(test_types) if test_types else None
+
     stmt = _apply_validation_scope_filters(
         _scoped_subject_score_joins(select(SubjectScore, ExamSubject)),
         exam_id=exam_id,
         school_id=school_id,
         subject_id=subject_id,
+        subject_type=subject_type,
     )
 
     try:
@@ -101,6 +127,7 @@ async def process_validation(
         exam_id=exam_id,
         school_id=school_id,
         subject_id=subject_id,
+        subject_type=subject_type,
     )
     existing_issues_stmt = select(SubjectScoreValidationIssue).where(
         SubjectScoreValidationIssue.subject_score_id.in_(score_ids_subq),
@@ -116,12 +143,20 @@ async def process_validation(
             total_checked += 1
 
             validation_issues = validate_subject_score(subject_score, exam_subject)
+            if test_type_set is not None:
+                validation_issues = [
+                    issue for issue in validation_issues if issue["test_type"] in test_type_set
+                ]
             current_issue_fields = {issue["field_name"] for issue in validation_issues}
             score_existing = existing_issues_by_score.get(subject_score.id, {})
 
             # Auto-resolve pending/skipped issues for fields that are now clean.
             # Already-resolved/ignored clean fields are left alone.
             for field_name, existing_issue in list(score_existing.items()):
+                if test_type_set is not None:
+                    field_tt = _field_test_type(field_name)
+                    if field_tt is None or field_tt not in test_type_set:
+                        continue
                 if field_name not in current_issue_fields:
                     if existing_issue.status in (
                         ValidationIssueStatus.PENDING,

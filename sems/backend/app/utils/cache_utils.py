@@ -34,10 +34,12 @@ def generate_issues_list_key(
     exam_id: int | None = None,
     school_id: int | None = None,
     subject_id: int | None = None,
+    subject_ids: str | None = None,
     status_filter: str | None = None,
     issue_type: str | None = None,
     test_type: int | None = None,
     subject_type: str | None = None,
+    batch_filter: str | None = None,
 ) -> str:
     """
     Generate cache key for validation issues list endpoint.
@@ -63,10 +65,12 @@ def generate_issues_list_key(
         exam_id=exam_id,
         school_id=school_id,
         subject_id=subject_id,
+        subject_ids=subject_ids,
         status_filter=status_filter,
         issue_type=issue_type,
         test_type=test_type,
         subject_type=subject_type,
+        batch_filter=batch_filter,
     )
 
 

@@ -63,6 +63,11 @@ class RunValidationRequest(BaseModel):
     exam_id: int | None = Field(None, description="Optional exam ID to filter by")
     school_id: int | None = Field(None, description="Optional school ID to filter by")
     subject_id: int | None = Field(None, description="Optional subject ID to filter by")
+    subject_type: str | None = Field(None, description="Optional subject type filter (CORE, ELECTIVE)")
+    test_types: list[int] | None = Field(
+        None,
+        description="Optional paper filter (1=Objectives, 2=Essay, 3=Practical). When set, only those papers are validated/reconciled.",
+    )
 
 
 class RunValidationResponse(BaseModel):

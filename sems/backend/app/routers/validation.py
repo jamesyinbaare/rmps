@@ -58,6 +58,18 @@ from app.utils.cache_utils import (
 router = APIRouter(prefix="/api/v1/validation", tags=["validation"])
 
 
+def _parse_subject_ids(subject_ids: str | None) -> list[int] | None:
+    if not subject_ids:
+        return None
+    try:
+        return [int(sid.strip()) for sid in subject_ids.split(",") if sid.strip()]
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject_ids must be comma-separated integers",
+        ) from e
+
+
 @router.post("/run", response_model=RunValidationResponse, status_code=status.HTTP_200_OK)
 async def run_validation(
     request: RunValidationRequest,
@@ -73,13 +85,16 @@ async def run_validation(
     try:
         logger.info(
             f"Running validation with filters: exam_id={request.exam_id}, "
-            f"school_id={request.school_id}, subject_id={request.subject_id}"
+            f"school_id={request.school_id}, subject_id={request.subject_id}, "
+            f"subject_type={request.subject_type}, test_types={request.test_types}"
         )
         results = await process_validation(
             session,
             exam_id=request.exam_id,
             school_id=request.school_id,
             subject_id=request.subject_id,
+            subject_type=request.subject_type,
+            test_types=request.test_types,
         )
 
         message = (
@@ -378,17 +393,29 @@ async def list_validation_issues(
     exam_id: int | None = Query(None, description="Filter by exam ID"),
     school_id: int | None = Query(None, description="Filter by school ID"),
     subject_id: int | None = Query(None, description="Filter by subject ID"),
+    subject_ids: str | None = Query(None, description="Comma-separated subject IDs"),
     status_filter: ValidationIssueStatus | None = Query(None, description="Filter by issue status"),
     issue_type: str | None = Query(None, description="Filter by issue type (missing_score, invalid_score)"),
     test_type: int | None = Query(None, description="Filter by test type (1 = Objectives, 2 = Essay, 3 = Practical)"),
     subject_type: str | None = Query(None, description="Filter by subject type (CORE, ELECTIVE)"),
     batch_id: int | None = Query(None, description="Filter by batch ID"),
+    batch_filter: str | None = Query(
+        None,
+        description="Filter by batch membership: batched (has batch_id) or unbatched (no batch_id)",
+    ),
     assigned_to_user_id: str | None = Query(None, description="Registrar+: filter by assignee UUID"),
     unassigned_only: bool = Query(False, description="Registrar+: only issues with no batch or unassigned batch"),
 ) -> ValidationIssueListResponse:
     """List validation issues with pagination and optional filters."""
     is_clerk = current_user.role == UserRole.DATACLERK
-    use_cache = not is_clerk and batch_id is None and not unassigned_only and not assigned_to_user_id
+    use_cache = (
+        not is_clerk
+        and batch_id is None
+        and batch_filter is None
+        and not unassigned_only
+        and not assigned_to_user_id
+    )
+    subject_id_list = _parse_subject_ids(subject_ids)
 
     if use_cache:
         cache_key = generate_issues_list_key(
@@ -397,10 +424,12 @@ async def list_validation_issues(
             exam_id=exam_id,
             school_id=school_id,
             subject_id=subject_id,
+            subject_ids=subject_ids,
             status_filter=status_filter.value if status_filter else None,
             issue_type=issue_type,
             test_type=test_type,
             subject_type=subject_type,
+            batch_filter=batch_filter,
         )
         cached_response = await cache_service.get(cache_key)
         if cached_response is not None:
@@ -436,12 +465,19 @@ async def list_validation_issues(
                 IssueBatch.assigned_to_user_id == assignee
             )
 
-    needs_exam_subject_join = exam_id is not None or subject_id is not None or subject_type is not None
+    needs_exam_subject_join = (
+        exam_id is not None
+        or subject_id is not None
+        or subject_id_list is not None
+        or subject_type is not None
+    )
     if needs_exam_subject_join:
         stmt = stmt.join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
         if exam_id is not None:
             stmt = stmt.where(ExamSubject.exam_id == exam_id)
-        if subject_id is not None:
+        if subject_id_list is not None:
+            stmt = stmt.where(ExamSubject.subject_id.in_(subject_id_list))
+        elif subject_id is not None:
             stmt = stmt.where(ExamSubject.subject_id == subject_id)
         if subject_type is not None:
             stmt = stmt.join(Subject, ExamSubject.subject_id == Subject.id)
@@ -473,6 +509,18 @@ async def list_validation_issues(
 
     if test_type is not None:
         stmt = stmt.where(SubjectScoreValidationIssue.test_type == test_type)
+
+    if batch_id is None and batch_filter is not None:
+        normalized_batch_filter = batch_filter.strip().lower()
+        if normalized_batch_filter == "batched":
+            stmt = stmt.where(SubjectScoreValidationIssue.batch_id.isnot(None))
+        elif normalized_batch_filter == "unbatched":
+            stmt = stmt.where(SubjectScoreValidationIssue.batch_id.is_(None))
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="batch_filter must be 'batched' or 'unbatched'",
+            )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total_result = await session.execute(count_stmt)
