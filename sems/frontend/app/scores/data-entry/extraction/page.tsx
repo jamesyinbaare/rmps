@@ -22,7 +22,7 @@ import {
   getFilteredDocuments,
   getScoresExtractionStatusCounts,
   getAllExams,
-  listSchools,
+  getAllSchools,
   listExamSubjects,
   compareSheetIds,
   queueReductoExtraction,
@@ -199,7 +199,7 @@ export default function ReductoExtractionPage() {
       try {
         const [examsData, schoolsData] = await Promise.all([
           getAllExams(),
-          listSchools(1, 100),
+          getAllSchools(),
         ]);
         setExams(examsData);
         setSchools(schoolsData);

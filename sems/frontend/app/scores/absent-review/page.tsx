@@ -23,7 +23,7 @@ import {
   getAbsentReviewCandidates,
   getAllExams,
   getCurrentUser,
-  listSchools,
+  getAllSchools,
   listSubjects,
 } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
@@ -178,7 +178,7 @@ export default function AbsentReviewPage() {
 
       const [examsData, schoolsData] = await Promise.all([
         getAllExams().catch(() => []),
-        listSchools(1, 100).catch(() => []),
+        getAllSchools().catch(() => []),
       ]);
 
       setExams(Array.isArray(examsData) ? examsData : []);

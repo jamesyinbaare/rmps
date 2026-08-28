@@ -872,6 +872,18 @@ export async function listSchools(page = 1, pageSize = 100): Promise<School[]> {
   return handleResponse<School[]>(response);
 }
 
+export async function getAllSchools(): Promise<School[]> {
+  const all: School[] = [];
+  let page = 1;
+  while (page <= 20) {
+    const chunk = await listSchools(page, 100);
+    all.push(...chunk);
+    if (chunk.length < 100) break;
+    page += 1;
+  }
+  return all;
+}
+
 export async function getSchoolById(id: number): Promise<School | null> {
   // Backend uses school_code, so we need to fetch all schools and find by ID
   // This is not ideal but works with the current API structure
