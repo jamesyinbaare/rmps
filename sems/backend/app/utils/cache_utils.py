@@ -39,6 +39,7 @@ def generate_issues_list_key(
     issue_type: str | None = None,
     test_type: int | None = None,
     subject_type: str | None = None,
+    batch_filter: str | None = None,
 ) -> str:
     """
     Generate cache key for validation issues list endpoint.
@@ -69,6 +70,7 @@ def generate_issues_list_key(
         issue_type=issue_type,
         test_type=test_type,
         subject_type=subject_type,
+        batch_filter=batch_filter,
     )
 
 

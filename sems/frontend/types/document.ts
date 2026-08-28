@@ -955,6 +955,7 @@ export interface ValidationIssuesFilters {
   test_type?: number;
   subject_type?: string;
   batch_id?: number;
+  batch_filter?: "batched" | "unbatched";
   page?: number;
   page_size?: number;
 }

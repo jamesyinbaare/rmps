@@ -117,11 +117,17 @@ import type {
  */
 export function getApiBaseUrl(): string {
   if (typeof window !== "undefined") {
+    const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    // In local dev, call the API directly when configured (e.g. localhost:8000 in
+    // Docker) so long-running validation requests are not cut off by the Next.js
+    // rewrite proxy (~30s default timeout).
+    if (process.env.NODE_ENV === "development" && envBase) {
+      return envBase.replace(/\/$/, "");
+    }
     if (process.env.NODE_ENV === "development") {
       return window.location.origin.replace(/\/$/, "");
     }
 
-    const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
     if (envBase) return envBase.replace(/\/$/, "");
 
     const { protocol, hostname } = window.location;
@@ -3196,6 +3202,7 @@ export async function getValidationIssues(
   if (filters.test_type) params.append("test_type", filters.test_type.toString());
   if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.batch_id) params.append("batch_id", filters.batch_id.toString());
+  if (filters.batch_filter) params.append("batch_filter", filters.batch_filter);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -3347,6 +3354,8 @@ export async function listMyBatches(
 export async function listIssueBatches(filters: {
   exam_id?: number;
   subject_id?: number;
+  subject_ids?: number[];
+  subject_type?: "CORE" | "ELECTIVE";
   test_type?: number;
   has_document?: boolean;
   unassigned_only?: boolean;
@@ -3354,7 +3363,12 @@ export async function listIssueBatches(filters: {
 } = {}): Promise<IssueBatchListResponse> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", String(filters.exam_id));
-  if (filters.subject_id) params.append("subject_id", String(filters.subject_id));
+  if (filters.subject_ids?.length) {
+    params.append("subject_ids", filters.subject_ids.join(","));
+  } else if (filters.subject_id) {
+    params.append("subject_id", String(filters.subject_id));
+  }
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.test_type) params.append("test_type", String(filters.test_type));
   if (filters.has_document !== undefined) {
     params.append("has_document", String(filters.has_document));

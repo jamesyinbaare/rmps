@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { ChevronDown, Filter, RefreshCw, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -32,6 +31,8 @@ import { cn } from "@/lib/utils";
 
 type ExamOption = { value: number; label: string };
 
+export type BatchFilterValue = "all" | "batched" | "unbatched";
+
 interface ValidationScopeFiltersBarProps {
   examOptions: ExamOption[];
   selectedExamId: number | undefined;
@@ -50,8 +51,8 @@ interface ValidationScopeFiltersBarProps {
   onStatusFilterChange: (value: ValidationIssueStatus | null) => void;
   issueTypeFilter: ValidationIssueType | null;
   onIssueTypeFilterChange: (value: ValidationIssueType | null) => void;
-  batchId?: number;
-  onBatchIdChange: (value: number | undefined) => void;
+  batchFilter: BatchFilterValue;
+  onBatchFilterChange: (value: BatchFilterValue) => void;
   loading?: boolean;
   onRefresh: () => void;
   refreshing?: boolean;
@@ -94,8 +95,8 @@ export function ValidationScopeFiltersBar({
   onStatusFilterChange,
   issueTypeFilter,
   onIssueTypeFilterChange,
-  batchId,
-  onBatchIdChange,
+  batchFilter,
+  onBatchFilterChange,
   loading,
   onRefresh,
   refreshing,
@@ -106,7 +107,7 @@ export function ValidationScopeFiltersBar({
     (testType ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (issueTypeFilter ? 1 : 0) +
-    (batchId ? 1 : 0);
+    (batchFilter !== "all" ? 1 : 0);
 
   const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
 
@@ -168,18 +169,18 @@ export function ValidationScopeFiltersBar({
       onRemove: () => onIssueTypeFilterChange(null),
     });
   }
-  if (batchId) {
+  if (batchFilter !== "all") {
     chips.push({
       key: "batch",
-      label: `Batch: ${batchId}`,
-      onRemove: () => onBatchIdChange(undefined),
+      label: batchFilter === "batched" ? "Batched only" : "Unbatched only",
+      onRemove: () => onBatchFilterChange("all"),
     });
   }
 
   const hasActiveFilters = chips.length > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1.2fr)_minmax(200px,1fr)_minmax(200px,1fr)_auto] xl:items-end">
           <FilterField label="Examination" className="sm:col-span-2 xl:col-span-1">
@@ -307,19 +308,23 @@ export function ValidationScopeFiltersBar({
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">Batch ID</p>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={batchId ?? ""}
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      onBatchIdChange(raw ? parseInt(raw, 10) : undefined);
-                    }}
-                    placeholder="Filter by batch ID"
-                    className="h-8"
+                  <p className="text-xs font-medium text-muted-foreground">Batch</p>
+                  <Select
+                    value={batchFilter}
+                    onValueChange={(value) =>
+                      onBatchFilterChange(value as BatchFilterValue)
+                    }
                     disabled={loading}
-                  />
+                  >
+                    <SelectTrigger size="sm" className="h-8 w-full">
+                      <SelectValue placeholder="Batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All issues</SelectItem>
+                      <SelectItem value="batched">Batched only</SelectItem>
+                      <SelectItem value="unbatched">Unbatched only</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </PopoverContent>
             </Popover>
@@ -348,7 +353,7 @@ export function ValidationScopeFiltersBar({
       </div>
 
       {chips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-2">
+        <div className="flex max-h-16 flex-wrap items-center gap-2 overflow-y-auto rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-1.5">
           <span className="text-xs font-medium text-muted-foreground">Active filters</span>
           {chips.map((chip) => (
             <Badge

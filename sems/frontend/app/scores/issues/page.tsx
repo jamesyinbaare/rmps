@@ -3,15 +3,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, Layers, Play } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
-import { Button } from "@/components/ui/button";
 import {
   getCurrentUser,
   getValidationIssues,
   getAllExams,
   listSchools,
   getAllSubjects,
+  getBatchSummary,
 } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import type {
@@ -21,16 +22,24 @@ import type {
   Exam,
   School,
   Subject,
+  BatchSummaryResponse,
 } from "@/types/document";
-import { Play, AlertCircle, ArrowRight, Layers } from "lucide-react";
 import { ValidationIssueWorkspace } from "@/components/ValidationIssueWorkspace";
 import { ValidationIssuesDataTable } from "@/components/ValidationIssuesDataTable";
-import { ValidationScopeFiltersBar } from "@/components/validation/ValidationScopeFiltersBar";
+import {
+  ValidationScopeFiltersBar,
+  type BatchFilterValue,
+} from "@/components/validation/ValidationScopeFiltersBar";
+import {
+  ValidationIssuesKpiStrip,
+  type ValidationIssuesKpiData,
+} from "@/components/validation/ValidationIssuesKpiStrip";
 import {
   RunValidationDialog,
   type ValidationRunScope,
 } from "@/components/validation/RunValidationDialog";
 import type { SubjectTypeFilterValue } from "@/components/SubjectMultiSelectFilter";
+import { Button } from "@/components/ui/button";
 
 function parseSubjectIdsParam(value: string | null): number[] {
   if (!value) return [];
@@ -66,6 +75,11 @@ function parseStatusParam(value: string | null): ValidationIssueStatus | null {
 function parseIssueTypeParam(value: string | null): ValidationIssueType | null {
   if (value === "missing_score" || value === "invalid_score") return value;
   return null;
+}
+
+function parseBatchFilterParam(value: string | null): BatchFilterValue {
+  if (value === "batched" || value === "unbatched") return value;
+  return "all";
 }
 
 export default function ValidationIssuesPage() {
@@ -105,9 +119,18 @@ export default function ValidationIssuesPage() {
   const [issueTypeFilter, setIssueTypeFilter] = useState<ValidationIssueType | null>(
     parseIssueTypeParam(searchParams.get("issue_type"))
   );
-  const [batchIdFilter, setBatchIdFilter] = useState<number | undefined>(
-    parseOptionalInt(searchParams.get("batch_id"))
+  const [batchFilter, setBatchFilter] = useState<BatchFilterValue>(
+    parseBatchFilterParam(searchParams.get("batch_filter"))
   );
+
+  const [batchSummary, setBatchSummary] = useState<BatchSummaryResponse | null>(null);
+  const [kpiData, setKpiData] = useState<ValidationIssuesKpiData>({
+    open: 0,
+    missing: 0,
+    invalid: 0,
+    filtered: 0,
+    filteredLabel: "Matching filters",
+  });
 
   const [runDialogOpen, setRunDialogOpen] = useState(false);
 
@@ -150,27 +173,89 @@ export default function ValidationIssuesPage() {
     [selectedExamId, schoolId, subjectIds, subjectTypeFilter, testTypeFilter]
   );
 
+  const filteredLabel = useMemo(() => {
+    if (!statusFilter) return "All statuses";
+    if (statusFilter === "pending") {
+      if (issueTypeFilter === "missing_score") return "Open · missing";
+      if (issueTypeFilter === "invalid_score") return "Open · invalid";
+      return "Open · in view";
+    }
+    if (statusFilter === "resolved") return "Resolved";
+    if (statusFilter === "ignored") return "Ignored";
+    if (statusFilter === "skipped") return "Skipped";
+    return "Matching filters";
+  }, [statusFilter, issueTypeFilter]);
+
+  const scopeFilters = useMemo(
+    () => ({
+      exam_id: selectedExamId,
+      school_id: schoolId,
+      subject_ids: subjectIds.length > 0 ? subjectIds : undefined,
+      test_type: testTypeFilter,
+      subject_type: subjectTypeFilter !== "ALL" ? subjectTypeFilter : undefined,
+      batch_filter: batchFilter !== "all" ? batchFilter : undefined,
+    }),
+    [
+      selectedExamId,
+      schoolId,
+      subjectIds,
+      testTypeFilter,
+      subjectTypeFilter,
+      batchFilter,
+    ]
+  );
+
   const loadIssues = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await getValidationIssues({
-        page,
-        page_size: pageSize,
-        exam_id: selectedExamId,
-        school_id: schoolId,
-        subject_ids: subjectIds.length > 0 ? subjectIds : undefined,
-        status: statusFilter ?? undefined,
-        issue_type: issueTypeFilter ?? undefined,
-        test_type: testTypeFilter,
-        subject_type: subjectTypeFilter !== "ALL" ? subjectTypeFilter : undefined,
-        batch_id: batchIdFilter,
+      const [listResponse, openResponse, missingResponse, invalidResponse, summaryResponse] =
+        await Promise.all([
+          getValidationIssues({
+            ...scopeFilters,
+            page,
+            page_size: pageSize,
+            status: statusFilter ?? undefined,
+            issue_type: issueTypeFilter ?? undefined,
+          }),
+          getValidationIssues({
+            ...scopeFilters,
+            page: 1,
+            page_size: 1,
+            status: "pending",
+          }),
+          getValidationIssues({
+            ...scopeFilters,
+            page: 1,
+            page_size: 1,
+            status: "pending",
+            issue_type: "missing_score",
+          }),
+          getValidationIssues({
+            ...scopeFilters,
+            page: 1,
+            page_size: 1,
+            status: "pending",
+            issue_type: "invalid_score",
+          }),
+          selectedExamId
+            ? getBatchSummary(selectedExamId, { includeUnbatched: false })
+            : Promise.resolve(null),
+        ]);
+
+      setIssues(listResponse.issues);
+      setTotal(listResponse.total);
+      setTotalPages(Math.ceil(listResponse.total / pageSize));
+      setKpiData({
+        open: openResponse.total,
+        missing: missingResponse.total,
+        invalid: invalidResponse.total,
+        filtered: listResponse.total,
+        filteredLabel,
       });
-      setIssues(response.issues);
-      setTotal(response.total);
-      setTotalPages(Math.ceil(response.total / pageSize));
+      setBatchSummary(summaryResponse);
       setCurrentIssueIndex((idx) => {
-        if (idx !== null && idx >= response.issues.length) {
+        if (idx !== null && idx >= listResponse.issues.length) {
           setIssueModalOpen(false);
           return null;
         }
@@ -185,14 +270,11 @@ export default function ValidationIssuesPage() {
   }, [
     page,
     pageSize,
-    selectedExamId,
-    schoolId,
-    subjectIds,
+    scopeFilters,
     statusFilter,
     issueTypeFilter,
-    testTypeFilter,
-    subjectTypeFilter,
-    batchIdFilter,
+    filteredLabel,
+    selectedExamId,
   ]);
 
   useEffect(() => {
@@ -251,7 +333,7 @@ export default function ValidationIssuesPage() {
     if (testTypeFilter) params.set("test_type", String(testTypeFilter));
     if (statusFilter) params.set("status", statusFilter);
     if (issueTypeFilter) params.set("issue_type", issueTypeFilter);
-    if (batchIdFilter) params.set("batch_id", String(batchIdFilter));
+    if (batchFilter !== "all") params.set("batch_filter", batchFilter);
     const next = params.toString();
     if (lastUrlQueryRef.current === next) return;
     lastUrlQueryRef.current = next;
@@ -265,7 +347,7 @@ export default function ValidationIssuesPage() {
     testTypeFilter,
     statusFilter,
     issueTypeFilter,
-    batchIdFilter,
+    batchFilter,
     router,
   ]);
 
@@ -294,7 +376,7 @@ export default function ValidationIssuesPage() {
     setTestTypeFilter(undefined);
     setStatusFilter("pending");
     setIssueTypeFilter(null);
-    setBatchIdFilter(undefined);
+    setBatchFilter("all");
     resetPage();
     lastUrlQueryRef.current = "";
     router.replace("/scores/issues?status=pending", { scroll: false });
@@ -308,9 +390,13 @@ export default function ValidationIssuesPage() {
   const handleIssueHandled = (issueId: number) => {
     setIssues((prev) => prev.filter((issue) => issue.id !== issueId));
     setTotal((prev) => Math.max(0, prev - 1));
+    setKpiData((prev) => ({
+      ...prev,
+      open: Math.max(0, prev.open - 1),
+      filtered: Math.max(0, prev.filtered - 1),
+    }));
   };
 
-  const openIssuesInScope = statusFilter === "pending" ? total : null;
   const batchesHref = selectedExamId
     ? `/clerk/batches?exam_id=${selectedExamId}`
     : "/clerk/batches";
@@ -333,51 +419,20 @@ export default function ValidationIssuesPage() {
           }
         />
 
-        <div className="mx-auto flex w-full max-w-[2000px] min-h-0 flex-1 flex-col gap-4 overflow-hidden px-4 py-4 sm:px-6 sm:py-5">
-          <section className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
-            <div className="border-b border-border/70 bg-gradient-to-r from-muted/50 via-background to-background px-4 py-4 sm:px-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex min-w-[140px] flex-col rounded-lg border border-border/70 bg-background/90 px-4 py-3 shadow-sm">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {openIssuesInScope != null ? "Open in scope" : "Issues in scope"}
-                    </span>
-                    <span className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight">
-                      {(openIssuesInScope ?? total).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex min-w-[120px] flex-col rounded-lg border border-border/70 bg-background/60 px-4 py-3">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Showing
-                    </span>
-                    <span className="mt-0.5 text-lg font-medium tabular-nums">
-                      {issues.length.toLocaleString()}
-                      <span className="text-sm font-normal text-muted-foreground"> / page</span>
-                    </span>
-                  </div>
-                  {selectedExamId && openIssuesInScope != null && openIssuesInScope > 0 && (
-                    <Link
-                      href={batchesHref}
-                      className="group inline-flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
-                    >
-                      <Layers className="h-4 w-4" />
-                      Prepare batches
-                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                    </Link>
-                  )}
-                </div>
-
-                <Button
-                  onClick={() => setRunDialogOpen(true)}
-                  className="h-10 shrink-0 gap-2 shadow-sm"
-                >
-                  <Play className="h-4 w-4" />
-                  Run validation
-                </Button>
-              </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="shrink-0 border-b border-border/70 bg-muted/20 px-4 py-2 sm:px-5">
+            <div className="mx-auto max-w-[2000px]">
+              <ValidationIssuesKpiStrip
+                kpis={kpiData}
+                batchSummary={batchSummary}
+                examSelected={!!selectedExamId}
+                loading={loading}
+              />
             </div>
+          </div>
 
-            <div className="px-4 py-4 sm:px-5">
+          <div className="shrink-0 border-b border-border/70 bg-background px-4 py-2 sm:px-5">
+            <div className="mx-auto max-w-[2000px]">
               <ValidationScopeFiltersBar
                 examOptions={examOptions}
                 selectedExamId={selectedExamId}
@@ -414,27 +469,41 @@ export default function ValidationIssuesPage() {
                   setIssueTypeFilter(value);
                   resetPage();
                 }}
-                batchId={batchIdFilter}
-                onBatchIdChange={(value) => {
-                  setBatchIdFilter(value);
+                batchFilter={batchFilter}
+                onBatchFilterChange={(value) => {
+                  setBatchFilter(value);
                   resetPage();
                 }}
                 loading={loadingFilterOptions}
                 onRefresh={() => void loadIssues()}
                 refreshing={loading}
                 onClear={handleClearFilters}
+                trailing={
+                  <>
+                    <Button
+                      onClick={() => setRunDialogOpen(true)}
+                      size="sm"
+                      className="h-9 gap-1.5 shadow-sm"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                      Run validation
+                    </Button>
+                    {selectedExamId && kpiData.open > 0 && (
+                      <Button variant="outline" size="sm" className="h-9 gap-1.5" asChild>
+                        <Link href={batchesHref}>
+                          <Layers className="h-3.5 w-3.5" />
+                          Prepare batches
+                          <ArrowRight className="h-3.5 w-3.5 opacity-60" />
+                        </Link>
+                      </Button>
+                    )}
+                  </>
+                }
               />
             </div>
-          </section>
+          </div>
 
-          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
-            {!loading && !error && issues.length === 0 && (
-              <div className="flex items-center gap-2 border-b border-border/70 bg-muted/20 px-4 py-2.5 text-sm text-muted-foreground">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                No issues match the current filters. Adjust scope above or run validation to scan for
-                new problems.
-              </div>
-            )}
+          <section className="mx-4 mb-3 mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm sm:mx-5 sm:mb-4">
             <ValidationIssuesDataTable
               issues={issues}
               loading={loading}
