@@ -517,3 +517,19 @@ class PaperCounterpartResponse(BaseModel):
     """Other-paper document for the same school/subject/series/page, if any."""
 
     counterpart: IdExtractionConflictItem | None = None
+
+
+class SwapPapersDocumentSummary(BaseModel):
+    id: int
+    extracted_id: str | None = None
+    test_type: str | None = None
+    old_extracted_id: str | None = None
+    old_test_type: str | None = None
+
+
+class SwapPapersResponse(BaseModel):
+    """Result of atomically swapping Paper 1 ↔ Paper 2 for a pair."""
+
+    scores_swapped: int = 0
+    document: SwapPapersDocumentSummary
+    counterpart: SwapPapersDocumentSummary

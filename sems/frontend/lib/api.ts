@@ -606,6 +606,31 @@ export async function getDocumentPaperCounterpart(
   return handleResponse<PaperCounterpartResponse>(response);
 }
 
+export type SwapPapersDocumentSummary = {
+  id: number;
+  extracted_id: string | null;
+  test_type: string | null;
+  old_extracted_id: string | null;
+  old_test_type: string | null;
+};
+
+export type SwapPapersResponse = {
+  scores_swapped: number;
+  document: SwapPapersDocumentSummary;
+  counterpart: SwapPapersDocumentSummary;
+};
+
+/** Atomically swap Paper 1 ↔ Paper 2 for a paired sheet (and remapped scores). */
+export async function swapDocumentPapers(
+  documentId: number
+): Promise<SwapPapersResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/${documentId}/swap-papers`,
+    { method: "POST" }
+  );
+  return handleResponse<SwapPapersResponse>(response);
+}
+
 /** Absolute download URL for a document file. */
 export function getDocumentDownloadUrl(documentId: number): string {
   return `${getApiBaseUrl()}/api/v1/documents/${documentId}/download`;

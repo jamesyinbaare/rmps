@@ -2281,6 +2281,14 @@ export default function DocumentsPage() {
               onPaperCounterpartChanged={async () => {
                 setConflictRefreshKey((n) => n + 1);
                 await loadDocuments(false);
+                if (selectedDocument) {
+                  try {
+                    const refreshed = await getDocument(selectedDocument.id);
+                    setSelectedDocument(refreshed);
+                  } catch (err) {
+                    console.error("Failed to refresh document after paper change:", err);
+                  }
+                }
               }}
               ownershipConflictDocs={
                 isOwnershipReview && ownershipPeerDoc ? [ownershipPeerDoc] : null

@@ -756,3 +756,251 @@ async def reclassify_document_paper(
         new_test_type=target_test_type,
         scores_moved=migration.scores_moved,
     )
+
+
+@dataclass
+class SwapPaperPairResult:
+    document_id: int
+    counterpart_id: int
+    document_old_extracted_id: str | None = None
+    document_new_extracted_id: str | None = None
+    counterpart_old_extracted_id: str | None = None
+    counterpart_new_extracted_id: str | None = None
+    document_old_test_type: str | None = None
+    document_new_test_type: str | None = None
+    counterpart_old_test_type: str | None = None
+    counterpart_new_test_type: str | None = None
+    scores_swapped: int = 0
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+def _temp_swap_extracted_id(document_id: int) -> str:
+    """13-char sentinel that will not collide with real numeric sheet IDs."""
+    return f"TMP{document_id:010d}"[:13]
+
+
+async def _remap_scores_for_paper_pair_swap(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    x1: str,
+    x2: str,
+) -> tuple[int, str | None]:
+    """Move applied values with the files: obj@X1 ↔ essay@X2.
+
+    Paper-digit pointers stay on X1 (obj) and X2 (essay) so they remain
+    consistent after the documents exchange identities.
+    Returns (rows_touched, error_message).
+    """
+    stmt = (
+        select(SubjectScore)
+        .join(
+            SubjectRegistration,
+            SubjectScore.subject_registration_id == SubjectRegistration.id,
+        )
+        .join(
+            ExamRegistration,
+            SubjectRegistration.exam_registration_id == ExamRegistration.id,
+        )
+        .where(
+            ExamRegistration.exam_id == exam_id,
+            or_(
+                SubjectScore.obj_document_id == x1,
+                SubjectScore.essay_document_id == x2,
+            ),
+        )
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    touched = 0
+
+    for row in rows:
+        a_has = row.obj_document_id == x1
+        b_has = row.essay_document_id == x2
+        if not a_has and not b_has:
+            continue
+
+        if a_has and row.essay_document_id and row.essay_document_id != x2:
+            return (
+                0,
+                f"Cannot swap: essay score already linked to sheet "
+                f"{row.essay_document_id}",
+            )
+        if b_has and row.obj_document_id and row.obj_document_id != x1:
+            return (
+                0,
+                f"Cannot swap: objectives score already linked to sheet "
+                f"{row.obj_document_id}",
+            )
+
+        a_raw = row.obj_raw_score if a_has else None
+        a_method = row.obj_extraction_method if a_has else None
+        a_norm = row.obj_normalized if a_has else None
+
+        b_raw = row.essay_raw_score if b_has else None
+        b_method = row.essay_extraction_method if b_has else None
+        b_norm = row.essay_normalized if b_has else None
+
+        if b_has:
+            row.obj_raw_score = b_raw
+            row.obj_document_id = x1
+            row.obj_extraction_method = b_method
+            row.obj_normalized = b_norm
+        elif a_has:
+            row.obj_raw_score = None
+            row.obj_document_id = None
+            row.obj_extraction_method = None
+            row.obj_normalized = None
+
+        if a_has:
+            row.essay_raw_score = a_raw
+            row.essay_document_id = x2
+            row.essay_extraction_method = a_method
+            row.essay_normalized = a_norm
+        elif b_has:
+            row.essay_raw_score = None
+            row.essay_document_id = None
+            row.essay_extraction_method = None
+            row.essay_normalized = None
+
+        row.updated_at = datetime.utcnow()
+        touched += 1
+
+    return touched, None
+
+
+async def swap_paper_pair(
+    session: AsyncSession,
+    document: Document,
+) -> SwapPaperPairResult:
+    """Atomically swap Paper 1 ↔ Paper 2 identities and remapped applied scores.
+
+    Resolves the counterpart server-side. Both sheets must be a true digit-10
+    flip pair (each rewritten ID equals the other's current extracted_id).
+    """
+    empty = SwapPaperPairResult(
+        document_id=document.id,
+        counterpart_id=0,
+        document_old_extracted_id=document.extracted_id,
+        document_old_test_type=document.test_type,
+    )
+
+    if document.upload_status != "uploaded":
+        empty.error = "Document is not uploaded"
+        return empty
+
+    if not document.extracted_id or len(document.extracted_id) != 13:
+        empty.error = "Document has no valid 13-character extracted_id"
+        return empty
+
+    doc_tt = document.test_type or document.extracted_id[10:11]
+    if doc_tt not in ("1", "2"):
+        empty.error = "Document must be Paper 1 (Objectives) or Paper 2 (Essay)"
+        return empty
+
+    counterpart = await find_paper_counterpart(session, document)
+    if not counterpart:
+        empty.error = "No paired Paper 1/Paper 2 counterpart found"
+        return empty
+
+    if counterpart.upload_status != "uploaded":
+        empty.error = "Counterpart document is not uploaded"
+        empty.counterpart_id = counterpart.id
+        return empty
+
+    if not counterpart.extracted_id or len(counterpart.extracted_id) != 13:
+        empty.error = "Counterpart has no valid 13-character extracted_id"
+        empty.counterpart_id = counterpart.id
+        return empty
+
+    cp_tt = counterpart.test_type or counterpart.extracted_id[10:11]
+    if flipped_test_type(doc_tt) != cp_tt:
+        empty.error = "Counterpart is not the opposite paper type"
+        empty.counterpart_id = counterpart.id
+        return empty
+
+    try:
+        doc_flipped = rewrite_extracted_id_test_type(document.extracted_id, cp_tt)
+        cp_flipped = rewrite_extracted_id_test_type(counterpart.extracted_id, doc_tt)
+    except ValueError as exc:
+        empty.error = str(exc)
+        empty.counterpart_id = counterpart.id
+        return empty
+
+    if doc_flipped != counterpart.extracted_id or cp_flipped != document.extracted_id:
+        empty.error = (
+            "Paired sheets do not share a flip ID "
+            "(Edit ID so only the paper digit differs, then retry)"
+        )
+        empty.counterpart_id = counterpart.id
+        empty.counterpart_old_extracted_id = counterpart.extracted_id
+        empty.counterpart_old_test_type = cp_tt
+        return empty
+
+    if document.exam_id is None or document.exam_id != counterpart.exam_id:
+        empty.error = "Both sheets must belong to the same exam"
+        empty.counterpart_id = counterpart.id
+        return empty
+
+    # Canonical paper-digit IDs (stable across the document identity swap)
+    if doc_tt == "1":
+        paper1_doc, paper2_doc = document, counterpart
+        x1, x2 = document.extracted_id, counterpart.extracted_id
+    else:
+        paper1_doc, paper2_doc = counterpart, document
+        x1, x2 = counterpart.extracted_id, document.extracted_id
+
+    scores_swapped, score_error = await _remap_scores_for_paper_pair_swap(
+        session,
+        exam_id=document.exam_id,
+        x1=x1,
+        x2=x2,
+    )
+    if score_error:
+        return SwapPaperPairResult(
+            document_id=document.id,
+            counterpart_id=counterpart.id,
+            document_old_extracted_id=document.extracted_id,
+            counterpart_old_extracted_id=counterpart.extracted_id,
+            document_old_test_type=doc_tt,
+            counterpart_old_test_type=cp_tt,
+            error=score_error,
+        )
+
+    doc_old_id = document.extracted_id
+    cp_old_id = counterpart.extracted_id
+    doc_old_tt = doc_tt
+    cp_old_tt = cp_tt
+
+    temp_id = _temp_swap_extracted_id(paper1_doc.id)
+    paper1_doc.extracted_id = temp_id
+    await session.flush()
+
+    paper2_doc.extracted_id = x1
+    paper2_doc.test_type = "1"
+    apply_test_type_change_markers(
+        paper2_doc, old_test_type="2", new_test_type="1"
+    )
+
+    paper1_doc.extracted_id = x2
+    paper1_doc.test_type = "2"
+    apply_test_type_change_markers(
+        paper1_doc, old_test_type="1", new_test_type="2"
+    )
+
+    return SwapPaperPairResult(
+        document_id=document.id,
+        counterpart_id=counterpart.id,
+        document_old_extracted_id=doc_old_id,
+        document_new_extracted_id=document.extracted_id,
+        counterpart_old_extracted_id=cp_old_id,
+        counterpart_new_extracted_id=counterpart.extracted_id,
+        document_old_test_type=doc_old_tt,
+        document_new_test_type=document.test_type,
+        counterpart_old_test_type=cp_old_tt,
+        counterpart_new_test_type=counterpart.test_type,
+        scores_swapped=scores_swapped,
+    )

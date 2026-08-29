@@ -457,7 +457,173 @@ def test_find_source_rows_filters_by_exam_id_in_migrate_signature() -> None:
     """Regression: sheet IDs collide across years; migrate must scope by exam_id."""
     import inspect
 
-    from app.services.paper_reclassify import _find_source_rows
+    sig = inspect.signature(migrate_applied_scores_for_id_change)
+    assert "exam_id" in sig.parameters
 
-    params = inspect.signature(_find_source_rows).parameters
-    assert "exam_id" in params
+
+def _doc(**kwargs: object) -> SimpleNamespace:
+    defaults = {
+        "id": 1,
+        "extracted_id": "1111111010101",
+        "test_type": "1",
+        "exam_id": 1,
+        "upload_status": "uploaded",
+        "school_id": 10,
+        "subject_id": 20,
+        "subject_series": "A",
+        "sheet_number": "01",
+        "test_type_changed_from": None,
+        "test_type_changed_at": None,
+    }
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_swap_paper_pair_no_scores() -> None:
+    from app.services.paper_reclassify import swap_paper_pair
+
+    x1 = "1111111010101"
+    x2 = "1111111010201"
+    paper1 = _doc(id=101, extracted_id=x1, test_type="1")
+    paper2 = _doc(id=102, extracted_id=x2, test_type="2")
+
+    session = AsyncMock()
+    # find_paper_counterpart: structured key lookup hits paper2
+    counterpart_result = MagicMock()
+    counterpart_result.scalar_one_or_none.return_value = paper2
+    # score remap query returns no rows
+    scores_result = MagicMock()
+    scores_result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(side_effect=[counterpart_result, scores_result])
+    session.flush = AsyncMock()
+
+    result = await swap_paper_pair(session, paper1)
+
+    assert result.ok
+    assert result.scores_swapped == 0
+    assert paper1.extracted_id == x2
+    assert paper1.test_type == "2"
+    assert paper2.extracted_id == x1
+    assert paper2.test_type == "1"
+    assert paper1.test_type_changed_from == "1"
+    assert paper2.test_type_changed_from == "2"
+
+
+@pytest.mark.asyncio
+async def test_swap_paper_pair_both_scores_exchange_values_keep_pointers() -> None:
+    from app.services.paper_reclassify import swap_paper_pair
+
+    x1 = "1111111010101"
+    x2 = "1111111010201"
+    paper1 = _doc(id=201, extracted_id=x1, test_type="1")
+    paper2 = _doc(id=202, extracted_id=x2, test_type="2")
+    row = _score_row(
+        id=9,
+        obj_raw_score="18",
+        obj_document_id=x1,
+        obj_extraction_method="MANUAL",
+        obj_normalized=0.9,
+        essay_raw_score="42",
+        essay_document_id=x2,
+        essay_extraction_method="AUTO",
+        essay_normalized=0.7,
+    )
+
+    session = AsyncMock()
+    counterpart_result = MagicMock()
+    counterpart_result.scalar_one_or_none.return_value = paper2
+    scores_result = MagicMock()
+    scores_result.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(side_effect=[counterpart_result, scores_result])
+    session.flush = AsyncMock()
+
+    result = await swap_paper_pair(session, paper1)
+
+    assert result.ok
+    assert result.scores_swapped == 1
+    assert row.obj_raw_score == "42"
+    assert row.obj_document_id == x1
+    assert row.obj_extraction_method == "AUTO"
+    assert row.essay_raw_score == "18"
+    assert row.essay_document_id == x2
+    assert row.essay_extraction_method == "MANUAL"
+    assert paper1.test_type == "2"
+    assert paper2.test_type == "1"
+
+
+@pytest.mark.asyncio
+async def test_swap_paper_pair_only_one_paper_applied() -> None:
+    from app.services.paper_reclassify import swap_paper_pair
+
+    x1 = "1111111010101"
+    x2 = "1111111010201"
+    paper1 = _doc(id=301, extracted_id=x1, test_type="1")
+    paper2 = _doc(id=302, extracted_id=x2, test_type="2")
+    row = _score_row(
+        id=3,
+        obj_raw_score="15",
+        obj_document_id=x1,
+        obj_extraction_method="MANUAL",
+        obj_normalized=0.5,
+    )
+
+    session = AsyncMock()
+    counterpart_result = MagicMock()
+    counterpart_result.scalar_one_or_none.return_value = paper2
+    scores_result = MagicMock()
+    scores_result.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(side_effect=[counterpart_result, scores_result])
+    session.flush = AsyncMock()
+
+    result = await swap_paper_pair(session, paper1)
+
+    assert result.ok
+    assert result.scores_swapped == 1
+    assert row.obj_raw_score is None
+    assert row.obj_document_id is None
+    assert row.essay_raw_score == "15"
+    assert row.essay_document_id == x2
+    assert row.essay_extraction_method == "MANUAL"
+
+
+@pytest.mark.asyncio
+async def test_swap_paper_pair_rejects_no_counterpart() -> None:
+    from app.services.paper_reclassify import swap_paper_pair
+
+    paper1 = _doc(id=401, extracted_id="1111111010101", test_type="1")
+    session = AsyncMock()
+    empty = MagicMock()
+    empty.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=empty)
+
+    result = await swap_paper_pair(session, paper1)
+
+    assert not result.ok
+    assert "counterpart" in (result.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_swap_paper_pair_rejects_non_flip_pair() -> None:
+    from app.services.paper_reclassify import swap_paper_pair
+
+    # Same school/subject/series/page but IDs that do not flip into each other
+    paper1 = _doc(id=501, extracted_id="1111111010101", test_type="1")
+    paper2 = _doc(id=502, extracted_id="9999999999201", test_type="2")
+
+    session = AsyncMock()
+    counterpart_result = MagicMock()
+    counterpart_result.scalar_one_or_none.return_value = paper2
+    session.execute = AsyncMock(return_value=counterpart_result)
+
+    result = await swap_paper_pair(session, paper1)
+
+    assert not result.ok
+    assert "flip" in (result.error or "").lower()
+
+
+def test_temp_swap_extracted_id_length() -> None:
+    from app.services.paper_reclassify import _temp_swap_extracted_id
+
+    assert len(_temp_swap_extracted_id(42)) == 13
+    assert _temp_swap_extracted_id(42).startswith("TMP")

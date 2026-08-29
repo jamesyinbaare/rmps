@@ -188,3 +188,95 @@
 .validation-pop {
   animation: validation-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
+
+@keyframes paper-swap-hint-pop {
+  0% {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes paper-swap-hint-ring {
+  0%,
+  55%,
+  100% {
+    transform: scale(1);
+    opacity: 0;
+    box-shadow: 0 0 0 0 rgb(14 165 233 / 0);
+  }
+  60% {
+    transform: scale(1);
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 rgb(14 165 233 / 0.4);
+  }
+  85% {
+    transform: scale(1.22);
+    opacity: 0;
+    box-shadow: 0 0 0 12px rgb(14 165 233 / 0);
+  }
+}
+
+@keyframes paper-swap-hint-icon {
+  0%,
+  58%,
+  100% {
+    transform: rotate(0deg);
+  }
+  64% {
+    transform: rotate(-16deg);
+  }
+  72% {
+    transform: rotate(16deg);
+  }
+  80% {
+    transform: rotate(-6deg);
+  }
+  88% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes paper-swap-hint-caption {
+  0%,
+  50%,
+  100% {
+    opacity: 0.55;
+  }
+  60%,
+  78% {
+    opacity: 1;
+  }
+}
+
+.paper-swap-hint-wrap {
+  animation: paper-swap-hint-pop 0.45s ease-out both;
+}
+
+.paper-swap-hint-ring {
+  animation: paper-swap-hint-ring 4.5s ease-out infinite;
+}
+
+.paper-swap-hint-icon {
+  animation: paper-swap-hint-icon 4.5s ease-in-out infinite;
+}
+
+.paper-swap-hint-caption {
+  animation: paper-swap-hint-caption 4.5s ease-in-out infinite;
+}
+
+.paper-swap-hint-btn {
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paper-swap-hint-wrap,
+  .paper-swap-hint-ring,
+  .paper-swap-hint-icon,
+  .paper-swap-hint-caption {
+    animation: none !important;
+  }
+}
