@@ -60,6 +60,8 @@ from app.schemas.document import (
     ScoreMigrationPreviewRequest,
     ScoreMigrationPreviewResponse,
     ScoreMigrationUnregisteredItem,
+    SwapPapersDocumentSummary,
+    SwapPapersResponse,
     UploadConfirmItem,
     UploadConfirmRequest,
     UploadConfirmResponse,
@@ -90,6 +92,7 @@ from app.services.paper_reclassify import (
     find_paper_counterpart,
     migrate_applied_scores_for_id_change,
     reclassify_document_paper,
+    swap_paper_pair,
 )
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import (
@@ -1711,6 +1714,68 @@ async def get_paper_counterpart(
         counterpart=(
             IdExtractionConflictItem.model_validate(counterpart) if counterpart else None
         )
+    )
+
+
+@router.post("/{document_id}/swap-papers", response_model=SwapPapersResponse)
+async def swap_papers(
+    document_id: int, session: DBSessionDep
+) -> SwapPapersResponse:
+    """Atomically swap Paper 1 ↔ Paper 2 for a paired sheet and remapped applied scores."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    try:
+        outcome = await swap_paper_pair(session, document)
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("swap_papers failed for document_id=%s", document_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    if not outcome.ok:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=outcome.error or "Cannot swap papers",
+        )
+
+    await session.commit()
+
+    # Reload after commit so response reflects persisted state
+    doc_result = await session.execute(select(Document).where(Document.id == document_id))
+    document = doc_result.scalar_one_or_none()
+    cp_result = await session.execute(
+        select(Document).where(Document.id == outcome.counterpart_id)
+    )
+    counterpart = cp_result.scalar_one_or_none()
+    if not document or not counterpart:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Swap succeeded but documents could not be reloaded",
+        )
+
+    return SwapPapersResponse(
+        scores_swapped=outcome.scores_swapped,
+        document=SwapPapersDocumentSummary(
+            id=document.id,
+            extracted_id=document.extracted_id,
+            test_type=document.test_type,
+            old_extracted_id=outcome.document_old_extracted_id,
+            old_test_type=outcome.document_old_test_type,
+        ),
+        counterpart=SwapPapersDocumentSummary(
+            id=counterpart.id,
+            extracted_id=counterpart.extracted_id,
+            test_type=counterpart.test_type,
+            old_extracted_id=outcome.counterpart_old_extracted_id,
+            old_test_type=outcome.counterpart_old_test_type,
+        ),
     )
 
 
