@@ -115,25 +115,44 @@ function getTaskLine(fieldName: string) {
   return getFieldNameLabel(fieldName);
 }
 
-function documentUrl(detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id">) {
+function documentUrl(
+  detail: Pick<
+    ValidationIssueDetailResponse,
+    "document_id" | "exam_id" | "document_numeric_id"
+  >
+) {
+  if (detail.document_numeric_id != null) {
+    return `${API_BASE_URL}/api/v1/documents/${detail.document_numeric_id}/download?inline=true`;
+  }
   return `${API_BASE_URL}/api/v1/documents/by-extracted-id/${detail.document_id}/download?exam_id=${detail.exam_id}`;
 }
 
 /** Stable identity for the score sheet — shared across issues on the same document. */
 function documentKey(
-  detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null
+  detail: Pick<
+    ValidationIssueDetailResponse,
+    "document_id" | "exam_id" | "document_numeric_id"
+  > | null
 ): string | null {
+  if (detail?.document_numeric_id != null) {
+    return `id:${detail.document_numeric_id}`;
+  }
   if (!detail?.document_id || detail.exam_id == null) return null;
   return `${detail.document_id}:${detail.exam_id}`;
 }
 
 function isPrefetchableDocument(
-  detail: Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> | null
-): detail is Pick<ValidationIssueDetailResponse, "document_id" | "exam_id"> & {
-  document_id: string;
-  exam_id: number;
+  detail: Pick<
+    ValidationIssueDetailResponse,
+    "document_id" | "exam_id" | "document_numeric_id"
+  > | null
+): detail is Pick<
+  ValidationIssueDetailResponse,
+  "document_id" | "exam_id" | "document_numeric_id"
+> & {
+  document_numeric_id: number;
 } {
-  return !!detail?.document_id && detail.exam_id != null;
+  return detail?.document_numeric_id != null;
 }
 
 export interface ValidationIssueWorkspaceProps {
@@ -538,22 +557,38 @@ export function ValidationIssueWorkspace({
     handleSkip,
   ]);
 
+  // Only treat a sheet as present when we resolved a concrete Document row.
+  // A score pointer (document_id) without document_numeric_id means the sheet
+  // was never linked, or the ID was corrected and the pointer is stale.
+  const hasLinkedSheet = issueDetail?.document_numeric_id != null;
   const hasPdf =
-    !!issueDetail?.document_id &&
-    !!issueDetail.exam_id &&
-    (issueDetail.document_mime_type === "application/pdf" ||
-      !!issueDetail.document_file_name?.toLowerCase().endsWith(".pdf"));
+    hasLinkedSheet &&
+    (issueDetail?.document_mime_type === "application/pdf" ||
+      !!issueDetail?.document_file_name?.toLowerCase().endsWith(".pdf"));
 
   // Prefer image viewer when mime is missing — most score sheets are images and
   // Document metadata is sometimes absent even when extracted_id is set.
   const hasImage =
-    !!issueDetail?.document_id &&
-    !!issueDetail.exam_id &&
+    hasLinkedSheet &&
     !hasPdf &&
-    (!issueDetail.document_mime_type ||
+    (!issueDetail?.document_mime_type ||
       issueDetail.document_mime_type.startsWith("image/"));
 
   const hasDocument = hasImage || hasPdf;
+
+  const missingSheetCopy = !issueDetail
+    ? null
+    : !issueDetail.document_id
+      ? {
+          title: "No score sheet",
+          body: "This score doesn’t have a sheet yet — it may not have been uploaded.",
+        }
+      : !issueDetail.document_numeric_id
+        ? {
+            title: "Sheet not found",
+            body: "The linked sheet may have been changed or removed.",
+          }
+        : null;
 
   const handleDownloadDocument = useCallback(async () => {
     if (!allowDownload || !issueDetail?.document_numeric_id) return;
@@ -603,7 +638,7 @@ export function ValidationIssueWorkspace({
     }
   };
 
-  const sideBySide = layout === "horizontal" && hasDocument;
+  const sideBySide = layout === "horizontal";
   const queueLabel =
     currentIndex !== null && issues.length > 0
       ? `${currentIndex + 1}/${issues.length}`
@@ -666,7 +701,7 @@ export function ValidationIssueWorkspace({
           <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
         </>
       )}
-      {hasDocument && (
+      {issueDetail && (
         <div
           className="inline-flex rounded-md p-0.5"
           role="group"
@@ -1020,13 +1055,15 @@ export function ValidationIssueWorkspace({
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-zinc-400">
           <FileText className="h-12 w-12" />
-          <p className="text-sm font-medium text-zinc-300">No score sheet</p>
-          <p className="max-w-xs text-xs text-zinc-500">
-            Enter the corrected score from your paper source
+          <p className="text-sm font-medium text-zinc-300">
+            {missingSheetCopy?.title ?? "No score sheet"}
+          </p>
+          <p className="max-w-sm text-xs text-zinc-500">
+            {missingSheetCopy?.body ??
+              "Enter the corrected score from your paper source."}
             {issueDetail.max_score != null && issueDetail.max_score > 0
-              ? ` (0–${issueDetail.max_score})`
+              ? ` Max score: ${issueDetail.max_score}.`
               : ""}
-            .
           </p>
         </div>
       )}

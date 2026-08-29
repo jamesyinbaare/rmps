@@ -1228,13 +1228,30 @@ async def download_document_by_extracted_id(
     exam_id: int = Query(..., description="Exam ID to filter by"),
     session: DBSessionDep = ...,
 ) -> StreamingResponse:
-    """Download document file by extracted_id and exam_id."""
-    stmt = select(Document).where(
-        Document.extracted_id == extracted_id,
-        Document.exam_id == exam_id,
+    """Download document file by extracted_id and exam_id.
+
+    Prefers the success uploaded sheet in the exam (exam-scoped uniqueness rule).
+    If multiple success rows exist (data integrity gap), returns the newest.
+    """
+    stmt = (
+        select(Document)
+        .where(
+            Document.extracted_id == extracted_id,
+            Document.exam_id == exam_id,
+            Document.upload_status == "uploaded",
+            Document.id_extraction_status == "success",
+        )
+        .order_by(Document.uploaded_at.desc(), Document.id.desc())
+        .limit(2)
     )
-    result = await session.execute(stmt)
-    document = result.scalar_one_or_none()
+    docs = list((await session.execute(stmt)).scalars().all())
+    if len(docs) > 1:
+        logger.warning(
+            "Multiple success documents for extracted_id=%s exam_id=%s; using newest",
+            extracted_id,
+            exam_id,
+        )
+    document = docs[0] if docs else None
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -1253,7 +1270,14 @@ async def download_document_by_extracted_id(
 
 
 @router.get("/{document_id}/download")
-async def download_document(document_id: int, session: DBSessionDep) -> StreamingResponse:
+async def download_document(
+    document_id: int,
+    session: DBSessionDep,
+    inline: bool = Query(
+        False,
+        description="When true, Content-Disposition is inline (for preview). Default attachment.",
+    ),
+) -> StreamingResponse:
     """Download document file."""
     stmt = select(Document).where(Document.id == document_id)
     result = await session.execute(stmt)
@@ -1264,8 +1288,9 @@ async def download_document(document_id: int, session: DBSessionDep) -> Streamin
     try:
         file_content = await storage_service.retrieve(document.file_path)
         safe_name = (document.file_name or f"document-{document.id}").replace('"', "")
+        disposition = "inline" if inline else "attachment"
         content_disposition = (
-            f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
+            f'{disposition}; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
         )
         return StreamingResponse(
             iter([file_content]),
