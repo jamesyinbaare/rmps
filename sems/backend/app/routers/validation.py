@@ -2,9 +2,11 @@
 
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, select, and_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import CurrentUserDep, RegistrarDep
 from app.dependencies.database import DBSessionDep
@@ -68,6 +70,54 @@ def _parse_subject_ids(subject_ids: str | None) -> list[int] | None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="subject_ids must be comma-separated integers",
         ) from e
+
+
+async def _find_sheet_document(
+    session: AsyncSession,
+    *,
+    extracted_id: str,
+    exam_id: int,
+    test_type: int | str | None = None,
+    school_id: int | None = None,
+    require_success: bool = True,
+) -> Document | None:
+    """Resolve one uploaded sheet for an extracted_id within an exam.
+
+    Intended invariant: at most one success document per extracted_id per exam.
+    If multiple rows match (data integrity gap), prefer school/paper match then newest.
+    """
+    conditions = [
+        Document.extracted_id == extracted_id,
+        Document.exam_id == exam_id,
+        Document.upload_status == "uploaded",
+    ]
+    if require_success:
+        conditions.append(Document.id_extraction_status == "success")
+
+    paper: str | None = None
+    if test_type is not None:
+        paper_str = str(test_type)
+        if paper_str in ("1", "2"):
+            paper = paper_str
+
+    order_clauses: list[Any] = []
+    if school_id is not None:
+        order_clauses.append(case((Document.school_id == school_id, 0), else_=1))
+    if paper is not None:
+        order_clauses.append(case((Document.test_type == paper, 0), else_=1))
+    order_clauses.extend([Document.uploaded_at.desc(), Document.id.desc()])
+
+    stmt = select(Document).where(*conditions).order_by(*order_clauses).limit(2)
+    rows = list((await session.execute(stmt)).scalars().all())
+    if len(rows) > 1:
+        logger.warning(
+            "Multiple documents for extracted_id=%s exam_id=%s "
+            "(require_success=%s); using preferred/newest",
+            extracted_id,
+            exam_id,
+            require_success,
+        )
+    return rows[0] if rows else None
 
 
 @router.post("/run", response_model=RunValidationResponse, status_code=status.HTTP_200_OK)
@@ -662,13 +712,14 @@ async def get_validation_issue(
     document_numeric_id = None
     document_mime_type = None
     if document_id:
-        doc_stmt = select(Document).where(
-            Document.extracted_id == document_id,
-            Document.exam_id == exam.id,
-            Document.id_extraction_status == "success",
+        doc = await _find_sheet_document(
+            session,
+            extracted_id=document_id,
+            exam_id=exam.id,
+            test_type=issue.test_type,
+            school_id=school.id if school else None,
+            require_success=True,
         )
-        doc_result = await session.execute(doc_stmt)
-        doc = doc_result.scalar_one_or_none()
         if doc:
             document_file_name = doc.file_name
             document_numeric_id = doc.id
@@ -817,9 +868,13 @@ async def resolve_validation_issue(
         subject_score.obj_raw_score = parsed_score
         subject_score.obj_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
         if subject_score.obj_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _find_sheet_document(
+                session,
+                extracted_id=subject_score.obj_document_id,
+                exam_id=exam_subject.exam_id,
+                test_type=issue.test_type,
+                require_success=True,
+            )
             if doc:
                 add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
                 doc.scores_extraction_status = "success"
@@ -828,9 +883,13 @@ async def resolve_validation_issue(
         subject_score.essay_raw_score = parsed_score
         subject_score.essay_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
         if subject_score.essay_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _find_sheet_document(
+                session,
+                extracted_id=subject_score.essay_document_id,
+                exam_id=exam_subject.exam_id,
+                test_type=issue.test_type,
+                require_success=True,
+            )
             if doc:
                 add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
                 doc.scores_extraction_status = "success"
@@ -839,9 +898,13 @@ async def resolve_validation_issue(
         subject_score.pract_raw_score = parsed_score
         subject_score.pract_extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
         if subject_score.pract_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _find_sheet_document(
+                session,
+                extracted_id=subject_score.pract_document_id,
+                exam_id=exam_subject.exam_id,
+                test_type=issue.test_type,
+                require_success=True,
+            )
             if doc:
                 add_extraction_method_to_document(doc, DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
                 doc.scores_extraction_status = "success"
