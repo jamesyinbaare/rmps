@@ -163,13 +163,42 @@ async def _resolve_document_for_scores(
     document_id: str,
     exam_id: int,
 ) -> Document | None:
-    """Resolve a Document by (extracted_id, exam_id), with numeric id fallback scoped to exam."""
-    doc_stmt = select(Document).where(
-        Document.extracted_id == document_id,
-        Document.exam_id == exam_id,
+    """Resolve a Document by (extracted_id, exam_id), with numeric id fallback scoped to exam.
+
+    Intended invariant: at most one success document per extracted_id per exam.
+    If multiple rows match (data integrity gap), prefer success+uploaded then newest.
+    """
+    doc_stmt = (
+        select(Document)
+        .where(
+            Document.extracted_id == document_id,
+            Document.exam_id == exam_id,
+        )
+        .order_by(
+            case(
+                (
+                    and_(
+                        Document.id_extraction_status == "success",
+                        Document.upload_status == "uploaded",
+                    ),
+                    0,
+                ),
+                else_=1,
+            ),
+            Document.uploaded_at.desc(),
+            Document.id.desc(),
+        )
+        .limit(2)
     )
-    doc_result = await session.execute(doc_stmt)
-    document = doc_result.scalar_one_or_none()
+    rows = list((await session.execute(doc_stmt)).scalars().all())
+    if len(rows) > 1:
+        logger.warning(
+            "Multiple documents for extracted_id=%s exam_id=%s; "
+            "using preferred/newest",
+            document_id,
+            exam_id,
+        )
+    document = rows[0] if rows else None
 
     if not document and document_id.isdigit():
         doc_stmt = select(Document).where(
