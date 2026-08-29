@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns2,
+  Download,
   FileText,
   Loader2,
   Minus,
@@ -38,6 +39,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   API_BASE_URL,
+  downloadDocument,
+  getDocumentDownloadFilename,
   getValidationIssue,
   ignoreValidationIssue,
   resolveValidationIssue,
@@ -146,6 +149,8 @@ export interface ValidationIssueWorkspaceProps {
   skippedTodayHint?: number;
   /** Registrar/ops only. Dataclerks cannot ignore. */
   allowIgnore?: boolean;
+  /** Admin/ops issues review only. Clerks cannot download sheets. */
+  allowDownload?: boolean;
 }
 
 export function ValidationIssueWorkspace({
@@ -158,6 +163,7 @@ export function ValidationIssueWorkspace({
   resolvedTodayHint = 0,
   skippedTodayHint = 0,
   allowIgnore = false,
+  allowDownload = false,
 }: ValidationIssueWorkspaceProps) {
   const [issueDetail, setIssueDetail] = useState<ValidationIssueDetailResponse | null>(null);
   const [loadingIssueDetail, setLoadingIssueDetail] = useState(false);
@@ -549,6 +555,22 @@ export function ValidationIssueWorkspace({
 
   const hasDocument = hasImage || hasPdf;
 
+  const handleDownloadDocument = useCallback(async () => {
+    if (!allowDownload || !issueDetail?.document_numeric_id) return;
+    try {
+      await downloadDocument(
+        issueDetail.document_numeric_id,
+        getDocumentDownloadFilename({
+          file_name: issueDetail.document_file_name ?? "score-sheet",
+          extracted_id: issueDetail.document_id,
+        })
+      );
+    } catch (error) {
+      console.error("Failed to download document:", error);
+      toast.error("Failed to download document. Please try again.");
+    }
+  }, [allowDownload, issueDetail]);
+
   const currentDocKey = documentKey(issueDetail);
   const prefetchedSheet =
     prefetchEpoch > -1 && currentDocKey ? prefetchCache.get(currentDocKey) : undefined;
@@ -740,6 +762,22 @@ export function ValidationIssueWorkspace({
               </div>
             </PopoverContent>
           </Popover>
+        </>
+      )}
+      {allowDownload && issueDetail?.document_numeric_id != null && (
+        <>
+          <span className="mx-0.5 h-3.5 w-px bg-border/50" aria-hidden />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7"
+            onClick={() => void handleDownloadDocument()}
+            aria-label="Download"
+            title="Download"
+          >
+            <Download className="h-3.5 w-3.5" />
+          </Button>
         </>
       )}
       {allowIgnore && issueDetail?.status === "pending" && (
