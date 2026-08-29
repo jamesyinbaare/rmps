@@ -541,6 +541,7 @@ export default function ValidationIssuesPage() {
           onCurrentIndexChange={setCurrentIssueIndex}
           onHandled={handleIssueHandled}
           allowIgnore
+          allowDownload
         />
       </div>
     </DashboardLayout>
