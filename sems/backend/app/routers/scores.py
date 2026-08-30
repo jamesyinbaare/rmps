@@ -161,19 +161,20 @@ async def _require_clerk_document_access(
 async def _resolve_document_for_scores(
     session: DBSessionDep,
     document_id: str,
-    exam_id: int,
+    exam_id: int | None = None,
 ) -> Document | None:
-    """Resolve a Document by (extracted_id, exam_id), with numeric id fallback scoped to exam.
+    """Resolve a Document by extracted_id (optionally scoped to exam), with numeric id fallback.
 
     Intended invariant: at most one success document per extracted_id per exam.
     If multiple rows match (data integrity gap), prefer success+uploaded then newest.
     """
+    conditions = [Document.extracted_id == document_id]
+    if exam_id is not None:
+        conditions.append(Document.exam_id == exam_id)
+
     doc_stmt = (
         select(Document)
-        .where(
-            Document.extracted_id == document_id,
-            Document.exam_id == exam_id,
-        )
+        .where(*conditions)
         .order_by(
             case(
                 (
@@ -201,10 +202,10 @@ async def _resolve_document_for_scores(
     document = rows[0] if rows else None
 
     if not document and document_id.isdigit():
-        doc_stmt = select(Document).where(
-            Document.id == int(document_id),
-            Document.exam_id == exam_id,
-        )
+        numeric_conditions = [Document.id == int(document_id)]
+        if exam_id is not None:
+            numeric_conditions.append(Document.exam_id == exam_id)
+        doc_stmt = select(Document).where(*numeric_conditions)
         doc_result = await session.execute(doc_stmt)
         document = doc_result.scalar_one_or_none()
 
@@ -799,6 +800,7 @@ async def update_score(
 
     # Track documents that need status updates
     documents_to_update_status: set[Document] = set()
+    exam_id_for_docs = exam_reg.exam_id
 
     # Update raw scores and set extraction methods per field
     if score_update.obj_raw_score is not None:
@@ -806,9 +808,9 @@ async def update_score(
         subject_score.obj_extraction_method = extraction_method
         # Update document's extraction methods array
         if subject_score.obj_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _resolve_document_for_scores(
+                session, subject_score.obj_document_id, exam_id_for_docs
+            )
             if doc:
                 add_extraction_method_to_document(doc, extraction_method)
                 documents_to_update_status.add(doc)
@@ -818,9 +820,9 @@ async def update_score(
         subject_score.essay_extraction_method = extraction_method
         # Update document's extraction methods array
         if subject_score.essay_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _resolve_document_for_scores(
+                session, subject_score.essay_document_id, exam_id_for_docs
+            )
             if doc:
                 add_extraction_method_to_document(doc, extraction_method)
                 documents_to_update_status.add(doc)
@@ -830,9 +832,9 @@ async def update_score(
         subject_score.pract_extraction_method = extraction_method
         # Update document's extraction methods array
         if subject_score.pract_document_id:
-            doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
-            doc_result = await session.execute(doc_stmt)
-            doc = doc_result.scalar_one_or_none()
+            doc = await _resolve_document_for_scores(
+                session, subject_score.pract_document_id, exam_id_for_docs
+            )
             if doc:
                 add_extraction_method_to_document(doc, extraction_method)
                 documents_to_update_status.add(doc)
@@ -1358,9 +1360,7 @@ async def get_candidates_for_manual_entry(
         base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
         # Validate that document_id matches a Document.extracted_id
-        doc_stmt = select(Document).where(Document.extracted_id == document_id)
-        doc_result = await session.execute(doc_stmt)
-        document = doc_result.scalar_one_or_none()
+        document = await _resolve_document_for_scores(session, document_id, exam_id)
 
         if not document:
             logger.warning(
@@ -1430,9 +1430,7 @@ async def get_candidates_for_manual_entry(
         count_base_stmt = count_base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
         # Validate that document_id matches a Document.extracted_id (same as above)
-        doc_stmt = select(Document).where(Document.extracted_id == document_id)
-        doc_result = await session.execute(doc_stmt)
-        document = doc_result.scalar_one_or_none()
+        document = await _resolve_document_for_scores(session, document_id, exam_id)
 
         if document and document.extracted_id is not None:
             # Use Document.extracted_id for filtering (not the parameter directly)
@@ -1459,19 +1457,20 @@ async def get_candidates_for_manual_entry(
     result = await session.execute(stmt)
     rows = result.all()
 
-    # Log results when document_id filter is used
+    # Resolve once for logging when document_id filter is used
+    log_extracted_id: str | None = None
     if document_id is not None:
-        # Re-query document to get extracted_id for logging
-        doc_stmt = select(Document).where(Document.extracted_id == document_id)
-        doc_result = await session.execute(doc_stmt)
-        document = doc_result.scalar_one_or_none()
-        extracted_id_to_filter = document.extracted_id if document and document.extracted_id else document_id
-
+        log_document = await _resolve_document_for_scores(session, document_id, exam_id)
+        log_extracted_id = (
+            log_document.extracted_id
+            if log_document and log_document.extracted_id
+            else document_id
+        )
         logger.info(
             f"Found {len(rows)} candidates matching document extracted_id filter",
             extra={
                 "document_id_param": document_id,
-                "document_extracted_id": extracted_id_to_filter,
+                "document_extracted_id": log_extracted_id,
                 "matches_count": len(rows),
                 "page": page,
                 "page_size": page_size,
@@ -1481,20 +1480,14 @@ async def get_candidates_for_manual_entry(
     items = []
     for candidate, subject_reg, subject_score, _exam_reg, exam, exam_subject, subject, programme in rows:
         # Log individual matches when document_id filter is used
-        if document_id is not None:
-            # Re-query document to get extracted_id for logging
-            doc_stmt = select(Document).where(Document.extracted_id == document_id)
-            doc_result = await session.execute(doc_stmt)
-            document = doc_result.scalar_one_or_none()
-            extracted_id_to_filter = document.extracted_id if document and document.extracted_id else document_id
-
+        if document_id is not None and log_extracted_id is not None:
             # Determine which field matched
             match_type = None
-            if subject_score.obj_document_id == extracted_id_to_filter:
+            if subject_score.obj_document_id == log_extracted_id:
                 match_type = "obj"
-            elif subject_score.essay_document_id == extracted_id_to_filter:
+            elif subject_score.essay_document_id == log_extracted_id:
                 match_type = "essay"
-            elif subject_score.pract_document_id == extracted_id_to_filter:
+            elif subject_score.pract_document_id == log_extracted_id:
                 match_type = "pract"
 
             logger.info(
@@ -1510,7 +1503,7 @@ async def get_candidates_for_manual_entry(
                     "essay_document_id": subject_score.essay_document_id,
                     "pract_document_id": subject_score.pract_document_id,
                     "match_type": match_type,
-                    "document_extracted_id": extracted_id_to_filter,
+                    "document_extracted_id": log_extracted_id,
                 }
             )
         items.append(
@@ -1566,12 +1559,12 @@ async def batch_update_scores_manual_entry(
     async def _touch_document_for_field(
         document_id: str | None,
         method: DataExtractionMethod,
+        *,
+        exam_id: int | None = None,
     ) -> Document | None:
         if not document_id:
             return None
-        doc_stmt = select(Document).where(Document.extracted_id == document_id)
-        doc_result = await session.execute(doc_stmt)
-        doc = doc_result.scalar_one_or_none()
+        doc = await _resolve_document_for_scores(session, document_id, exam_id)
         if doc:
             add_extraction_method_to_document(doc, method)
         return doc
