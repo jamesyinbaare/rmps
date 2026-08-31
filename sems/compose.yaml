@@ -14,7 +14,7 @@ services:
       - sems_score_sheets_data:/app/score_sheets
     develop:
       watch:
-        - action: sync
+        - action: sync+restart
           path: ./backend
           target: /app
           ignore:

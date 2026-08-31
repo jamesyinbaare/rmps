@@ -91,9 +91,11 @@ async def generate_export_filename(
     year: int | None = None,
     subject_type: SubjectType | None = None,
     programme_id: int | None = None,
+    programme_ids: list[int] | None = None,
     subject_id: int | None = None,
     export_format: str = "standard",
     test_type: str | None = None,
+    test_types: list[str] | None = None,
     subject_ids: list[int] | None = None,
 ) -> str:
     """
@@ -131,8 +133,13 @@ async def generate_export_filename(
 
     if export_format == "multi_subject":
         parts.append("multi_subject")
-        if test_type:
-            parts.append(test_type)
+        try:
+            papers = parse_export_test_types(test_type, test_types)
+            if papers:
+                parts.append("_".join(papers))
+        except ValueError:
+            if test_type:
+                parts.append(test_type)
 
     if subject_type == SubjectType.CORE:
         parts.append("CORE")
@@ -141,14 +148,18 @@ async def generate_export_filename(
     elif subject_ids:
         parts.append(f"{len(subject_ids)}_subjects")
 
-    if programme_id is not None:
-        programme_stmt = select(Programme).where(Programme.id == programme_id)
-        programme_result = await session.execute(programme_stmt)
-        programme = programme_result.scalar_one_or_none()
-        if programme:
-            parts.append(sanitize_filename_part(programme.name))
+    resolved_programmes = _resolve_programme_ids(programme_id, programme_ids)
+    if resolved_programmes:
+        if len(resolved_programmes) == 1:
+            programme_stmt = select(Programme).where(Programme.id == resolved_programmes[0])
+            programme_result = await session.execute(programme_stmt)
+            programme = programme_result.scalar_one_or_none()
+            if programme:
+                parts.append(sanitize_filename_part(programme.name))
+            else:
+                parts.append("Unknown_Programme")
         else:
-            parts.append("Unknown_Programme")
+            parts.append(f"{len(resolved_programmes)}_programmes")
 
     if subject_id is not None:
         subject_stmt = select(Subject).where(Subject.id == subject_id)
@@ -219,29 +230,36 @@ def _grade_cell(persisted: Grade | str | None, total_score: float | None, grade_
     return grade.value if grade else None
 
 
+def _sanitize_excel_sheet_name(name: str) -> str:
+    """Make a string safe as an Excel worksheet tab name (max 31 chars)."""
+    if not name:
+        return "Sheet"
+    sanitized = re.sub(r"[\[\]:*?/\\'／⁄∕]", "_", str(name))
+    sanitized = re.sub(r"_+", "_", sanitized).strip("._ ")
+    if not sanitized:
+        return "Sheet"
+    return sanitized[:31]
+
+
 def _unique_sheet_name(
     base_sheet_name: str,
     used_sheet_names: set[str],
     sheet_counter: dict[str, int],
 ) -> str:
-    sheet_name = base_sheet_name[:31]
+    base_sheet_name = _sanitize_excel_sheet_name(base_sheet_name)
+    sheet_name = base_sheet_name
     if sheet_name in used_sheet_names:
         counter = sheet_counter.get(base_sheet_name, 1)
         sheet_counter[base_sheet_name] = counter + 1
-        sheet_name = f"{base_sheet_name[:27]}_{counter}"[:31]
+        suffix = f"_{counter}"
+        sheet_name = _sanitize_excel_sheet_name(f"{base_sheet_name[: 31 - len(suffix)]}{suffix}")
     used_sheet_names.add(sheet_name)
     return sheet_name
 
 
 def _subject_sheet_name(subject_code: str, subject_name: str) -> str:
     combined_name = f"{subject_code} - {subject_name}"
-    if len(combined_name) <= 29:
-        return combined_name
-    max_code_len = len(subject_code) + 3
-    if max_code_len < 29:
-        truncated_name = subject_name[: 29 - max_code_len]
-        return f"{subject_code} - {truncated_name}"
-    return subject_code[:29]
+    return _sanitize_excel_sheet_name(combined_name)
 
 
 def _write_workbook(sheets: list[tuple[str, list[dict[str, Any]]]]) -> bytes:
@@ -250,7 +268,7 @@ def _write_workbook(sheets: list[tuple[str, list[dict[str, Any]]]]) -> bytes:
     header_format = workbook.add_format({"bold": True})
     try:
         for sheet_name, rows in sheets:
-            worksheet = workbook.add_worksheet(sheet_name[:31])
+            worksheet = workbook.add_worksheet(_sanitize_excel_sheet_name(sheet_name))
             if not rows:
                 continue
             headers = list(rows[0].keys())
@@ -342,6 +360,126 @@ def _apply_exam_filters(stmt: Any, exam_id: int | None, exam_type: ExamType | No
     return stmt
 
 
+def _resolve_programme_ids(
+    programme_id: int | None,
+    programme_ids: list[int] | None,
+) -> list[int] | None:
+    """Merge legacy single programme_id with programme_ids list."""
+    if programme_id is not None and programme_ids:
+        raise ValueError("programme_id and programme_ids cannot both be specified")
+    if programme_ids:
+        return sorted(set(programme_ids))
+    if programme_id is not None:
+        return [programme_id]
+    return None
+
+
+def parse_export_test_types(
+    test_type: str | None = None,
+    test_types: list[str] | str | None = None,
+) -> list[str]:
+    """Parse multi-subject paper selection: obj and/or essay."""
+    allowed = {"obj", "essay"}
+    values: list[str] = []
+    if test_types is not None:
+        if isinstance(test_types, str):
+            raw = [p.strip().lower() for p in test_types.split(",") if p.strip()]
+        else:
+            raw = [str(v).strip().lower() for v in test_types if str(v).strip()]
+        invalid = [v for v in raw if v not in allowed]
+        if invalid:
+            raise ValueError(f"Invalid test_types: {', '.join(invalid)}. Use obj and/or essay.")
+        values = raw
+    elif test_type is not None:
+        tt = test_type.strip().lower()
+        if tt not in allowed:
+            raise ValueError(f"Invalid test_type: {test_type}. Use obj or essay.")
+        values = [tt]
+    if not values:
+        raise ValueError("At least one test type (obj, essay) is required for multi_subject export")
+    # Stable order: obj before essay
+    order = {"obj": 0, "essay": 1}
+    return sorted(set(values), key=lambda v: order[v])
+
+
+def _component_index(original_code: str | None) -> int | None:
+    """Last character of original_code when it is a digit."""
+    if not original_code:
+        return None
+    last = original_code[-1]
+    if last.isdigit():
+        return int(last)
+    return None
+
+
+def _elective_component_column_headers(component_indices: list[int], test_types: list[str]) -> list[str]:
+    headers: list[str] = []
+    for n in component_indices:
+        headers.append(f"COMPONENT_{n}")
+        if "obj" in test_types:
+            headers.append(f"COMPONENT_{n}_OBJ_SCORE")
+        if "essay" in test_types:
+            headers.append(f"COMPONENT_{n}_ESSAY_SCORE")
+    return headers
+
+
+def _subject_score_column_headers(subject_codes: list[str], test_types: list[str]) -> list[str]:
+    """Wide-layout column names for CORE / non-component multi-subject."""
+    headers: list[str] = []
+    for code in subject_codes:
+        if len(test_types) == 1:
+            headers.append(code)
+        else:
+            if "obj" in test_types:
+                headers.append(f"{code}_OBJ")
+            if "essay" in test_types:
+                headers.append(f"{code}_ESSAY")
+    return headers
+
+
+async def _should_use_elective_component_export(
+    session: AsyncSession,
+    *,
+    subject_type: SubjectType | None,
+    subject_ids: set[int] | None,
+) -> bool:
+    if subject_type == SubjectType.ELECTIVE:
+        return True
+    if not subject_ids:
+        return False
+    stmt = select(Subject.subject_type).where(Subject.id.in_(subject_ids))
+    types = [row[0] for row in (await session.execute(stmt)).all()]
+    if not types:
+        return False
+    return all(t == SubjectType.ELECTIVE for t in types)
+
+
+def _build_multi_subject_metadata_row(row: Any, fields_to_export: list[str]) -> dict[str, Any]:
+    row_data: dict[str, Any] = {}
+    exam_type_value = _enum_value(row.exam_type)
+    if "candidate_name" in fields_to_export:
+        row_data["Candidate Name"] = row.candidate_name
+    if "candidate_index_number" in fields_to_export:
+        row_data["Index Number"] = row.candidate_index_number
+    if "school_name" in fields_to_export:
+        row_data["School Name"] = row.school_name
+    if "school_code" in fields_to_export:
+        row_data["School Code"] = row.school_code
+    if "exam_name" in fields_to_export:
+        row_data["Exam Name"] = exam_type_value
+    if "exam_type" in fields_to_export:
+        row_data["Exam Type"] = exam_type_value
+    if "exam_year" in fields_to_export:
+        row_data["Exam Year"] = row.exam_year
+    if "exam_series" in fields_to_export:
+        row_data["Exam Series"] = _enum_value(row.exam_series)
+    if "programme_name" in fields_to_export:
+        row_data["Programme Name"] = row.programme_name
+    if "programme_code" in fields_to_export:
+        row_data["Programme Code"] = row.programme_code
+    return row_data
+
+
 async def generate_results_export(
     session: AsyncSession,
     exam_id: int | None = None,
@@ -350,16 +488,20 @@ async def generate_results_export(
     year: int | None = None,
     school_id: int | None = None,
     programme_id: int | None = None,
+    programme_ids: list[int] | None = None,
     subject_id: int | None = None,
     document_id: str | None = None,
     fields: list[str] | None = None,
     subject_type: SubjectType | None = None,
     export_format: str = "standard",
     test_type: str | None = None,
+    test_types: list[str] | None = None,
     subject_ids: list[int] | None = None,
 ) -> bytes:
     """Generate Excel export for candidate processed results."""
+    resolved_programmes = _resolve_programme_ids(programme_id, programme_ids)
     if export_format == "multi_subject":
+        papers = parse_export_test_types(test_type, test_types)
         return await generate_multi_subject_export(
             session=session,
             exam_id=exam_id,
@@ -367,8 +509,8 @@ async def generate_results_export(
             series=series,
             year=year,
             school_id=school_id,
-            programme_id=programme_id,
-            test_type=test_type or "obj",
+            programme_ids=resolved_programmes,
+            test_types=papers,
             subject_ids=subject_ids,
             subject_type=subject_type,
             fields=fields,
@@ -382,8 +524,8 @@ async def generate_results_export(
     if subject_type is not None and subject_id is not None:
         raise ValueError("subject_type and subject_id cannot both be specified")
 
-    if subject_type == SubjectType.ELECTIVE and programme_id is None:
-        raise ValueError("programme_id is required when subject_type is ELECTIVE")
+    if subject_type == SubjectType.ELECTIVE and not resolved_programmes:
+        raise ValueError("programme_id or programme_ids is required when subject_type is ELECTIVE")
 
     fields_to_export = fields if fields is not None else list(EXPORT_FIELDS.keys())
 
@@ -433,18 +575,18 @@ async def generate_results_export(
     base_stmt = _apply_exam_filters(base_stmt, exam_id, exam_type, series, year)
     if school_id is not None:
         base_stmt = base_stmt.where(Candidate.school_id == school_id)
-    if programme_id is not None:
-        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
+    if resolved_programmes:
+        base_stmt = base_stmt.where(Candidate.programme_id.in_(resolved_programmes))
     if subject_id is not None:
         base_stmt = base_stmt.where(Subject.id == subject_id)
     if subject_type is not None:
         base_stmt = base_stmt.where(Subject.subject_type == subject_type)
-    if subject_type == SubjectType.ELECTIVE and programme_id is not None:
+    if subject_type == SubjectType.ELECTIVE and resolved_programmes:
         base_stmt = base_stmt.join(
             programme_subjects,
             and_(
                 programme_subjects.c.subject_id == Subject.id,
-                programme_subjects.c.programme_id == programme_id,
+                programme_subjects.c.programme_id.in_(resolved_programmes),
             ),
         )
     if document_id is not None:
@@ -499,8 +641,8 @@ async def generate_multi_subject_export(
     series: ExamSeries | None = None,
     year: int | None = None,
     school_id: int | None = None,
-    programme_id: int | None = None,
-    test_type: str = "obj",
+    programme_ids: list[int] | None = None,
+    test_types: list[str] | None = None,
     subject_ids: list[int] | None = None,
     subject_type: SubjectType | None = None,
     fields: list[str] | None = None,
@@ -523,6 +665,7 @@ async def generate_multi_subject_export(
         if invalid_fields:
             raise ValueError(f"Invalid fields for multi-subject format: {', '.join(invalid_fields)}")
 
+    papers = test_types or ["obj"]
     fields_to_export = fields if fields is not None else ["candidate_name", "candidate_index_number"]
 
     candidate_stmt = (
@@ -546,8 +689,8 @@ async def generate_multi_subject_export(
     candidate_stmt = _apply_exam_filters(candidate_stmt, exam_id, exam_type, series, year)
     if school_id is not None:
         candidate_stmt = candidate_stmt.where(Candidate.school_id == school_id)
-    if programme_id is not None:
-        candidate_stmt = candidate_stmt.where(Candidate.programme_id == programme_id)
+    if programme_ids:
+        candidate_stmt = candidate_stmt.where(Candidate.programme_id.in_(programme_ids))
     candidate_stmt = candidate_stmt.order_by(Candidate.index_number)
     candidate_rows = (await session.execute(candidate_stmt)).all()
 
@@ -571,30 +714,36 @@ async def generate_multi_subject_export(
             .where(Subject.subject_type == subject_type)
         )
         subject_stmt = _apply_exam_filters(subject_stmt, exam_id, exam_type, series, year)
-        if subject_type == SubjectType.ELECTIVE and programme_id is not None:
+        if subject_type == SubjectType.ELECTIVE and programme_ids:
             subject_stmt = subject_stmt.join(
                 programme_subjects, Subject.id == programme_subjects.c.subject_id
-            ).where(programme_subjects.c.programme_id == programme_id)
+            ).where(programme_subjects.c.programme_id.in_(programme_ids))
         selected_subject_ids = {row[0] for row in (await session.execute(subject_stmt)).all()}
         if not selected_subject_ids:
             raise ValueError(f"No {subject_type.value} subjects found for the specified exam")
     else:
         raise ValueError("Either subject_ids or subject_type must be provided")
 
-    subject_code_stmt = (
-        select(Subject.id, Subject.original_code)
+    subject_meta_stmt = (
+        select(Subject.id, Subject.original_code, Subject.subject_type)
         .where(Subject.id.in_(selected_subject_ids))
         .order_by(Subject.original_code)
     )
-    subject_codes_map = {row[0]: row[1] for row in (await session.execute(subject_code_stmt)).all()}
+    subject_rows = (await session.execute(subject_meta_stmt)).all()
+    subject_codes_map = {row.id: row.original_code for row in subject_rows}
     subject_codes_sorted = sorted(subject_codes_map.values())
 
-    score_col = SubjectScore.obj_raw_score if test_type == "obj" else SubjectScore.essay_raw_score
+    use_component = await _should_use_elective_component_export(
+        session, subject_type=subject_type, subject_ids=selected_subject_ids
+    )
+
     subject_reg_stmt = (
         select(
             ExamRegistration.candidate_id,
+            Subject.id.label("subject_id"),
             Subject.original_code,
-            score_col.label("raw_score"),
+            SubjectScore.obj_raw_score,
+            SubjectScore.essay_raw_score,
         )
         .select_from(SubjectRegistration)
         .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
@@ -608,46 +757,118 @@ async def generate_multi_subject_export(
     subject_reg_stmt = _apply_exam_filters(subject_reg_stmt, exam_id, exam_type, series, year)
     if school_id is not None:
         subject_reg_stmt = subject_reg_stmt.where(Candidate.school_id == school_id)
-    if programme_id is not None:
-        subject_reg_stmt = subject_reg_stmt.where(Candidate.programme_id == programme_id)
+    if programme_ids:
+        subject_reg_stmt = subject_reg_stmt.where(Candidate.programme_id.in_(programme_ids))
 
-    candidate_scores: dict[int, dict[str, str]] = {
-        row.candidate_id: {code: "N/A" for code in subject_codes_sorted} for row in candidate_rows
-    }
-    for score_row in (await session.execute(subject_reg_stmt)).all():
-        scores = candidate_scores.get(score_row.candidate_id)
-        if scores is None or score_row.original_code not in scores:
-            continue
-        scores[score_row.original_code] = score_row.raw_score if score_row.raw_score is not None else ""
+    score_rows = (await session.execute(subject_reg_stmt)).all()
 
     export_rows: list[dict[str, Any]] = []
-    for row in candidate_rows:
-        row_data: dict[str, Any] = {}
-        exam_type_value = _enum_value(row.exam_type)
-        if "candidate_name" in fields_to_export:
-            row_data["Candidate Name"] = row.candidate_name
-        if "candidate_index_number" in fields_to_export:
-            row_data["Index Number"] = row.candidate_index_number
-        if "school_name" in fields_to_export:
-            row_data["School Name"] = row.school_name
-        if "school_code" in fields_to_export:
-            row_data["School Code"] = row.school_code
-        if "exam_name" in fields_to_export:
-            row_data["Exam Name"] = exam_type_value
-        if "exam_type" in fields_to_export:
-            row_data["Exam Type"] = exam_type_value
-        if "exam_year" in fields_to_export:
-            row_data["Exam Year"] = row.exam_year
-        if "exam_series" in fields_to_export:
-            row_data["Exam Series"] = _enum_value(row.exam_series)
-        if "programme_name" in fields_to_export:
-            row_data["Programme Name"] = row.programme_name
-        if "programme_code" in fields_to_export:
-            row_data["Programme Code"] = row.programme_code
-        scores = candidate_scores.get(row.candidate_id, {})
-        for subject_code in subject_codes_sorted:
-            row_data[subject_code] = scores.get(subject_code, "N/A")
-        export_rows.append(row_data)
+
+    if use_component:
+        component_indices: list[int] = sorted(
+            {
+                idx
+                for code in subject_codes_map.values()
+                if (idx := _component_index(code)) is not None
+            }
+        )
+        if not component_indices:
+            raise ValueError("No elective subjects with a numeric component digit in original_code")
+
+        # subject_id -> component index for export pool
+        subject_component: dict[int, int] = {}
+        for sid, code in subject_codes_map.items():
+            idx = _component_index(code)
+            if idx is not None:
+                subject_component[sid] = idx
+
+        # candidate_id -> component -> {code, obj, essay}
+        candidate_components: dict[int, dict[int, dict[str, str | None]]] = {
+            row.candidate_id: {} for row in candidate_rows
+        }
+        for sr in score_rows:
+            comp = subject_component.get(sr.subject_id)
+            if comp is None:
+                continue
+            bucket = candidate_components.setdefault(sr.candidate_id, {})
+            if comp in bucket:
+                logger.warning(
+                    "Duplicate component %s for candidate %s; keeping first registration",
+                    comp,
+                    sr.candidate_id,
+                )
+                continue
+            bucket[comp] = {
+                "code": sr.original_code,
+                "obj": sr.obj_raw_score,
+                "essay": sr.essay_raw_score,
+            }
+
+        for row in candidate_rows:
+            row_data = _build_multi_subject_metadata_row(row, fields_to_export)
+            comps = candidate_components.get(row.candidate_id, {})
+            for n in component_indices:
+                entry = comps.get(n)
+                if entry is None:
+                    row_data[f"COMPONENT_{n}"] = "N/A"
+                    if "obj" in papers:
+                        row_data[f"COMPONENT_{n}_OBJ_SCORE"] = "N/A"
+                    if "essay" in papers:
+                        row_data[f"COMPONENT_{n}_ESSAY_SCORE"] = "N/A"
+                else:
+                    row_data[f"COMPONENT_{n}"] = entry["code"]
+                    if "obj" in papers:
+                        val = entry["obj"]
+                        row_data[f"COMPONENT_{n}_OBJ_SCORE"] = val if val is not None else ""
+                    if "essay" in papers:
+                        val = entry["essay"]
+                        row_data[f"COMPONENT_{n}_ESSAY_SCORE"] = val if val is not None else ""
+            export_rows.append(row_data)
+    else:
+        column_headers = _subject_score_column_headers(subject_codes_sorted, papers)
+        candidate_scores: dict[int, dict[str, dict[str, str | None]]] = {
+            row.candidate_id: {
+                code: {"obj": None, "essay": None} for code in subject_codes_sorted
+            }
+            for row in candidate_rows
+        }
+        for sr in score_rows:
+            scores = candidate_scores.get(sr.candidate_id)
+            if scores is None or sr.original_code not in scores:
+                continue
+            scores[sr.original_code]["obj"] = sr.obj_raw_score
+            scores[sr.original_code]["essay"] = sr.essay_raw_score
+
+        for row in candidate_rows:
+            row_data = _build_multi_subject_metadata_row(row, fields_to_export)
+            scores = candidate_scores.get(row.candidate_id, {})
+            for header in column_headers:
+                if len(papers) == 1:
+                    code = header
+                    paper = papers[0]
+                    entry = scores.get(code)
+                    if entry is None:
+                        row_data[header] = "N/A"
+                    else:
+                        val = entry[paper]
+                        row_data[header] = val if val is not None else ""
+                elif header.endswith("_OBJ"):
+                    code = header[: -len("_OBJ")]
+                    entry = scores.get(code)
+                    if entry is None:
+                        row_data[header] = "N/A"
+                    else:
+                        val = entry["obj"]
+                        row_data[header] = val if val is not None else ""
+                elif header.endswith("_ESSAY"):
+                    code = header[: -len("_ESSAY")]
+                    entry = scores.get(code)
+                    if entry is None:
+                        row_data[header] = "N/A"
+                    else:
+                        val = entry["essay"]
+                        row_data[header] = val if val is not None else ""
+            export_rows.append(row_data)
 
     return _write_workbook([("Multi_Subject_Scores", export_rows)])
 
@@ -678,6 +899,7 @@ async def process_results_export_job(tracking_id: int) -> None:
             subject_type_raw = metadata.get("subject_type")
             exam_type_raw = metadata.get("exam_type")
             series_raw = metadata.get("series")
+            resolved = _resolve_programme_ids(metadata.get("programme_id"), metadata.get("programme_ids"))
             excel_bytes = await generate_results_export(
                 session=session,
                 exam_id=metadata.get("exam_id") or tracking.exam_id,
@@ -685,13 +907,14 @@ async def process_results_export_job(tracking_id: int) -> None:
                 series=ExamSeries(series_raw) if series_raw else None,
                 year=metadata.get("year"),
                 school_id=metadata.get("school_id"),
-                programme_id=metadata.get("programme_id"),
+                programme_ids=resolved,
                 subject_id=metadata.get("subject_id"),
                 document_id=metadata.get("document_id"),
                 fields=metadata.get("fields"),
                 subject_type=SubjectType(subject_type_raw) if subject_type_raw else None,
                 export_format=metadata.get("export_format") or "standard",
                 test_type=metadata.get("test_type"),
+                test_types=metadata.get("test_types"),
                 subject_ids=metadata.get("subject_ids"),
             )
 

@@ -31,6 +31,12 @@ interface SubjectMultiSelectFilterProps {
   onSubjectTypeChange: (value: SubjectTypeFilterValue) => void;
   disabled?: boolean;
   className?: string;
+  /** Hide CORE/ELECTIVE type select (e.g. when parent already scoped). */
+  hideTypeFilter?: boolean;
+  /** Trigger label when nothing selected (default: "All subjects"). */
+  emptyLabel?: string;
+  /** Full-width trigger (export page filter grid). */
+  fullWidth?: boolean;
 }
 
 export function SubjectMultiSelectFilter({
@@ -41,6 +47,9 @@ export function SubjectMultiSelectFilter({
   onSubjectTypeChange,
   disabled = false,
   className,
+  hideTypeFilter = false,
+  emptyLabel = "All subjects",
+  fullWidth = false,
 }: SubjectMultiSelectFilterProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -68,13 +77,13 @@ export function SubjectMultiSelectFilter({
   }, [subjects, subjectType, search, value]);
 
   const triggerLabel = useMemo(() => {
-    if (value.length === 0) return "All subjects";
+    if (value.length === 0) return emptyLabel;
     if (value.length === 1) {
       const subject = subjects.find((item) => item.id === value[0]);
       return subject ? `${subject.code} - ${subject.name}` : "1 subject";
     }
     return `${value.length} subjects`;
-  }, [value, subjects]);
+  }, [value, subjects, emptyLabel]);
 
   const typeCue =
     subjectType === "CORE" ? "Core" : subjectType === "ELECTIVE" ? "Elective" : null;
@@ -104,14 +113,17 @@ export function SubjectMultiSelectFilter({
   };
 
   return (
-    <div className={cn("inline-flex", className)}>
+    <div className={cn("inline-flex", fullWidth && "w-full", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 min-w-[180px] max-w-[280px] justify-between gap-1.5 font-normal"
+            className={cn(
+              "h-8 justify-between gap-1.5 font-normal",
+              fullWidth ? "h-9 w-full min-w-0 max-w-none" : "min-w-[180px] max-w-[280px]"
+            )}
             disabled={disabled}
           >
             <span className="flex min-w-0 items-center gap-1.5 truncate">
@@ -127,20 +139,22 @@ export function SubjectMultiSelectFilter({
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80 space-y-2 p-2">
           <div className="flex items-center gap-2 px-1">
-            <Select
-              value={subjectType}
-              onValueChange={(next) => onSubjectTypeChange(next as SubjectTypeFilterValue)}
-              disabled={disabled}
-            >
-              <SelectTrigger size="sm" className="h-8 w-[118px] shrink-0">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All types</SelectItem>
-                <SelectItem value="CORE">Core</SelectItem>
-                <SelectItem value="ELECTIVE">Elective</SelectItem>
-              </SelectContent>
-            </Select>
+            {!hideTypeFilter ? (
+              <Select
+                value={subjectType}
+                onValueChange={(next) => onSubjectTypeChange(next as SubjectTypeFilterValue)}
+                disabled={disabled}
+              >
+                <SelectTrigger size="sm" className="h-8 w-[118px] shrink-0">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All types</SelectItem>
+                  <SelectItem value="CORE">Core</SelectItem>
+                  <SelectItem value="ELECTIVE">Elective</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
             <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">Subjects</p>
               {filteredSubjects.length > 0 && (
