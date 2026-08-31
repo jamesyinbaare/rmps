@@ -752,6 +752,7 @@ export interface ManualEntryFilters {
   year?: number;
   school_id?: number;
   programme_id?: number;
+  programme_ids?: number[];
   subject_id?: number;
   subject_type?: "CORE" | "ELECTIVE";
   document_id?: string;

@@ -2793,7 +2793,11 @@ export async function getCandidatesForManualEntry(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
+  if (filters.programme_ids?.length) {
+    params.append("programme_ids", filters.programme_ids.join(","));
+  } else if (filters.programme_id) {
+    params.append("programme_id", filters.programme_id.toString());
+  }
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.document_id) params.append("document_id", filters.document_id);
@@ -2809,7 +2813,7 @@ function buildResultsExportParams(
   fields: string[],
   subjectType?: "CORE" | "ELECTIVE",
   exportFormat?: "standard" | "multi_subject",
-  testType?: "obj" | "essay",
+  testTypes?: ("obj" | "essay")[],
   subjectIds?: number[]
 ): URLSearchParams {
   const params = new URLSearchParams();
@@ -2818,13 +2822,17 @@ function buildResultsExportParams(
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
-  if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
+  if (filters.programme_ids?.length) {
+    params.append("programme_ids", filters.programme_ids.join(","));
+  } else if (filters.programme_id) {
+    params.append("programme_id", filters.programme_id.toString());
+  }
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.document_id) params.append("document_id", filters.document_id);
   params.append("fields", fields.join(","));
   if (subjectType) params.append("subject_type", subjectType);
   if (exportFormat) params.append("export_format", exportFormat);
-  if (testType) params.append("test_type", testType);
+  if (testTypes?.length) params.append("test_types", testTypes.join(","));
   if (subjectIds && subjectIds.length > 0) params.append("subject_ids", subjectIds.join(","));
   return params;
 }
@@ -2867,10 +2875,10 @@ export async function exportCandidateResults(
   fields: string[],
   subjectType?: "CORE" | "ELECTIVE",
   exportFormat?: "standard" | "multi_subject",
-  testType?: "obj" | "essay",
+  testTypes?: ("obj" | "essay")[],
   subjectIds?: number[]
 ): Promise<string> {
-  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testType, subjectIds);
+  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testTypes, subjectIds);
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
     method: "GET",
     headers: getAuthHeaders(),
@@ -2892,13 +2900,13 @@ export async function startResultsExportJob(
   fields: string[],
   subjectType?: "CORE" | "ELECTIVE",
   exportFormat?: "standard" | "multi_subject",
-  testType?: "obj" | "essay",
+  testTypes?: ("obj" | "essay")[],
   subjectIds?: number[]
 ): Promise<{ job_id: number; status: string }> {
   if (!filters.exam_id) {
     throw new Error("Please select an examination before exporting");
   }
-  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testType, subjectIds);
+  const params = buildResultsExportParams(filters, fields, subjectType, exportFormat, testTypes, subjectIds);
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
     method: "POST",
     headers: getAuthHeaders(),

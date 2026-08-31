@@ -74,7 +74,12 @@ from app.services.absent_review import (
     paginate_rows,
     sort_absent_papers,
 )
-from app.services.results_export import generate_export_filename, generate_results_export, process_results_export_job
+from app.services.results_export import (
+    generate_export_filename,
+    generate_results_export,
+    parse_export_test_types,
+    process_results_export_job,
+)
 from app.services.score_validation_report import (
     build_score_validation_report,
     generate_report_filename,
@@ -1321,6 +1326,7 @@ async def get_candidates_for_manual_entry(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None, description="Filter by school ID"),
     programme_id: int | None = Query(None),
+    programme_ids: str | None = Query(None, description="Comma-separated programme IDs"),
     subject_id: int | None = Query(None),
     subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE)"),
     document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
@@ -1329,6 +1335,7 @@ async def get_candidates_for_manual_entry(
 ) -> CandidateScoreListResponse:
     """Get candidates with existing scores for manual entry, filtered by exam, programme, and subject."""
     offset = (page - 1) * page_size
+    programme_ids_list = _parse_programme_ids(programme_id, programme_ids)
 
     # Build query to get candidates with existing SubjectScore records
     # Join through: SubjectScore -> SubjectRegistration -> ExamRegistration -> Candidate
@@ -1366,8 +1373,8 @@ async def get_candidates_for_manual_entry(
             base_stmt = base_stmt.where(Exam.year == year)
     if school_id is not None:
         base_stmt = base_stmt.where(Candidate.school_id == school_id)
-    if programme_id is not None:
-        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
+    if programme_ids_list:
+        base_stmt = base_stmt.where(Candidate.programme_id.in_(programme_ids_list))
     if subject_id is not None:
         base_stmt = base_stmt.where(Subject.id == subject_id)
     if subject_type is not None:
@@ -1436,8 +1443,8 @@ async def get_candidates_for_manual_entry(
             count_base_stmt = count_base_stmt.where(Exam.year == year)
     if school_id is not None:
         count_base_stmt = count_base_stmt.where(Candidate.school_id == school_id)
-    if programme_id is not None:
-        count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
+    if programme_ids_list:
+        count_base_stmt = count_base_stmt.where(Candidate.programme_id.in_(programme_ids_list))
     if subject_id is not None:
         count_base_stmt = count_base_stmt.where(Subject.id == subject_id)
     if subject_type is not None:
@@ -2822,13 +2829,47 @@ def _parse_subject_ids(subject_ids: str | None) -> list[int] | None:
         )
 
 
+def _parse_programme_ids(
+    programme_id: int | None,
+    programme_ids: str | None,
+) -> list[int] | None:
+    if programme_id is not None and programme_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="programme_id and programme_ids cannot both be specified",
+        )
+    if programme_ids:
+        try:
+            return [int(pid.strip()) for pid in programme_ids.split(",") if pid.strip()]
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="programme_ids must be comma-separated integers",
+            )
+    if programme_id is not None:
+        return [programme_id]
+    return None
+
+
+def _parse_test_types_param(
+    test_type: str | None,
+    test_types: str | None,
+) -> list[str] | None:
+    if not test_type and not test_types:
+        return None
+    try:
+        return parse_export_test_types(test_type, test_types)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 def _validate_export_filters(
     *,
     subject_type: SubjectType | None,
     subject_id: int | None,
-    programme_id: int | None,
+    programme_ids_list: list[int] | None,
     export_format: str,
-    test_type: str | None,
+    test_types_list: list[str] | None,
     subject_ids: str | None,
 ) -> list[int] | None:
     if subject_type is not None and subject_id is not None:
@@ -2836,17 +2877,17 @@ def _validate_export_filters(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="subject_type and subject_id cannot both be specified",
         )
-    if subject_type == SubjectType.ELECTIVE and programme_id is None:
+    if subject_type == SubjectType.ELECTIVE and not programme_ids_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="programme_id is required when subject_type is ELECTIVE",
+            detail="programme_id or programme_ids is required when subject_type is ELECTIVE",
         )
     subject_ids_list = None
     if export_format == "multi_subject":
-        if test_type is None:
+        if not test_types_list:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="test_type is required when export_format is 'multi_subject'",
+                detail="test_types (or test_type) is required when export_format is 'multi_subject'",
             )
         if subject_ids is None and subject_type is None:
             raise HTTPException(
@@ -2875,24 +2916,28 @@ async def export_candidate_results(
     series: ExamSeries | None = Query(None, description="Filter by examination series"),
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None, description="Filter by school ID"),
-    programme_id: int | None = Query(None, description="Filter by programme ID"),
+    programme_id: int | None = Query(None, description="Filter by programme ID (legacy single programme)"),
+    programme_ids: str | None = Query(None, description="Comma-separated programme IDs for elective exports"),
     subject_id: int | None = Query(None, description="Filter by subject ID"),
     document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
     fields: str = Query(..., description="Comma-separated list of fields to export. Available fields: candidate_name, candidate_index_number, school_name, school_code, exam_name, exam_type, exam_year, exam_series, programme_name, programme_code, subject_name, subject_code, subject_series, obj_raw_score, essay_raw_score, pract_raw_score, obj_normalized, essay_normalized, pract_normalized, total_score, grade, obj_document_id, essay_document_id, pract_document_id, created_at, updated_at"),
     subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE). If ELECTIVE, programme_id is required. Mutually exclusive with subject_id."),
     export_format: Literal["standard", "multi_subject"] = Query("standard", description="Export format: 'standard' for traditional format, 'multi_subject' for multiple subjects on same sheet"),
-    test_type: Literal["obj", "essay"] | None = Query(None, description="Test type for multi_subject format: 'obj' for objectives or 'essay' for essay raw scores"),
+    test_type: Literal["obj", "essay"] | None = Query(None, description="Legacy single test type for multi_subject format"),
+    test_types: str | None = Query(None, description="Comma-separated test types for multi_subject: obj, essay"),
     subject_ids: str | None = Query(None, description="Comma-separated list of subject IDs for multi_subject format (mutually exclusive with subject_type)"),
 ) -> StreamingResponse:
     """Export candidate processed results as Excel file (small/sync downloads)."""
     try:
         fields_list = _parse_export_fields(fields)
+        programme_ids_list = _parse_programme_ids(programme_id, programme_ids)
+        test_types_list = _parse_test_types_param(test_type, test_types)
         subject_ids_list = _validate_export_filters(
             subject_type=subject_type,
             subject_id=subject_id,
-            programme_id=programme_id,
+            programme_ids_list=programme_ids_list,
             export_format=export_format,
-            test_type=test_type,
+            test_types_list=test_types_list,
             subject_ids=subject_ids,
         )
         try:
@@ -2903,10 +2948,11 @@ async def export_candidate_results(
                 series=series,
                 year=year,
                 subject_type=subject_type,
-                programme_id=programme_id,
+                programme_ids=programme_ids_list,
                 subject_id=subject_id,
                 export_format=export_format,
                 test_type=test_type,
+                test_types=test_types_list,
                 subject_ids=subject_ids_list,
             )
         except Exception as e:
@@ -2921,13 +2967,14 @@ async def export_candidate_results(
             series=series,
             year=year,
             school_id=school_id,
-            programme_id=programme_id,
+            programme_ids=programme_ids_list,
             subject_id=subject_id,
             document_id=document_id,
             fields=fields_list,
             subject_type=subject_type,
             export_format=export_format,
             test_type=test_type,
+            test_types=test_types_list,
             subject_ids=subject_ids_list,
         )
         return StreamingResponse(
@@ -2957,12 +3004,14 @@ async def start_results_export_job(
     year: int | None = Query(None, ge=1900, le=2100),
     school_id: int | None = Query(None),
     programme_id: int | None = Query(None),
+    programme_ids: str | None = Query(None),
     subject_id: int | None = Query(None),
     document_id: str | None = Query(None),
     fields: str = Query(...),
     subject_type: SubjectType | None = Query(None),
     export_format: Literal["standard", "multi_subject"] = Query("standard"),
     test_type: Literal["obj", "essay"] | None = Query(None),
+    test_types: str | None = Query(None),
     subject_ids: str | None = Query(None),
 ) -> ResultsExportJobCreateResponse:
     """Start a background results export job for large exam-wide downloads."""
@@ -2971,12 +3020,14 @@ async def start_results_export_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
     fields_list = _parse_export_fields(fields)
+    programme_ids_list = _parse_programme_ids(programme_id, programme_ids)
+    test_types_list = _parse_test_types_param(test_type, test_types)
     subject_ids_list = _validate_export_filters(
         subject_type=subject_type,
         subject_id=subject_id,
-        programme_id=programme_id,
+        programme_ids_list=programme_ids_list,
         export_format=export_format,
-        test_type=test_type,
+        test_types_list=test_types_list,
         subject_ids=subject_ids,
     )
     filename = await generate_export_filename(
@@ -2986,10 +3037,11 @@ async def start_results_export_job(
         series=series,
         year=year,
         subject_type=subject_type,
-        programme_id=programme_id,
+        programme_ids=programme_ids_list,
         subject_id=subject_id,
         export_format=export_format,
         test_type=test_type,
+        test_types=test_types_list,
         subject_ids=subject_ids_list,
     )
     tracking = ProcessTracking(
@@ -3004,13 +3056,14 @@ async def start_results_export_job(
             "series": series.value if series else None,
             "year": year,
             "school_id": school_id,
-            "programme_id": programme_id,
+            "programme_ids": programme_ids_list,
             "subject_id": subject_id,
             "document_id": document_id,
             "fields": fields_list,
             "subject_type": subject_type.value if subject_type else None,
             "export_format": export_format,
             "test_type": test_type,
+            "test_types": test_types_list,
             "subject_ids": subject_ids_list,
             "filename": filename,
             "message": "Queued",
