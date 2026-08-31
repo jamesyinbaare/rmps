@@ -269,21 +269,23 @@ async def ensure_process_type_enum_values(manager: DatabaseSessionManager) -> No
     """Add new processtype labels that Alembic may not have applied yet.
 
     docker compose watch syncs code without re-running the prestart migration
-    job, so RESULTS_EXPORT inserts otherwise fail with invalid enum input.
+    job, so RESULTS_EXPORT / SCORE_VALIDATION_REPORT inserts otherwise fail
+    with invalid enum input.
     """
     if manager._engine is None:
         return
     try:
         async with manager._engine.connect() as conn:
             await conn.execution_options(isolation_level="AUTOCOMMIT")
-            await conn.execute(
-                text("ALTER TYPE processtype ADD VALUE IF NOT EXISTS 'RESULTS_EXPORT'")
-            )
+            for label in ("RESULTS_EXPORT", "SCORE_VALIDATION_REPORT"):
+                await conn.execute(
+                    text(f"ALTER TYPE processtype ADD VALUE IF NOT EXISTS '{label}'")
+                )
         # asyncpg caches enum codecs per connection; drop stale pooled ones.
         await manager._engine.dispose()
     except Exception:
         logging.getLogger(__name__).warning(
-            "Could not ensure RESULTS_EXPORT process type enum value",
+            "Could not ensure process type enum values",
             exc_info=True,
         )
 

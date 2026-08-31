@@ -2920,6 +2920,159 @@ export async function downloadResultsExportJobFile(jobId: number): Promise<strin
   return downloadExcelResponse(response);
 }
 
+// --- Score validation report ---
+
+export type ScoreValidationReportStatus = "entered" | "missing" | "invalid" | "absent";
+
+export type ScoreValidationReportFilters = {
+  exam_id: number;
+  school_id?: number;
+  subject_type?: "CORE" | "ELECTIVE";
+  subject_ids?: number[];
+  test_types?: number[];
+  /** Exactly one status — required for generation */
+  status?: ScoreValidationReportStatus;
+  format?: "xlsx" | "pdf";
+  page?: number;
+  page_size?: number;
+};
+
+export type ScoreValidationReportDetailRow = {
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string;
+  candidate_id: number;
+  index_number: string;
+  candidate_name: string;
+  test_type: number;
+  paper_label: string;
+  paper_short: string;
+  raw_score: string | null;
+  max_score: number | null;
+  status: ScoreValidationReportStatus;
+  message: string | null;
+  extraction_method: string | null;
+  expected: string | null;
+};
+
+export type ScoreValidationReportSummary = {
+  total: number;
+  entered: number;
+  missing: number;
+  invalid: number;
+  absent: number;
+  by_school: Array<Record<string, string | number>>;
+  by_subject: Array<Record<string, string | number>>;
+};
+
+export type ScoreValidationReportPreview = {
+  meta: Record<string, unknown>;
+  summary: ScoreValidationReportSummary;
+  page: number;
+  page_size: number;
+  total_rows: number;
+  rows: ScoreValidationReportDetailRow[];
+};
+
+export type ScoreValidationReportJobStatus = {
+  job_id: number;
+  exam_id: number;
+  status: string;
+  filename?: string | null;
+  message?: string | null;
+  error_message?: string | null;
+  row_count?: number | null;
+  stage?: string | null;
+  schools_done?: number | null;
+  schools_total?: number | null;
+  school_count?: number | null;
+  is_zip?: boolean | null;
+};
+
+function buildValidationReportParams(filters: ScoreValidationReportFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set("exam_id", String(filters.exam_id));
+  if (filters.school_id != null) params.set("school_id", String(filters.school_id));
+  if (filters.subject_type) params.set("subject_type", filters.subject_type);
+  if (filters.subject_ids?.length) params.set("subject_ids", filters.subject_ids.join(","));
+  if (filters.test_types?.length) params.set("test_types", filters.test_types.join(","));
+  if (filters.status) params.set("statuses", filters.status);
+  if (filters.format) params.set("format", filters.format);
+  if (filters.page != null) params.set("page", String(filters.page));
+  if (filters.page_size != null) params.set("page_size", String(filters.page_size));
+  return params;
+}
+
+export async function previewScoreValidationReport(
+  filters: ScoreValidationReportFilters
+): Promise<ScoreValidationReportPreview> {
+  const params = buildValidationReportParams(filters);
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/validation-report/preview?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+  return handleResponse<ScoreValidationReportPreview>(response);
+}
+
+async function downloadReportResponse(response: Response, fallback: string): Promise<string> {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download report" }));
+    throw new Error(
+      typeof error.detail === "string" ? error.detail : error.detail?.[0]?.msg || "Failed to download report"
+    );
+  }
+  const filename = filenameFromContentDisposition(response.headers.get("Content-Disposition"), fallback);
+  const blob = await response.blob();
+  triggerBlobDownload(blob, filename);
+  return filename;
+}
+
+export async function downloadScoreValidationReport(
+  filters: ScoreValidationReportFilters
+): Promise<string> {
+  const params = buildValidationReportParams(filters);
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/validation-report?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+  return downloadReportResponse(
+    response,
+    filters.format === "pdf" ? "score_validation_report.pdf" : "score_validation_report.xlsx"
+  );
+}
+
+export async function startScoreValidationReportJob(
+  filters: ScoreValidationReportFilters
+): Promise<{ job_id: number; status: string }> {
+  const params = buildValidationReportParams(filters);
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/validation-report/jobs?${params.toString()}`,
+    { method: "POST", headers: getAuthHeaders() }
+  );
+  return handleResponse<{ job_id: number; status: string }>(response);
+}
+
+export async function getScoreValidationReportJob(
+  jobId: number
+): Promise<ScoreValidationReportJobStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/validation-report/jobs/${jobId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<ScoreValidationReportJobStatus>(response);
+}
+
+export async function downloadScoreValidationReportJobFile(jobId: number): Promise<string> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/validation-report/jobs/${jobId}/file`,
+    { headers: getAuthHeaders() }
+  );
+  return downloadReportResponse(response, "score_validation_report.xlsx");
+}
+
 export async function batchUpdateScoresForManualEntry(
   data: BatchScoreUpdate
 ): Promise<BatchScoreUpdateResponse> {

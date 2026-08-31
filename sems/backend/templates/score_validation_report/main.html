@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Score Correction Worksheet — {{ meta.exam_label }}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm 11mm 16mm 11mm;
+      @bottom-left {
+        content: "{{ meta.school_label or 'Score correction' }} · {{ status_labels[report_status] }}";
+        font-size: 7pt;
+        color: #6b7280;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      }
+      @bottom-center {
+        content: "Write scores in ink";
+        font-size: 6.5pt;
+        color: #9ca3af;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " / " counter(pages);
+        font-size: 7pt;
+        color: #6b7280;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #111827;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 1.35;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .masthead {
+      display: table;
+      width: 100%;
+      border-bottom: 2.5pt solid #0f3d4c;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+    }
+    .masthead-logo {
+      display: table-cell;
+      width: 52px;
+      vertical-align: middle;
+    }
+    .masthead-logo img {
+      width: 48px;
+      height: auto;
+      display: block;
+    }
+    .masthead-body {
+      display: table-cell;
+      vertical-align: middle;
+      padding-left: 10px;
+    }
+    .masthead-kicker {
+      margin: 0;
+      font-size: 7.5pt;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #0f3d4c;
+      font-weight: bold;
+    }
+    .masthead-title {
+      margin: 1px 0 0 0;
+      font-size: 14pt;
+      font-weight: bold;
+      color: #0f3d4c;
+      letter-spacing: -0.01em;
+    }
+    .masthead-meta {
+      margin: 3px 0 0 0;
+      font-size: 8pt;
+      color: #4b5563;
+    }
+    .masthead-aside {
+      display: table-cell;
+      width: 118px;
+      vertical-align: middle;
+      text-align: right;
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 3px;
+      font-size: 8pt;
+      font-weight: bold;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .status-pill.missing { background: #fef3c7; color: #92400e; border: 1pt solid #f59e0b; }
+    .status-pill.invalid { background: #fee2e2; color: #991b1b; border: 1pt solid #ef4444; }
+    .status-pill.absent  { background: #e5e7eb; color: #374151; border: 1pt solid #9ca3af; }
+    .status-pill.entered { background: #d1fae5; color: #065f46; border: 1pt solid #10b981; }
+    .status-count {
+      display: block;
+      margin-top: 4px;
+      font-size: 7.5pt;
+      color: #6b7280;
+    }
+
+    .meta-chips {
+      margin: 0 0 8px 0;
+      padding: 7px 10px;
+      background: #f0f7f9;
+      border: 1pt solid #b6d4de;
+      border-left: 3.5pt solid #0f3d4c;
+      font-size: 8.5pt;
+      color: #1f2937;
+    }
+    .meta-chips strong { color: #0f3d4c; }
+    .meta-sep { color: #94a3b8; margin: 0 6px; }
+
+    .instruction {
+      background: #fffbeb;
+      border: 1pt solid #fcd34d;
+      padding: 6px 10px;
+      margin-bottom: 8px;
+      font-size: 8pt;
+      color: #78350f;
+    }
+    .instruction strong { color: #92400e; }
+
+    .subject-block { page-break-inside: auto; }
+    .page-break { page-break-before: always; }
+
+    .subject-bar {
+      display: table;
+      width: 100%;
+      background: #0f3d4c;
+      color: #fff;
+      padding: 7px 10px;
+    }
+    .subject-bar-main { display: table-cell; vertical-align: middle; }
+    .subject-code {
+      font-size: 11pt;
+      font-weight: bold;
+      letter-spacing: 0.02em;
+    }
+    .subject-name {
+      font-size: 9pt;
+      font-weight: normal;
+      opacity: 0.92;
+      margin-left: 6px;
+    }
+    .subject-bar-side {
+      display: table-cell;
+      vertical-align: middle;
+      text-align: right;
+      font-size: 8pt;
+      white-space: nowrap;
+      opacity: 0.95;
+    }
+
+    .school-line {
+      background: #e8f2f5;
+      color: #0f3d4c;
+      padding: 4px 10px;
+      font-size: 8pt;
+      border: 1pt solid #c5dde5;
+      border-top: none;
+      margin-bottom: 0;
+    }
+    .school-line strong { font-weight: bold; }
+
+    .sheet {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      margin-top: 8px;
+      font-size: 8.5pt;
+    }
+    .sheet thead { display: table-header-group; }
+    .sheet th {
+      background: #1a5566;
+      color: #fff;
+      font-size: 7.5pt;
+      font-weight: bold;
+      text-align: left;
+      padding: 6px 5px;
+      border: 0.6pt solid #0f3d4c;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .sheet th.col-score {
+      background: #c45c26;
+      border-color: #9a3f12;
+      text-align: center;
+    }
+    .sheet td {
+      border: 0.6pt solid #cbd5e1;
+      padding: 0;
+      vertical-align: middle;
+      height: 28px;
+      background: #fff;
+    }
+    .sheet tr:nth-child(even) td.cell-data { background: #f8fafc; }
+    .sheet td.cell-data { padding: 3px 5px; }
+    .sheet td.col-num {
+      width: 28px;
+      text-align: right;
+      padding-right: 5px;
+      color: #6b7280;
+      font-size: 8pt;
+      font-variant-numeric: tabular-nums;
+    }
+    .sheet .index {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 8.5pt;
+      font-weight: bold;
+      letter-spacing: 0.02em;
+    }
+    .sheet .name { font-size: 8.5pt; }
+    .sheet .bad-value {
+      color: #b91c1c;
+      font-weight: bold;
+      font-family: "Courier New", Courier, monospace;
+    }
+    .sheet .expected {
+      color: #0f3d4c;
+      font-weight: bold;
+      font-size: 8pt;
+    }
+    .sheet .muted { font-size: 8pt; color: #4b5563; }
+
+    .write-box {
+      height: 28px;
+      background-color: #fff7ed;
+    }
+    .sheet td.col-score {
+      width: 72px;
+      background-color: #fff7ed;
+      border-color: #fdba74;
+    }
+
+    .w-num { width: 28px; }
+    .w-index { width: 22%; }
+    .w-name { width: auto; }
+    .w-value { width: 14%; }
+    .w-hint { width: 14%; }
+    .w-score { width: 72px; }
+
+    .foot-note {
+      margin-top: 8px;
+      font-size: 7.5pt;
+      color: #6b7280;
+      display: table;
+      width: 100%;
+    }
+    .foot-note .left { display: table-cell; }
+    .foot-note .right { display: table-cell; text-align: right; }
+    .legend-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 1px;
+      background: #fff7ed;
+      border: 1pt solid #fdba74;
+      vertical-align: middle;
+      margin-right: 3px;
+    }
+
+    .summary-strip {
+      margin-bottom: 12px;
+      border: 1pt solid #d1d5db;
+      overflow: hidden;
+    }
+    .summary-strip table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+    }
+    .summary-strip th {
+      background: #f3f4f6;
+      text-align: left;
+      padding: 4px 8px;
+      color: #374151;
+      font-weight: bold;
+      border-bottom: 1pt solid #e5e7eb;
+    }
+    .summary-strip td {
+      padding: 4px 8px;
+      border-bottom: 0.5pt solid #e5e7eb;
+    }
+    .summary-strip tr:last-child td { border-bottom: none; }
+    .summary-strip .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: bold;
+      color: #0f3d4c;
+    }
+  </style>
+</head>
+<body>
+
+  {% set block_count = namespace(n=0) %}
+  {% for school in sections %}
+    {% for paper in school.papers %}
+      {% for subject in paper.subjects %}
+        {% set block_count.n = block_count.n + 1 %}
+      {% endfor %}
+    {% endfor %}
+  {% endfor %}
+  {% set show_cover = block_count.n > 1 %}
+
+  {% if show_cover %}
+  <div class="masthead">
+    <div class="masthead-logo">
+      <img src="{{ logo_src }}" alt="" />
+    </div>
+    <div class="masthead-body">
+      <p class="masthead-kicker">Examinations · Score entry</p>
+      <h1 class="masthead-title">Score Correction Worksheet</h1>
+      <p class="masthead-meta">
+        {{ meta.exam_label }}
+        · {{ meta.school_label or "All schools" }}
+        · Generated {{ meta.generated_at }}
+      </p>
+    </div>
+    <div class="masthead-aside">
+      <span class="status-pill {{ report_status }}">{{ status_labels[report_status] }}</span>
+      <span class="status-count">{{ status_count }} row(s)</span>
+    </div>
+  </div>
+
+  <div class="instruction">
+    <strong>How to use:</strong>
+    Papers are separated — Paper 1, then Paper 2
+    {% if report_status == "missing" %}
+      · write each missing mark in the <strong>Score</strong> column.
+    {% elif report_status == "invalid" %}
+      · write the <strong>correct score</strong> in the highlighted column.
+    {% elif report_status == "absent" %}
+      · write a score only if the candidate sat the paper.
+    {% else %}
+      · use <strong>Correction</strong> only when changing a recorded mark.
+    {% endif %}
+  </div>
+
+  <div class="summary-strip">
+    <table>
+      <thead>
+        <tr>
+          <th>Paper</th>
+          <th>Subject</th>
+          <th style="width: 70px; text-align: right;">Rows</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for school in sections %}
+          {% for paper in school.papers %}
+            {% for subject in paper.subjects %}
+            <tr>
+              <td>{{ paper.paper_short }} — {{ paper.paper_label }}</td>
+              <td>{{ subject.subject_code }} — {{ subject.subject_name }}</td>
+              <td class="num">{{ subject.subtotals.total }}</td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% set ns = namespace(block_index=0) %}
+  {% for school in sections %}
+    {% for paper in school.papers %}
+      {% for subject in paper.subjects %}
+      {% set ns.block_index = ns.block_index + 1 %}
+      <div class="{% if show_cover or ns.block_index > 1 %}page-break {% endif %}subject-block">
+
+        <div class="masthead">
+          <div class="masthead-logo">
+            <img src="{{ logo_src }}" alt="" />
+          </div>
+          <div class="masthead-body">
+            <p class="masthead-kicker">Score correction worksheet</p>
+            <h1 class="masthead-title">{{ meta.exam_label }}</h1>
+            <p class="masthead-meta">Generated {{ meta.generated_at }}</p>
+          </div>
+          <div class="masthead-aside">
+            <span class="status-pill {{ report_status }}">{{ status_labels[report_status] }}</span>
+            <span class="status-count">{{ subject.subtotals.total }} on this page</span>
+          </div>
+        </div>
+
+        <div class="subject-bar">
+          <div class="subject-bar-main">
+            <span class="subject-code">{{ subject.subject_code }}</span>
+            <span class="subject-name">{{ subject.subject_name }} · {{ subject.subject_type }}</span>
+          </div>
+          <div class="subject-bar-side">
+            {{ subject.subtotals.total }} {{ status_labels[report_status] | lower }}
+          </div>
+        </div>
+        <div class="school-line">
+          <strong>Centre:</strong> {{ school.school_code }} — {{ school.school_name }}
+        </div>
+
+        <div class="meta-chips">
+          <strong>Paper:</strong> {{ paper.paper_label }}
+          <span class="meta-sep">·</span>
+          <strong>Maximum mark:</strong> {{ subject.max_score or "—" }}
+        </div>
+
+        <div class="instruction">
+          {% if report_status == "missing" %}
+            <strong>Missing scores</strong> — write the mark in <strong>Score</strong>. Leave blank only if still unavailable.
+          {% elif report_status == "invalid" %}
+            <strong>Invalid values</strong> — write the corrected mark in <strong>Correct score</strong>.
+          {% elif report_status == "absent" %}
+            <strong>Absent</strong> — write a score only if the candidate sat this paper.
+          {% else %}
+            <strong>Entered scores</strong> — leave <strong>Correction</strong> empty unless changing the recorded mark.
+          {% endif %}
+        </div>
+
+        <table class="sheet">
+          <thead>
+            <tr>
+              <th class="w-num col-num">#</th>
+              <th class="w-index">Index</th>
+              <th class="w-name">Candidate</th>
+              {% if report_status == "invalid" %}
+              <th class="w-value">Value</th>
+              <th class="w-score col-score">Correct score</th>
+              {% elif report_status == "entered" %}
+              <th class="w-value">Score</th>
+              <th class="w-score col-score">Correction</th>
+              {% else %}
+              <th class="w-score col-score">Score</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in subject.rows %}
+            <tr>
+              <td class="col-num cell-data">{{ loop.index }}</td>
+              <td class="cell-data"><span class="index">{{ row.index_number }}</span></td>
+              <td class="cell-data"><span class="name">{{ row.candidate_name }}</span></td>
+
+              {% if report_status == "invalid" %}
+              <td class="cell-data"><span class="bad-value">{{ row.raw_score if row.raw_score is not none else "—" }}</span></td>
+              <td class="col-score write-box"></td>
+
+              {% elif report_status == "entered" %}
+              <td class="cell-data muted">
+                {% if row.raw_score is not none %}{{ row.raw_score }}{% else %}—{% endif %}
+              </td>
+              <td class="col-score write-box"></td>
+
+              {% else %}
+              <td class="col-score write-box"></td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="foot-note">
+          <div class="left">
+            <span class="legend-dot"></span>
+            Highlighted cells are for handwriting
+          </div>
+          <div class="right">
+            {{ paper.paper_short }} · {{ subject.subject_code }} · {{ subject.subtotals.total }} row(s)
+          </div>
+        </div>
+
+      </div>
+      {% endfor %}
+    {% endfor %}
+  {% endfor %}
+
+</body>
+</html>

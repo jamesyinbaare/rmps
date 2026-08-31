@@ -337,3 +337,64 @@ class ResultsExportJobStatusResponse(BaseModel):
     filename: str | None = None
     message: str | None = None
     error_message: str | None = None
+
+
+class ScoreValidationReportJobCreateResponse(BaseModel):
+    job_id: int
+    status: str
+
+
+class ScoreValidationReportJobStatusResponse(BaseModel):
+    job_id: int
+    exam_id: int
+    status: str
+    filename: str | None = None
+    message: str | None = None
+    error_message: str | None = None
+    row_count: int | None = None
+    stage: str | None = None
+    schools_done: int | None = None
+    schools_total: int | None = None
+    school_count: int | None = None
+    is_zip: bool | None = None
+
+
+class ScoreValidationReportDetailRow(BaseModel):
+    school_id: int
+    school_code: str
+    school_name: str
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    subject_type: str
+    candidate_id: int
+    index_number: str
+    candidate_name: str
+    test_type: int
+    paper_label: str
+    paper_short: str
+    raw_score: str | None = None
+    max_score: float | None = None
+    status: str
+    message: str | None = None
+    extraction_method: str | None = None
+    expected: str | None = None
+
+
+class ScoreValidationReportSummary(BaseModel):
+    total: int = 0
+    entered: int = 0
+    missing: int = 0
+    invalid: int = 0
+    absent: int = 0
+    by_school: list[dict] = Field(default_factory=list)
+    by_subject: list[dict] = Field(default_factory=list)
+
+
+class ScoreValidationReportPreviewResponse(BaseModel):
+    meta: dict
+    summary: ScoreValidationReportSummary
+    page: int
+    page_size: int
+    total_rows: int
+    rows: list[ScoreValidationReportDetailRow]
