@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, delete, func, or_, select, case
 
-from app.dependencies.auth import CurrentUserDep
+from app.dependencies.auth import CurrentUserDep, OfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
@@ -56,6 +56,9 @@ from app.schemas.score import (
     ResultsExportJobStatusResponse,
     ScoreResponse,
     ScoreUpdate,
+    ScoreValidationReportJobCreateResponse,
+    ScoreValidationReportJobStatusResponse,
+    ScoreValidationReportPreviewResponse,
     UnmatchedExtractionRecordResponse,
     UnmatchedIndexSuggestion,
     UnmatchedRecordsListResponse,
@@ -72,6 +75,17 @@ from app.services.absent_review import (
     sort_absent_papers,
 )
 from app.services.results_export import generate_export_filename, generate_results_export, process_results_export_job
+from app.services.score_validation_report import (
+    build_score_validation_report,
+    generate_report_filename,
+    generate_score_validation_report_bytes,
+    parse_statuses,
+    parse_subject_ids,
+    parse_test_types,
+    process_score_validation_report_job,
+    report_to_preview_dict,
+    should_use_report_job,
+)
 from app.services.issue_batch_service import (
     assigned_document_extracted_ids,
     clerk_may_access_extracted_id,
@@ -3065,4 +3079,267 @@ async def download_results_export_job_file(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=filename,
         headers={"Content-Disposition": _excel_content_disposition(filename)},
+    )
+
+
+def _parse_validation_report_filters(
+    *,
+    subject_type: SubjectType | None,
+    subject_ids: str | None,
+    test_types: str | None,
+    statuses: str | None,
+) -> tuple[list[int] | None, list[int] | None, list[str] | None]:
+    try:
+        subject_ids_list = parse_subject_ids(subject_ids)
+        test_types_list = parse_test_types(test_types)
+        statuses_list = parse_statuses(statuses)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if subject_type is not None and subject_ids_list:
+        # Allow both: subject_ids further narrow within type filter applied in query
+        pass
+    return subject_ids_list, test_types_list, statuses_list
+
+
+def _validation_report_content_disposition(filename: str) -> str:
+    encoded_filename = quote(filename, safe="")
+    return f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
+
+
+@router.get("/validation-report/preview", response_model=ScoreValidationReportPreviewResponse)
+async def preview_score_validation_report(
+    session: DBSessionDep,
+    _user: OfficerDep,
+    exam_id: int = Query(..., description="Examination ID (required)"),
+    school_id: int | None = Query(None),
+    subject_type: SubjectType | None = Query(None),
+    subject_ids: str | None = Query(None, description="Comma-separated subject IDs"),
+    test_types: str | None = Query(None, description="Comma-separated papers: 1,2,3"),
+    statuses: str | None = Query(
+        None,
+        description="Exactly one status: entered, missing, invalid, or absent. Default: missing",
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> ScoreValidationReportPreviewResponse:
+    """Paginated live preview of score validation report rows."""
+    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+        subject_type=subject_type,
+        subject_ids=subject_ids,
+        test_types=test_types,
+        statuses=statuses,
+    )
+    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+    try:
+        data = await build_score_validation_report(
+            session,
+            exam_id=exam_id,
+            school_id=school_id,
+            subject_type=subject_type,
+            subject_ids=subject_ids_list,
+            test_types=test_types_list,
+            statuses=statuses_list,  # type: ignore[arg-type]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return ScoreValidationReportPreviewResponse(**report_to_preview_dict(data, page=page, page_size=page_size))
+
+
+@router.get("/validation-report")
+async def download_score_validation_report(
+    session: DBSessionDep,
+    _user: OfficerDep,
+    exam_id: int = Query(..., description="Examination ID (required)"),
+    school_id: int | None = Query(None),
+    subject_type: SubjectType | None = Query(None),
+    subject_ids: str | None = Query(None),
+    test_types: str | None = Query(None),
+    statuses: str | None = Query(None),
+    format: Literal["xlsx", "pdf"] = Query("xlsx"),
+):
+    """Synchronous score validation report download (small scopes)."""
+    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+        subject_type=subject_type,
+        subject_ids=subject_ids,
+        test_types=test_types,
+        statuses=statuses,
+    )
+    try:
+        file_bytes, filename, data = await generate_score_validation_report_bytes(
+            session,
+            exam_id=exam_id,
+            school_id=school_id,
+            subject_type=subject_type,
+            subject_ids=subject_ids_list,
+            test_types=test_types_list,
+            statuses=statuses_list,  # type: ignore[arg-type]
+            report_format=format,
+        )
+    except ValueError as e:
+        detail = str(e)
+        code = status.HTTP_404_NOT_FOUND if "not found" in detail.lower() or "no score rows" in detail.lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=code, detail=detail) from e
+
+    if should_use_report_job(
+        school_id=school_id,
+        report_format=format,
+        estimated_rows=data.meta.row_count,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Report is too large for synchronous download. Use POST /validation-report/jobs instead.",
+        )
+
+    media = (
+        "application/zip"
+        if filename.lower().endswith(".zip")
+        else "application/pdf"
+        if format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media,
+        headers={"Content-Disposition": _validation_report_content_disposition(filename)},
+    )
+
+
+@router.post(
+    "/validation-report/jobs",
+    response_model=ScoreValidationReportJobCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_score_validation_report_job(
+    session: DBSessionDep,
+    background_tasks: BackgroundTasks,
+    _user: OfficerDep,
+    exam_id: int = Query(...),
+    school_id: int | None = Query(None),
+    subject_type: SubjectType | None = Query(None),
+    subject_ids: str | None = Query(None),
+    test_types: str | None = Query(None),
+    statuses: str | None = Query(None),
+    format: Literal["xlsx", "pdf"] = Query("xlsx"),
+) -> ScoreValidationReportJobCreateResponse:
+    """Start a background score validation report job for large scopes."""
+    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+
+    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+        subject_type=subject_type,
+        subject_ids=subject_ids,
+        test_types=test_types,
+        statuses=statuses,
+    )
+    filename = await generate_report_filename(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        subject_type=subject_type,
+        test_types=test_types_list,
+        statuses=statuses_list,  # type: ignore[arg-type]
+        report_format=format,
+    )
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.SCORE_VALIDATION_REPORT,
+        school_id=school_id,
+        status=ProcessStatus.PENDING,
+        process_metadata={
+            "exam_id": exam_id,
+            "school_id": school_id,
+            "subject_type": subject_type.value if subject_type else None,
+            "subject_ids": subject_ids_list,
+            "test_types": test_types_list,
+            "statuses": statuses_list,
+            "format": format,
+            "filename": filename,
+            "message": "Queued",
+        },
+    )
+    session.add(tracking)
+    await session.commit()
+    await session.refresh(tracking)
+    background_tasks.add_task(process_score_validation_report_job, tracking.id)
+    return ScoreValidationReportJobCreateResponse(job_id=tracking.id, status=tracking.status.value)
+
+
+@router.get(
+    "/validation-report/jobs/{job_id}",
+    response_model=ScoreValidationReportJobStatusResponse,
+)
+async def get_score_validation_report_job(
+    job_id: int,
+    session: DBSessionDep,
+    _user: OfficerDep,
+) -> ScoreValidationReportJobStatusResponse:
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.SCORE_VALIDATION_REPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
+    metadata = tracking.process_metadata or {}
+    return ScoreValidationReportJobStatusResponse(
+        job_id=tracking.id,
+        exam_id=tracking.exam_id,
+        status=tracking.status.value,
+        filename=metadata.get("filename"),
+        message=metadata.get("message"),
+        error_message=tracking.error_message,
+        row_count=metadata.get("row_count"),
+        stage=metadata.get("stage"),
+        schools_done=metadata.get("schools_done"),
+        schools_total=metadata.get("schools_total"),
+        school_count=metadata.get("school_count"),
+        is_zip=metadata.get("is_zip"),
+    )
+
+
+@router.get("/validation-report/jobs/{job_id}/file")
+async def download_score_validation_report_job_file(
+    job_id: int,
+    session: DBSessionDep,
+    _user: OfficerDep,
+) -> FileResponse:
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.SCORE_VALIDATION_REPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
+    if tracking.status != ProcessStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report is not ready yet",
+        )
+    metadata = tracking.process_metadata or {}
+    file_path = metadata.get("file_path")
+    filename = metadata.get("filename") or "score_validation_report.xlsx"
+    report_format = metadata.get("format") or "xlsx"
+    if not file_path or not Path(file_path).is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found")
+    media = (
+        "application/zip"
+        if str(filename).lower().endswith(".zip")
+        else "application/pdf"
+        if report_format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    return FileResponse(
+        path=file_path,
+        media_type=media,
+        filename=filename,
+        headers={"Content-Disposition": _validation_report_content_disposition(filename)},
     )
