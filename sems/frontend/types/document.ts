@@ -1005,6 +1005,7 @@ export interface AbsentReviewFilters {
   exam_id: number;
   school_id?: number;
   subject_id?: number;
+  candidate_id?: number;
   test_type?: number;
   absent_marker?: AbsentMarker;
   page?: number;
@@ -1021,6 +1022,80 @@ export interface ConfirmAbsentReviewResponse {
   field_name: string;
   test_type: number;
   confirmed_at: string;
+}
+
+export type AbsentReviewBucket = "fully_absent" | "mixed";
+
+export interface AbsentReviewPendingPaper {
+  score_id: number;
+  field_name: string;
+  test_type: number;
+  absent_marker: string;
+}
+
+export interface AbsentReviewSubjectGroup {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  score_id: number | null;
+  total_score: number | null;
+  grade: string | null;
+  is_fully_absent: boolean;
+  pending_papers: AbsentReviewPendingPaper[];
+}
+
+export interface AbsentReviewCandidateGroup {
+  candidate_id: number;
+  candidate_name: string;
+  candidate_index_number: string;
+  school_id: number | null;
+  school_name: string | null;
+  school_code: string | null;
+  exam_id: number;
+  bucket: AbsentReviewBucket;
+  registered_subject_count: number;
+  fully_absent_subject_count: number;
+  scored_subject_count: number;
+  pending_paper_count: number;
+  subjects: AbsentReviewSubjectGroup[];
+}
+
+export interface AbsentReviewCandidateListResponse {
+  items: AbsentReviewCandidateGroup[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface AbsentReviewCandidateFilters {
+  exam_id: number;
+  school_id?: number;
+  /** Paper type: 1=obj, 2=essay, 3=pract */
+  test_type?: number;
+  bucket?: AbsentReviewBucket | "all";
+  page?: number;
+  page_size?: number;
+}
+
+export interface AbsentReviewStatsResponse {
+  candidates_fully_absent: number;
+  candidates_mixed: number;
+  pending_papers: number;
+  subjects_fully_absent: number;
+  confirmed_papers: number;
+}
+
+export interface ConfirmAbsentReviewCandidateRequest {
+  candidate_id: number;
+  exam_id: number;
+}
+
+export interface ConfirmAbsentReviewCandidateResponse {
+  candidate_id: number;
+  exam_id: number;
+  confirmed_count: number;
+  already_confirmed_count: number;
 }
 
 export interface ValidationIssueDetailResponse {

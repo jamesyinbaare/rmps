@@ -37,8 +37,13 @@ from app.models import (
 )
 from app.schemas.document import DocumentListResponse, DocumentResponse, ScoresExtractionStatusCounts
 from app.schemas.score import (
+    AbsentReviewCandidateGroup,
+    AbsentReviewCandidateListResponse,
     AbsentReviewEntry,
     AbsentReviewListResponse,
+    AbsentReviewPendingPaper,
+    AbsentReviewStatsResponse,
+    AbsentReviewSubjectGroup,
     BatchScoreUpdate,
     BatchScoreUpdateResponse,
     BulkUnmatchedActionError,
@@ -47,6 +52,8 @@ from app.schemas.score import (
     BulkUnmatchedOcrResolveRequest,
     CandidateScoreEntry,
     CandidateScoreListResponse,
+    ConfirmAbsentReviewCandidateRequest,
+    ConfirmAbsentReviewCandidateResponse,
     ConfirmAbsentReviewRequest,
     ConfirmAbsentReviewResponse,
     DocumentScoresResponse,
@@ -68,11 +75,18 @@ from app.schemas.score import (
 from app.utils.score_utils import add_extraction_method_to_document, is_absent, parse_score_value, parse_score_value_safe
 from app.services.absent_review import (
     PAPER_FIELDS,
+    RegisteredSubjectInfo,
     absent_field_sql,
+    build_candidate_group,
+    compute_group_stats,
+    filter_groups_by_bucket,
     filter_unconfirmed_rows,
     flatten_absent_papers,
+    normalize_absent_marker,
+    paginate_groups,
     paginate_rows,
     sort_absent_papers,
+    sort_candidate_groups,
 )
 from app.services.results_export import (
     generate_export_filename,
@@ -220,13 +234,21 @@ async def _resolve_document_for_scores(
         )
     document = rows[0] if rows else None
 
+    # Fallback: treat digit-only ids as Document.id only when they fit INTEGER.
+    # Sheet extracted_ids are often long digit strings (e.g. 8170914211101) and
+    # must not be cast to documents.id (PostgreSQL int32).
     if not document and document_id.isdigit():
-        numeric_conditions = [Document.id == int(document_id)]
-        if exam_id is not None:
-            numeric_conditions.append(Document.exam_id == exam_id)
-        doc_stmt = select(Document).where(*numeric_conditions)
-        doc_result = await session.execute(doc_stmt)
-        document = doc_result.scalar_one_or_none()
+        try:
+            numeric_id = int(document_id)
+        except ValueError:
+            numeric_id = None
+        if numeric_id is not None and -(2**31) <= numeric_id < 2**31:
+            numeric_conditions = [Document.id == numeric_id]
+            if exam_id is not None:
+                numeric_conditions.append(Document.exam_id == exam_id)
+            doc_stmt = select(Document).where(*numeric_conditions)
+            doc_result = await session.execute(doc_stmt)
+            document = doc_result.scalar_one_or_none()
 
     return document
 
@@ -1137,6 +1159,7 @@ async def get_absent_review(
     exam_id: int = Query(..., description="Exam ID (required)"),
     school_id: int | None = Query(None, description="Filter by school ID"),
     subject_id: int | None = Query(None, description="Filter by subject ID"),
+    candidate_id: int | None = Query(None, description="Filter by candidate ID"),
     test_type: int | None = Query(None, ge=1, le=3, description="Filter by test type (1=Objectives, 2=Essay, 3=Practical)"),
     absent_marker: Literal["A", "AA", "AAA"] | None = Query(None, description="Filter by absent marker"),
     page: int = Query(1, ge=1),
@@ -1155,6 +1178,8 @@ async def get_absent_review(
         )
 
     base_stmt = _absent_review_base_stmt(exam_id, school_id, subject_id)
+    if candidate_id is not None:
+        base_stmt = base_stmt.where(Candidate.id == candidate_id)
     stmt = base_stmt.where(or_(*field_conditions))
     result = await session.execute(stmt)
     rows = result.all()
@@ -1314,6 +1339,328 @@ async def confirm_absent_review(
         field_name=confirmation.field_name,
         test_type=confirmation.test_type,
         confirmed_at=confirmation.confirmed_at,
+    )
+
+
+async def _load_pending_absent_papers(
+    session: DBSessionDep,
+    *,
+    exam_id: int,
+    school_id: int | None = None,
+    subject_id: int | None = None,
+    test_type: int | None = None,
+    absent_marker: str | None = None,
+    candidate_id: int | None = None,
+):
+    """Return unconfirmed absent paper rows for the exam scope."""
+    field_conditions = _absent_field_conditions(test_type, absent_marker)
+    if not field_conditions:
+        return []
+
+    base_stmt = _absent_review_base_stmt(exam_id, school_id, subject_id)
+    if candidate_id is not None:
+        base_stmt = base_stmt.where(Candidate.id == candidate_id)
+    stmt = base_stmt.where(or_(*field_conditions))
+    result = await session.execute(stmt)
+    rows = result.all()
+    if not rows:
+        return []
+
+    score_ids = [subject_score.id for subject_score, *_rest in rows]
+    confirmed_result = await session.execute(
+        select(SubjectScoreAbsentConfirmation).where(
+            SubjectScoreAbsentConfirmation.subject_score_id.in_(score_ids)
+        )
+    )
+    confirmed_keys = {
+        (c.subject_score_id, c.field_name) for c in confirmed_result.scalars().all()
+    }
+
+    flattened = []
+    for subject_score, candidate, school, exam, exam_subject, subject in rows:
+        flattened.extend(
+            flatten_absent_papers(
+                subject_score,
+                candidate=candidate,
+                school=school,
+                exam=exam,
+                exam_subject=exam_subject,
+                subject=subject,
+                documents_by_extracted_id={},
+                test_type_filter=test_type,
+                absent_marker_filter=absent_marker,
+            )
+        )
+    return filter_unconfirmed_rows(flattened, confirmed_keys)
+
+
+async def _build_absent_candidate_groups(
+    session: DBSessionDep,
+    *,
+    exam_id: int,
+    school_id: int | None = None,
+    test_type: int | None = None,
+):
+    pending = await _load_pending_absent_papers(
+        session, exam_id=exam_id, school_id=school_id, test_type=test_type
+    )
+    if not pending:
+        return []
+
+    by_candidate: dict[int, list] = {}
+    for row in pending:
+        by_candidate.setdefault(row.candidate_id, []).append(row)
+
+    candidate_ids = list(by_candidate.keys())
+    reg_stmt = (
+        select(Candidate, School, Subject, SubjectScore, ExamSubject)
+        .select_from(ExamRegistration)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(SubjectRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .outerjoin(SubjectScore, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .outerjoin(School, Candidate.school_id == School.id)
+        .where(ExamRegistration.exam_id == exam_id)
+        .where(Candidate.id.in_(candidate_ids))
+    )
+    if school_id is not None:
+        reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
+
+    reg_result = await session.execute(reg_stmt)
+    registered_by_candidate: dict[int, list[RegisteredSubjectInfo]] = {
+        cid: [] for cid in candidate_ids
+    }
+    meta_by_candidate: dict[int, tuple] = {}
+    for candidate, school, subject, subject_score, exam_subject in reg_result.all():
+        meta_by_candidate[candidate.id] = (candidate, school)
+        registered_by_candidate[candidate.id].append(
+            RegisteredSubjectInfo(
+                subject_id=subject.id,
+                subject_code=subject.code,
+                subject_name=subject.name,
+                score_id=subject_score.id if subject_score else None,
+                total_score=subject_score.total_score if subject_score else None,
+                grade=subject_score.grade if subject_score else None,
+                obj_raw_score=subject_score.obj_raw_score if subject_score else None,
+                essay_raw_score=subject_score.essay_raw_score if subject_score else None,
+                pract_raw_score=subject_score.pract_raw_score if subject_score else None,
+                obj_expected=exam_subject.obj_max_score is not None,
+                essay_expected=exam_subject.essay_max_score is not None,
+                pract_expected=exam_subject.pract_max_score is not None,
+            )
+        )
+
+    groups = []
+    for candidate_id, papers in by_candidate.items():
+        sample = papers[0]
+        meta = meta_by_candidate.get(candidate_id)
+        candidate = meta[0] if meta else None
+        school = meta[1] if meta else None
+        group = build_candidate_group(
+            candidate_id=candidate_id,
+            candidate_name=candidate.name if candidate else sample.candidate_name,
+            candidate_index_number=(
+                candidate.index_number if candidate else sample.candidate_index_number
+            ),
+            school_id=school.id if school else sample.school_id,
+            school_name=school.name if school else sample.school_name,
+            school_code=school.code if school else sample.school_code,
+            exam_id=exam_id,
+            registered=registered_by_candidate.get(candidate_id, []),
+            pending_papers=papers,
+        )
+        if group:
+            groups.append(group)
+    return sort_candidate_groups(groups)
+
+
+def _group_to_schema(group) -> AbsentReviewCandidateGroup:
+    return AbsentReviewCandidateGroup(
+        candidate_id=group.candidate_id,
+        candidate_name=group.candidate_name,
+        candidate_index_number=group.candidate_index_number,
+        school_id=group.school_id,
+        school_name=group.school_name,
+        school_code=group.school_code,
+        exam_id=group.exam_id,
+        bucket=group.bucket,
+        registered_subject_count=group.registered_subject_count,
+        fully_absent_subject_count=group.fully_absent_subject_count,
+        scored_subject_count=group.scored_subject_count,
+        pending_paper_count=group.pending_paper_count,
+        subjects=[
+            AbsentReviewSubjectGroup(
+                subject_id=s.subject_id,
+                subject_code=s.subject_code,
+                subject_name=s.subject_name,
+                score_id=s.score_id,
+                total_score=s.total_score,
+                grade=s.grade,
+                is_fully_absent=s.is_fully_absent,
+                pending_papers=[
+                    AbsentReviewPendingPaper(
+                        score_id=p.score_id,
+                        field_name=p.field_name,
+                        test_type=p.test_type,
+                        absent_marker=p.absent_marker,
+                    )
+                    for p in s.pending_papers
+                ],
+            )
+            for s in group.subjects
+        ],
+    )
+
+
+@router.get("/absent-review/candidates", response_model=AbsentReviewCandidateListResponse)
+async def get_absent_review_candidates(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int = Query(..., description="Exam ID (required)"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    test_type: int | None = Query(None, description="Filter by paper type: 1=obj, 2=essay, 3=pract"),
+    bucket: Literal["fully_absent", "mixed", "all"] | None = Query(
+        "all", description="Candidate bucket filter"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+) -> AbsentReviewCandidateListResponse:
+    """List candidates with pending absences, grouped and classified as fully_absent or mixed."""
+    _ = current_user
+    groups = await _build_absent_candidate_groups(
+        session, exam_id=exam_id, school_id=school_id, test_type=test_type
+    )
+    filtered = filter_groups_by_bucket(groups, bucket)
+    total = len(filtered)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    page_groups = paginate_groups(filtered, page, page_size)
+    return AbsentReviewCandidateListResponse(
+        items=[_group_to_schema(g) for g in page_groups],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/absent-review/stats", response_model=AbsentReviewStatsResponse)
+async def get_absent_review_stats(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    exam_id: int = Query(..., description="Exam ID (required)"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    test_type: int | None = Query(None, description="Filter by paper type: 1=obj, 2=essay, 3=pract"),
+) -> AbsentReviewStatsResponse:
+    """Absentee queue statistics for an exam (optional school / paper-type filter)."""
+    _ = current_user
+    groups = await _build_absent_candidate_groups(
+        session, exam_id=exam_id, school_id=school_id, test_type=test_type
+    )
+    stats = compute_group_stats(groups)
+
+    confirmed_stmt = (
+        select(func.count(SubjectScoreAbsentConfirmation.id))
+        .select_from(SubjectScoreAbsentConfirmation)
+        .join(SubjectScore, SubjectScoreAbsentConfirmation.subject_score_id == SubjectScore.id)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .where(ExamRegistration.exam_id == exam_id)
+    )
+    if school_id is not None:
+        confirmed_stmt = confirmed_stmt.where(Candidate.school_id == school_id)
+    confirmed_count = (await session.execute(confirmed_stmt)).scalar() or 0
+
+    return AbsentReviewStatsResponse(
+        candidates_fully_absent=stats.candidates_fully_absent,
+        candidates_mixed=stats.candidates_mixed,
+        pending_papers=stats.pending_papers,
+        subjects_fully_absent=stats.subjects_fully_absent,
+        confirmed_papers=int(confirmed_count),
+    )
+
+
+@router.post(
+    "/absent-review/confirm-candidate",
+    response_model=ConfirmAbsentReviewCandidateResponse,
+)
+async def confirm_absent_review_candidate(
+    body: ConfirmAbsentReviewCandidateRequest,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> ConfirmAbsentReviewCandidateResponse:
+    """Confirm all unconfirmed absent papers for a fully-absent candidate."""
+    groups = await _build_absent_candidate_groups(session, exam_id=body.exam_id)
+    group = next((g for g in groups if g.candidate_id == body.candidate_id), None)
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No pending absences for this candidate in the exam",
+        )
+    if group.bucket != "fully_absent":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidate is not fully absent on all registered subjects; review papers individually",
+        )
+
+    pending = await _load_pending_absent_papers(
+        session, exam_id=body.exam_id, candidate_id=body.candidate_id
+    )
+    if not pending:
+        return ConfirmAbsentReviewCandidateResponse(
+            candidate_id=body.candidate_id,
+            exam_id=body.exam_id,
+            confirmed_count=0,
+            already_confirmed_count=0,
+        )
+
+    score_ids = list({p.score_id for p in pending})
+    scores_result = await session.execute(
+        select(SubjectScore).where(SubjectScore.id.in_(score_ids))
+    )
+    scores_by_id = {s.id: s for s in scores_result.scalars().all()}
+
+    existing_result = await session.execute(
+        select(SubjectScoreAbsentConfirmation).where(
+            SubjectScoreAbsentConfirmation.subject_score_id.in_(score_ids)
+        )
+    )
+    existing_keys = {
+        (c.subject_score_id, c.field_name) for c in existing_result.scalars().all()
+    }
+
+    confirmed_count = 0
+    already_confirmed_count = 0
+    confirmed_at = datetime.utcnow()
+    for paper in pending:
+        key = (paper.score_id, paper.field_name)
+        if key in existing_keys:
+            already_confirmed_count += 1
+            continue
+        subject_score = scores_by_id.get(paper.score_id)
+        if not subject_score:
+            continue
+        if normalize_absent_marker(getattr(subject_score, paper.field_name)) is None:
+            continue
+        session.add(
+            SubjectScoreAbsentConfirmation(
+                subject_score_id=paper.score_id,
+                field_name=paper.field_name,
+                test_type=paper.test_type,
+                confirmed_by_user_id=current_user.id,
+                confirmed_at=confirmed_at,
+            )
+        )
+        existing_keys.add(key)
+        confirmed_count += 1
+
+    await session.commit()
+    return ConfirmAbsentReviewCandidateResponse(
+        candidate_id=body.candidate_id,
+        exam_id=body.exam_id,
+        confirmed_count=confirmed_count,
+        already_confirmed_count=already_confirmed_count,
     )
 
 

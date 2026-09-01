@@ -200,6 +200,68 @@ class ConfirmAbsentReviewResponse(BaseModel):
     confirmed_at: datetime
 
 
+class AbsentReviewPendingPaper(BaseModel):
+    score_id: int
+    field_name: str
+    test_type: int
+    absent_marker: str
+
+
+class AbsentReviewSubjectGroup(BaseModel):
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    score_id: int | None = None
+    total_score: float | None = None
+    grade: Grade | None = None
+    is_fully_absent: bool
+    pending_papers: list[AbsentReviewPendingPaper]
+
+
+class AbsentReviewCandidateGroup(BaseModel):
+    candidate_id: int
+    candidate_name: str
+    candidate_index_number: str
+    school_id: int | None = None
+    school_name: str | None = None
+    school_code: str | None = None
+    exam_id: int
+    bucket: Literal["fully_absent", "mixed"]
+    registered_subject_count: int
+    fully_absent_subject_count: int
+    scored_subject_count: int
+    pending_paper_count: int
+    subjects: list[AbsentReviewSubjectGroup]
+
+
+class AbsentReviewCandidateListResponse(BaseModel):
+    items: list[AbsentReviewCandidateGroup]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class AbsentReviewStatsResponse(BaseModel):
+    candidates_fully_absent: int
+    candidates_mixed: int
+    pending_papers: int
+    subjects_fully_absent: int
+    confirmed_papers: int = 0
+
+
+class ConfirmAbsentReviewCandidateRequest(BaseModel):
+    candidate_id: int
+    exam_id: int
+
+
+class ConfirmAbsentReviewCandidateResponse(BaseModel):
+    candidate_id: int
+    exam_id: int
+    confirmed_count: int
+    already_confirmed_count: int
+
+
 class ReductoDataResponse(BaseModel):
     """Response for extraction data preview."""
 

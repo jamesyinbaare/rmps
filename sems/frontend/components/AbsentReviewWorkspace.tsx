@@ -273,9 +273,15 @@ export function AbsentReviewWorkspace({
     (key: string, action: "confirmed" | "corrected") => {
       const remainingCount = entries.length - 1;
       onHandled?.(key, action);
-      if (currentIndex === null || remainingCount <= 0 || currentIndex >= remainingCount) {
+      if (remainingCount <= 0) {
         onOpenChange(false);
         onCurrentIndexChange(null);
+        return;
+      }
+      // Parent removes the handled entry; keep index on the next paper (same slot)
+      // or clamp if we were on the last item.
+      if (currentIndex !== null && currentIndex >= remainingCount) {
+        onCurrentIndexChange(remainingCount - 1);
       }
     },
     [entries.length, onHandled, currentIndex, onOpenChange, onCurrentIndexChange]
@@ -381,11 +387,16 @@ export function AbsentReviewWorkspace({
       if (e.key === "Enter" && !e.shiftKey && entry) {
         if (isInputFocused || e.target === document.body || e.ctrlKey || e.metaKey) {
           e.preventDefault();
+          if (confirming || saving) return;
           if (e.ctrlKey || e.metaKey) {
-            if (!confirming && !saving) void handleConfirm();
-          } else if (!saving && !confirming) {
-            void handleSave();
+            void handleConfirm();
+            return;
           }
+          const current = currentFieldValue(entry) || "";
+          const dirty =
+            correctedScore.trim().toUpperCase() !== current.trim().toUpperCase();
+          if (dirty) void handleSave();
+          else void handleConfirm();
           return;
         }
       }
@@ -420,7 +431,16 @@ export function AbsentReviewWorkspace({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, entry, saving, confirming, handleSave, handleConfirm, handleNavigate]);
+  }, [
+    open,
+    entry,
+    saving,
+    confirming,
+    correctedScore,
+    handleSave,
+    handleConfirm,
+    handleNavigate,
+  ]);
 
   const hasPdf =
     !!entry?.document_id &&
@@ -454,6 +474,27 @@ export function AbsentReviewWorkspace({
 
   const positionLabel =
     currentIndex !== null ? `${currentIndex + 1} of ${entries.length}` : "";
+
+  const queueMeta = (() => {
+    if (!entry || currentIndex === null || entries.length === 0) return null;
+    const candidateIds: number[] = [];
+    for (const e of entries) {
+      if (!candidateIds.includes(e.candidate_id)) candidateIds.push(e.candidate_id);
+    }
+    const candidateOrdinal = candidateIds.indexOf(entry.candidate_id) + 1;
+    const papersForCandidate = entries.filter((e) => e.candidate_id === entry.candidate_id);
+    const paperOrdinal =
+      papersForCandidate.findIndex(
+        (e) => e.score_id === entry.score_id && e.field_name === entry.field_name
+      ) + 1;
+    return {
+      candidateOrdinal,
+      candidateTotal: candidateIds.length,
+      paperOrdinal: Math.max(1, paperOrdinal),
+      paperTotal: papersForCandidate.length,
+      remaining: entries.length,
+    };
+  })();
 
   const currentValue = entry ? currentFieldValue(entry) : null;
   const inputChanged =
@@ -516,7 +557,15 @@ export function AbsentReviewWorkspace({
                   </div>
                 ) : null}
                 <MarkerBadge marker={entry.absent_marker} />
-                {entries.length > 0 ? (
+                {queueMeta ? (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    Candidate {queueMeta.candidateOrdinal} of {queueMeta.candidateTotal}
+                    {" · "}
+                    Paper {queueMeta.paperOrdinal} of {queueMeta.paperTotal}
+                    {" · "}
+                    {queueMeta.remaining} remaining
+                  </span>
+                ) : entries.length > 0 ? (
                   <span className="text-xs text-muted-foreground tabular-nums">{positionLabel}</span>
                 ) : null}
               </div>
@@ -848,7 +897,7 @@ export function AbsentReviewWorkspace({
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
-                    <Kbd>Enter</Kbd> save
+                    <Kbd>Enter</Kbd> {inputChanged ? "save" : "confirm"}
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <Kbd>Ctrl</Kbd>
@@ -856,10 +905,10 @@ export function AbsentReviewWorkspace({
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <Kbd>←</Kbd>
-                    <Kbd>→</Kbd>
+                    <Kbd>→</Kbd> navigate
                   </span>
                   <span className="inline-flex items-center gap-1">
-                    <Kbd>Esc</Kbd>
+                    <Kbd>Esc</Kbd> close
                   </span>
                 </div>
               </div>
