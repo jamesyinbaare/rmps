@@ -64,8 +64,13 @@ import type {
   RunValidationRequest,
   RunValidationResponse,
   ValidationIssuesFilters,
+  AbsentReviewCandidateFilters,
+  AbsentReviewCandidateListResponse,
   AbsentReviewFilters,
   AbsentReviewListResponse,
+  AbsentReviewStatsResponse,
+  ConfirmAbsentReviewCandidateRequest,
+  ConfirmAbsentReviewCandidateResponse,
   ConfirmAbsentReviewRequest,
   ConfirmAbsentReviewResponse,
   MyValidationStats,
@@ -3420,13 +3425,14 @@ export async function getValidationIssues(
   return handleResponse<ValidationIssueListResponse>(response);
 }
 
-export async function getAbsentReviewCandidates(
+export async function getAbsentReviewEntries(
   filters: AbsentReviewFilters
 ): Promise<AbsentReviewListResponse> {
   const params = new URLSearchParams();
   params.append("exam_id", filters.exam_id.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.candidate_id) params.append("candidate_id", filters.candidate_id.toString());
   if (filters.test_type) params.append("test_type", filters.test_type.toString());
   if (filters.absent_marker) params.append("absent_marker", filters.absent_marker);
   if (filters.page) params.append("page", filters.page.toString());
@@ -3436,6 +3442,42 @@ export async function getAbsentReviewCandidates(
     `${API_BASE_URL}/api/v1/scores/absent-review?${params.toString()}`
   );
   return handleResponse<AbsentReviewListResponse>(response);
+}
+
+/** @deprecated Use getAbsentReviewEntries */
+export const getAbsentReviewCandidates = getAbsentReviewEntries;
+
+export async function getAbsentReviewCandidateGroups(
+  filters: AbsentReviewCandidateFilters
+): Promise<AbsentReviewCandidateListResponse> {
+  const params = new URLSearchParams();
+  params.append("exam_id", filters.exam_id.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.test_type) params.append("test_type", filters.test_type.toString());
+  if (filters.bucket) params.append("bucket", filters.bucket);
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/absent-review/candidates?${params.toString()}`
+  );
+  return handleResponse<AbsentReviewCandidateListResponse>(response);
+}
+
+export async function getAbsentReviewStats(filters: {
+  exam_id: number;
+  school_id?: number;
+  test_type?: number;
+}): Promise<AbsentReviewStatsResponse> {
+  const params = new URLSearchParams();
+  params.append("exam_id", filters.exam_id.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.test_type) params.append("test_type", filters.test_type.toString());
+
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/absent-review/stats?${params.toString()}`
+  );
+  return handleResponse<AbsentReviewStatsResponse>(response);
 }
 
 export async function confirmAbsentReview(
@@ -3449,6 +3491,22 @@ export async function confirmAbsentReview(
     body: JSON.stringify(data),
   });
   return handleResponse<ConfirmAbsentReviewResponse>(response);
+}
+
+export async function confirmAbsentReviewCandidate(
+  data: ConfirmAbsentReviewCandidateRequest
+): Promise<ConfirmAbsentReviewCandidateResponse> {
+  const response = await fetchWithAuth(
+    `${API_BASE_URL}/api/v1/scores/absent-review/confirm-candidate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    }
+  );
+  return handleResponse<ConfirmAbsentReviewCandidateResponse>(response);
 }
 
 export async function getValidationIssue(issueId: number): Promise<ValidationIssueDetailResponse> {
