@@ -88,12 +88,18 @@ const STATUS_OPTIONS: { id: ScoreValidationReportStatus; label: string; hint: st
 
 type PreviewColumn = { key: string; header: string };
 
-function previewColumnsForStatus(status: ScoreValidationReportStatus): PreviewColumn[] {
+function previewColumnsForStatus(
+  status: ScoreValidationReportStatus,
+  combineP1P2: boolean
+): PreviewColumn[] {
   const base: PreviewColumn[] = [
     { key: "index_number", header: "Index" },
     { key: "candidate_name", header: "Candidate" },
-    { key: "paper_label", header: "Paper" },
   ];
+  if (status === "missing" && combineP1P2) {
+    return [...base, { key: "missing_papers", header: "Missing papers" }];
+  }
+  base.push({ key: "paper_label", header: "Paper" });
   if (status === "invalid") {
     return [
       ...base,
@@ -114,6 +120,7 @@ function cellValue(row: ScoreValidationReportDetailRow, key: string): string {
     return Number.isInteger(row.max_score) ? String(row.max_score) : String(row.max_score);
   }
   if (key === "expected") return row.expected ?? "—";
+  if (key === "missing_papers") return row.missing_papers || row.paper_short || "—";
   if (key === "paper_label") return row.paper_short || row.paper_label;
   const value = row[key as keyof ScoreValidationReportDetailRow];
   return value == null ? "—" : String(value);
@@ -153,6 +160,7 @@ export default function ScoreValidationReportPage() {
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>("ALL");
   const [subjectIds, setSubjectIds] = useState<number[]>([]);
   const [testTypes, setTestTypes] = useState<number[]>([]);
+  const [combineP1P2, setCombineP1P2] = useState(false);
   const [selectedStatus, setSelectedStatus] =
     useState<ScoreValidationReportStatus>("missing");
   const [papersOpen, setPapersOpen] = useState(false);
@@ -168,8 +176,8 @@ export default function ScoreValidationReportPage() {
   const pollCancelRef = useRef(false);
 
   const columns = useMemo(
-    () => previewColumnsForStatus(selectedStatus),
-    [selectedStatus]
+    () => previewColumnsForStatus(selectedStatus, combineP1P2),
+    [selectedStatus, combineP1P2]
   );
 
   useEffect(() => {
@@ -232,19 +240,34 @@ export default function ScoreValidationReportPage() {
   const buildFilters = useCallback(
     (overrides?: Partial<ScoreValidationReportFilters>): ScoreValidationReportFilters | null => {
       if (!examId) return null;
+      const status = combineP1P2 ? "missing" : selectedStatus;
       return {
         exam_id: examId,
         school_id: schoolId,
         subject_type: subjectTypeFilter === "ALL" ? undefined : subjectTypeFilter,
         subject_ids: subjectIds.length ? subjectIds : undefined,
-        test_types: testTypes.length ? [...testTypes].sort((a, b) => a - b) : undefined,
-        status: selectedStatus,
+        test_types: combineP1P2
+          ? [1, 2]
+          : testTypes.length
+            ? [...testTypes].sort((a, b) => a - b)
+            : undefined,
+        status,
+        combine_p1_p2: combineP1P2 || undefined,
         page,
         page_size: PREVIEW_PAGE_SIZE,
         ...overrides,
       };
     },
-    [examId, schoolId, subjectTypeFilter, subjectIds, testTypes, selectedStatus, page]
+    [
+      examId,
+      schoolId,
+      subjectTypeFilter,
+      subjectIds,
+      testTypes,
+      selectedStatus,
+      combineP1P2,
+      page,
+    ]
   );
 
   const loadPreview = useCallback(async () => {
@@ -503,11 +526,13 @@ export default function ScoreValidationReportPage() {
                   className="h-9 w-full justify-between font-normal"
                 >
                   <span className="truncate">
-                    {testTypes.length === 0
-                      ? "All papers"
-                      : testTypes.length === 1
-                        ? PAPER_OPTIONS.find((p) => p.id === testTypes[0])?.label
-                        : `${testTypes.length} papers`}
+                    {combineP1P2
+                      ? "Paper 1 or 2 (combined)"
+                      : testTypes.length === 0
+                        ? "All papers"
+                        : testTypes.length === 1
+                          ? PAPER_OPTIONS.find((p) => p.id === testTypes[0])?.label
+                          : `${testTypes.length} papers`}
                   </span>
                   <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
                 </Button>
@@ -518,6 +543,7 @@ export default function ScoreValidationReportPage() {
                     type="button"
                     className="text-xs text-muted-foreground hover:text-foreground"
                     onClick={() => {
+                      setCombineP1P2(false);
                       setTestTypes([]);
                       setPage(1);
                     }}
@@ -527,7 +553,9 @@ export default function ScoreValidationReportPage() {
                   <button
                     type="button"
                     className="text-xs text-muted-foreground hover:text-foreground"
+                    disabled={combineP1P2}
                     onClick={() => {
+                      setCombineP1P2(false);
                       setTestTypes(PAPER_OPTIONS.map((p) => p.id));
                       setPage(1);
                     }}
@@ -535,18 +563,42 @@ export default function ScoreValidationReportPage() {
                     Select all
                   </button>
                 </div>
+                <label className="mb-1 flex cursor-pointer items-center gap-2 rounded-md border border-amber-200/80 bg-amber-50/50 px-2 py-1.5 dark:border-amber-900/40 dark:bg-amber-950/20">
+                  <Checkbox
+                    checked={combineP1P2}
+                    onCheckedChange={(value) => {
+                      const on = value === true;
+                      setCombineP1P2(on);
+                      if (on) {
+                        setTestTypes([1, 2]);
+                        setSelectedStatus("missing");
+                      }
+                      setPage(1);
+                    }}
+                  />
+                  <span className="text-sm font-medium">Paper 1 or 2 (combined)</span>
+                </label>
+                <p className="mb-2 px-1 text-[11px] text-muted-foreground">
+                  One row per candidate when P1 and/or P2 is missing. Shows Missing papers as P1,
+                  P2, or P1/P2.
+                </p>
                 <div className="space-y-1">
                   {PAPER_OPTIONS.map((paper) => {
-                    const checked = testTypes.includes(paper.id);
+                    const checked = !combineP1P2 && testTypes.includes(paper.id);
                     return (
                       <label
                         key={paper.id}
-                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60"
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60",
+                          combineP1P2 && "opacity-50"
+                        )}
                       >
                         <Checkbox
                           checked={checked}
+                          disabled={combineP1P2}
                           onCheckedChange={(value) => {
                             const on = value === true;
+                            setCombineP1P2(false);
                             setTestTypes((prev) => {
                               if (on) {
                                 return prev.includes(paper.id)
@@ -564,7 +616,9 @@ export default function ScoreValidationReportPage() {
                   })}
                 </div>
                 <p className="mt-2 px-1 text-[11px] text-muted-foreground">
-                  Exports keep Paper 1 and Paper 2 on separate pages/sheets.
+                  {combineP1P2
+                    ? "Combined mode uses Missing status and lists P1/P2 gaps together."
+                    : "Exports keep Paper 1 and Paper 2 on separate pages/sheets."}
                 </p>
               </PopoverContent>
             </Popover>
@@ -575,7 +629,8 @@ export default function ScoreValidationReportPage() {
               Status (one at a time)
             </p>
             <Select
-              value={selectedStatus}
+              value={combineP1P2 ? "missing" : selectedStatus}
+              disabled={combineP1P2}
               onValueChange={(value) => {
                 setSelectedStatus(value as ScoreValidationReportStatus);
                 setPage(1);

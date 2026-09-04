@@ -441,6 +441,7 @@ class ScoreValidationReportDetailRow(BaseModel):
     message: str | None = None
     extraction_method: str | None = None
     expected: str | None = None
+    missing_papers: str | None = None
 
 
 class ScoreValidationReportSummary(BaseModel):
