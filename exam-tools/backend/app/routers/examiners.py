@@ -124,6 +124,9 @@ def _examiner_response(ex: Examiner) -> ExaminerResponse:
         roster_source=ExaminerRosterSourceSchema(ex.roster_source.value),
         invitation_id=inv.id if inv is not None else None,
         invitation_status=inv.status.value if inv is not None else None,
+        chief_examiners_report_count=int(ex.chief_examiners_report_count or 0),
+        reporting_allowance_enabled=bool(getattr(ex, "reporting_allowance_enabled", False)),
+        num_days=int(ex.num_days) if getattr(ex, "num_days", None) is not None else None,
         created_at=ex.created_at,
         updated_at=ex.updated_at,
     )
@@ -189,7 +192,10 @@ async def list_examiners(
         return []
     stmt = (
         select(Examiner)
-        .where(Examiner.examination_id == examination_id)
+        .where(
+            Examiner.examination_id == examination_id,
+            Examiner.roster_source != ExaminerRosterSource.SPECIAL,
+        )
         .options(
             selectinload(Examiner.subjects),
             selectinload(Examiner.group_membership),
@@ -246,17 +252,23 @@ async def create_examiner(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    from app.services.examiner_report_count import default_report_count
+
+    examiner_type = _examiner_type_from_schema(body.examiner_type)
+    report_count = default_report_count(examiner_type)
     ex = Examiner(
         examination_id=examination_id,
         name=body.name.strip(),
         phone_number=body.phone_number.strip(),
         msisdn=msisdn,
         gender=gender,
-        examiner_type=_examiner_type_from_schema(body.examiner_type),
+        examiner_type=examiner_type,
         region=region,
         deviation_weight=body.deviation_weight,
         portal_token=generate_portal_token(),
         roster_source=ExaminerRosterSource.MANUAL,
+        chief_examiners_report_count=report_count,
+        reporting_allowance_enabled=report_count > 0,
     )
     session.add(ex)
     await session.flush()
@@ -266,6 +278,9 @@ async def create_examiner(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     await _sync_cohort_memberships_for_examiner(session, ex)
+    from app.services.examiner_allowance_groups import ensure_general_membership
+
+    await ensure_general_membership(session, ex)
     await session.commit()
     stmt = (
         select(Examiner)
@@ -389,6 +404,13 @@ async def bulk_upload_examiners(
             deviation_weight=None,
             portal_token=generate_portal_token(),
             roster_source=ExaminerRosterSource.MANUAL,
+            chief_examiners_report_count=fields.get(
+                "report_count",
+                1 if fields["examiner_type"] != ExaminerType.ASSISTANT else 0,
+            ),
+            reporting_allowance_enabled=bool(fields.get("reporting_allowance_enabled", False))
+            or int(fields.get("report_count", 0) or 0) > 0,
+            num_days=fields.get("num_days"),
         )
         session.add(ex)
         try:
@@ -396,6 +418,20 @@ async def bulk_upload_examiners(
             await sync_examiner_subjects(session, ex, fields["subject_ids"])
             await assign_reference_code_to_examiner(session, ex)
             await _sync_cohort_memberships_for_examiner(session, ex)
+            from app.services.examiner_allowance_groups import (
+                ensure_general_membership,
+                parse_allowance_groups_cell,
+                resolve_custom_groups_by_names,
+                set_examiner_custom_groups,
+            )
+
+            await ensure_general_membership(session, ex)
+            if "allowance_groups" in df.columns:
+                group_names = parse_allowance_groups_cell(srow.get("allowance_groups"))
+                group_ids = await resolve_custom_groups_by_names(
+                    session, examination_id, group_names
+                )
+                await set_examiner_custom_groups(session, examination_id, ex.id, group_ids)
             await session.commit()
             created_count += 1
         except Exception as e:  # noqa: BLE001 — row-level import; surface message to admin
@@ -470,6 +506,25 @@ async def update_examiner(
         sync_accepted_invitation_role_from_roster(ex, new_type)
     if "deviation_weight" in patch:
         ex.deviation_weight = patch["deviation_weight"]
+    if "chief_examiners_report_count" in patch and patch["chief_examiners_report_count"] is not None:
+        from app.services.examiner_report_count import validate_report_count_for_type
+
+        count = int(patch["chief_examiners_report_count"])
+        et_for_count = new_type if "examiner_type" in patch and patch["examiner_type"] is not None else ex.examiner_type
+        try:
+            validate_report_count_for_type(count, et_for_count)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        ex.chief_examiners_report_count = count
+        if "reporting_allowance_enabled" not in patch or patch.get("reporting_allowance_enabled") is None:
+            ex.reporting_allowance_enabled = count > 0
+    if "reporting_allowance_enabled" in patch and patch["reporting_allowance_enabled"] is not None:
+        ex.reporting_allowance_enabled = bool(patch["reporting_allowance_enabled"])
+    if "num_days" in patch:
+        nd = patch["num_days"]
+        if nd is not None and int(nd) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="num_days must be at least 1")
+        ex.num_days = int(nd) if nd is not None else None
     if "gender" in patch:
         ex.gender = new_gender
     if "phone_number" in patch and patch["phone_number"] is not None:

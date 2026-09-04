@@ -53,6 +53,12 @@ export function ExaminerAllowanceBreakdownCell({
   const totalLabel = formatGhsAmount(cellAmount);
   const markingBreakdowns = applicableMarkingBreakdowns(row.subject_breakdowns);
   const roleLabel = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
+  const reportCount = Math.max(0, Number(row.chief_examiners_report_count) || 0);
+  const cerAmount = Number(row.chief_examiners_report_ghs);
+  const cerLabel =
+    reportCount > 0
+      ? `Chief Examiner's Report (×${reportCount})`
+      : "Chief Examiner's Report";
   const ariaLabel = examinerName
     ? `Allowance for ${examinerName}: ${totalLabel}. Open breakdown.`
     : `Allowance ${totalLabel}. Open breakdown.`;
@@ -75,27 +81,44 @@ export function ExaminerAllowanceBreakdownCell({
           />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
-        <div className="border-b border-border px-3 py-2.5">
+      <PopoverContent
+        align="end"
+        collisionPadding={12}
+        className="flex w-80 max-h-[min(36rem,calc(100dvh-1.5rem))] flex-col overflow-hidden p-0"
+      >
+        <div className="shrink-0 border-b border-border px-3 py-2.5">
           <p className="text-sm font-semibold text-foreground">{examinerName ?? row.full_name}</p>
           <p className="text-xs text-muted-foreground">
             {roleLabel} · {row.region}
           </p>
         </div>
-        <dl className="space-y-2 px-3 py-3 text-sm">
+        <dl className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-3 py-3 text-sm">
           <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
-            <p className="font-medium text-foreground">Role allowances (once)</p>
+            <p className="font-medium text-foreground">Role allowances</p>
             <div className="mt-2 space-y-1">
               <BreakdownRow label="Responsibility" value={formatGhsAmount(row.responsibility_allowance_ghs)} />
               <BreakdownRow label="Inconvenience" value={formatGhsAmount(row.inconvenience_allowance_ghs)} />
-              <BreakdownRow
-                label="Chief Examiner's Report"
-                value={formatGhsAmount(row.chief_examiners_report_ghs)}
-              />
+              <BreakdownRow label={cerLabel} value={formatGhsAmount(row.chief_examiners_report_ghs)} />
+              {reportCount > 0 && !(cerAmount > 0) ? (
+                <p className="text-xs text-muted-foreground">
+                  Report count is {reportCount}, but the CE report rate for this role is 0 (set it under Examiner
+                  rates → Role allowances).
+                </p>
+              ) : null}
               <BreakdownRow label="Vetting of Scripts (gross)" value={formatGhsAmount(row.vetting_of_scripts_ghs)} />
               <BreakdownRow label="Vetting tax (10%)" value={formatGhsAmount(row.vetting_withholding_tax_ghs)} />
               <BreakdownRow label="Vetting net" value={formatGhsAmount(row.vetting_net_ghs)} />
               <BreakdownRow label="Internal Commuting" value={formatGhsAmount(row.internal_commuting_ghs)} />
+              {Number(row.sitting_allowance_ghs) > 0 || row.sitting_num_days > 0 ? (
+                <>
+                  <BreakdownRow
+                    label={`Sitting (gross, ${row.sitting_num_days} days × ${formatGhsAmount(row.sitting_daily_rate_ghs)})`}
+                    value={formatGhsAmount(row.sitting_allowance_ghs)}
+                  />
+                  <BreakdownRow label="Sitting tax (10%)" value={formatGhsAmount(row.sitting_withholding_tax_ghs)} />
+                  <BreakdownRow label="Sitting net" value={formatGhsAmount(row.sitting_net_ghs)} />
+                </>
+              ) : null}
             </div>
           </div>
           {markingBreakdowns.map((sub) => (
@@ -148,6 +171,32 @@ export function ExaminerAllowanceBreakdownCell({
           ) : (
             <BreakdownRow label="T & T" value={formatGhsAmount(row.travel_and_transport_ghs)} />
           )}
+          {(row.payout_adjustments ?? []).length > 0 ? (
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+              <p className="font-medium text-foreground">Manual adjustments</p>
+              <div className="mt-2 space-y-1">
+                {(row.payout_adjustments ?? []).map((line, idx) => (
+                  <div key={line.id ?? `${line.description}-${idx}`} className="space-y-1">
+                    <BreakdownRow
+                      label={`${line.description}${line.is_taxable ? " (taxed)" : ""}`}
+                      value={formatGhsAmount(line.amount_ghs)}
+                    />
+                    {line.is_taxable ? (
+                      <>
+                        <BreakdownRow label="Tax (10%)" value={formatGhsAmount(line.tax_ghs)} />
+                        <BreakdownRow label="Net" value={formatGhsAmount(line.net_ghs)} />
+                      </>
+                    ) : null}
+                  </div>
+                ))}
+                <BreakdownRow
+                  label="Adjustments net total"
+                  value={formatGhsAmount(row.adjustments_net_ghs ?? "0")}
+                  highlight
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
             <p className="font-medium text-foreground">Payout batches</p>
             <div className="mt-2 space-y-1">

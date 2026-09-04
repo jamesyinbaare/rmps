@@ -14,26 +14,35 @@ from sqlalchemy.orm import selectinload
 from app.models import (
     Examiner,
     ExaminerAllowanceType,
+    ExaminerPayoutAdjustment,
+    ExaminerPayoutOverride,
+    ExaminerRosterSource,
     ExaminerBankAccount,
     ExaminerSubject,
     ExaminerType,
+    ExaminationExaminerDefaultDays,
+    ExaminationExaminerMarkingDefault,
     ExaminationExaminerMarkingRate,
     ExaminationExaminerRoleAllowanceRate,
+    ExaminationExaminerSittingAllowanceRate,
     ExaminationExaminerTravelRate,
     ExaminationExaminerTravelRoleFactor,
     ExaminationExaminerTravelZone,
     ExaminationExaminerTravelZoneRegion,
     Region,
+    RosterAllowanceKey,
     Subject,
 )
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
+from app.services.examiner_allowance_groups import ExaminerEnabledKeysMap, is_group_allowance_enabled
+from app.services.examiner_roster_allowance_eligibility import EligibilityMap, is_allowance_enabled
 
 WITHHOLDING_TAX_RATE = Decimal("0.10")
 _MONEY_QUANTIZE = Decimal("0.01")
 
 
 def withholding_tax(gross: Decimal) -> tuple[Decimal, Decimal]:
-    """Return (net, tax) after 10% withholding on gross marking/vetting amounts."""
+    """Return (net, tax) after 10% withholding on gross taxable amounts."""
     if gross <= 0:
         return Decimal("0"), Decimal("0")
     tax = (gross * WITHHOLDING_TAX_RATE).quantize(_MONEY_QUANTIZE)
@@ -60,12 +69,25 @@ class SubjectMarkingBreakdown:
 
 
 @dataclass(frozen=True)
+class PayoutAdjustmentLine:
+    description: str
+    amount_ghs: Decimal
+    is_taxable: bool
+    tax_ghs: Decimal
+    net_ghs: Decimal
+    id: UUID | None = None
+
+
+@dataclass(frozen=True)
 class ComputedExaminerCompensation:
     responsibility_allowance_ghs: Decimal
     inconvenience_allowance_ghs: Decimal
     chief_examiners_report_ghs: Decimal
     vetting_of_scripts_ghs: Decimal
     internal_commuting_ghs: Decimal
+    sitting_allowance_ghs: Decimal
+    sitting_daily_rate_ghs: Decimal
+    sitting_num_days: int
     marking_allowance_ghs: Decimal
     travel_base_ghs: Decimal
     travel_zone_name: str | None
@@ -74,25 +96,103 @@ class ComputedExaminerCompensation:
     total_allocated_scripts: int
     marking_withholding_tax_ghs: Decimal
     marking_net_ghs: Decimal
+    sitting_withholding_tax_ghs: Decimal
+    sitting_net_ghs: Decimal
     vetting_withholding_tax_ghs: Decimal
     vetting_net_ghs: Decimal
     payout_travel_commuting_ghs: Decimal
     payout_allowances_marking_ghs: Decimal
     total_payable_ghs: Decimal
     subject_breakdowns: list[SubjectMarkingBreakdown]
+    payout_adjustments: list[PayoutAdjustmentLine]
+    adjustments_gross_ghs: Decimal
+    adjustments_tax_ghs: Decimal
+    adjustments_net_ghs: Decimal
+
+
+PayoutAdjustmentInput = PayoutAdjustmentLine | ExaminerPayoutAdjustment
+
+
+def compute_payout_adjustment_lines(
+    adjustments: list[PayoutAdjustmentInput] | None,
+) -> tuple[list[PayoutAdjustmentLine], Decimal, Decimal, Decimal]:
+    """Return (lines, gross, tax, net). Independent of roster/group eligibility."""
+    lines: list[PayoutAdjustmentLine] = []
+    if not adjustments:
+        zero = Decimal("0")
+        return lines, zero, zero, zero
+
+    for raw in adjustments:
+        description = (getattr(raw, "description", None) or "").strip() or "Adjustment"
+        amount = _amount_or_zero(_to_decimal(getattr(raw, "amount_ghs", None)))
+        if amount <= 0:
+            continue
+        is_taxable = bool(getattr(raw, "is_taxable", False))
+        adj_id = getattr(raw, "id", None)
+        if is_taxable:
+            net, tax = withholding_tax(amount)
+        else:
+            net, tax = amount, Decimal("0")
+        lines.append(
+            PayoutAdjustmentLine(
+                id=adj_id if isinstance(adj_id, UUID) else None,
+                description=description,
+                amount_ghs=amount,
+                is_taxable=is_taxable,
+                tax_ghs=tax,
+                net_ghs=net,
+            )
+        )
+
+    gross = sum((line.amount_ghs for line in lines), Decimal("0"))
+    tax_total = sum((line.tax_ghs for line in lines), Decimal("0"))
+    net_total = sum((line.net_ghs for line in lines), Decimal("0"))
+    return lines, gross, tax_total, net_total
 
 
 RoleAllowanceKey = tuple[ExaminerType, ExaminerAllowanceType]
 RoleAllowanceMap = dict[RoleAllowanceKey, Decimal | None]
 MarkingRateKey = tuple[int, int]
 MarkingRateMap = dict[MarkingRateKey, Decimal | None]
+SittingRateMap = dict[ExaminerType, Decimal | None]
+DefaultDaysMap = dict[ExaminerType, int | None]
 TravelRateMap = dict[Region, Decimal | None]
 TravelZoneMap = dict[Region, UUID]
 TravelZoneNameMap = dict[UUID, str]
 TravelRoleFactorKey = tuple[ExaminerType, UUID]
 TravelRoleFactorMap = dict[TravelRoleFactorKey, Decimal | None]
 
+
+@dataclass(frozen=True)
+class MarkingDefaults:
+    paper_1: Decimal | None = None
+    paper_2: Decimal | None = None
+
 TRegionMapValue = TypeVar("TRegionMapValue")
+
+_ALLOWANCE_KEY_BY_TYPE: dict[ExaminerAllowanceType, RosterAllowanceKey] = {
+    ExaminerAllowanceType.RESPONSIBILITY: RosterAllowanceKey.RESPONSIBILITY,
+    ExaminerAllowanceType.INCONVENIENCE: RosterAllowanceKey.INCONVENIENCE,
+    ExaminerAllowanceType.CHIEF_EXAMINERS_REPORT: RosterAllowanceKey.CHIEF_EXAMINERS_REPORT,
+    ExaminerAllowanceType.VETTING_OF_SCRIPTS: RosterAllowanceKey.VETTING,
+    ExaminerAllowanceType.INTERNAL_COMMUTING: RosterAllowanceKey.INTERNAL_COMMUTING,
+}
+
+
+def has_default_marking_rate(
+    marking_defaults: MarkingDefaults | None,
+    paper_number: int,
+) -> bool:
+    return default_rate_for_paper(marking_defaults, paper_number) is not None
+
+
+def parse_roster_source_stored(raw: object) -> ExaminerRosterSource:
+    return ExaminerRosterSource.from_stored(raw)
+
+
+def is_special_examiner(examiner: Examiner) -> bool:
+    return parse_roster_source_stored(examiner.roster_source) == ExaminerRosterSource.SPECIAL
+
 
 _ALLOWANCE_FIELD_BY_TYPE: dict[ExaminerAllowanceType, str] = {
     ExaminerAllowanceType.RESPONSIBILITY: "responsibility_allowance_ghs",
@@ -223,6 +323,83 @@ async def load_marking_rates_map(
     return out
 
 
+async def load_marking_defaults(session: AsyncSession, examination_id: int) -> MarkingDefaults | None:
+    row = await session.get(ExaminationExaminerMarkingDefault, examination_id)
+    if row is None:
+        return None
+    return MarkingDefaults(
+        paper_1=_to_decimal(row.default_rate_paper_1_ghs),
+        paper_2=_to_decimal(row.default_rate_paper_2_ghs),
+    )
+
+
+async def load_sitting_rates_map(session: AsyncSession, examination_id: int) -> SittingRateMap:
+    stmt = select(ExaminationExaminerSittingAllowanceRate).where(
+        ExaminationExaminerSittingAllowanceRate.examination_id == examination_id,
+    )
+    result = await session.execute(stmt)
+    out: SittingRateMap = {}
+    for row in result.scalars().all():
+        out[parse_examiner_type_stored(row.examiner_type)] = _to_decimal(row.daily_rate_ghs)
+    return out
+
+
+async def load_default_days_map(session: AsyncSession, examination_id: int) -> DefaultDaysMap:
+    stmt = select(ExaminationExaminerDefaultDays).where(
+        ExaminationExaminerDefaultDays.examination_id == examination_id,
+    )
+    result = await session.execute(stmt)
+    out: DefaultDaysMap = {}
+    for row in result.scalars().all():
+        dd = row.default_days
+        out[parse_examiner_type_stored(row.examiner_type)] = int(dd) if dd is not None else None
+    return out
+
+
+def default_rate_for_paper(marking_defaults: MarkingDefaults | None, paper_number: int) -> Decimal | None:
+    if marking_defaults is None:
+        return None
+    if paper_number == 1:
+        return marking_defaults.paper_1
+    if paper_number == 2:
+        return marking_defaults.paper_2
+    return None
+
+
+def effective_marking_rate(
+    marking_rates: MarkingRateMap,
+    marking_defaults: MarkingDefaults | None,
+    subject_id: int,
+    paper_number: int,
+) -> Decimal | None:
+    key = (subject_id, paper_number)
+    if key in marking_rates and marking_rates[key] is not None:
+        return marking_rates[key]
+    return default_rate_for_paper(marking_defaults, paper_number)
+
+
+def has_effective_marking_rate(
+    marking_rates: MarkingRateMap,
+    marking_defaults: MarkingDefaults | None,
+    subject_id: int,
+    paper_number: int,
+) -> bool:
+    rate = effective_marking_rate(marking_rates, marking_defaults, subject_id, paper_number)
+    return rate is not None
+
+
+def resolve_examiner_num_days(
+    examiner: Examiner,
+    examiner_type: ExaminerType,
+    default_days: DefaultDaysMap,
+) -> int:
+    nd = getattr(examiner, "num_days", None)
+    if nd is not None:
+        return max(int(nd), 0)
+    configured = default_days.get(examiner_type)
+    return max(int(configured), 0) if configured is not None else 0
+
+
 async def load_travel_rates_map(
     session: AsyncSession,
     examination_id: int,
@@ -335,15 +512,52 @@ def compensation_for_examiner(
     travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
+    *,
+    payout_override: ExaminerPayoutOverride | None = None,
+    marking_defaults: MarkingDefaults | None = None,
+    sitting_rates: SittingRateMap | None = None,
+    default_days: DefaultDaysMap | None = None,
+    roster_eligibility: EligibilityMap | None = None,
+    group_eligibility: ExaminerEnabledKeysMap | None = None,
+    payout_adjustments: list[PayoutAdjustmentInput] | None = None,
 ) -> ComputedExaminerCompensation:
     examiner_type = parse_examiner_type_stored(examiner.examiner_type)
+    roster_source = parse_roster_source_stored(examiner.roster_source)
+
+    def _paid(eligibility_key: RosterAllowanceKey) -> bool:
+        return is_allowance_enabled(
+            roster_eligibility, roster_source, eligibility_key
+        ) and is_group_allowance_enabled(group_eligibility, examiner.id, eligibility_key)
 
     role_totals = {field: Decimal("0") for field in _ALLOWANCE_FIELD_BY_TYPE.values()}
     for allowance_type in ExaminerAllowanceType:
         raw = _lookup_role_amount(role_rates, examiner_type, allowance_type)
         amount = _amount_or_zero(raw)
         field = _ALLOWANCE_FIELD_BY_TYPE[allowance_type]
-        role_totals[field] = amount
+        eligibility_key = _ALLOWANCE_KEY_BY_TYPE[allowance_type]
+        if _paid(eligibility_key):
+            role_totals[field] = amount
+
+    from app.services.examiner_report_count import default_report_count
+
+    raw_report_count = getattr(examiner, "chief_examiners_report_count", None)
+    if raw_report_count is None:
+        report_count = default_report_count(examiner_type)
+    else:
+        report_count = max(0, int(raw_report_count))
+    role_totals["chief_examiners_report_ghs"] = (
+        role_totals["chief_examiners_report_ghs"] * Decimal(report_count)
+    )
+
+    sitting_rate_map = sitting_rates or {}
+    default_days_map = default_days or {}
+    sitting_daily_rate = _amount_or_zero(sitting_rate_map.get(examiner_type))
+    sitting_num_days = resolve_examiner_num_days(examiner, examiner_type, default_days_map)
+    sitting_allowance = sitting_daily_rate * Decimal(sitting_num_days)
+    if not _paid(RosterAllowanceKey.SITTING):
+        sitting_allowance = Decimal("0")
+        sitting_daily_rate = Decimal("0")
+        sitting_num_days = 0
 
     subject_by_id: dict[int, Subject | None] = {}
     for link in examiner.subjects:
@@ -358,29 +572,57 @@ def compensation_for_examiner(
     total_allocated_scripts = 0
     subject_breakdowns: list[SubjectMarkingBreakdown] = []
 
-    for subject_id, paper_number in sorted(subject_paper_keys):
-        booklets = allocated_booklets.get((examiner.id, subject_id, paper_number), 0)
-        if booklets <= 0:
-            continue
-        total_allocated_scripts += booklets
-        rate_raw = marking_rates.get((subject_id, paper_number))
-        rate_amount = _amount_or_zero(rate_raw)
-        marking_amount = rate_amount * Decimal(booklets)
-        marking_total += marking_amount
-
-        subject = subject_by_id.get(subject_id)
-        code, name = subject_display(subject)
-        subject_breakdowns.append(
-            SubjectMarkingBreakdown(
-                subject_id=subject_id,
-                subject_code=code,
-                subject_name=name,
-                paper_number=paper_number,
-                allocated_booklets=booklets,
-                rate_per_script_ghs=rate_raw,
-                marking_allowance_ghs=marking_amount,
+    if is_special_examiner(examiner) and payout_override is not None:
+        label = (payout_override.description or "").strip() or "Special marking"
+        paper_counts = {
+            1: int(payout_override.paper_1_script_count or 0),
+            2: int(payout_override.paper_2_script_count or 0),
+        }
+        for paper_number, booklets in sorted(paper_counts.items()):
+            if booklets <= 0:
+                continue
+            rate_raw = default_rate_for_paper(marking_defaults, paper_number)
+            rate = _amount_or_zero(rate_raw)
+            marking_amount = rate * Decimal(booklets)
+            marking_total += marking_amount
+            total_allocated_scripts += booklets
+            subject_breakdowns.append(
+                SubjectMarkingBreakdown(
+                    subject_id=0,
+                    subject_code="",
+                    subject_name=f"{label} · Paper {paper_number}",
+                    paper_number=paper_number,
+                    allocated_booklets=booklets,
+                    rate_per_script_ghs=rate_raw,
+                    marking_allowance_ghs=marking_amount,
+                )
             )
-        )
+    else:
+        for subject_id, paper_number in sorted(subject_paper_keys):
+            booklets = allocated_booklets.get((examiner.id, subject_id, paper_number), 0)
+            if booklets <= 0:
+                continue
+            total_allocated_scripts += booklets
+            rate_raw = effective_marking_rate(
+                marking_rates, marking_defaults, subject_id, paper_number
+            )
+            rate_amount = _amount_or_zero(rate_raw)
+            marking_amount = rate_amount * Decimal(booklets)
+            marking_total += marking_amount
+
+            subject = subject_by_id.get(subject_id)
+            code, name = subject_display(subject)
+            subject_breakdowns.append(
+                SubjectMarkingBreakdown(
+                    subject_id=subject_id,
+                    subject_code=code,
+                    subject_name=name,
+                    paper_number=paper_number,
+                    allocated_booklets=booklets,
+                    rate_per_script_ghs=rate_raw,
+                    marking_allowance_ghs=marking_amount,
+                )
+            )
 
     travel_comp = compute_travel_compensation(
         region=examiner.region,
@@ -390,18 +632,36 @@ def compensation_for_examiner(
         travel_zone_names=travel_zone_names,
         travel_role_factors=travel_role_factors,
     )
+    if not _paid(RosterAllowanceKey.TRAVEL):
+        travel_comp = TravelCompensation(
+            base_ghs=Decimal("0"),
+            zone_name=None,
+            role_factor=Decimal("1"),
+            payable_ghs=Decimal("0"),
+        )
+
+    if not _paid(RosterAllowanceKey.MARKING):
+        marking_total = Decimal("0")
+        total_allocated_scripts = 0
+        subject_breakdowns = []
 
     marking_net, marking_tax = withholding_tax(marking_total)
+    sitting_net, sitting_tax = withholding_tax(sitting_allowance)
     vetting_gross = role_totals["vetting_of_scripts_ghs"]
     vetting_net, vetting_tax = withholding_tax(vetting_gross)
+
+    adj_source = list(payout_adjustments or [])
+    adj_lines, adj_gross, adj_tax, adj_net = compute_payout_adjustment_lines(adj_source)
 
     payout_travel_commuting = role_totals["internal_commuting_ghs"] + travel_comp.payable_ghs
     payout_allowances_marking = (
         role_totals["responsibility_allowance_ghs"]
         + role_totals["inconvenience_allowance_ghs"]
         + role_totals["chief_examiners_report_ghs"]
+        + sitting_net
         + marking_net
         + vetting_net
+        + adj_net
     )
     total_payable = payout_travel_commuting + payout_allowances_marking
 
@@ -411,6 +671,9 @@ def compensation_for_examiner(
         chief_examiners_report_ghs=role_totals["chief_examiners_report_ghs"],
         vetting_of_scripts_ghs=vetting_gross,
         internal_commuting_ghs=role_totals["internal_commuting_ghs"],
+        sitting_allowance_ghs=sitting_allowance,
+        sitting_daily_rate_ghs=sitting_daily_rate,
+        sitting_num_days=sitting_num_days,
         marking_allowance_ghs=marking_total,
         travel_base_ghs=travel_comp.base_ghs,
         travel_zone_name=travel_comp.zone_name,
@@ -419,12 +682,18 @@ def compensation_for_examiner(
         total_allocated_scripts=total_allocated_scripts,
         marking_withholding_tax_ghs=marking_tax,
         marking_net_ghs=marking_net,
+        sitting_withholding_tax_ghs=sitting_tax,
+        sitting_net_ghs=sitting_net,
         vetting_withholding_tax_ghs=vetting_tax,
         vetting_net_ghs=vetting_net,
         payout_travel_commuting_ghs=payout_travel_commuting,
         payout_allowances_marking_ghs=payout_allowances_marking,
         total_payable_ghs=total_payable,
         subject_breakdowns=subject_breakdowns,
+        payout_adjustments=adj_lines,
+        adjustments_gross_ghs=adj_gross,
+        adjustments_tax_ghs=adj_tax,
+        adjustments_net_ghs=adj_net,
     )
 
 
@@ -453,3 +722,37 @@ def format_ghs_amount(value: Decimal | None) -> str:
     if value is None:
         return ""
     return f"{value:.2f}"
+
+
+async def load_payout_overrides_map(
+    session: AsyncSession,
+    examination_id: int,
+) -> dict[UUID, ExaminerPayoutOverride]:
+    stmt = (
+        select(ExaminerPayoutOverride)
+        .join(Examiner, Examiner.id == ExaminerPayoutOverride.examiner_id)
+        .where(Examiner.examination_id == examination_id)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    return {row.examiner_id: row for row in rows}
+
+
+async def load_payout_adjustments_map(
+    session: AsyncSession,
+    examination_id: int,
+) -> dict[UUID, list[ExaminerPayoutAdjustment]]:
+    stmt = (
+        select(ExaminerPayoutAdjustment)
+        .join(Examiner, Examiner.id == ExaminerPayoutAdjustment.examiner_id)
+        .where(Examiner.examination_id == examination_id)
+        .order_by(
+            ExaminerPayoutAdjustment.examiner_id.asc(),
+            ExaminerPayoutAdjustment.sort_order.asc(),
+            ExaminerPayoutAdjustment.created_at.asc(),
+        )
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    out: dict[UUID, list[ExaminerPayoutAdjustment]] = {}
+    for row in rows:
+        out.setdefault(row.examiner_id, []).append(row)
+    return out

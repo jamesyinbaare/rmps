@@ -13,7 +13,11 @@ import {
   ExaminerSubjectSummaryKpiSkeleton,
   ExaminerSubjectSummaryKpiStrip,
 } from "@/components/examiner-accounts/examiner-subject-summary-kpi-strip";
-import { ExaminerSubjectSummaryCommandBar } from "@/components/examiner-accounts/examiner-subject-summary-command-bar";
+import { ExaminerCeReportCountModal } from "@/components/examiner-accounts/examiner-ce-report-count-modal";
+import {
+  ExaminerSubjectSummaryCommandBar,
+  type ExaminerSourceFilter,
+} from "@/components/examiner-accounts/examiner-subject-summary-command-bar";
 import { RoleGuard } from "@/components/role-guard";
 import {
   apiJson,
@@ -22,6 +26,7 @@ import {
   getExaminationExaminerMarkingRates,
   listAdminExaminerAllowances,
   listAdminExaminerMarkingSubjectSummary,
+  updateExaminerPayoutSettings,
   listAdminSubjectMarkingGroups,
   type AdminExaminerAllowanceRow,
   type AdminExaminerMarkingSubjectSummaryRow,
@@ -32,6 +37,7 @@ import {
 import { buildExaminerMarkingAttendanceSheetsHref } from "@/lib/finance-nav";
 import {
   EXAMINER_PAYOUTS_HREF,
+  buildExaminerSpecialHref,
   officialAccountsBtnSecondary,
   officialAccountsPageLayoutClass,
   officialAccountsPanelFillClass,
@@ -77,6 +83,18 @@ function exportFilenameBase(exam: Examination | null, subjectCode?: string, pape
   return raw.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || `exam_${exam.id}`;
 }
 
+type SourceFilter = ExaminerSourceFilter;
+
+function parseSourceFilter(raw: string | null): SourceFilter {
+  if (raw === "regular") return "regular";
+  return "all";
+}
+
+function sourceFilterToUrl(value: SourceFilter): string | null {
+  if (value === "regular") return "regular";
+  return null;
+}
+
 function parsePaperNumber(raw: string | null, allowed: number[]): number | null {
   if (!raw?.trim() || allowed.length === 0) return null;
   const n = Number.parseInt(raw, 10);
@@ -113,6 +131,11 @@ function ExaminerAccountsBySubjectContent() {
     null,
   );
   const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [ceEditRow, setCeEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [ceReportCount, setCeReportCount] = useState("1");
+  const [ceEditBusy, setCeEditBusy] = useState(false);
+  const [ceEditError, setCeEditError] = useState<string | null>(null);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
   );
@@ -218,8 +241,20 @@ function ExaminerAccountsBySubjectContent() {
         : DEFAULT_PAGE_SIZE,
     );
     setPayoutView(parseExaminerPayoutView(searchParams.get("payoutView")));
+    const rawSource = searchParams.get("source");
+    // Legacy bookmarks for special examiners now live on the dedicated page.
+    if (rawSource === "special" || rawSource === "payout_override") {
+      const parsedExam = Number.parseInt(searchParams.get("exam") ?? "", 10);
+      const examForRedirect =
+        (!Number.isNaN(parsedExam) ? parsedExam : null) ?? exams[0]?.id ?? null;
+      if (examForRedirect != null) {
+        router.replace(buildExaminerSpecialHref({ examId: examForRedirect }));
+        return;
+      }
+    }
+    setSourceFilter(parseSourceFilter(rawSource));
     setUrlHydrated(true);
-  }, [exams, searchParams, urlHydrated]);
+  }, [exams, router, searchParams, urlHydrated]);
 
   const syncUrl = useCallback(
     (patch: {
@@ -233,6 +268,7 @@ function ExaminerAccountsBySubjectContent() {
       page?: number;
       pageSize?: number;
       payoutView?: ExaminerPayoutView;
+      source?: SourceFilter;
     }) => {
       const p = new URLSearchParams();
       const nextExam = patch.examId !== undefined ? patch.examId : examId;
@@ -245,6 +281,7 @@ function ExaminerAccountsBySubjectContent() {
       const nextPage = patch.page ?? page;
       const nextPageSize = patch.pageSize ?? pageSize;
       const nextPayoutView = patch.payoutView ?? payoutView;
+      const nextSource = patch.source ?? sourceFilter;
       if (nextExam != null) p.set("exam", String(nextExam));
       if (nextSubjectType !== "all") p.set("stype", nextSubjectType);
       if (nextSubject.trim()) p.set("subject", nextSubject.trim());
@@ -255,6 +292,8 @@ function ExaminerAccountsBySubjectContent() {
       if (nextPage > 1) p.set("page", String(nextPage));
       if (nextPageSize !== DEFAULT_PAGE_SIZE) p.set("pageSize", String(nextPageSize));
       if (nextPayoutView !== "all") p.set("payoutView", nextPayoutView);
+      const sourceUrl = sourceFilterToUrl(nextSource);
+      if (sourceUrl) p.set("source", sourceUrl);
       const nextQuery = p.toString();
       const currentQuery = searchParams.toString();
       if (nextQuery === currentQuery) return;
@@ -274,6 +313,7 @@ function ExaminerAccountsBySubjectContent() {
       searchQuery,
       subjectId,
       subjectTypeFilter,
+      sourceFilter,
     ],
   );
 
@@ -403,8 +443,8 @@ function ExaminerAccountsBySubjectContent() {
   }, [filteredSummaries, summaryBusy, urlHydrated]);
 
   const rowsQueryKey = useMemo(
-    () => `${examId}:${subjectId}:${cohortFilter}:${regionFilter}:${searchQuery.trim()}:${pageSize}`,
-    [examId, subjectId, cohortFilter, regionFilter, searchQuery, pageSize],
+    () => `${examId}:${subjectId}:${cohortFilter}:${regionFilter}:${searchQuery.trim()}:${sourceFilter}:${pageSize}`,
+    [examId, subjectId, cohortFilter, regionFilter, searchQuery, sourceFilter, pageSize],
   );
 
   const fetchRows = useCallback(
@@ -426,6 +466,7 @@ function ExaminerAccountsBySubjectContent() {
           group_id: cohortFilter || null,
           region: regionFilter || null,
           search: searchQuery.trim() || null,
+          source: sourceFilter,
           skip: (targetPage - 1) * pageSize,
           limit: pageSize,
         });
@@ -441,7 +482,7 @@ function ExaminerAccountsBySubjectContent() {
         setRowsBusy(false);
       }
     },
-    [examId, cohortFilter, pageSize, regionFilter, rowsQueryKey, searchQuery, subjectId],
+    [examId, cohortFilter, pageSize, regionFilter, rowsQueryKey, searchQuery, sourceFilter, subjectId],
   );
 
   useEffect(() => {
@@ -464,6 +505,7 @@ function ExaminerAccountsBySubjectContent() {
     page,
     pageSize,
     payoutView,
+    sourceFilter,
     syncUrl,
   ]);
 
@@ -583,6 +625,7 @@ function ExaminerAccountsBySubjectContent() {
         group_id: cohortFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
+        source: sourceFilter,
         payout_mode: mode,
         filename: `${base}_${bogExportFilenameSuffix(mode)}.xlsx`,
       });
@@ -605,6 +648,7 @@ function ExaminerAccountsBySubjectContent() {
         group_id: cohortFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
+        source: sourceFilter,
         include_fields: includeFields,
         filename: `${base}_examiner_allowances.xlsx`,
       });
@@ -613,6 +657,35 @@ function ExaminerAccountsBySubjectContent() {
       setLoadError(e instanceof Error ? e.message : "Export failed.");
     } finally {
       setExportBusy(null);
+    }
+  }
+
+  function openCeReportEdit(row: AdminExaminerAllowanceRow) {
+    setCeEditRow(row);
+    setCeReportCount(String(row.chief_examiners_report_count ?? 1));
+    setCeEditError(null);
+  }
+
+  async function saveCeReportCount() {
+    if (examId == null || ceEditRow == null) return;
+    const count = Number.parseInt(ceReportCount, 10);
+    if (!Number.isFinite(count) || count < 0) {
+      setCeEditError("Enter a whole number at least 0.");
+      return;
+    }
+    setCeEditBusy(true);
+    setCeEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, ceEditRow.id, {
+        chief_examiners_report_count: count,
+      });
+      setCeEditRow(null);
+      loadedRowsKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setCeEditError(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setCeEditBusy(false);
     }
   }
 
@@ -737,6 +810,13 @@ function ExaminerAccountsBySubjectContent() {
           exportBusy={exportBusy}
           onExport={(key) => void onExport(key)}
           paperSheetsHref={paperSheetsHref}
+          sourceFilter={sourceFilter}
+          onSourceFilterChange={(source) => {
+            setSourceFilter(source);
+            setPage(1);
+            loadedRowsKeyRef.current = "";
+            syncUrl({ source, page: 1 });
+          }}
         />
 
         {loadError ? (
@@ -821,7 +901,7 @@ function ExaminerAccountsBySubjectContent() {
               items={items}
               busy={busy}
               emptyLabel="No examiners on this subject."
-              hasActiveFilters={!!searchQuery.trim() || !!regionFilter || !!cohortFilter}
+              hasActiveFilters={!!searchQuery.trim() || !!regionFilter || !!cohortFilter || sourceFilter !== "all"}
               page={page}
               total={total}
               pageSize={pageSize}
@@ -841,11 +921,24 @@ function ExaminerAccountsBySubjectContent() {
               paperNumber={paperNumber}
               payoutView={payoutView}
               columnVisibility={columnVisibility}
+              onEditCeReportCount={openCeReportEdit}
             />
           </section>
         ) : null}
       </div>
 
+      <ExaminerCeReportCountModal
+        open={ceEditRow != null}
+        row={ceEditRow}
+        busy={ceEditBusy}
+        error={ceEditError}
+        value={ceReportCount}
+        onClose={() => {
+          if (!ceEditBusy) setCeEditRow(null);
+        }}
+        onSubmit={() => void saveCeReportCount()}
+        onValueChange={setCeReportCount}
+      />
       <ExaminerAllowanceExportFieldsDialog
         open={excelExportOpen}
         onClose={() => {

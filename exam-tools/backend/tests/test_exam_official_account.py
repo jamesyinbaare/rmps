@@ -105,3 +105,33 @@ def test_split_absa_account_for_display() -> None:
 def test_absa_precedence_over_adb_name_collision() -> None:
     name = "ABSA something agricultural development bank"
     assert resolve_bank_kind(name) == AccountBankKind.ABSA
+
+
+def test_absa_bulk_import_accepts_stored_13() -> None:
+    stored = normalize_account_for_save(
+        "0301001234567",
+        bank_name=ABSA_BANK_NAME_IN_DIRECTORY,
+        bank_code="030100",
+        for_bulk_import=True,
+    )
+    assert stored == "0301001234567"
+
+
+def test_absa_bulk_import_rebuilds_from_suffix_when_prefix_wrong() -> None:
+    stored = normalize_account_for_save(
+        "9999991234567",
+        bank_name=ABSA_BANK_NAME_IN_DIRECTORY,
+        bank_code="030100",
+        for_bulk_import=True,
+    )
+    assert stored == "0301001234567"
+
+
+def test_adb_bulk_import_accepts_stored_13() -> None:
+    stored = normalize_account_for_save(
+        "4567890123456",
+        bank_name=ADB_BANK_NAME_IN_DIRECTORY,
+        bank_code="000001",
+        for_bulk_import=True,
+    )
+    assert stored == "4567890123456"

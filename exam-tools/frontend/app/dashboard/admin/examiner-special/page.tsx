@@ -1,0 +1,676 @@
+"use client";
+
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { ExaminerAllowanceDownloadConfirmDialog } from "@/components/examiner-accounts/examiner-allowance-download-confirm-dialog";
+import { ExaminerAllowanceExportFieldsDialog } from "@/components/examiner-accounts/examiner-allowance-export-fields-dialog";
+import { ExaminerCeReportCountModal } from "@/components/examiner-accounts/examiner-ce-report-count-modal";
+import {
+  draftsFromAdjustmentRows,
+  ExaminerPayoutAdjustmentsModal,
+  type PayoutAdjustmentDraft,
+} from "@/components/examiner-accounts/examiner-payout-adjustments-modal";
+import { ExaminerPayoutOverrideUploadModal } from "@/components/examiner-accounts/examiner-payout-override-upload-modal";
+import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
+import { ExaminerPayoutsCommandBar } from "@/components/examiner-accounts/examiner-payouts-command-bar";
+import { ExaminerSpecialAccountsTable } from "@/components/examiner-accounts/examiner-special-accounts-table";
+import { ExaminerSpecialAllocationModal } from "@/components/examiner-accounts/examiner-special-allocation-modal";
+import { RoleGuard } from "@/components/role-guard";
+import {
+  apiJson,
+  downloadAdminExaminerAllowancesBogExport,
+  downloadAdminExaminerAllowancesExport,
+  downloadExaminerPayoutOverrideBulkTemplate,
+  listAdminExaminerAllowances,
+  updateExaminerPayoutSettings,
+  uploadExaminerPayoutOverrideBulk,
+  type AdminExaminerAllowanceRow,
+  type Examination,
+  type ExaminerPayoutOverrideBulkImportResponse,
+} from "@/lib/api";
+import {
+  parseExaminerAllowanceDownloadKind,
+  payoutModeFromBogDownloadKind,
+  type ExaminerAllowanceDownloadKind,
+} from "@/lib/examiner-allowance-download-copy";
+import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
+import {
+  bogExportFilenameSuffix,
+  parseExaminerPayoutView,
+  sumPayoutViewOnPage,
+  type ExaminerPayoutView,
+} from "@/lib/examiner-payout-view";
+import { formatGhsAmount } from "@/lib/format-ghs";
+import {
+  officialAccountsBtnSecondary,
+  officialAccountsPageLayoutClass,
+  officialAccountsPanelFillClass,
+  officialAccountsTabPanelClass,
+  officialAccountsTableSearchClass,
+  officialAccountsTableToolbarClass,
+} from "@/lib/official-accounts-zone";
+import { REGION_OPTIONS } from "@/lib/school-enums";
+
+const SECTION_ID = "examiner-special";
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [50, 100, 200, 500] as const;
+
+const VALID_ROLES = new Set<string>([
+  "chief_examiner",
+  "assistant_chief_examiner",
+  "assistant_examiner",
+  "team_leader",
+]);
+
+function parseRoleFilter(raw: string | null): string {
+  if (raw && VALID_ROLES.has(raw)) return raw;
+  return "";
+}
+
+function formatExamLabel(ex: Examination): string {
+  return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
+}
+
+function exportFilenameBase(exam: Examination | null): string {
+  if (!exam) return "exam";
+  const parts = [String(exam.year), exam.exam_series?.trim() || "", exam.exam_type.trim()].filter(Boolean);
+  const raw = `${exam.id}_${parts.join("_")}`;
+  return raw.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || `exam_${exam.id}`;
+}
+
+function ExaminerSpecialContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [exams, setExams] = useState<Examination[]>([]);
+  const [examId, setExamId] = useState<number | null>(null);
+  const [roleFilter, setRoleFilter] = useState("");
+  const [regionFilter, setRegionFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [items, setItems] = useState<AdminExaminerAllowanceRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [excelExportOpen, setExcelExportOpen] = useState(false);
+  const [downloadConfirmKind, setDownloadConfirmKind] = useState<ExaminerAllowanceDownloadKind | null>(
+    null,
+  );
+  const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
+  const [ceEditRow, setCeEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [ceReportCount, setCeReportCount] = useState("1");
+  const [ceEditBusy, setCeEditBusy] = useState(false);
+  const [ceEditError, setCeEditError] = useState<string | null>(null);
+  const [adjEditRow, setAdjEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [adjLines, setAdjLines] = useState<PayoutAdjustmentDraft[]>([]);
+  const [adjEditBusy, setAdjEditBusy] = useState(false);
+  const [adjEditError, setAdjEditError] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadResult, setUploadResult] = useState<ExaminerPayoutOverrideBulkImportResponse | null>(null);
+  const [specialEditRow, setSpecialEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [specialDescription, setSpecialDescription] = useState("");
+  const [specialPaper1, setSpecialPaper1] = useState("0");
+  const [specialPaper2, setSpecialPaper2] = useState("0");
+  const [specialEditBusy, setSpecialEditBusy] = useState(false);
+  const [specialEditError, setSpecialEditError] = useState<string | null>(null);
+  const [urlHydrated, setUrlHydrated] = useState(false);
+
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedQueryKeyRef = useRef("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiJson<Examination[]>("/examinations");
+        if (!cancelled) setExams(list);
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "Failed to load examinations.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (exams.length === 0 || urlHydrated) return;
+    const rawExam = searchParams.get("exam");
+    if (rawExam) {
+      const n = Number.parseInt(rawExam, 10);
+      if (!Number.isNaN(n) && exams.some((e) => e.id === n)) setExamId(n);
+    } else {
+      setExamId(exams[0]!.id);
+    }
+    setRoleFilter(parseRoleFilter(searchParams.get("role")));
+    const reg = searchParams.get("region")?.trim() ?? "";
+    setRegionFilter(reg && REGION_OPTIONS.some((r) => r.value === reg) ? reg : "");
+    setSearchQuery(searchParams.get("search")?.trim() ?? "");
+    const rawPage = Number.parseInt(searchParams.get("page") ?? "1", 10);
+    setPage(!Number.isNaN(rawPage) && rawPage > 0 ? rawPage : 1);
+    const rawPageSize = Number.parseInt(searchParams.get("pageSize") ?? String(DEFAULT_PAGE_SIZE), 10);
+    setPageSize(
+      PAGE_SIZE_OPTIONS.includes(rawPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+        ? rawPageSize
+        : DEFAULT_PAGE_SIZE,
+    );
+    setPayoutView(parseExaminerPayoutView(searchParams.get("payoutView")));
+    setUrlHydrated(true);
+  }, [exams, searchParams, urlHydrated]);
+
+  const syncUrl = useCallback(
+    (patch: {
+      examId?: number | null;
+      role?: string;
+      region?: string;
+      search?: string;
+      page?: number;
+      pageSize?: number;
+      payoutView?: ExaminerPayoutView;
+    }) => {
+      const p = new URLSearchParams();
+      const nextExam = patch.examId !== undefined ? patch.examId : examId;
+      const nextRole = patch.role !== undefined ? patch.role : roleFilter;
+      const nextRegion = patch.region !== undefined ? patch.region : regionFilter;
+      const nextSearch = patch.search !== undefined ? patch.search : searchQuery;
+      const nextPage = patch.page ?? page;
+      const nextPageSize = patch.pageSize ?? pageSize;
+      const nextPayoutView = patch.payoutView ?? payoutView;
+      if (nextExam != null) p.set("exam", String(nextExam));
+      if (nextRole) p.set("role", nextRole);
+      if (nextRegion) p.set("region", nextRegion);
+      if (nextSearch.trim()) p.set("search", nextSearch.trim());
+      if (nextPage > 1) p.set("page", String(nextPage));
+      if (nextPageSize !== DEFAULT_PAGE_SIZE) p.set("pageSize", String(nextPageSize));
+      if (nextPayoutView !== "all") p.set("payoutView", nextPayoutView);
+      const nextQuery = p.toString();
+      const currentQuery = searchParams.toString();
+      if (nextQuery === currentQuery) return;
+      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+    },
+    [examId, page, pageSize, pathname, payoutView, regionFilter, roleFilter, router, searchParams, searchQuery],
+  );
+
+  const queryKey = useMemo(
+    () => `${examId}:${roleFilter}:${regionFilter}:${searchQuery.trim()}:${pageSize}`,
+    [examId, roleFilter, regionFilter, searchQuery, pageSize],
+  );
+
+  const fetchRows = useCallback(
+    async (targetPage: number, force = false) => {
+      if (examId == null) return;
+      const key = `${queryKey}:${targetPage}`;
+      if (!force && loadedQueryKeyRef.current === key) return;
+
+      setBusy(true);
+      setLoadError(null);
+      try {
+        const res = await listAdminExaminerAllowances({
+          examination_id: examId,
+          role: roleFilter || null,
+          region: regionFilter || null,
+          search: searchQuery.trim() || null,
+          source: "special",
+          skip: (targetPage - 1) * pageSize,
+          limit: pageSize,
+        });
+        setItems(res.items);
+        setTotal(res.total);
+        setPage(targetPage);
+        loadedQueryKeyRef.current = key;
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to load special examiners.");
+        setItems([]);
+        setTotal(0);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [examId, pageSize, queryKey, regionFilter, roleFilter, searchQuery],
+  );
+
+  useEffect(() => {
+    if (!urlHydrated || examId == null) return;
+    void fetchRows(page);
+  }, [urlHydrated, examId, page, fetchRows]);
+
+  useEffect(() => {
+    if (!urlHydrated) return;
+    syncUrl({});
+  }, [urlHydrated, examId, roleFilter, regionFilter, searchQuery, page, pageSize, payoutView, syncUrl]);
+
+  const selectedExam = exams.find((e) => e.id === examId) ?? null;
+
+  const exportOptions = useMemo(
+    () => [
+      { key: "excel", label: "Export Excel", primary: true },
+      { key: "bog_all", label: "BoG — All together" },
+      { key: "bog_travel_commuting", label: "BoG — T&T & commuting" },
+      { key: "bog_allowances_marking", label: "BoG — Allowances & marking" },
+    ],
+    [],
+  );
+
+  const exportDisabled = examId == null || total === 0 || !!exportBusy;
+  const exportDisabledReason =
+    examId == null ? "Select an examination" : total === 0 ? "No records to export" : undefined;
+
+  const downloadScope = useMemo(() => {
+    if (!selectedExam) return null;
+    const regionLabel =
+      REGION_OPTIONS.find((r) => r.value === regionFilter)?.label ?? (regionFilter || null);
+    return {
+      examinationLabel: formatExamLabel(selectedExam),
+      regionLabel,
+      examinerCount: total,
+    };
+  }, [selectedExam, regionFilter, total]);
+
+  function onExport(key: string) {
+    if (examId == null || !selectedExam) return;
+    const kind = parseExaminerAllowanceDownloadKind(key);
+    if (!kind) return;
+    if (kind === "excel") {
+      setExcelExportOpen(true);
+      return;
+    }
+    setDownloadConfirmKind(kind);
+  }
+
+  async function runBogDownload(kind: ExaminerAllowanceDownloadKind) {
+    if (examId == null || !selectedExam) return;
+    const mode = payoutModeFromBogDownloadKind(kind);
+    if (!mode) return;
+    setExportBusy(`${SECTION_ID}:${kind}`);
+    try {
+      const base = exportFilenameBase(selectedExam);
+      await downloadAdminExaminerAllowancesBogExport({
+        examination_id: examId,
+        role: roleFilter || null,
+        region: regionFilter || null,
+        search: searchQuery.trim() || null,
+        source: "special",
+        payout_mode: mode,
+        filename: `${base}_${bogExportFilenameSuffix(mode)}_special.xlsx`,
+      });
+      setDownloadConfirmKind(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExportBusy(null);
+    }
+  }
+
+  async function onConfirmExcelExport(includeFields: ExaminerAllowanceOptionalExportField[]) {
+    if (examId == null || !selectedExam) return;
+    setExportBusy(`${SECTION_ID}:excel`);
+    try {
+      const base = exportFilenameBase(selectedExam);
+      await downloadAdminExaminerAllowancesExport({
+        examination_id: examId,
+        role: roleFilter || null,
+        region: regionFilter || null,
+        search: searchQuery.trim() || null,
+        source: "special",
+        include_fields: includeFields,
+        filename: `${base}_special_examiners.xlsx`,
+      });
+      setExcelExportOpen(false);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExportBusy(null);
+    }
+  }
+
+  function openCeReportEdit(row: AdminExaminerAllowanceRow) {
+    setCeEditRow(row);
+    setCeReportCount(String(row.chief_examiners_report_count ?? 1));
+    setCeEditError(null);
+  }
+
+  async function saveCeReportCount() {
+    if (examId == null || ceEditRow == null) return;
+    const count = Math.max(0, Number.parseInt(ceReportCount, 10) || 0);
+    setCeEditBusy(true);
+    setCeEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, ceEditRow.id, {
+        chief_examiners_report_count: count,
+      });
+      setCeEditRow(null);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setCeEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setCeEditBusy(false);
+    }
+  }
+
+  function openAdjustmentsEdit(row: AdminExaminerAllowanceRow) {
+    setAdjEditRow(row);
+    setAdjLines(draftsFromAdjustmentRows(row.payout_adjustments));
+    setAdjEditError(null);
+  }
+
+  async function saveAdjustments() {
+    if (examId == null || adjEditRow == null) return;
+    const payload: {
+      description: string;
+      amount_ghs: string;
+      is_taxable: boolean;
+    }[] = [];
+    for (const line of adjLines) {
+      const description = line.description.trim();
+      const amount = Number.parseFloat(line.amount);
+      if (!description && !line.amount.trim()) continue;
+      if (!description) {
+        setAdjEditError("Each adjustment needs a description.");
+        return;
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setAdjEditError("Each adjustment amount must be greater than 0.");
+        return;
+      }
+      payload.push({
+        description,
+        amount_ghs: amount.toFixed(2),
+        is_taxable: line.is_taxable,
+      });
+    }
+    setAdjEditBusy(true);
+    setAdjEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, adjEditRow.id, {
+        payout_adjustments: payload,
+      });
+      setAdjEditRow(null);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setAdjEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setAdjEditBusy(false);
+    }
+  }
+
+  function openSpecialAllocationEdit(row: AdminExaminerAllowanceRow) {
+    setSpecialEditRow(row);
+    setSpecialDescription(row.payout_description ?? row.subject_names ?? "");
+    setSpecialPaper1(String(row.paper_1_script_count ?? 0));
+    setSpecialPaper2(String(row.paper_2_script_count ?? 0));
+    setSpecialEditError(null);
+  }
+
+  async function saveSpecialAllocation() {
+    if (examId == null || specialEditRow == null) return;
+    const paper1 = Math.max(0, Number.parseInt(specialPaper1, 10) || 0);
+    const paper2 = Math.max(0, Number.parseInt(specialPaper2, 10) || 0);
+    if (paper1 === 0 && paper2 === 0) {
+      setSpecialEditError("Enter at least one paper allocation greater than 0.");
+      return;
+    }
+    setSpecialEditBusy(true);
+    setSpecialEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, specialEditRow.id, {
+        description: specialDescription.trim() || null,
+        paper_1_script_count: paper1,
+        paper_2_script_count: paper2,
+      });
+      setSpecialEditRow(null);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setSpecialEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSpecialEditBusy(false);
+    }
+  }
+
+  async function handleUploadFile(file: File) {
+    if (examId == null) return;
+    setUploadBusy(true);
+    setUploadError(null);
+    setUploadResult(null);
+    try {
+      const result = await uploadExaminerPayoutOverrideBulk(examId, file);
+      setUploadResult(result);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  function handleSearchChange(q: string) {
+    setSearchQuery(q);
+    setPage(1);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      loadedQueryKeyRef.current = "";
+      syncUrl({ search: q, page: 1 });
+    }, 300);
+  }
+
+  const pagePayoutTotal = useMemo(() => sumPayoutViewOnPage(items, payoutView), [items, payoutView]);
+
+  const tableMeta = busy
+    ? "Updating special examiners…"
+    : `${total.toLocaleString()} special examiner${total === 1 ? "" : "s"} · ${formatGhsAmount(String(pagePayoutTotal))} on this page`;
+
+  return (
+    <div className={officialAccountsPageLayoutClass}>
+      <div className={officialAccountsPanelFillClass}>
+        <ExaminerPayoutsCommandBar
+          exams={exams}
+          examId={examId}
+          onExamChange={(id) => {
+            setExamId(id);
+            setPage(1);
+            loadedQueryKeyRef.current = "";
+            syncUrl({ examId: id, page: 1 });
+          }}
+          formatExamLabel={formatExamLabel}
+          roleFilter={roleFilter}
+          onRoleChange={(role) => {
+            setRoleFilter(role);
+            setPage(1);
+            loadedQueryKeyRef.current = "";
+            syncUrl({ role, page: 1 });
+          }}
+          regionFilter={regionFilter}
+          onRegionChange={(region) => {
+            setRegionFilter(region);
+            setPage(1);
+            loadedQueryKeyRef.current = "";
+            syncUrl({ region, page: 1 });
+          }}
+          bySubjectHref={null}
+          exportOptions={exportOptions}
+          exportDisabled={exportDisabled}
+          exportDisabledReason={exportDisabledReason}
+          exportBusy={exportBusy}
+          exportSectionId={SECTION_ID}
+          onExport={(key) => void onExport(key)}
+          onUpload={() => {
+            setUploadOpen(true);
+            setUploadError(null);
+            setUploadResult(null);
+          }}
+          uploadDisabled={busy || uploadBusy || examId == null}
+        />
+
+        {loadError ? (
+          <div
+            className="mx-4 mt-4 flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-3 text-sm text-destructive sm:mx-5 sm:flex-row sm:items-center sm:justify-between"
+            role="alert"
+          >
+            <p>{loadError}</p>
+            {examId != null ? (
+              <button
+                type="button"
+                className={officialAccountsBtnSecondary}
+                onClick={() => void fetchRows(page, true)}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <section className={officialAccountsTabPanelClass}>
+          <div className={officialAccountsTableToolbarClass}>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <input
+                id="examiner-special-search"
+                type="search"
+                className={officialAccountsTableSearchClass}
+                placeholder="Search name…"
+                aria-label="Search special examiners"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                disabled={busy && items.length === 0}
+              />
+              <ExaminerPayoutViewSegmented
+                value={payoutView}
+                onChange={(view) => {
+                  setPayoutView(view);
+                  syncUrl({ payoutView: view });
+                }}
+                disabled={busy && items.length === 0}
+              />
+            </div>
+            <p className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-live="polite">
+              {tableMeta}
+            </p>
+          </div>
+
+          <ExaminerSpecialAccountsTable
+            items={items}
+            busy={busy}
+            emptyLabel="No special examiners for this examination."
+            hasActiveFilters={!!roleFilter || !!regionFilter || !!searchQuery.trim()}
+            page={page}
+            total={total}
+            pageSize={pageSize}
+            pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+            onPageChange={(p) => {
+              setPage(p);
+              loadedQueryKeyRef.current = "";
+              syncUrl({ page: p });
+            }}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+              loadedQueryKeyRef.current = "";
+              syncUrl({ pageSize: size, page: 1 });
+            }}
+            payoutView={payoutView}
+            onEditAllocation={openSpecialAllocationEdit}
+            onEditCeReportCount={openCeReportEdit}
+            onEditPayoutAdjustments={openAdjustmentsEdit}
+          />
+        </section>
+      </div>
+
+      <ExaminerSpecialAllocationModal
+        row={specialEditRow}
+        description={specialDescription}
+        paper1={specialPaper1}
+        paper2={specialPaper2}
+        busy={specialEditBusy}
+        error={specialEditError}
+        onDescriptionChange={setSpecialDescription}
+        onPaper1Change={setSpecialPaper1}
+        onPaper2Change={setSpecialPaper2}
+        onClose={() => {
+          if (!specialEditBusy) setSpecialEditRow(null);
+        }}
+        onSubmit={() => void saveSpecialAllocation()}
+      />
+      <ExaminerPayoutOverrideUploadModal
+        open={uploadOpen}
+        busy={uploadBusy}
+        error={uploadError}
+        result={uploadResult}
+        onClose={() => {
+          if (!uploadBusy) setUploadOpen(false);
+        }}
+        onDownloadTemplate={async () => {
+          if (examId == null) return;
+          try {
+            await downloadExaminerPayoutOverrideBulkTemplate(examId);
+          } catch (err) {
+            setUploadError(err instanceof Error ? err.message : "Template download failed");
+          }
+        }}
+        onFileSelected={(file) => void handleUploadFile(file)}
+      />
+      <ExaminerCeReportCountModal
+        open={ceEditRow != null}
+        row={ceEditRow}
+        busy={ceEditBusy}
+        error={ceEditError}
+        value={ceReportCount}
+        onClose={() => {
+          if (!ceEditBusy) setCeEditRow(null);
+        }}
+        onSubmit={() => void saveCeReportCount()}
+        onValueChange={setCeReportCount}
+      />
+      <ExaminerPayoutAdjustmentsModal
+        open={adjEditRow != null}
+        row={adjEditRow}
+        busy={adjEditBusy}
+        error={adjEditError}
+        lines={adjLines}
+        onClose={() => {
+          if (!adjEditBusy) setAdjEditRow(null);
+        }}
+        onSubmit={() => void saveAdjustments()}
+        onLinesChange={setAdjLines}
+      />
+      <ExaminerAllowanceExportFieldsDialog
+        open={excelExportOpen}
+        onClose={() => {
+          if (!exportBusy) setExcelExportOpen(false);
+        }}
+        busy={exportBusy === `${SECTION_ID}:excel`}
+        scope={downloadScope}
+        onConfirm={(fields) => void onConfirmExcelExport(fields)}
+      />
+      <ExaminerAllowanceDownloadConfirmDialog
+        open={downloadConfirmKind != null}
+        kind={downloadConfirmKind}
+        scope={downloadScope}
+        busy={
+          downloadConfirmKind != null && exportBusy === `${SECTION_ID}:${downloadConfirmKind}`
+        }
+        onClose={() => {
+          if (!exportBusy) setDownloadConfirmKind(null);
+        }}
+        onConfirm={() => {
+          if (downloadConfirmKind) void runBogDownload(downloadConfirmKind);
+        }}
+      />
+    </div>
+  );
+}
+
+export default function ExaminerSpecialPage() {
+  return (
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "FINANCE_OFFICER"]} loginHref="/login/admin">
+      <ExaminerSpecialContent />
+    </RoleGuard>
+  );
+}

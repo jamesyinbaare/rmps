@@ -233,9 +233,11 @@ async def assign_reference_code_to_examiner(
     if examiner.reference_code:
         return cast(str, examiner.reference_code)
     await ensure_default_region_groups(session, int(examiner.examination_id))
-    if subject_id is None and "subjects" in sa_inspect(examiner).unloaded:
+    if subject_id is not None:
+        return await _set_reference_code_on_examiner(session, examiner, subject_id=subject_id)
+    if "subjects" in sa_inspect(examiner).unloaded:
         await session.refresh(examiner, attribute_names=["subjects"])
-    return await _set_reference_code_on_examiner(session, examiner, subject_id=subject_id)
+    return await _set_reference_code_on_examiner(session, examiner, subject_id=None)
 
 
 async def reference_code_stats(session: AsyncSession, examination_id: int) -> ReferenceCodeStats:

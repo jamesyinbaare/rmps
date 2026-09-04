@@ -7,11 +7,11 @@ import { ExaminerAllowanceBreakdownCell } from "@/components/examiner-allowance-
 import { ExaminerAccountsMobileCard } from "@/components/examiner-accounts/examiner-accounts-mobile-card";
 import {
   ExaminerBankAccountCell,
-  ExaminerIdentityCell,
   ExaminerScriptsCell,
   examinerRowIncompleteClass,
   isBankAccountIncomplete,
 } from "@/components/examiner-accounts/examiner-accounts-table-cells";
+import { ExaminerPayoutSideCell } from "@/components/examiner-accounts/examiner-payout-side-cell";
 import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import { displayBankCode, type AdminExaminerAllowanceRow, type ExaminerTypeApi } from "@/lib/api";
@@ -53,6 +53,8 @@ type Props = {
   payoutView?: ExaminerPayoutView;
   columnVisibility: VisibilityState;
   layout?: ExaminerAccountsTableLayout;
+  onEditCeReportCount?: (row: AdminExaminerAllowanceRow) => void;
+  onEditPayoutAdjustments?: (row: AdminExaminerAllowanceRow) => void;
 };
 
 const cellPad = "px-3 py-2 align-top";
@@ -106,6 +108,8 @@ function TableSkeleton({ colSpan, rows = 6 }: { colSpan: number; rows?: number }
   );
 }
 
+
+
 export function ExaminerAccountsTable({
   items,
   busy,
@@ -122,6 +126,8 @@ export function ExaminerAccountsTable({
   payoutView = "all",
   columnVisibility,
   layout = "composite",
+  onEditCeReportCount,
+  onEditPayoutAdjustments,
 }: Props) {
   const [sortKey, setSortKey] = useState<ExaminerAccountsSortKey>("full_name");
   const [sortDir, setSortDir] = useState<ExaminerAccountsSortDir>("asc");
@@ -186,12 +192,14 @@ export function ExaminerAccountsTable({
           examinerRowIncompleteClass(row),
         )}
       >
-        <td className={cn(cellPad, "sticky left-0 z-[1] min-w-[12rem] max-w-[18rem]", rowStickyBg)}>
-          <ExaminerIdentityCell
+        <td className={cn(cellPad, "sticky left-0 z-[1] min-w-[14rem] max-w-[20rem]", rowStickyBg)}>
+          <ExaminerPayoutSideCell
             row={row}
             showRole={showRole}
             showRegion={showRegion}
             showPhoneInSubline={!showPhone}
+            onEditCeReportCount={onEditCeReportCount}
+            onEditPayoutAdjustments={onEditPayoutAdjustments}
           />
         </td>
         {showReferenceCode ? (
@@ -331,7 +339,7 @@ export function ExaminerAccountsTable({
               <tr className="border-b border-border text-left">
                 {useComposite ? (
                   <>
-                    <th className="sticky left-0 z-20 min-w-[12rem] bg-muted/95 px-3 py-1.5 font-medium text-muted-foreground">
+                    <th className="sticky left-0 z-20 min-w-[14rem] bg-muted/95 px-3 py-1.5 font-medium text-muted-foreground">
                       <SortableHeader
                         label="Examiner"
                         sortKey="full_name"

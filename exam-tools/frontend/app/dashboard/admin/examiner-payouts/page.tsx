@@ -8,6 +8,12 @@ import { ExaminerAllowanceDownloadConfirmDialog } from "@/components/examiner-ac
 import { ExaminerAllowanceExportFieldsDialog } from "@/components/examiner-accounts/examiner-allowance-export-fields-dialog";
 import { ExaminerPayoutViewSegmented } from "@/components/examiner-accounts/examiner-payout-view-segmented";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
+import { ExaminerCeReportCountModal } from "@/components/examiner-accounts/examiner-ce-report-count-modal";
+import {
+  draftsFromAdjustmentRows,
+  ExaminerPayoutAdjustmentsModal,
+  type PayoutAdjustmentDraft,
+} from "@/components/examiner-accounts/examiner-payout-adjustments-modal";
 import { ExaminerPayoutsCommandBar } from "@/components/examiner-accounts/examiner-payouts-command-bar";
 import { RoleGuard } from "@/components/role-guard";
 import {
@@ -15,6 +21,7 @@ import {
   downloadAdminExaminerAllowancesBogExport,
   downloadAdminExaminerAllowancesExport,
   listAdminExaminerAllowances,
+  updateExaminerPayoutSettings,
   type AdminExaminerAllowanceRow,
   type Examination,
 } from "@/lib/api";
@@ -96,6 +103,14 @@ function ExaminerPayoutsContent() {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
   );
+  const [ceEditRow, setCeEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [ceReportCount, setCeReportCount] = useState("1");
+  const [ceEditBusy, setCeEditBusy] = useState(false);
+  const [ceEditError, setCeEditError] = useState<string | null>(null);
+  const [adjEditRow, setAdjEditRow] = useState<AdminExaminerAllowanceRow | null>(null);
+  const [adjLines, setAdjLines] = useState<PayoutAdjustmentDraft[]>([]);
+  const [adjEditBusy, setAdjEditBusy] = useState(false);
+  const [adjEditError, setAdjEditError] = useState<string | null>(null);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,6 +208,7 @@ function ExaminerPayoutsContent() {
           role: roleFilter || null,
           region: regionFilter || null,
           search: searchQuery.trim() || null,
+          source: "regular",
           skip: (targetPage - 1) * pageSize,
           limit: pageSize,
         });
@@ -280,6 +296,7 @@ function ExaminerPayoutsContent() {
         role: roleFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
+        source: "regular",
         payout_mode: mode,
         filename: `${base}_${bogExportFilenameSuffix(mode)}.xlsx`,
       });
@@ -301,6 +318,7 @@ function ExaminerPayoutsContent() {
         role: roleFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
+        source: "regular",
         include_fields: includeFields,
         filename: `${base}_examiner_allowances.xlsx`,
       });
@@ -309,6 +327,78 @@ function ExaminerPayoutsContent() {
       setLoadError(e instanceof Error ? e.message : "Export failed.");
     } finally {
       setExportBusy(null);
+    }
+  }
+
+  function openCeReportEdit(row: AdminExaminerAllowanceRow) {
+    setCeEditRow(row);
+    setCeReportCount(String(row.chief_examiners_report_count ?? 1));
+    setCeEditError(null);
+  }
+
+  async function saveCeReportCount() {
+    if (examId == null || ceEditRow == null) return;
+    const count = Math.max(0, Number.parseInt(ceReportCount, 10) || 0);
+    setCeEditBusy(true);
+    setCeEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, ceEditRow.id, {
+        chief_examiners_report_count: count,
+      });
+      setCeEditRow(null);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setCeEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setCeEditBusy(false);
+    }
+  }
+
+  function openAdjustmentsEdit(row: AdminExaminerAllowanceRow) {
+    setAdjEditRow(row);
+    setAdjLines(draftsFromAdjustmentRows(row.payout_adjustments));
+    setAdjEditError(null);
+  }
+
+  async function saveAdjustments() {
+    if (examId == null || adjEditRow == null) return;
+    const payload: {
+      description: string;
+      amount_ghs: string;
+      is_taxable: boolean;
+    }[] = [];
+    for (const line of adjLines) {
+      const description = line.description.trim();
+      const amount = Number.parseFloat(line.amount);
+      if (!description && !line.amount.trim()) continue;
+      if (!description) {
+        setAdjEditError("Each adjustment needs a description.");
+        return;
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setAdjEditError("Each adjustment amount must be greater than 0.");
+        return;
+      }
+      payload.push({
+        description,
+        amount_ghs: amount.toFixed(2),
+        is_taxable: line.is_taxable,
+      });
+    }
+    setAdjEditBusy(true);
+    setAdjEditError(null);
+    try {
+      await updateExaminerPayoutSettings(examId, adjEditRow.id, {
+        payout_adjustments: payload,
+      });
+      setAdjEditRow(null);
+      loadedQueryKeyRef.current = "";
+      await fetchRows(page, true);
+    } catch (e) {
+      setAdjEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setAdjEditBusy(false);
     }
   }
 
@@ -437,10 +527,36 @@ function ExaminerPayoutsContent() {
             }}
             payoutView={payoutView}
             columnVisibility={columnVisibility}
+            onEditCeReportCount={openCeReportEdit}
+            onEditPayoutAdjustments={openAdjustmentsEdit}
           />
         </section>
       </div>
 
+      <ExaminerCeReportCountModal
+        open={ceEditRow != null}
+        row={ceEditRow}
+        busy={ceEditBusy}
+        error={ceEditError}
+        value={ceReportCount}
+        onClose={() => {
+          if (!ceEditBusy) setCeEditRow(null);
+        }}
+        onSubmit={() => void saveCeReportCount()}
+        onValueChange={setCeReportCount}
+      />
+      <ExaminerPayoutAdjustmentsModal
+        open={adjEditRow != null}
+        row={adjEditRow}
+        busy={adjEditBusy}
+        error={adjEditError}
+        lines={adjLines}
+        onClose={() => {
+          if (!adjEditBusy) setAdjEditRow(null);
+        }}
+        onSubmit={() => void saveAdjustments()}
+        onLinesChange={setAdjLines}
+      />
       <ExaminerAllowanceExportFieldsDialog
         open={excelExportOpen}
         onClose={() => {

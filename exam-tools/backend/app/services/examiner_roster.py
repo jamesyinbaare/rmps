@@ -199,6 +199,11 @@ def _canonical_column_map() -> dict[str, str]:
         "phone": "phone_number",
         "phone_number": "phone_number",
         "mobile": "phone_number",
+        "report_count": "report_count",
+        "reports": "report_count",
+        "chief_examiners_report_count": "report_count",
+        "allowance_groups": "allowance_groups",
+        "allowance_group": "allowance_groups",
         "zone": "restrict_zone",
         "allowed_zone": "restrict_zone",
         "source_zone": "restrict_zone",
@@ -269,6 +274,31 @@ async def dataframe_row_to_examiner_fields(
         raise ValueError("Phone number is required")
     phone_number = parse_inspector_phone_number(phone_raw)
     gender = parse_gender_cell(row.get("gender"))
+    from app.services.examiner_report_count import (
+        default_report_count,
+        parse_report_count_cell,
+        parse_reporting_allowance_flag,
+        validate_report_count_for_type,
+    )
+
+    report_count = parse_report_count_cell(
+        row.get("report_count"),
+        default=default_report_count(et),
+    )
+    reporting_allowance_enabled = parse_reporting_allowance_flag(row.get("reporting_allowance"))
+    if report_count > 0:
+        reporting_allowance_enabled = True
+    validate_report_count_for_type(
+        report_count,
+        et,
+        reporting_allowance_enabled=reporting_allowance_enabled,
+    )
+    num_days = None
+    raw_days = row.get("num_days")
+    if raw_days is not None and not (isinstance(raw_days, float) and pd.isna(raw_days)) and str(raw_days).strip():
+        num_days = int(str(raw_days).strip())
+        if num_days < 1:
+            raise ValueError("num_days must be at least 1")
     return {
         "name": str(name).strip(),
         "phone_number": phone_number,
@@ -277,4 +307,7 @@ async def dataframe_row_to_examiner_fields(
         "allowed_region": allowed_region,
         "restrict_zone": restrict,
         "gender": gender,
+        "report_count": report_count,
+        "reporting_allowance_enabled": reporting_allowance_enabled,
+        "num_days": num_days,
     }

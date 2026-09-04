@@ -332,6 +332,9 @@ async def _finalize_invitation_acceptance(
         examination_id=int(inv.examination_id),
         subject_id=int(inv.subject_id),
     )
+    from app.services.examiner_allowance_groups import ensure_general_membership
+
+    await ensure_general_membership(session, examiner)
 
     now = datetime.utcnow()
     inv.status = ExaminerInvitationStatus.ACCEPTED

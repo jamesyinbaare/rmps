@@ -9,6 +9,8 @@ import type {
   ExaminerTypeApi,
   ExaminationExaminerMarkingRatesResponse,
   ExaminationExaminerRoleAllowanceRatesResponse,
+  ExaminationExaminerSittingAllowanceRatesResponse,
+  ExaminationExaminerDefaultDaysResponse,
   ExaminationExaminerTravelRatesResponse,
   SubjectTypeEnum,
 } from "@/lib/api";
@@ -36,16 +38,141 @@ export const EXAMINER_ALLOWANCE_TYPE_OPTIONS: { value: ExaminerAllowanceTypeApi;
   { value: "internal_commuting", label: "Internal Commuting" },
 ];
 
-export const EXAMINER_MARKING_TAB = "marking" as const;
-export const EXAMINER_TRAVEL_TAB = "travel_and_transport" as const;
+/** Short column headers for the role × allowance matrix. */
+export const EXAMINER_ALLOWANCE_TYPE_SHORT_LABELS: Record<ExaminerAllowanceTypeApi, string> = {
+  responsibility_allowance: "Responsibility",
+  inconvenience_allowance: "Inconvenience",
+  chief_examiners_report: "CE report",
+  vetting_of_scripts: "Vetting",
+  internal_commuting: "Commuting",
+};
 
-export type ExaminerRatesTab =
-  | ExaminerAllowanceTypeApi
-  | typeof EXAMINER_MARKING_TAB
-  | typeof EXAMINER_TRAVEL_TAB;
+export const EXAMINER_RATES_SECTION_ROLE = "role_allowances" as const;
+export const EXAMINER_RATES_SECTION_SITTING = "sitting" as const;
+export const EXAMINER_RATES_SECTION_MARKING = "marking" as const;
+export const EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY = "roster_eligibility" as const;
+export const EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS = "allowance_groups" as const;
+export const EXAMINER_RATES_SECTION_TRAVEL = "travel" as const;
+
+export type ExaminerRatesSectionId =
+  | typeof EXAMINER_RATES_SECTION_ROLE
+  | typeof EXAMINER_RATES_SECTION_SITTING
+  | typeof EXAMINER_RATES_SECTION_MARKING
+  | typeof EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY
+  | typeof EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS
+  | typeof EXAMINER_RATES_SECTION_TRAVEL;
+
+/** @deprecated Use ExaminerRatesSectionId */
+export type ExaminerRatesTab = ExaminerRatesSectionId;
+
+export const EXAMINER_MARKING_TAB = EXAMINER_RATES_SECTION_MARKING;
+export const EXAMINER_TRAVEL_TAB = EXAMINER_RATES_SECTION_TRAVEL;
+export const EXAMINER_SITTING_TAB = EXAMINER_RATES_SECTION_SITTING;
+export const EXAMINER_ELIGIBILITY_TAB = EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY;
+export const EXAMINER_ALLOWANCE_GROUPS_TAB = EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS;
+
+export type ExaminerRatesNavGroup = {
+  id: "amounts" | "who_qualifies" | "travel";
+  label: string;
+  items: {
+    id: ExaminerRatesSectionId;
+    label: string;
+    description: string;
+  }[];
+};
+
+export const EXAMINER_RATES_NAV_GROUPS: ExaminerRatesNavGroup[] = [
+  {
+    id: "amounts",
+    label: "Amounts",
+    items: [
+      {
+        id: EXAMINER_RATES_SECTION_ROLE,
+        label: "Role allowances",
+        description: "Flat amounts by examiner role",
+      },
+      {
+        id: EXAMINER_RATES_SECTION_SITTING,
+        label: "Sitting",
+        description: "Daily rate × days",
+      },
+      {
+        id: EXAMINER_RATES_SECTION_MARKING,
+        label: "Marking",
+        description: "Per-script rates by subject",
+      },
+    ],
+  },
+  {
+    id: "who_qualifies",
+    label: "Who qualifies",
+    items: [
+      {
+        id: EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY,
+        label: "By roster source",
+        description: "Manual, invitation, or special",
+      },
+      {
+        id: EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS,
+        label: "By allowance group",
+        description: "General and custom groups",
+      },
+    ],
+  },
+  {
+    id: "travel",
+    label: "Travel",
+    items: [
+      {
+        id: EXAMINER_RATES_SECTION_TRAVEL,
+        label: "T & T",
+        description: "Zones, regions, and role factors",
+      },
+    ],
+  },
+];
+
+export function examinerRatesSectionMeta(section: ExaminerRatesSectionId): {
+  groupLabel: string;
+  label: string;
+  description: string;
+} {
+  for (const group of EXAMINER_RATES_NAV_GROUPS) {
+    const item = group.items.find((i) => i.id === section);
+    if (item) {
+      return { groupLabel: group.label, label: item.label, description: item.description };
+    }
+  }
+  return { groupLabel: "", label: section, description: "" };
+}
+
+export const ROSTER_ALLOWANCE_ELIGIBILITY_KEYS = [
+  "responsibility",
+  "inconvenience",
+  "chief_examiners_report",
+  "vetting",
+  "internal_commuting",
+  "sitting",
+  "marking",
+  "travel",
+] as const;
+
+export const ROSTER_ALLOWANCE_ELIGIBILITY_LABELS: Record<(typeof ROSTER_ALLOWANCE_ELIGIBILITY_KEYS)[number], string> = {
+  responsibility: "Responsibility",
+  inconvenience: "Inconvenience",
+  chief_examiners_report: "Chief Examiner's Report",
+  vetting: "Vetting",
+  internal_commuting: "Commuting",
+  sitting: "Sitting",
+  marking: "Marking",
+  travel: "T & T",
+};
 
 export type RoleRateDraft = Record<string, string>;
 export type MarkingRateDraft = Record<string, string>;
+export type MarkingDefaultsDraft = { paper1: string; paper2: string };
+export type SittingRateDraft = Record<string, string>;
+export type DefaultDaysDraft = Record<string, string>;
 export type TravelRateDraft = Record<string, string>;
 export type TravelZoneDraft = { id: string; name: string; regions: string[] }[];
 export type TravelRoleFactorDraft = Record<string, string>;
@@ -149,10 +276,35 @@ export function roleRatesFromApi(data: ExaminationExaminerRoleAllowanceRatesResp
   return draft;
 }
 
-export function markingRatesFromApi(data: ExaminationExaminerMarkingRatesResponse): MarkingRateDraft {
+export function markingRatesFromApi(data: ExaminationExaminerMarkingRatesResponse): {
+  rates: MarkingRateDraft;
+  defaults: MarkingDefaultsDraft;
+} {
   const draft: MarkingRateDraft = {};
   for (const row of data.items) {
     draft[markingCellKey(row.subject_id, row.paper_number)] = row.rate_per_script_ghs ?? "";
+  }
+  return {
+    rates: draft,
+    defaults: {
+      paper1: data.default_rate_paper_1_ghs ?? "",
+      paper2: data.default_rate_paper_2_ghs ?? "",
+    },
+  };
+}
+
+export function sittingRatesFromApi(data: ExaminationExaminerSittingAllowanceRatesResponse): SittingRateDraft {
+  const draft: SittingRateDraft = {};
+  for (const row of data.items) {
+    draft[row.examiner_type] = row.daily_rate_ghs ?? "";
+  }
+  return draft;
+}
+
+export function defaultDaysFromApi(data: ExaminationExaminerDefaultDaysResponse): DefaultDaysDraft {
+  const draft: DefaultDaysDraft = {};
+  for (const row of data.items) {
+    draft[row.examiner_type] = row.default_days != null ? String(row.default_days) : "";
   }
   return draft;
 }
@@ -213,6 +365,9 @@ export function serializeExaminerRatesDraft(
   travelRates: TravelRateDraft,
   travelZones: TravelZoneDraft,
   travelRoleFactors: TravelRoleFactorDraft,
+  markingDefaults?: MarkingDefaultsDraft,
+  sittingRates?: SittingRateDraft,
+  defaultDays?: DefaultDaysDraft,
 ): string {
   const normalizedRole: RoleRateDraft = {};
   for (const [key, raw] of Object.entries(roleRates)) {
@@ -238,6 +393,9 @@ export function serializeExaminerRatesDraft(
   return JSON.stringify({
     role: normalizedRole,
     marking: normalizedMarking,
+    markingDefaults: markingDefaults ?? { paper1: "", paper2: "" },
+    sittingRates: sittingRates ?? {},
+    defaultDays: defaultDays ?? {},
     travel: normalizedTravel,
     travelZones: normalizedZones,
     travelFactors: normalizedFactors,
@@ -356,8 +514,17 @@ export function buildRoleRatesSavePayload(roleRates: RoleRateDraft): {
   return { items, roleErrors };
 }
 
-export function buildMarkingRatesSavePayload(markingRates: MarkingRateDraft): {
-  items: ExaminerMarkingRateRow[];
+export function buildMarkingRatesSavePayload(
+  markingRates: MarkingRateDraft,
+  markingDefaults?: MarkingDefaultsDraft,
+  applyDefaultsToUnset?: boolean,
+): {
+  payload: {
+    items: ExaminerMarkingRateRow[];
+    default_rate_paper_1_ghs?: string | null;
+    default_rate_paper_2_ghs?: string | null;
+    apply_defaults_to_unset?: boolean;
+  };
   markingErrors: ExaminerRatesCellErrors;
 } {
   const markingErrors: ExaminerRatesCellErrors = {};
@@ -375,7 +542,50 @@ export function buildMarkingRatesSavePayload(markingRates: MarkingRateDraft): {
       rate_per_script_ghs: parsed.value,
     });
   }
-  return { items, markingErrors };
+  const p1 = markingDefaults ? parseOptionalGhsField(markingDefaults.paper1) : { value: null as string | null };
+  const p2 = markingDefaults ? parseOptionalGhsField(markingDefaults.paper2) : { value: null as string | null };
+  if (p1.error) markingErrors.__default_paper_1__ = p1.error;
+  if (p2.error) markingErrors.__default_paper_2__ = p2.error;
+  return {
+    payload: {
+      items,
+      default_rate_paper_1_ghs: p1.value,
+      default_rate_paper_2_ghs: p2.value,
+      apply_defaults_to_unset: applyDefaultsToUnset,
+    },
+    markingErrors,
+  };
+}
+
+export function buildSittingRatesSavePayload(sittingRates: SittingRateDraft): {
+  items: { examiner_type: ExaminerTypeApi; daily_rate_ghs: string | null }[];
+  sittingErrors: ExaminerRatesCellErrors;
+} {
+  const sittingErrors: ExaminerRatesCellErrors = {};
+  const items = EXAMINER_ROLE_TYPES.map((examiner_type) => {
+    const parsed = parseOptionalGhsField(sittingRates[examiner_type] ?? "");
+    if (parsed.error) sittingErrors[examiner_type] = parsed.error;
+    return { examiner_type, daily_rate_ghs: parsed.value };
+  });
+  return { items, sittingErrors };
+}
+
+export function buildDefaultDaysSavePayload(defaultDays: DefaultDaysDraft): {
+  items: { examiner_type: ExaminerTypeApi; default_days: number | null }[];
+  defaultDaysErrors: ExaminerRatesCellErrors;
+} {
+  const defaultDaysErrors: ExaminerRatesCellErrors = {};
+  const items = EXAMINER_ROLE_TYPES.map((examiner_type) => {
+    const raw = (defaultDays[examiner_type] ?? "").trim();
+    if (!raw) return { examiner_type, default_days: null };
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      defaultDaysErrors[examiner_type] = "Enter a whole number at least 1";
+      return { examiner_type, default_days: null };
+    }
+    return { examiner_type, default_days: n };
+  });
+  return { items, defaultDaysErrors };
 }
 
 export function buildTravelRatesSavePayload(

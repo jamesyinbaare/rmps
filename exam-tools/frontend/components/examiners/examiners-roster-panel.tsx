@@ -153,6 +153,9 @@ export function ExaminersRosterPanel({
   const [subjectId, setSubjectId] = useState("");
   const [region, setRegion] = useState("");
   const [gender, setGender] = useState("");
+  const [reportCount, setReportCount] = useState("1");
+  const [reportingAllowanceEnabled, setReportingAllowanceEnabled] = useState(false);
+  const [numDays, setNumDays] = useState("");
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -459,6 +462,9 @@ export function ExaminersRosterPanel({
     setSubjectId("");
     setRegion("");
     setGender("");
+    setReportCount("0");
+    setReportingAllowanceEnabled(false);
+    setNumDays("");
     setFormError(null);
     setFormOpen(true);
   }
@@ -471,6 +477,9 @@ export function ExaminersRosterPanel({
     setSubjectId(row.subject_ids[0] != null ? String(row.subject_ids[0]) : "");
     setRegion(row.region?.trim() ?? "");
     setGender(row.gender ?? "");
+    setReportCount(String(row.chief_examiners_report_count ?? 0));
+    setReportingAllowanceEnabled(Boolean(row.reporting_allowance_enabled));
+    setNumDays(row.num_days != null ? String(row.num_days) : "");
     setFormError(null);
     setFormOpen(true);
   }
@@ -495,6 +504,8 @@ export function ExaminersRosterPanel({
     setBusy(true);
     setFormError(null);
     try {
+      const parsedReportCount = Math.max(0, Number.parseInt(reportCount, 10) || 0);
+      const parsedDays = numDays.trim() ? Math.max(1, Number.parseInt(numDays, 10) || 1) : null;
       if (editing) {
         await updateExaminationExaminer(examId, editing.id, {
           name: name.trim(),
@@ -503,6 +514,9 @@ export function ExaminersRosterPanel({
           subject_ids: [sid],
           region: region.trim(),
           gender: gender.trim() || null,
+          chief_examiners_report_count: parsedReportCount,
+          reporting_allowance_enabled: parsedReportCount > 0,
+          num_days: parsedDays,
         });
         setActionMessage("Examiner updated.");
       } else {
@@ -925,6 +939,9 @@ export function ExaminersRosterPanel({
         subjectId={subjectId}
         region={region}
         gender={gender}
+        reportCount={reportCount}
+        reportingAllowanceEnabled={reportingAllowanceEnabled}
+        numDays={numDays}
         subjectOptions={formSubjectOptions}
         regionOptions={regionOptions}
         onClose={closeForm}
@@ -935,6 +952,9 @@ export function ExaminersRosterPanel({
         onSubjectIdChange={setSubjectId}
         onRegionChange={setRegion}
         onGenderChange={setGender}
+        onReportCountChange={setReportCount}
+        onReportingAllowanceEnabledChange={setReportingAllowanceEnabled}
+        onNumDaysChange={setNumDays}
       />
 
       <RosterBulkUploadModal

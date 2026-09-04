@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, FileText } from "lucide-react";
+import { BookOpen, FileText, Upload } from "lucide-react";
 
 import { CommandBarBorderField } from "@/components/command-bar-border-field";
 import type { ExportMenuOption } from "@/components/official-accounts-export-menu";
@@ -48,6 +48,7 @@ const toolbarRowClass =
 type SubjectOption = { value: string; label: string };
 type CohortOption = { value: string; label: string };
 type RegionOption = { value: string; label: string };
+export type ExaminerSourceFilter = "all" | "regular";
 
 type Props = {
   exams: Examination[];
@@ -81,6 +82,10 @@ type Props = {
   exportBusy: string | null;
   onExport: (key: string) => void;
   paperSheetsHref?: string | null;
+  sourceFilter: ExaminerSourceFilter;
+  onSourceFilterChange: (value: ExaminerSourceFilter) => void;
+  onUpload?: () => void;
+  uploadDisabled?: boolean;
 };
 
 export function ExaminerSubjectSummaryCommandBar({
@@ -115,6 +120,10 @@ export function ExaminerSubjectSummaryCommandBar({
   exportBusy,
   onExport,
   paperSheetsHref,
+  sourceFilter,
+  onSourceFilterChange,
+  onUpload,
+  uploadDisabled,
 }: Props) {
   const exportBusyKey = exportBusy?.startsWith(`${SECTION_ID}:`)
     ? exportBusy.split(":")[1]
@@ -170,6 +179,21 @@ export function ExaminerSubjectSummaryCommandBar({
                     {opt.label}
                   </option>
                 ))}
+              </select>
+
+              <select
+                id={`${SECTION_ID}-source`}
+                aria-label="Examiner source"
+                className={cn(
+                  inputGroupSelectClass,
+                  "w-[22%] min-w-24 max-w-36 shrink-0 border-r border-input-border",
+                )}
+                value={sourceFilter}
+                disabled={filtersDisabled}
+                onChange={(e) => onSourceFilterChange(e.target.value as ExaminerSourceFilter)}
+              >
+                <option value="all">All</option>
+                <option value="regular">Regular</option>
               </select>
 
               <div className="min-w-0 flex-1 overflow-hidden">
@@ -252,6 +276,18 @@ export function ExaminerSubjectSummaryCommandBar({
           role="toolbar"
           aria-label="Subject summary actions"
         >
+          {onUpload ? (
+            <button
+              type="button"
+              className={cn(allAccountsBtnClass, "bg-background text-foreground border-border")}
+              aria-label="Upload special examiners"
+              title="Upload special examiners"
+              disabled={!canLoad || uploadDisabled}
+              onClick={onUpload}
+            >
+              <Upload className="size-4 shrink-0" aria-hidden />
+            </button>
+          ) : null}
           <Link
             href={allAccountsHref}
             className={cn(

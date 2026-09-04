@@ -17,6 +17,8 @@ class ExaminerTypeSchema(str, Enum):
 class ExaminerRosterSourceSchema(str, Enum):
     manual = "manual"
     invitation = "invitation"
+    special = "special"
+    payout_override = "special"
 
 
 class AllocationRunStatusSchema(str, Enum):
@@ -92,6 +94,7 @@ class AllocationResponse(BaseModel):
     enable_post_rebalance: bool
     rebalance_tolerance_booklets: int = Field(ge=0)
     created_at: datetime
+    chief_examiners_report_count: int = 1
     updated_at: datetime
 
     model_config = {"from_attributes": True}
@@ -170,6 +173,9 @@ class ExaminerUpdate(BaseModel):
     subject_ids: list[int] | None = Field(default=None, min_length=1, max_length=1)
     deviation_weight: float | None = Field(default=None, gt=0)
     gender: str | None = None
+    chief_examiners_report_count: int | None = Field(default=None, ge=0)
+    reporting_allowance_enabled: bool | None = None
+    num_days: int | None = Field(default=None, ge=1)
 
 
 class ExaminerResponse(BaseModel):
@@ -195,6 +201,9 @@ class ExaminerResponse(BaseModel):
     roster_source: ExaminerRosterSourceSchema
     invitation_id: UUID | None = None
     invitation_status: str | None = None
+    chief_examiners_report_count: int = 1
+    reporting_allowance_enabled: bool = False
+    num_days: int | None = None
     created_at: datetime
     updated_at: datetime
 

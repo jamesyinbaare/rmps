@@ -10,6 +10,17 @@ from app.schemas.bank_branch import normalize_bank_code_for_api
 from app.schemas.examination_examiner_allowance_rate import SubjectMarkingBreakdownRow
 
 
+class ExaminerPayoutAdjustmentRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID | None = None
+    description: str
+    amount_ghs: Decimal
+    is_taxable: bool
+    tax_ghs: Decimal
+    net_ghs: Decimal
+
+
 class AdminExaminerAllowanceRow(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -28,11 +39,23 @@ class AdminExaminerAllowanceRow(BaseModel):
     branch_name: str | None = None
     account_number: str | None = None
     phone_number: str | None = None
+    roster_source: str
+    chief_examiners_report_count: int = 1
+    reporting_allowance_enabled: bool = False
+    num_days: int | None = None
+    payout_description: str | None = None
+    paper_1_script_count: int = 0
+    paper_2_script_count: int = 0
     responsibility_allowance_ghs: Decimal
     inconvenience_allowance_ghs: Decimal
     chief_examiners_report_ghs: Decimal
     vetting_of_scripts_ghs: Decimal
     internal_commuting_ghs: Decimal
+    sitting_allowance_ghs: Decimal
+    sitting_daily_rate_ghs: Decimal
+    sitting_num_days: int = 0
+    sitting_withholding_tax_ghs: Decimal
+    sitting_net_ghs: Decimal
     marking_allowance_ghs: Decimal
     travel_base_ghs: Decimal
     travel_zone_name: str | None = None
@@ -47,6 +70,12 @@ class AdminExaminerAllowanceRow(BaseModel):
     payout_allowances_marking_ghs: Decimal
     total_payable_ghs: Decimal
     subject_breakdowns: list[SubjectMarkingBreakdownRow]
+    allowance_group_ids: list[UUID] = []
+    allowance_group_names: list[str] = []
+    payout_adjustments: list[ExaminerPayoutAdjustmentRow] = []
+    adjustments_gross_ghs: Decimal = Decimal("0")
+    adjustments_tax_ghs: Decimal = Decimal("0")
+    adjustments_net_ghs: Decimal = Decimal("0")
     created_at: datetime
     updated_at: datetime
 

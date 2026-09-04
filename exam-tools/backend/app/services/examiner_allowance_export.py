@@ -12,17 +12,22 @@ from openpyxl.utils import get_column_letter
 from app.models import Examiner, Examination, ExaminerType
 from app.schemas.admin_examiner_allowance import AdminExaminerAllowanceRow
 from app.services.exam_official_export import examination_label, safe_filename_part
-from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiners_to_admin_rows
-from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_compensation import (
+    DefaultDaysMap,
+    MarkingDefaults,
     MarkingRateMap,
     RoleAllowanceMap,
+    SittingRateMap,
     TravelRateMap,
     TravelRoleFactorMap,
     TravelZoneMap,
     TravelZoneNameMap,
 )
+from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiners_to_admin_rows
+from app.services.examiner_allowance_groups import ExaminerEnabledKeysMap
+from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_invitation import _examiner_type_label
+from app.services.examiner_roster_allowance_eligibility import EligibilityMap
 
 # Core columns always included (order matters).
 CORE_HEADER_LABELS = [
@@ -44,9 +49,16 @@ CORE_HEADER_LABELS = [
     "Vetting tax (GHS)",
     "Vetting net (GHS)",
     "Internal Commuting (GHS)",
+    "Sitting allowance (GHS)",
+    "Sitting tax (GHS)",
+    "Sitting net (GHS)",
     "Marking (GHS)",
     "Marking tax (GHS)",
     "Marking net (GHS)",
+    "Adjustments (GHS)",
+    "Adjustments tax (GHS)",
+    "Adjustments net (GHS)",
+    "Adjustments detail",
     "Allocated scripts",
     "T & T (GHS)",
     "Payout T&T & commuting (GHS)",
@@ -76,6 +88,13 @@ CORE_COLUMN_WIDTHS = [
     18,
     14,
     14,
+    18,
+    14,
+    14,
+    14,
+    14,
+    14,
+    36,
     14,
     14,
     18,
@@ -277,9 +296,20 @@ def _row_values(
             item.vetting_withholding_tax_ghs,
             item.vetting_net_ghs,
             item.internal_commuting_ghs,
+            item.sitting_allowance_ghs,
+            item.sitting_withholding_tax_ghs,
+            item.sitting_net_ghs,
             item.marking_allowance_ghs,
             item.marking_withholding_tax_ghs,
             item.marking_net_ghs,
+            item.adjustments_gross_ghs,
+            item.adjustments_tax_ghs,
+            item.adjustments_net_ghs,
+            "; ".join(
+                f"{line.description}: {line.amount_ghs}"
+                f"{' (taxed)' if line.is_taxable else ''}"
+                for line in (item.payout_adjustments or [])
+            ),
             allocated_scripts_for_scope(item, subject_id=subject_id),
         ]
     )
@@ -401,6 +431,14 @@ def examiner_detail_workbook_bytes(
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
     source_modes: MarkingScriptSourceModes | None = None,
+    payout_overrides: dict | None = None,
+    marking_defaults: MarkingDefaults | None = None,
+    sitting_rates: SittingRateMap | None = None,
+    default_days: DefaultDaysMap | None = None,
+    roster_eligibility: EligibilityMap | None = None,
+    group_eligibility: ExaminerEnabledKeysMap | None = None,
+    examiner_custom_groups: dict | None = None,
+    payout_adjustments_by_examiner: dict | None = None,
     *,
     include_fields: frozenset[str] | None = None,
     subject_id: int | None = None,
@@ -416,6 +454,14 @@ def examiner_detail_workbook_bytes(
         travel_role_factors,
         allocated_booklets,
         source_modes,
+        payout_overrides,
+        marking_defaults,
+        sitting_rates,
+        default_days,
+        roster_eligibility,
+        group_eligibility,
+        examiner_custom_groups,
+        payout_adjustments_by_examiner,
     )
     title = f"Examiner allowances — {examination_label(examination)}"
     return detail_workbook_bytes(

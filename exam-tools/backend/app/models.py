@@ -126,6 +126,30 @@ class ExaminerInvitationStatus(enum.Enum):
 class ExaminerRosterSource(enum.Enum):
     MANUAL = "manual"
     INVITATION = "invitation"
+    SPECIAL = "special"
+
+    @classmethod
+    def from_stored(cls, raw: object) -> "ExaminerRosterSource":
+        if isinstance(raw, cls):
+            return raw
+        text = str(raw).strip()
+        if text == "payout_override":
+            return cls.SPECIAL
+        for member in cls:
+            if member.value == text or member.name == text:
+                return member
+        raise ValueError(f"Invalid roster source: {raw!r}")
+
+
+class RosterAllowanceKey(enum.Enum):
+    RESPONSIBILITY = "responsibility"
+    INCONVENIENCE = "inconvenience"
+    CHIEF_EXAMINERS_REPORT = "chief_examiners_report"
+    VETTING = "vetting"
+    INTERNAL_COMMUTING = "internal_commuting"
+    SITTING = "sitting"
+    MARKING = "marking"
+    TRAVEL = "travel"
 
 
 class ExaminerBackgroundOccupationType(enum.Enum):
@@ -471,6 +495,12 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
         order_by="Examiner.name",
+    )
+    allowance_groups = relationship(
+        "ExaminationAllowanceGroup",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="ExaminationAllowanceGroup.name",
     )
     examiner_groups = relationship(
         "ExaminerGroup",
@@ -1720,6 +1750,19 @@ class Examiner(Base):
         ),
         nullable=False,
     )
+    chief_examiners_report_count = Column(Integer, nullable=False, default=1, server_default="1")
+    reporting_allowance_enabled = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        doc="Legacy AE flag; report pay is driven by chief_examiners_report_count.",
+    )
+    num_days = Column(
+        SmallInteger,
+        nullable=True,
+        doc="Sitting allowance days override; null uses examination default for role.",
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -1762,6 +1805,23 @@ class Examiner(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    payout_override = relationship(
+        "ExaminerPayoutOverride",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    payout_adjustments = relationship(
+        "ExaminerPayoutAdjustment",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+        order_by="ExaminerPayoutAdjustment.sort_order, ExaminerPayoutAdjustment.created_at",
+    )
+    allowance_group_memberships = relationship(
+        "ExaminationAllowanceGroupMember",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+    )
     sms_deliveries = relationship(
         "SmsDelivery",
         back_populates="examiner",
@@ -1769,6 +1829,14 @@ class Examiner(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "chief_examiners_report_count >= 0",
+            name="ck_examiner_chief_examiners_report_count",
+        ),
+        CheckConstraint(
+            "num_days IS NULL OR num_days >= 1",
+            name="ck_examiner_num_days",
+        ),
         CheckConstraint(
             "deviation_weight IS NULL OR deviation_weight > 0",
             name="ck_examiner_deviation_weight_positive",
@@ -1782,6 +1850,166 @@ class Examiner(Base):
             "reference_code",
             name="uq_examiners_examination_reference_code",
         ),
+    )
+
+
+class ExaminerPayoutOverride(Base):
+    """Ad-hoc marking payout for special examiners who bypass invitation/allocation."""
+
+    __tablename__ = "examiner_payout_overrides"
+
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    description = Column(String(200), nullable=True)
+    paper_1_script_count = Column(Integer, nullable=False, default=0)
+    paper_2_script_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examiner = relationship("Examiner", back_populates="payout_override")
+
+    __table_args__ = (
+        CheckConstraint("paper_1_script_count >= 0", name="ck_examiner_payout_override_p1_script_count"),
+        CheckConstraint("paper_2_script_count >= 0", name="ck_examiner_payout_override_p2_script_count"),
+        CheckConstraint(
+            "paper_1_script_count > 0 OR paper_2_script_count > 0",
+            name="ck_examiner_payout_override_has_scripts",
+        ),
+    )
+
+
+class ExaminerPayoutAdjustment(Base):
+    """Named per-examiner payout line items (opt-in; independent of role rates/eligibility)."""
+
+    __tablename__ = "examiner_payout_adjustments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    description = Column(String(200), nullable=False)
+    amount_ghs = Column(Numeric(12, 2), nullable=False)
+    is_taxable = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examiner = relationship("Examiner", back_populates="payout_adjustments")
+
+    __table_args__ = (
+        CheckConstraint("amount_ghs > 0", name="ck_examiner_payout_adjustment_amount_positive"),
+        CheckConstraint("sort_order >= 0", name="ck_examiner_payout_adjustment_sort_order"),
+    )
+
+
+class ExaminationRosterAllowanceEligibility(Base):
+    """Per-examination allowance eligibility by roster source."""
+
+    __tablename__ = "examination_roster_allowance_eligibility"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    roster_source = Column(String(32), nullable=False)
+    allowance_key = Column(String(64), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="roster_allowance_eligibility")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "roster_source",
+            "allowance_key",
+            name="uq_exam_roster_allowance_eligibility",
+        ),
+    )
+
+
+class ExaminationAllowanceGroup(Base):
+    """Exam-scoped group that gates which allowances an examiner may receive."""
+
+    __tablename__ = "examination_allowance_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    is_general = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="allowance_groups")
+    members = relationship(
+        "ExaminationAllowanceGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    eligibility = relationship(
+        "ExaminationAllowanceGroupEligibility",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "name", name="uq_exam_allowance_group_name"),
+        Index(
+            "uq_exam_allowance_group_general",
+            "examination_id",
+            unique=True,
+            postgresql_where=text("is_general = true"),
+        ),
+    )
+
+
+class ExaminationAllowanceGroupMember(Base):
+    """Membership of an examiner in an exam allowance group."""
+
+    __tablename__ = "examination_allowance_group_members"
+
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_allowance_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    group = relationship("ExaminationAllowanceGroup", back_populates="members")
+    examiner = relationship("Examiner", back_populates="allowance_group_memberships")
+
+
+class ExaminationAllowanceGroupEligibility(Base):
+    """Per-group on/off matrix for roster allowance keys."""
+
+    __tablename__ = "examination_allowance_group_eligibility"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_allowance_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    allowance_key = Column(String(64), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    group = relationship("ExaminationAllowanceGroup", back_populates="eligibility")
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "allowance_key", name="uq_exam_allowance_group_eligibility"),
     )
 
 
@@ -2424,6 +2652,89 @@ class ExaminationExaminerMarkingRate(Base):
         CheckConstraint(
             "rate_per_script_ghs IS NULL OR rate_per_script_ghs >= 0",
             name="ck_examination_examiner_marking_rates_rate_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerMarkingDefault(Base):
+    """Exam-wide default marking rates per paper (fallback when subject rate unset)."""
+
+    __tablename__ = "examination_examiner_marking_defaults"
+
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    default_rate_paper_1_ghs = Column(Numeric(12, 2), nullable=True)
+    default_rate_paper_2_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_marking_defaults")
+
+    __table_args__ = (
+        CheckConstraint(
+            "default_rate_paper_1_ghs IS NULL OR default_rate_paper_1_ghs >= 0",
+            name="ck_exam_examiner_marking_defaults_p1_nonneg",
+        ),
+        CheckConstraint(
+            "default_rate_paper_2_ghs IS NULL OR default_rate_paper_2_ghs >= 0",
+            name="ck_exam_examiner_marking_defaults_p2_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerSittingAllowanceRate(Base):
+    """Per-examination sitting allowance daily rate by examiner type."""
+
+    __tablename__ = "examination_examiner_sitting_allowance_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    examiner_type = examiner_type_column(nullable=False)
+    daily_rate_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_sitting_allowance_rates")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "examiner_type",
+            name="uq_exam_examiner_sitting_allowance_rates",
+        ),
+        CheckConstraint(
+            "daily_rate_ghs IS NULL OR daily_rate_ghs >= 0",
+            name="ck_exam_examiner_sitting_allowance_rates_rate_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerDefaultDays(Base):
+    """Default sitting allowance days by examiner type for an examination."""
+
+    __tablename__ = "examination_examiner_default_days"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    examiner_type = examiner_type_column(nullable=False)
+    default_days = Column(SmallInteger, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_default_days")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "examiner_type",
+            name="uq_exam_examiner_default_days",
+        ),
+        CheckConstraint(
+            "default_days IS NULL OR default_days >= 1",
+            name="ck_exam_examiner_default_days_nonneg",
         ),
     )
 

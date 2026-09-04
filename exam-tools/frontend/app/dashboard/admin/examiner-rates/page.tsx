@@ -75,10 +75,10 @@ async function fetchExamRatesSummary(examId: number): Promise<ExamRatesSummary> 
     getExaminationExaminerTravelRates(examId),
   ]);
   const roleDraft = roleRatesFromApi(roleData);
-  const markingDraft = markingRatesFromApi(markingData);
+  const markingParsed = markingRatesFromApi(markingData);
   const travelDraft = travelRatesFromApi(travelData);
   const { status, configuredRoleCells, totalRoleCells, markingConfigured, markingTotal, travelConfigured } =
-    examinerRatesConfigStatus(roleDraft, markingDraft, travelDraft, markingData.items.length);
+    examinerRatesConfigStatus(roleDraft, markingParsed.rates, travelDraft, markingData.items.length);
   return { status, configuredRoleCells, totalRoleCells, markingConfigured, markingTotal, travelConfigured };
 }
 
@@ -188,8 +188,8 @@ function ExaminerRatesContent() {
   return (
     <div className="space-y-4">
       <OfficialAccountsPageIntro
-        description="Set flat role allowances, per-subject marking rates, and regional T & T for each examination."
-        footerNote={<ExaminerRatesFormulaCallout />}
+        description="Set amounts, who can receive them, and travel for each examination."
+        footerNote={<ExaminerRatesFormulaCallout defaultOpen />}
       />
 
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}

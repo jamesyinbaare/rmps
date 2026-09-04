@@ -19,16 +19,21 @@ from app.services.examiner_allowance_export import (
     scripts_for_paper,
 )
 from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiner_to_admin_row
+from app.services.examiner_allowance_groups import ExaminerEnabledKeysMap
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_compensation import (
+    DefaultDaysMap,
+    MarkingDefaults,
     MarkingRateMap,
     RoleAllowanceMap,
+    SittingRateMap,
     TravelRateMap,
     TravelRoleFactorMap,
     TravelZoneMap,
     TravelZoneNameMap,
 )
 from app.services.examiner_invitation import _examiner_type_label
+from app.services.examiner_roster_allowance_eligibility import EligibilityMap
 
 
 class ExaminerBogPayoutMode(StrEnum):
@@ -131,6 +136,14 @@ def examiner_bog_workbook_bytes(
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
     source_modes: MarkingScriptSourceModes | None = None,
+    payout_overrides: dict | None = None,
+    marking_defaults: MarkingDefaults | None = None,
+    sitting_rates: SittingRateMap | None = None,
+    default_days: DefaultDaysMap | None = None,
+    roster_eligibility: EligibilityMap | None = None,
+    group_eligibility: ExaminerEnabledKeysMap | None = None,
+    examiner_custom_groups: dict | None = None,
+    payout_adjustments_by_examiner: dict | None = None,
     *,
     title: str,
     mode: ExaminerBogPayoutMode = ExaminerBogPayoutMode.ALL,
@@ -148,6 +161,15 @@ def examiner_bog_workbook_bytes(
             travel_role_factors,
             allocated_booklets,
             source_modes,
+            payout_overrides,
+            marking_defaults,
+            sitting_rates,
+            default_days,
+            roster_eligibility,
+            group_eligibility,
+            allowance_group_ids=(examiner_custom_groups or {}).get(ex.id, ([], []))[0],
+            allowance_group_names=(examiner_custom_groups or {}).get(ex.id, ([], []))[1],
+            payout_adjustments=(payout_adjustments_by_examiner or {}).get(ex.id, []),
         )
         for ex in examiners
     ]
