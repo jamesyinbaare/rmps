@@ -2945,6 +2945,8 @@ export type ScoreValidationReportFilters = {
   test_types?: number[];
   /** Exactly one status — required for generation */
   status?: ScoreValidationReportStatus;
+  /** Combined P1/P2 missing rows with Missing papers column */
+  combine_p1_p2?: boolean;
   format?: "xlsx" | "pdf";
   page?: number;
   page_size?: number;
@@ -2970,6 +2972,7 @@ export type ScoreValidationReportDetailRow = {
   message: string | null;
   extraction_method: string | null;
   expected: string | null;
+  missing_papers: string | null;
 };
 
 export type ScoreValidationReportSummary = {
@@ -3014,6 +3017,7 @@ function buildValidationReportParams(filters: ScoreValidationReportFilters): URL
   if (filters.subject_ids?.length) params.set("subject_ids", filters.subject_ids.join(","));
   if (filters.test_types?.length) params.set("test_types", filters.test_types.join(","));
   if (filters.status) params.set("statuses", filters.status);
+  if (filters.combine_p1_p2) params.set("combine_p1_p2", "true");
   if (filters.format) params.set("format", filters.format);
   if (filters.page != null) params.set("page", String(filters.page));
   if (filters.page_size != null) params.set("page_size", String(filters.page_size));

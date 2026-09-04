@@ -25,6 +25,7 @@ from app.services.score_validation_report import (
     generate_validation_report_excel,
     generate_validation_report_pdf,
     group_rows_for_pdf,
+    missing_p1_p2_label,
     parse_statuses,
     parse_test_types,
     primary_report_status,
@@ -141,6 +142,36 @@ def test_classify_skips_non_required_papers() -> None:
     assert papers[0][0] == 1
 
 
+def test_missing_p1_p2_label_both() -> None:
+    score = _make_score(obj_raw_score=None, essay_raw_score=None)
+    exam_subject = _make_exam_subject()
+    assert missing_p1_p2_label(score, exam_subject) == "P1/P2"
+
+
+def test_missing_p1_p2_label_only_p1() -> None:
+    score = _make_score(obj_raw_score=None, essay_raw_score="40")
+    exam_subject = _make_exam_subject()
+    assert missing_p1_p2_label(score, exam_subject) == "P1"
+
+
+def test_missing_p1_p2_label_only_p2() -> None:
+    score = _make_score(obj_raw_score="10", essay_raw_score=None)
+    exam_subject = _make_exam_subject()
+    assert missing_p1_p2_label(score, exam_subject) == "P2"
+
+
+def test_missing_p1_p2_label_neither() -> None:
+    score = _make_score(obj_raw_score="10", essay_raw_score="40")
+    exam_subject = _make_exam_subject()
+    assert missing_p1_p2_label(score, exam_subject) is None
+
+
+def test_missing_p1_p2_label_only_p1_required() -> None:
+    score = _make_score(obj_raw_score=None, essay_raw_score=None)
+    exam_subject = _make_exam_subject(essay_max_score=None)
+    assert missing_p1_p2_label(score, exam_subject) == "P1"
+
+
 def test_parse_statuses_single_required() -> None:
     assert parse_statuses(None) == ["missing"]
     assert parse_statuses("") == ["missing"]
@@ -163,6 +194,9 @@ def test_parse_test_types() -> None:
 def test_detail_columns_by_status() -> None:
     missing = [c.header for c in detail_columns_for_status("missing")]
     assert missing == ["Index number", "Candidate name"]
+
+    combined = [c.header for c in detail_columns_for_status("missing", combine_p1_p2=True)]
+    assert combined == ["Index number", "Candidate name", "Missing papers"]
 
     invalid = [c.header for c in detail_columns_for_status("invalid")]
     assert invalid == ["Index number", "Candidate name", "Value", "Expected"]
@@ -440,6 +474,76 @@ def test_pdf_invalid_has_correct_score_column(monkeypatch: pytest.MonkeyPatch) -
     assert "bad-value" in html
     pdf_bytes = generate_validation_report_pdf(data)
     assert pdf_bytes[:4] == b"%PDF"
+
+
+def test_pdf_combine_p1_p2_has_dual_score_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    templates = Path(__file__).resolve().parents[1] / "templates"
+    monkeypatch.setattr(
+        "app.services.score_validation_report.settings.templates_path",
+        str(templates),
+    )
+    from jinja2 import Environment, FileSystemLoader
+
+    rows = [
+        _detail_row(
+            test_type=0,
+            paper_label="Paper 1 or 2 (combined)",
+            paper_short="P1/P2",
+            status="missing",
+            missing_papers="P1/P2",
+            message="Missing score(s): P1/P2",
+            raw_score=None,
+            max_score=None,
+        ),
+        _detail_row(
+            candidate_id=2,
+            index_number="002",
+            candidate_name="Only P1 Missing",
+            test_type=0,
+            paper_label="Paper 1 or 2 (combined)",
+            paper_short="P1",
+            status="missing",
+            missing_papers="P1",
+            message="Missing score(s): P1",
+            raw_score=None,
+            max_score=None,
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    data.meta.combine_p1_p2 = True
+    data.meta.test_types = [1, 2]
+
+    env = Environment(loader=FileSystemLoader(str(templates)))
+    template = env.get_template("score_validation_report/main.html")
+    html = template.render(
+        meta=data.meta,
+        summary=data.summary,
+        sections=group_rows_for_pdf(data.rows),
+        report_status="missing",
+        status_count=2,
+        columns=detail_columns_for_status("missing", combine_p1_p2=True),
+        combine_p1_p2=True,
+        logo_src="score_sheets/logo-crest-only.png",
+        status_labels={
+            "entered": "Entered",
+            "missing": "Missing",
+            "invalid": "Invalid",
+            "absent": "Absent",
+        },
+    )
+    assert "Missing papers" in html
+    assert ">P1</th>" in html
+    assert ">P2</th>" in html
+    assert html.count("col-score-dual write-box") >= 2
+    assert "P1 and/or <strong>P2</strong>" in html or "P1</strong> and/or <strong>P2" in html
+    # Single Score write column should not be the only write-in for combined mode
+    assert "Write-in:</strong> P1 and P2 score columns" in html
+
+    pdf_bytes = generate_validation_report_pdf(data)
+    assert isinstance(pdf_bytes, (bytes, bytearray))
+    assert len(pdf_bytes) > 100
+    assert pdf_bytes[:4] == b"%PDF"
+
 
 def test_slice_and_multi_school_zip_structure() -> None:
     rows = [

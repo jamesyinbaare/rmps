@@ -195,6 +195,13 @@
       border-color: #9a3f12;
       text-align: center;
     }
+    .sheet th.col-score-dual {
+      background: #c45c26;
+      border-color: #9a3f12;
+      text-align: center;
+      font-size: 8pt;
+      letter-spacing: 0.02em;
+    }
     .sheet td {
       border: 0.6pt solid #cbd5e1;
       padding: 0;
@@ -240,6 +247,13 @@
       background-color: #fff7ed;
       border-color: #fdba74;
     }
+    .sheet th.col-score-dual,
+    .sheet td.col-score-dual {
+      width: 58px;
+      background-color: #fff7ed;
+      border-color: #fdba74;
+      text-align: center;
+    }
 
     .w-num { width: 28px; }
     .w-index { width: 22%; }
@@ -247,6 +261,7 @@
     .w-value { width: 14%; }
     .w-hint { width: 14%; }
     .w-score { width: 72px; }
+    .w-score-dual { width: 58px; }
 
     .foot-note {
       margin-top: 8px;
@@ -407,13 +422,21 @@
         </div>
 
         <div class="meta-chips">
+          {% if combine_p1_p2 %}
+          <strong>Papers:</strong> Paper 1 or 2 (combined)
+          <span class="meta-sep">·</span>
+          <strong>Write-in:</strong> P1 and P2 score columns
+          {% else %}
           <strong>Paper:</strong> {{ paper.paper_label }}
           <span class="meta-sep">·</span>
           <strong>Maximum mark:</strong> {{ subject.max_score or "—" }}
+          {% endif %}
         </div>
 
         <div class="instruction">
-          {% if report_status == "missing" %}
+          {% if combine_p1_p2 and report_status == "missing" %}
+            <strong>Missing Paper 1 and/or 2</strong> — use <strong>Missing papers</strong> to see which mark(s) are needed, then write them in the <strong>P1</strong> and/or <strong>P2</strong> columns. Leave the other column blank if that paper is already entered.
+          {% elif report_status == "missing" %}
             <strong>Missing scores</strong> — write the mark in <strong>Score</strong>. Leave blank only if still unavailable.
           {% elif report_status == "invalid" %}
             <strong>Invalid values</strong> — write the corrected mark in <strong>Correct score</strong>.
@@ -430,7 +453,11 @@
               <th class="w-num col-num">#</th>
               <th class="w-index">Index</th>
               <th class="w-name">Candidate</th>
-              {% if report_status == "invalid" %}
+              {% if combine_p1_p2 and report_status == "missing" %}
+              <th class="w-value">Missing papers</th>
+              <th class="w-score-dual col-score-dual">P1</th>
+              <th class="w-score-dual col-score-dual">P2</th>
+              {% elif report_status == "invalid" %}
               <th class="w-value">Value</th>
               <th class="w-score col-score">Correct score</th>
               {% elif report_status == "entered" %}
@@ -448,7 +475,12 @@
               <td class="cell-data"><span class="index">{{ row.index_number }}</span></td>
               <td class="cell-data"><span class="name">{{ row.candidate_name }}</span></td>
 
-              {% if report_status == "invalid" %}
+              {% if combine_p1_p2 and report_status == "missing" %}
+              <td class="cell-data"><span class="expected">{{ row.missing_papers or row.paper_short }}</span></td>
+              <td class="col-score-dual write-box"></td>
+              <td class="col-score-dual write-box"></td>
+
+              {% elif report_status == "invalid" %}
               <td class="cell-data"><span class="bad-value">{{ row.raw_score if row.raw_score is not none else "—" }}</span></td>
               <td class="col-score write-box"></td>
 

@@ -81,6 +81,7 @@ class ReportDetailRow:
     message: str | None
     extraction_method: str | None
     expected: str | None = None
+    missing_papers: str | None = None
 
 
 @dataclass
@@ -89,15 +90,25 @@ class DetailColumn:
     header: str
 
 
-def detail_columns_for_status(status: ReportStatus) -> list[DetailColumn]:
+def detail_columns_for_status(
+    status: ReportStatus,
+    *,
+    combine_p1_p2: bool = False,
+) -> list[DetailColumn]:
     """Adaptive detail columns for a single report status.
 
-    Paper and max score live in section headers (PDF/Excel), not row columns.
+    Paper and max score live in section headers (PDF/Excel), not row columns —
+    except combined P1/P2 missing mode, which shows Missing papers per row.
     """
     base = [
         DetailColumn("index_number", "Index number"),
         DetailColumn("candidate_name", "Candidate name"),
     ]
+    if status == "missing" and combine_p1_p2:
+        return [
+            *base,
+            DetailColumn("missing_papers", "Missing papers"),
+        ]
     if status == "missing":
         return base
     if status == "invalid":
@@ -122,6 +133,8 @@ def row_cell_value(row: ReportDetailRow, key: str) -> str:
         return _format_max_score(row.max_score)
     if key == "expected":
         return row.expected or ""
+    if key == "missing_papers":
+        return row.missing_papers or row.paper_short or ""
     return str(getattr(row, key) or "")
 
 
@@ -166,6 +179,7 @@ class ReportMeta:
     generated_at: str
     row_count: int
     school_code: str | None = None
+    combine_p1_p2: bool = False
 
 
 @dataclass
@@ -271,6 +285,26 @@ def classify_score_papers(
             )
         )
     return results
+
+
+def missing_p1_p2_label(
+    subject_score: SubjectScore,
+    exam_subject: ExamSubject,
+) -> str | None:
+    """
+    Return P1, P2, or P1/P2 when any required Paper 1/2 score is missing.
+    Returns None when neither required paper is missing (or none required).
+    """
+    missing_shorts: list[str] = []
+    for test_type in (1, 2):
+        if not paper_is_required(exam_subject, test_type):
+            continue
+        status, _, _ = classify_paper(subject_score, exam_subject, test_type)
+        if status == "missing":
+            missing_shorts.append(PAPER_META[test_type]["short"])
+    if not missing_shorts:
+        return None
+    return "/".join(missing_shorts)
 
 
 def build_summary(rows: list[ReportDetailRow]) -> ReportSummary:
@@ -468,6 +502,7 @@ async def build_score_validation_report(
     subject_ids: list[int] | None = None,
     test_types: list[int] | None = None,
     statuses: list[ReportStatus] | None = None,
+    combine_p1_p2: bool = False,
 ) -> ScoreValidationReportData:
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
     if not exam:
@@ -483,10 +518,15 @@ async def build_score_validation_report(
             except ValueError as exc:
                 raise ValueError(f"Invalid subject_type: {subject_type}") from exc
 
-    test_type_set = set(test_types) if test_types else None
     if statuses is None:
         statuses = [DEFAULT_STATUS]
     status_set = set(statuses)
+
+    # Combined P1/P2 layout only applies when filtering to Missing.
+    use_combine = bool(combine_p1_p2) and status_set == {"missing"}
+    if combine_p1_p2:
+        test_types = [1, 2]
+    test_type_set = set(test_types) if test_types else None
 
     stmt = (
         select(
@@ -517,12 +557,46 @@ async def build_score_validation_report(
 
     detail_rows: list[ReportDetailRow] = []
     for subject_score, exam_subject, subject, candidate, school, exam_reg in db_rows:
+        subject_type_value = _enum_value(subject.subject_type) or ""
+        common = dict(
+            school_id=school.id,
+            school_code=school.code or "",
+            school_name=school.name or "",
+            subject_id=subject.id,
+            subject_code=subject.original_code or subject.code or "",
+            subject_name=subject.name or "",
+            subject_type=subject_type_value,
+            candidate_id=candidate.id,
+            index_number=exam_reg.index_number or candidate.index_number or "",
+            candidate_name=candidate.name or "",
+        )
+
+        if use_combine:
+            label = missing_p1_p2_label(subject_score, exam_subject)
+            if not label:
+                continue
+            detail_rows.append(
+                ReportDetailRow(
+                    **common,
+                    test_type=0,
+                    paper_label="Paper 1 or 2 (combined)",
+                    paper_short=label,
+                    raw_score=None,
+                    max_score=None,
+                    status="missing",
+                    message=f"Missing score(s): {label}",
+                    extraction_method=None,
+                    expected=None,
+                    missing_papers=label,
+                )
+            )
+            continue
+
         classified = classify_score_papers(
             subject_score,
             exam_subject,
             test_types=test_type_set,
         )
-        subject_type_value = _enum_value(subject.subject_type) or ""
         for test_type, status, message, max_score, raw_score, expected in classified:
             if status not in status_set:
                 continue
@@ -530,16 +604,7 @@ async def build_score_validation_report(
             extraction = getattr(subject_score, extraction_attr, None)
             detail_rows.append(
                 ReportDetailRow(
-                    school_id=school.id,
-                    school_code=school.code or "",
-                    school_name=school.name or "",
-                    subject_id=subject.id,
-                    subject_code=subject.original_code or subject.code or "",
-                    subject_name=subject.name or "",
-                    subject_type=subject_type_value,
-                    candidate_id=candidate.id,
-                    index_number=exam_reg.index_number or candidate.index_number or "",
-                    candidate_name=candidate.name or "",
+                    **common,
                     test_type=test_type,
                     paper_label=PAPER_META[test_type]["label"],
                     paper_short=PAPER_META[test_type]["short"],
@@ -549,6 +614,7 @@ async def build_score_validation_report(
                     message=message,
                     extraction_method=_enum_value(extraction),
                     expected=expected,
+                    missing_papers=None,
                 )
             )
 
@@ -558,6 +624,7 @@ async def build_score_validation_report(
             r.test_type,
             r.subject_code,
             r.index_number,
+            r.missing_papers or "",
         )
     )
 
@@ -600,6 +667,7 @@ async def build_score_validation_report(
         statuses=statuses_for_meta,
         generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         row_count=len(detail_rows),
+        combine_p1_p2=use_combine,
     )
     return ScoreValidationReportData(
         meta=meta,
@@ -638,11 +706,13 @@ async def generate_report_filename(
     test_types: list[int] | None,
     statuses: list[ReportStatus] | None,
     report_format: ReportFormat,
+    combine_p1_p2: bool = False,
 ) -> str:
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
     status_list = statuses or [DEFAULT_STATUS]
     status_part = str(status_list[0]).upper()
     ext = "pdf" if report_format == "pdf" else "xlsx"
+    paper_part = "P1_or_P2" if combine_p1_p2 else None
 
     # Per-school files: school_code_school_name first
     if school_id is not None:
@@ -653,6 +723,8 @@ async def generate_report_filename(
             "score_validation",
             status_part,
         ]
+        if paper_part:
+            parts.append(paper_part)
         if exam:
             parts.append(str(exam.year))
             series = _enum_value(exam.series)
@@ -677,8 +749,10 @@ async def generate_report_filename(
     if subject_type:
         st = _enum_value(subject_type) if not isinstance(subject_type, str) else subject_type
         parts.append(sanitize_filename_part(str(st)))
-    if test_types:
-        parts.append("_".join(PAPER_META[t]["short"] for t in sorted(test_types)))
+    if paper_part:
+        parts.append(paper_part)
+    elif test_types:
+        parts.append("_".join(PAPER_META[t]["short"] for t in sorted(test_types) if t in PAPER_META))
     else:
         parts.append("ALL_PAPERS")
     parts.append(status_part)
@@ -711,6 +785,7 @@ def _slice_report_for_school(
         statuses=list(data.meta.statuses),
         generated_at=data.meta.generated_at,
         row_count=len(rows),
+        combine_p1_p2=data.meta.combine_p1_p2,
     )
     return ScoreValidationReportData(meta=meta, summary=build_summary(rows), rows=rows)
 
@@ -754,7 +829,10 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
     meta = data.meta
     summary = data.summary
     report_status = primary_report_status(meta.statuses)
-    columns = detail_columns_for_status(report_status)
+    columns = detail_columns_for_status(
+        report_status,
+        combine_p1_p2=meta.combine_p1_p2,
+    )
 
     # --- Summary sheet ---
     summary_ws = workbook.add_worksheet("Summary")
@@ -782,9 +860,13 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
     summary_ws.write(r, 1, ", ".join(meta.subject_labels) if meta.subject_labels else "All")
     r += 1
     papers = (
-        ", ".join(PAPER_META[t]["short"] for t in meta.test_types)
-        if meta.test_types
-        else "All required papers"
+        "Paper 1 or 2 (combined)"
+        if meta.combine_p1_p2
+        else (
+            ", ".join(PAPER_META[t]["short"] for t in meta.test_types if t in PAPER_META)
+            if meta.test_types
+            else "All required papers"
+        )
     )
     summary_ws.write(r, 0, "Papers", label_fmt)
     summary_ws.write(r, 1, papers)
@@ -827,9 +909,17 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
         paper_short = block_rows[0].paper_short
         paper_label = block_rows[0].paper_label
         max_label = _section_max_score(block_rows) or "—"
-        base_name = sanitize_filename_part(f"{paper_short}_{subject_code or subject_name or 'Subject'}")[
-            :28
-        ] or "Sheet"
+        if meta.combine_p1_p2:
+            sheet_title_extra = (
+                f"{paper_label} · Missing papers per candidate · {len(block_rows)} {report_status} row(s)"
+            )
+        else:
+            sheet_title_extra = (
+                f"{paper_label} · Maximum mark: {max_label} · {len(block_rows)} {report_status} row(s)"
+            )
+        base_name = sanitize_filename_part(
+            f"{'P1P2' if meta.combine_p1_p2 else paper_short}_{subject_code or subject_name or 'Subject'}"
+        )[:28] or "Sheet"
         sheet_name = base_name
         n = 2
         while sheet_name in used_sheet_names or sheet_name.lower() == "summary":
@@ -841,12 +931,7 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
         detail_ws.write(
             0, 0, f"{subject_code} — {subject_name} ({subject_type})", title_fmt
         )
-        detail_ws.write(
-            1,
-            0,
-            f"{paper_label} · Maximum mark: {max_label} · {len(block_rows)} {report_status} row(s)",
-            muted_fmt,
-        )
+        detail_ws.write(1, 0, sheet_title_extra, muted_fmt)
 
         # Column 0 = row number; remaining columns follow adaptive headers
         num_fmt = workbook.add_format({"border": 1, "align": "right", "font_color": "#546E7A"})
@@ -882,7 +967,10 @@ def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
     template = env.get_template("score_validation_report/main.html")
 
     report_status = primary_report_status(data.meta.statuses)
-    columns = detail_columns_for_status(report_status)
+    columns = detail_columns_for_status(
+        report_status,
+        combine_p1_p2=data.meta.combine_p1_p2,
+    )
     sections = group_rows_for_pdf(data.rows)
     context = {
         "meta": data.meta,
@@ -891,6 +979,7 @@ def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
         "report_status": report_status,
         "status_count": getattr(data.summary, report_status),
         "columns": columns,
+        "combine_p1_p2": data.meta.combine_p1_p2,
         "logo_src": "score_sheets/logo-crest-only.png",
         "status_labels": {
             "entered": "Entered",
@@ -921,6 +1010,7 @@ async def generate_score_validation_report_bytes(
     statuses: list[ReportStatus] | None = None,
     report_format: ReportFormat = "xlsx",
     progress: dict[str, Any] | None = None,
+    combine_p1_p2: bool = False,
 ) -> tuple[bytes, str, ScoreValidationReportData]:
     if progress is not None:
         progress.update({"stage": "building", "message": "Building report rows…"})
@@ -933,6 +1023,7 @@ async def generate_score_validation_report_bytes(
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        combine_p1_p2=combine_p1_p2,
     )
     if not data.rows:
         raise ValueError("No score rows match the selected filters")
@@ -965,6 +1056,7 @@ async def generate_score_validation_report_bytes(
             test_types=test_types,
             statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
             report_format=report_format,
+            combine_p1_p2=data.meta.combine_p1_p2,
         )
         file_bytes = _render_report_file(school_data, report_format)
         if progress is not None:
@@ -1005,6 +1097,7 @@ async def generate_score_validation_report_bytes(
         test_types=test_types,
         statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
         report_format=report_format,
+        combine_p1_p2=data.meta.combine_p1_p2,
     )
     zip_name = zip_name.rsplit(".", 1)[0] + ".zip"
     if progress is not None:
@@ -1062,6 +1155,7 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                 statuses=metadata.get("statuses"),
                 report_format=report_format,
                 progress=progress,
+                combine_p1_p2=bool(metadata.get("combine_p1_p2")),
             )
             await flush_progress()
 

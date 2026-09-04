@@ -3519,6 +3519,10 @@ async def preview_score_validation_report(
         None,
         description="Exactly one status: entered, missing, invalid, or absent. Default: missing",
     ),
+    combine_p1_p2: bool = Query(
+        False,
+        description="When true with status=missing: one row per candidate×subject with Missing papers P1, P2, or P1/P2",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> ScoreValidationReportPreviewResponse:
@@ -3541,6 +3545,7 @@ async def preview_score_validation_report(
             subject_ids=subject_ids_list,
             test_types=test_types_list,
             statuses=statuses_list,  # type: ignore[arg-type]
+            combine_p1_p2=combine_p1_p2,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -3557,6 +3562,7 @@ async def download_score_validation_report(
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
     statuses: str | None = Query(None),
+    combine_p1_p2: bool = Query(False),
     format: Literal["xlsx", "pdf"] = Query("xlsx"),
 ):
     """Synchronous score validation report download (small scopes)."""
@@ -3576,6 +3582,7 @@ async def download_score_validation_report(
             test_types=test_types_list,
             statuses=statuses_list,  # type: ignore[arg-type]
             report_format=format,
+            combine_p1_p2=combine_p1_p2,
         )
     except ValueError as e:
         detail = str(e)
@@ -3621,6 +3628,7 @@ async def start_score_validation_report_job(
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
     statuses: str | None = Query(None),
+    combine_p1_p2: bool = Query(False),
     format: Literal["xlsx", "pdf"] = Query("xlsx"),
 ) -> ScoreValidationReportJobCreateResponse:
     """Start a background score validation report job for large scopes."""
@@ -3642,6 +3650,7 @@ async def start_score_validation_report_job(
         test_types=test_types_list,
         statuses=statuses_list,  # type: ignore[arg-type]
         report_format=format,
+        combine_p1_p2=combine_p1_p2,
     )
     tracking = ProcessTracking(
         exam_id=exam_id,
@@ -3653,8 +3662,9 @@ async def start_score_validation_report_job(
             "school_id": school_id,
             "subject_type": subject_type.value if subject_type else None,
             "subject_ids": subject_ids_list,
-            "test_types": test_types_list,
+            "test_types": test_types_list if not combine_p1_p2 else [1, 2],
             "statuses": statuses_list,
+            "combine_p1_p2": combine_p1_p2,
             "format": format,
             "filename": filename,
             "message": "Queued",
