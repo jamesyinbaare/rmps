@@ -9,11 +9,13 @@ export const OFFICIAL_ACCOUNTS_STATISTICS_HREF = "/dashboard/admin/official-stat
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
 export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
+export const EXAMINER_SPECIAL_HREF = "/dashboard/admin/examiner-special";
 export const EXAMINER_ATTENDANCE_HREF = "/dashboard/admin/examiner-attendance";
 /** @deprecated Use EXAMINER_ACCOUNTS_BY_SUBJECT_HREF */
 export const EXAMINERS_BY_SUBJECT_HREF = "/dashboard/admin/examiners-by-subject";
 export const EXAMINER_ACCOUNTS_BY_SUBJECT_HREF = "/dashboard/admin/examiner-accounts-by-subject";
 export const EXAMINER_BANK_ACCOUNTS_LABEL = "Examiner bank accounts";
+export const EXAMINER_SPECIAL_LABEL = "Special examiners";
 export const EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL = "Bank accounts by subject";
 
 export function buildExaminerAccountsBySubjectHref(params: {
@@ -34,6 +36,30 @@ export function buildExaminerAccountsBySubjectHref(params: {
   return `${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}?${p.toString()}`;
 }
 
+export function buildExaminerPayoutsHref(params: {
+  examId: number;
+  region?: string;
+  role?: string;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  if (params.region?.trim()) p.set("region", params.region.trim());
+  if (params.role?.trim()) p.set("role", params.role.trim());
+  return `${EXAMINER_PAYOUTS_HREF}?${p.toString()}`;
+}
+
+export function buildExaminerSpecialHref(params: {
+  examId: number;
+  region?: string;
+  role?: string;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  if (params.region?.trim()) p.set("region", params.region.trim());
+  if (params.role?.trim()) p.set("role", params.role.trim());
+  return `${EXAMINER_SPECIAL_HREF}?${p.toString()}`;
+}
+
 export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
   OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF,
@@ -41,6 +67,7 @@ export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_INSPECTOR_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
   EXAMINER_PAYOUTS_HREF,
+  EXAMINER_SPECIAL_HREF,
   EXAMINER_ATTENDANCE_HREF,
   EXAMINERS_BY_SUBJECT_HREF,
   EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,

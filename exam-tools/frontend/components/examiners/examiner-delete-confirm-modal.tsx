@@ -39,7 +39,7 @@ type Props = {
   examinerName: string;
   subjectLabel?: string;
   examinerTypeLabel?: string;
-  rosterSource?: "manual" | "invitation";
+  rosterSource?: "manual" | "invitation" | "payout_override";
   deleteMode?: DeleteMode;
   manualAllocations: ManualAllocation[];
   envelopeAssignments: EnvelopeAssignment[];

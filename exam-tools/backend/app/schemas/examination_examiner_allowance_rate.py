@@ -80,6 +80,8 @@ class ExaminationExaminerMarkingRatesResponse(BaseModel):
     examination_id: int
     subjects: list[ExaminerAllowanceSubjectRef]
     items: list[ExaminerMarkingRateRow]
+    default_rate_paper_1_ghs: Decimal | None = None
+    default_rate_paper_2_ghs: Decimal | None = None
 
 
 class ExaminerMarkingRateItemUpdate(BaseModel):
@@ -96,7 +98,72 @@ class ExaminerMarkingRateItemUpdate(BaseModel):
 
 
 class ExaminationExaminerMarkingRatesPut(BaseModel):
-    items: list[ExaminerMarkingRateItemUpdate] = Field(..., min_length=1)
+    items: list[ExaminerMarkingRateItemUpdate] = Field(default_factory=list)
+    default_rate_paper_1_ghs: Decimal | None = None
+    default_rate_paper_2_ghs: Decimal | None = None
+    apply_defaults_to_unset: bool = False
+
+    @field_validator("default_rate_paper_1_ghs", "default_rate_paper_2_ghs")
+    @classmethod
+    def _non_negative_default(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v < 0:
+            raise ValueError("Default rate must be >= 0")
+        return v
+
+
+class ExaminerSittingAllowanceRateCell(BaseModel):
+    examiner_type: str
+    daily_rate_ghs: Decimal | None = None
+
+
+class ExaminationExaminerSittingAllowanceRatesResponse(BaseModel):
+    examination_id: int
+    items: list[ExaminerSittingAllowanceRateCell]
+
+
+class ExaminerSittingAllowanceRateItemUpdate(BaseModel):
+    examiner_type: str
+    daily_rate_ghs: Decimal | None = None
+
+    @field_validator("examiner_type")
+    @classmethod
+    def _valid_examiner_type(cls, v: str) -> str:
+        return examiner_type_from_api_label(v).value
+
+    @field_validator("daily_rate_ghs")
+    @classmethod
+    def _non_negative_rate(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v < 0:
+            raise ValueError("Rate must be >= 0")
+        return v
+
+
+class ExaminationExaminerSittingAllowanceRatesPut(BaseModel):
+    items: list[ExaminerSittingAllowanceRateItemUpdate] = Field(..., min_length=1)
+
+
+class ExaminerDefaultDaysCell(BaseModel):
+    examiner_type: str
+    default_days: int | None = None
+
+
+class ExaminationExaminerDefaultDaysResponse(BaseModel):
+    examination_id: int
+    items: list[ExaminerDefaultDaysCell]
+
+
+class ExaminerDefaultDaysItemUpdate(BaseModel):
+    examiner_type: str
+    default_days: int | None = Field(default=None, ge=1)
+
+    @field_validator("examiner_type")
+    @classmethod
+    def _valid_examiner_type(cls, v: str) -> str:
+        return examiner_type_from_api_label(v).value
+
+
+class ExaminationExaminerDefaultDaysPut(BaseModel):
+    items: list[ExaminerDefaultDaysItemUpdate] = Field(..., min_length=1)
 
 
 class ExaminerTravelRateRow(BaseModel):

@@ -16,6 +16,7 @@ from app.models import (
     AllocationRun,
     AllocationRunStatus,
     Examiner,
+    ExaminerRosterSource,
     ExaminerGroup,
     ExaminerGroupMember,
     ExaminerGroupSourceRegion,
@@ -177,7 +178,10 @@ async def load_allocation_or_none(session: AsyncSession, allocation_id: UUID) ->
 async def load_examiners_for_examination(session: AsyncSession, examination_id: int) -> list[Examiner]:
     stmt = (
         select(Examiner)
-        .where(Examiner.examination_id == examination_id)
+        .where(
+            Examiner.examination_id == examination_id,
+            Examiner.roster_source != ExaminerRosterSource.SPECIAL,
+        )
         .options(
             selectinload(Examiner.subjects),
             selectinload(Examiner.group_membership),

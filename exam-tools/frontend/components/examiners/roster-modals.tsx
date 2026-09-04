@@ -24,6 +24,9 @@ type ExaminerFormModalProps = {
   subjectId: string;
   region: string;
   gender: string;
+  reportCount: string;
+  reportingAllowanceEnabled: boolean;
+  numDays: string;
   subjectOptions: Option[];
   regionOptions: Option[];
   onClose: () => void;
@@ -34,6 +37,9 @@ type ExaminerFormModalProps = {
   onSubjectIdChange: (v: string) => void;
   onRegionChange: (v: string) => void;
   onGenderChange: (v: string) => void;
+  onReportCountChange: (v: string) => void;
+  onReportingAllowanceEnabledChange: (v: boolean) => void;
+  onNumDaysChange: (v: string) => void;
 };
 
 export function RosterExaminerFormModal({
@@ -47,6 +53,9 @@ export function RosterExaminerFormModal({
   subjectId,
   region,
   gender,
+  reportCount,
+  reportingAllowanceEnabled,
+  numDays,
   subjectOptions,
   regionOptions,
   onClose,
@@ -57,8 +66,17 @@ export function RosterExaminerFormModal({
   onSubjectIdChange,
   onRegionChange,
   onGenderChange,
+  onReportCountChange,
+  onReportingAllowanceEnabledChange,
+  onNumDaysChange,
 }: ExaminerFormModalProps) {
   if (!open) return null;
+
+  const showReportFields =
+    examinerType === "chief_examiner" ||
+    examinerType === "assistant_chief_examiner" ||
+    examinerType === "team_leader" ||
+    examinerType === "assistant_examiner";
 
   return (
     <OfficialModal
@@ -153,6 +171,40 @@ export function RosterExaminerFormModal({
               <option value="Female">Female</option>
             </select>
           </div>
+          {showReportFields ? (
+            <div>
+              <label className={formLabelClass} htmlFor="roster-report-count">
+                Report count
+              </label>
+              <input
+                id="roster-report-count"
+                type="number"
+                min={0}
+                step={1}
+                className={formInputClass}
+                value={reportCount}
+                onChange={(e) => onReportCountChange(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                CE/ACE/TL default 1; AE default 0. Multiplies the report allowance.
+              </p>
+            </div>
+          ) : null}
+          <div>
+            <label className={formLabelClass} htmlFor="roster-num-days">
+              Sitting days (optional)
+            </label>
+            <input
+              id="roster-num-days"
+              type="number"
+              min={1}
+              step={1}
+              className={formInputClass}
+              value={numDays}
+              onChange={(e) => onNumDaysChange(e.target.value)}
+              placeholder="Uses exam default if blank"
+            />
+          </div>
           <div className="md:col-span-2">
             <label className={formLabelClass} id="roster-subject-label">
               Subject
@@ -227,7 +279,7 @@ export function RosterBulkUploadModal({
         code, e.g. MATH301; internal code still accepted), <span className="font-mono">examiner_type</span> (
         <span className="font-mono">CE</span>, <span className="font-mono">ACE</span>,{" "}
         <span className="font-mono">AE</span>, <span className="font-mono">TL</span>, or full names),{" "}
-        <span className="font-mono">region</span>, optional <span className="font-mono">gender</span> (Male/Female).
+        <span className="font-mono">region</span>, optional <span className="font-mono">gender</span> (Male/Female), optional <span className="font-mono">report_count</span> (CE/ACE/TL default 1; AE default 0), optional <span className="font-mono">num_days</span>.
       </p>
       <div className="mt-3">
         <button type="button" className={officialAccountsBtnSecondary} disabled={busy} onClick={onDownloadTemplate}>

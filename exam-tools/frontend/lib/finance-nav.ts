@@ -5,6 +5,8 @@ import {
   BANK_ACCOUNTS_LABEL,
   EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
   EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL,
+  EXAMINER_SPECIAL_HREF,
+  EXAMINER_SPECIAL_LABEL,
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
 } from "@/lib/official-accounts-zone";
 import {
@@ -20,6 +22,7 @@ export const FINANCE_HOME_HREF = "/dashboard/admin";
 export const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 export const EXAMINER_RATES_HREF = "/dashboard/admin/examiner-rates";
 export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
+export { EXAMINER_SPECIAL_HREF, EXAMINER_SPECIAL_LABEL } from "@/lib/official-accounts-zone";
 export const SCRIPT_CHECKER_PAYOUTS_HREF = "/dashboard/admin/script-checker-payouts";
 export const DATA_ENTRY_CLERK_PAYOUTS_HREF = "/dashboard/admin/data-entry-clerk-payouts";
 export const SCRIPT_CHECKER_RATES_HREF = "/dashboard/admin/script-checker-rates";
@@ -169,6 +172,12 @@ export const COORDINATION_MARKING_NAV_GROUP: FinanceNavGroup = {
       icon: "bank",
     },
     {
+      href: EXAMINER_SPECIAL_HREF,
+      label: EXAMINER_SPECIAL_LABEL,
+      description: "Ad-hoc examiners & script payouts",
+      icon: "bank",
+    },
+    {
       href: EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
       label: EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL,
       description: "Single subject drill-down",
@@ -303,6 +312,7 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [OFFICIAL_RATES_HREF, "Allowance rates"],
   [EXAMINER_RATES_HREF, "Examiner rates"],
   [EXAMINER_PAYOUTS_HREF, "Examiner bank accounts"],
+  [EXAMINER_SPECIAL_HREF, EXAMINER_SPECIAL_LABEL],
   [SCRIPT_CHECKER_PAYOUTS_HREF, "Script checker payouts"],
   [DATA_ENTRY_CLERK_PAYOUTS_HREF, "Data entry clerk payouts"],
   [SCRIPT_CHECKER_RATES_HREF, "Script checker rates"],

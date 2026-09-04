@@ -2691,12 +2691,41 @@ export type ExaminationExaminerMarkingRatesResponse = {
   examination_id: number;
   subjects: ExaminerAllowanceSubjectRef[];
   items: ExaminerMarkingRateRow[];
+  default_rate_paper_1_ghs?: string | null;
+  default_rate_paper_2_ghs?: string | null;
 };
 
 export type ExaminerMarkingRateItemUpdate = {
   subject_id: number;
   paper_number: number;
   rate_per_script_ghs?: string | null;
+};
+
+export type ExaminationExaminerMarkingRatesPut = {
+  items?: ExaminerMarkingRateItemUpdate[];
+  default_rate_paper_1_ghs?: string | null;
+  default_rate_paper_2_ghs?: string | null;
+  apply_defaults_to_unset?: boolean;
+};
+
+export type ExaminerSittingAllowanceRateCell = {
+  examiner_type: ExaminerTypeApi;
+  daily_rate_ghs: string | null;
+};
+
+export type ExaminationExaminerSittingAllowanceRatesResponse = {
+  examination_id: number;
+  items: ExaminerSittingAllowanceRateCell[];
+};
+
+export type ExaminerDefaultDaysCell = {
+  examiner_type: ExaminerTypeApi;
+  default_days: number | null;
+};
+
+export type ExaminationExaminerDefaultDaysResponse = {
+  examination_id: number;
+  items: ExaminerDefaultDaysCell[];
 };
 
 export type ExaminerTravelRateRow = {
@@ -2734,6 +2763,15 @@ export type SubjectMarkingBreakdownRow = {
   script_source?: "allocation" | "manual";
 };
 
+export type ExaminerPayoutAdjustmentRow = {
+  id?: string | null;
+  description: string;
+  amount_ghs: string;
+  is_taxable: boolean;
+  tax_ghs: string;
+  net_ghs: string;
+};
+
 export type AdminExaminerAllowanceRow = {
   id: string;
   examination_id: number;
@@ -2750,11 +2788,23 @@ export type AdminExaminerAllowanceRow = {
   branch_name?: string | null;
   account_number?: string | null;
   phone_number?: string | null;
+  roster_source: "manual" | "invitation" | "special" | "payout_override";
+  chief_examiners_report_count: number;
+  reporting_allowance_enabled: boolean;
+  num_days?: number | null;
+  payout_description?: string | null;
+  paper_1_script_count: number;
+  paper_2_script_count: number;
   responsibility_allowance_ghs: string;
   inconvenience_allowance_ghs: string;
   chief_examiners_report_ghs: string;
   vetting_of_scripts_ghs: string;
   internal_commuting_ghs: string;
+  sitting_allowance_ghs: string;
+  sitting_daily_rate_ghs: string;
+  sitting_num_days: number;
+  sitting_withholding_tax_ghs: string;
+  sitting_net_ghs: string;
   marking_allowance_ghs: string;
   travel_base_ghs: string;
   travel_zone_name?: string | null;
@@ -2769,6 +2819,12 @@ export type AdminExaminerAllowanceRow = {
   payout_allowances_marking_ghs: string;
   total_payable_ghs: string;
   subject_breakdowns: SubjectMarkingBreakdownRow[];
+  allowance_group_ids?: string[];
+  allowance_group_names?: string[];
+  payout_adjustments?: ExaminerPayoutAdjustmentRow[];
+  adjustments_gross_ghs?: string;
+  adjustments_tax_ghs?: string;
+  adjustments_net_ghs?: string;
   created_at: string;
   updated_at: string;
 };
@@ -2840,14 +2896,50 @@ export async function getExaminationExaminerMarkingRates(
 
 export async function putExaminationExaminerMarkingRates(
   examId: number,
-  items: ExaminerMarkingRateItemUpdate[],
+  payload: ExaminationExaminerMarkingRatesPut,
 ): Promise<ExaminationExaminerMarkingRatesResponse> {
   return apiJson<ExaminationExaminerMarkingRatesResponse>(
     `/admin/examinations/${examId}/examiner-marking-rates`,
     {
       method: "PUT",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function getExaminationExaminerSittingAllowanceRates(
+  examId: number,
+): Promise<ExaminationExaminerSittingAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerSittingAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-sitting-allowance-rates`,
+  );
+}
+
+export async function putExaminationExaminerSittingAllowanceRates(
+  examId: number,
+  items: { examiner_type: ExaminerTypeApi; daily_rate_ghs?: string | null }[],
+): Promise<ExaminationExaminerSittingAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerSittingAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-sitting-allowance-rates`,
+    { method: "PUT", body: JSON.stringify({ items }) },
+  );
+}
+
+export async function getExaminationExaminerDefaultDays(
+  examId: number,
+): Promise<ExaminationExaminerDefaultDaysResponse> {
+  return apiJson<ExaminationExaminerDefaultDaysResponse>(
+    `/admin/examinations/${examId}/examiner-default-days`,
+  );
+}
+
+export async function putExaminationExaminerDefaultDays(
+  examId: number,
+  items: { examiner_type: ExaminerTypeApi; default_days?: number | null }[],
+): Promise<ExaminationExaminerDefaultDaysResponse> {
+  return apiJson<ExaminationExaminerDefaultDaysResponse>(
+    `/admin/examinations/${examId}/examiner-default-days`,
+    { method: "PUT", body: JSON.stringify({ items }) },
   );
 }
 
@@ -2890,6 +2982,217 @@ export async function copyExaminationExaminerAllowanceRates(
   );
 }
 
+
+export type ExaminerPayoutOverrideBulkImportRowError = {
+  row_number: number;
+  message: string;
+};
+
+export type ExaminerPayoutOverrideBulkImportResponse = {
+  created_count: number;
+  updated_count: number;
+  errors: ExaminerPayoutOverrideBulkImportRowError[];
+};
+
+export async function downloadExaminerPayoutOverrideBulkTemplate(examinationId: number): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/examiner-payout-overrides/bulk-upload/template`,
+    "special_examiner_template.xlsx",
+  );
+}
+
+export async function uploadExaminerPayoutOverrideBulk(
+  examinationId: number,
+  file: File,
+): Promise<ExaminerPayoutOverrideBulkImportResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiJson<ExaminerPayoutOverrideBulkImportResponse>(
+    `/admin/examinations/${examinationId}/examiner-payout-overrides/bulk-upload`,
+    { method: "POST", body: form },
+  );
+}
+
+export type RosterAllowanceEligibilityRow = {
+  roster_source: string;
+  label: string;
+  allowances: Record<string, boolean>;
+};
+
+export type ExaminationRosterAllowanceEligibilityResponse = {
+  rows: RosterAllowanceEligibilityRow[];
+};
+
+export async function getExaminationRosterAllowanceEligibility(
+  examinationId: number,
+): Promise<ExaminationRosterAllowanceEligibilityResponse> {
+  return apiJson<ExaminationRosterAllowanceEligibilityResponse>(
+    `/admin/examinations/${examinationId}/examiner-roster-allowance-eligibility`,
+  );
+}
+
+export async function putExaminationRosterAllowanceEligibility(
+  examinationId: number,
+  cells: { roster_source: string; allowance_key: string; enabled: boolean }[],
+): Promise<ExaminationRosterAllowanceEligibilityResponse> {
+  return apiJson<ExaminationRosterAllowanceEligibilityResponse>(
+    `/admin/examinations/${examinationId}/examiner-roster-allowance-eligibility`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cells }),
+    },
+  );
+}
+
+export type AllowanceGroupRow = {
+  id: string;
+  name: string;
+  is_general: boolean;
+  member_count: number;
+  allowances: Record<string, boolean>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ExaminationAllowanceGroupsResponse = {
+  examination_id: number;
+  groups: AllowanceGroupRow[];
+};
+
+export async function listExaminationAllowanceGroups(
+  examinationId: number,
+): Promise<ExaminationAllowanceGroupsResponse> {
+  return apiJson<ExaminationAllowanceGroupsResponse>(
+    `/admin/examinations/${examinationId}/allowance-groups`,
+  );
+}
+
+export async function createExaminationAllowanceGroup(
+  examinationId: number,
+  name: string,
+): Promise<AllowanceGroupRow> {
+  return apiJson<AllowanceGroupRow>(`/admin/examinations/${examinationId}/allowance-groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function renameExaminationAllowanceGroup(
+  examinationId: number,
+  groupId: string,
+  name: string,
+): Promise<AllowanceGroupRow> {
+  return apiJson<AllowanceGroupRow>(
+    `/admin/examinations/${examinationId}/allowance-groups/${groupId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    },
+  );
+}
+
+export async function deleteExaminationAllowanceGroup(
+  examinationId: number,
+  groupId: string,
+): Promise<void> {
+  return apiJson(`/admin/examinations/${examinationId}/allowance-groups/${groupId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function putExaminationAllowanceGroupEligibility(
+  examinationId: number,
+  groupId: string,
+  cells: { allowance_key: string; enabled: boolean }[],
+): Promise<AllowanceGroupRow> {
+  return apiJson<AllowanceGroupRow>(
+    `/admin/examinations/${examinationId}/allowance-groups/${groupId}/eligibility`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cells }),
+    },
+  );
+}
+
+export type AllowanceGroupMemberRow = {
+  id: string;
+  name: string;
+  examiner_type: string;
+  region: string;
+  roster_source: string;
+  reference_code?: string | null;
+};
+
+export type AllowanceGroupMembersResponse = {
+  group_id: string;
+  examiner_ids: string[];
+  members: AllowanceGroupMemberRow[];
+  is_general: boolean;
+};
+
+export async function getExaminationAllowanceGroupMembers(
+  examinationId: number,
+  groupId: string,
+): Promise<AllowanceGroupMembersResponse> {
+  return apiJson<AllowanceGroupMembersResponse>(
+    `/admin/examinations/${examinationId}/allowance-groups/${groupId}/members`,
+  );
+}
+
+export async function putExaminationAllowanceGroupMembers(
+  examinationId: number,
+  groupId: string,
+  examinerIds: string[],
+): Promise<AllowanceGroupMembersResponse> {
+  return apiJson<AllowanceGroupMembersResponse>(
+    `/admin/examinations/${examinationId}/allowance-groups/${groupId}/members`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ examiner_ids: examinerIds }),
+    },
+  );
+}
+
+export async function putExaminerAllowanceGroupMembership(
+  examinationId: number,
+  examinerId: string,
+  groupIds: string[],
+): Promise<{ examiner_id: string; group_ids: string[] }> {
+  return apiJson(`/admin/examinations/${examinationId}/examiners/${examinerId}/allowance-groups`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ group_ids: groupIds }),
+  });
+}
+
+export async function updateExaminerPayoutSettings(
+  examinationId: number,
+  examinerId: string,
+  payload: {
+    chief_examiners_report_count?: number;
+    reporting_allowance_enabled?: boolean;
+    description?: string | null;
+    paper_1_script_count?: number;
+    paper_2_script_count?: number;
+    payout_adjustments?: {
+      description: string;
+      amount_ghs: string;
+      is_taxable: boolean;
+    }[];
+  },
+): Promise<{ status: string }> {
+  return apiJson(`/admin/examinations/${examinationId}/examiners/${examinerId}/payout-settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listAdminExaminerAllowances(params: {
   examination_id: number;
   role?: string | null;
@@ -2897,6 +3200,7 @@ export async function listAdminExaminerAllowances(params: {
   subject_id?: number | null;
   group_id?: string | null;
   search?: string | null;
+  source?: "all" | "regular" | "special" | "payout_override" | null;
   skip?: number;
   limit?: number;
 }): Promise<AdminExaminerAllowanceListResponse> {
@@ -2907,6 +3211,7 @@ export async function listAdminExaminerAllowances(params: {
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
   if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.source && params.source !== "all") q.set("source", params.source);
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiJson<AdminExaminerAllowanceListResponse>(`/admin/examiner-allowances?${q.toString()}`);
@@ -2928,6 +3233,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   subject_id?: number | null;
   group_id?: string | null;
   search?: string | null;
+  source?: "all" | "regular" | "special" | "payout_override" | null;
   include_fields?: string[] | null;
   filename: string;
 }): Promise<void> {
@@ -2938,6 +3244,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
   if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.source && params.source !== "all") q.set("source", params.source);
   if (params.include_fields?.length) q.set("include_fields", params.include_fields.join(","));
   await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
 }
@@ -2951,6 +3258,7 @@ export async function downloadAdminExaminerAllowancesBogExport(params: {
   subject_id?: number | null;
   group_id?: string | null;
   search?: string | null;
+  source?: "all" | "regular" | "special" | "payout_override" | null;
   payout_mode?: ExaminerBogPayoutMode;
   filename: string;
 }): Promise<void> {
@@ -2961,6 +3269,7 @@ export async function downloadAdminExaminerAllowancesBogExport(params: {
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
   if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.source && params.source !== "all") q.set("source", params.source);
   if (params.payout_mode && params.payout_mode !== "all") q.set("payout_mode", params.payout_mode);
   await downloadApiFile(`/admin/examiner-allowances/bog-export.xlsx?${q.toString()}`, params.filename);
 }
@@ -4041,7 +4350,10 @@ export type ExaminerRow = {
   deviation_weight: number | null;
   examiner_group_id: string | null;
   portal_url: string;
-  roster_source: "manual" | "invitation";
+  roster_source: "manual" | "invitation" | "special" | "payout_override";
+  chief_examiners_report_count?: number;
+  reporting_allowance_enabled?: boolean;
+  num_days?: number | null;
   invitation_id?: string | null;
   invitation_status?: string | null;
   created_at: string;
@@ -4183,6 +4495,9 @@ export type ExaminerUpdatePayload = {
   subject_ids?: [number];
   deviation_weight?: number | null;
   gender?: string | null;
+  chief_examiners_report_count?: number;
+  reporting_allowance_enabled?: boolean;
+  num_days?: number | null;
 };
 
 export type ExaminerInvitationStatusApi =

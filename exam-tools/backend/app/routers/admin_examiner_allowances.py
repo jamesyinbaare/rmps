@@ -13,6 +13,7 @@ from app.dependencies.database import DBSessionDep
 from app.models import (
     Examiner,
     ExaminerBankAccount,
+    ExaminerRosterSource,
     ExaminerSubject,
     ExaminerType,
     Examination,
@@ -33,6 +34,11 @@ from app.services.examiner_allowance_export import (
     examiner_export_filename,
     parse_include_fields,
 )
+from app.services.examiner_allowance_groups import (
+    examiner_custom_group_ids,
+    list_allowance_groups,
+    load_group_eligibility_maps,
+)
 from app.services.examiner_allowance_list import examiners_to_admin_rows
 from app.services.examiner_allocated_booklets import (
     load_effective_allocated_booklets_map,
@@ -40,12 +46,19 @@ from app.services.examiner_allocated_booklets import (
 )
 from app.services.examiner_compensation import (
     examiner_type_from_api_label,
+    has_effective_marking_rate,
+    load_default_days_map,
+    load_marking_defaults,
     load_marking_rates_map,
+    load_payout_adjustments_map,
+    load_payout_overrides_map,
     load_role_allowance_rates_map,
+    load_sitting_rates_map,
     load_travel_rates_map,
     load_travel_role_factors_map,
     load_travel_zones_map,
 )
+from app.services.examiner_roster_allowance_eligibility import load_roster_allowance_eligibility_map
 from app.services.examiner_roster import parse_region
 from app.services.subject_marking_group import load_group
 
@@ -53,6 +66,40 @@ router = APIRouter(prefix="/admin/examiner-allowances", tags=["admin-examiner-al
 
 _MAX_LIST = 1000
 _DEFAULT_LIST = 100
+
+
+async def _load_compensation_context(session: DBSessionDep, examination_id: int):
+    travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
+    _group_elig, membership, enabled_by_examiner = await load_group_eligibility_maps(
+        session, examination_id
+    )
+    groups = await list_allowance_groups(session, examination_id)
+    custom_by_name = {g.id: g.name for g in groups if not g.is_general}
+    examiner_custom_groups: dict = {}
+    for examiner_id in membership:
+        custom_ids = examiner_custom_group_ids(membership, groups, examiner_id)
+        examiner_custom_groups[examiner_id] = (
+            custom_ids,
+            [custom_by_name[gid] for gid in custom_ids if gid in custom_by_name],
+        )
+    return {
+        "role_rates": await load_role_allowance_rates_map(session, examination_id),
+        "marking_rates": await load_marking_rates_map(session, examination_id),
+        "marking_defaults": await load_marking_defaults(session, examination_id),
+        "sitting_rates": await load_sitting_rates_map(session, examination_id),
+        "default_days": await load_default_days_map(session, examination_id),
+        "travel": await load_travel_rates_map(session, examination_id),
+        "travel_zones": travel_zones,
+        "travel_zone_names": travel_zone_names,
+        "travel_factors": await load_travel_role_factors_map(session, examination_id),
+        "allocated_booklets": await load_effective_allocated_booklets_map(session, examination_id),
+        "source_modes": await load_subject_source_modes(session, examination_id),
+        "payout_overrides": await load_payout_overrides_map(session, examination_id),
+        "payout_adjustments_by_examiner": await load_payout_adjustments_map(session, examination_id),
+        "roster_eligibility": await load_roster_allowance_eligibility_map(session, examination_id),
+        "group_eligibility": enabled_by_examiner,
+        "examiner_custom_groups": examiner_custom_groups,
+    }
 
 
 async def _load_examination(session: DBSessionDep, exam_id: int) -> Examination:
@@ -78,6 +125,18 @@ def _examiner_type_filter_from_query(role: str | None) -> ExaminerType | None:
         return examiner_type_from_api_label(role)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _source_filter_from_query(source: str | None) -> str:
+    raw = (source or "all").strip().lower()
+    if raw == "payout_override":
+        raw = "special"
+    if raw in ("all", "regular", "special"):
+        return raw
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid source filter (expected all, regular, or special)",
+    )
 
 
 async def _resolve_group_filter(
@@ -112,6 +171,7 @@ def _base_examiner_stmt(
     subject_id: int | None = None,
     group_id: UUID | None = None,
     search: str | None = None,
+    source: str = "all",
 ):
     stmt = (
         select(Examiner)
@@ -125,13 +185,14 @@ def _base_examiner_stmt(
         stmt = stmt.where(Examiner.examiner_type == role)
     if region is not None:
         stmt = stmt.where(Examiner.region == region)
-    if subject_id is not None:
-        stmt = stmt.where(
-            Examiner.id.in_(
-                select(ExaminerSubject.examiner_id).where(ExaminerSubject.subject_id == subject_id)
-            )
+    # Special examiners are exam-wide and have no subject/cohort membership.
+    apply_subject_scope = source != "special"
+    if apply_subject_scope and subject_id is not None:
+        regular_subject_ids = select(ExaminerSubject.examiner_id).where(
+            ExaminerSubject.subject_id == subject_id
         )
-    if group_id is not None:
+        stmt = stmt.where(Examiner.id.in_(regular_subject_ids))
+    if apply_subject_scope and group_id is not None:
         stmt = stmt.where(
             Examiner.id.in_(
                 select(SubjectMarkingGroupMember.examiner_id).where(
@@ -147,6 +208,10 @@ def _base_examiner_stmt(
                 Examiner.phone_number.ilike(q),
             )
         )
+    if source == "regular":
+        stmt = stmt.where(Examiner.roster_source != ExaminerRosterSource.SPECIAL)
+    elif source == "special":
+        stmt = stmt.where(Examiner.roster_source == ExaminerRosterSource.SPECIAL)
     return stmt.order_by(Examiner.name.asc())
 
 
@@ -160,6 +225,7 @@ async def admin_list_examiner_allowances(
     subject_id: int | None = Query(None, description="Filter by assigned subject id"),
     group_id: UUID | None = Query(None, description="Filter by subject marking group (cohort) id"),
     search: str | None = Query(None, description="Search name or phone"),
+    source: str = Query("all", description="all | regular | special"),
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_LIST, ge=1, le=_MAX_LIST),
 ) -> AdminExaminerAllowanceListResponse:
@@ -167,6 +233,7 @@ async def admin_list_examiner_allowances(
     role_filter = _examiner_type_filter_from_query(role)
     region_filter = _region_filter_from_query(region)
     group_filter = await _resolve_group_filter(session, examination_id, subject_id, group_id)
+    source_filter = _source_filter_from_query(source)
 
     base = _base_examiner_stmt(
         examination_id,
@@ -175,6 +242,7 @@ async def admin_list_examiner_allowances(
         subject_id=subject_id,
         group_id=group_filter,
         search=search,
+        source=source_filter,
     )
     count_stmt = select(func.count()).select_from(base.subquery())
     total = int(await session.scalar(count_stmt) or 0)
@@ -182,24 +250,26 @@ async def admin_list_examiner_allowances(
     result = await session.execute(base.offset(skip).limit(limit))
     examiners = list(result.scalars().all())
 
-    role_rates = await load_role_allowance_rates_map(session, examination_id)
-    marking_rates = await load_marking_rates_map(session, examination_id)
-    travel = await load_travel_rates_map(session, examination_id)
-    travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
-    travel_factors = await load_travel_role_factors_map(session, examination_id)
-    allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
-    source_modes = await load_subject_source_modes(session, examination_id)
+    ctx = await _load_compensation_context(session, examination_id)
     items = examiners_to_admin_rows(
         examiners,
         ex,
-        role_rates,
-        marking_rates,
-        travel,
-        travel_zones,
-        travel_zone_names,
-        travel_factors,
-        allocated_booklets,
-        source_modes,
+        ctx["role_rates"],
+        ctx["marking_rates"],
+        ctx["travel"],
+        ctx["travel_zones"],
+        ctx["travel_zone_names"],
+        ctx["travel_factors"],
+        ctx["allocated_booklets"],
+        ctx["source_modes"],
+        ctx["payout_overrides"],
+        ctx["marking_defaults"],
+        ctx["sitting_rates"],
+        ctx["default_days"],
+        ctx["roster_eligibility"],
+        ctx["group_eligibility"],
+        ctx["examiner_custom_groups"],
+        ctx["payout_adjustments_by_examiner"],
     )
     return AdminExaminerAllowanceListResponse(items=items, total=total)
 
@@ -214,6 +284,7 @@ async def admin_export_examiner_allowances(
     subject_id: int | None = Query(None),
     group_id: UUID | None = Query(None),
     search: str | None = Query(None),
+    source: str = Query("all"),
     include_fields: str | None = Query(
         None,
         description="Comma-separated optional columns: travel_zone, subject_names",
@@ -223,6 +294,7 @@ async def admin_export_examiner_allowances(
     role_filter = _examiner_type_filter_from_query(role)
     region_filter = _region_filter_from_query(region)
     group_filter = await _resolve_group_filter(session, examination_id, subject_id, group_id)
+    source_filter = _source_filter_from_query(source)
     extra_fields = parse_include_fields(include_fields)
 
     stmt = _base_examiner_stmt(
@@ -232,6 +304,7 @@ async def admin_export_examiner_allowances(
         subject_id=subject_id,
         group_id=group_filter,
         search=search,
+        source=source_filter,
     )
     result = await session.execute(stmt)
     examiners = list(result.scalars().all())
@@ -241,24 +314,26 @@ async def admin_export_examiner_allowances(
             detail="No examiners found for this examination (and filter, if any).",
         )
 
-    role_rates = await load_role_allowance_rates_map(session, examination_id)
-    marking_rates = await load_marking_rates_map(session, examination_id)
-    travel = await load_travel_rates_map(session, examination_id)
-    travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
-    travel_factors = await load_travel_role_factors_map(session, examination_id)
-    allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
-    source_modes = await load_subject_source_modes(session, examination_id)
+    ctx = await _load_compensation_context(session, examination_id)
     payload = examiner_detail_workbook_bytes(
         examiners,
         ex,
-        role_rates,
-        marking_rates,
-        travel,
-        travel_zones,
-        travel_zone_names,
-        travel_factors,
-        allocated_booklets,
-        source_modes,
+        ctx["role_rates"],
+        ctx["marking_rates"],
+        ctx["travel"],
+        ctx["travel_zones"],
+        ctx["travel_zone_names"],
+        ctx["travel_factors"],
+        ctx["allocated_booklets"],
+        ctx["source_modes"],
+        ctx["payout_overrides"],
+        ctx["marking_defaults"],
+        ctx["sitting_rates"],
+        ctx["default_days"],
+        ctx["roster_eligibility"],
+        ctx["group_eligibility"],
+        ctx["examiner_custom_groups"],
+        ctx["payout_adjustments_by_examiner"],
         include_fields=extra_fields,
         subject_id=subject_id,
     )
@@ -292,12 +367,14 @@ async def admin_bog_export_examiner_allowances(
     subject_id: int | None = Query(None),
     group_id: UUID | None = Query(None),
     search: str | None = Query(None),
+    source: str = Query("all"),
     payout_mode: str = Query("all", description="BoG batch: travel_commuting, allowances_marking, or all"),
 ) -> Response:
     ex = await _load_examination(session, examination_id)
     role_filter = _examiner_type_filter_from_query(role)
     region_filter = _region_filter_from_query(region)
     group_filter = await _resolve_group_filter(session, examination_id, subject_id, group_id)
+    source_filter = _source_filter_from_query(source)
 
     stmt = _base_examiner_stmt(
         examination_id,
@@ -306,6 +383,7 @@ async def admin_bog_export_examiner_allowances(
         subject_id=subject_id,
         group_id=group_filter,
         search=search,
+        source=source_filter,
     )
     result = await session.execute(stmt)
     examiners = list(result.scalars().all())
@@ -315,27 +393,29 @@ async def admin_bog_export_examiner_allowances(
             detail="No examiners found for this examination (and filter, if any).",
         )
 
-    role_rates = await load_role_allowance_rates_map(session, examination_id)
-    marking_rates = await load_marking_rates_map(session, examination_id)
-    travel = await load_travel_rates_map(session, examination_id)
-    allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
+    ctx = await _load_compensation_context(session, examination_id)
     mode = _payout_mode_from_query(payout_mode)
     exam_part = safe_filename_part(f"exam_{examination_id}_{examination_label(ex)}")
     title = bog_export_title(examination_label(ex), mode)
-    travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
-    travel_factors = await load_travel_role_factors_map(session, examination_id)
-    source_modes = await load_subject_source_modes(session, examination_id)
     payload = examiner_bog_workbook_bytes(
         examiners,
         ex,
-        role_rates,
-        marking_rates,
-        travel,
-        travel_zones,
-        travel_zone_names,
-        travel_factors,
-        allocated_booklets,
-        source_modes,
+        ctx["role_rates"],
+        ctx["marking_rates"],
+        ctx["travel"],
+        ctx["travel_zones"],
+        ctx["travel_zone_names"],
+        ctx["travel_factors"],
+        ctx["allocated_booklets"],
+        ctx["source_modes"],
+        ctx["payout_overrides"],
+        ctx["marking_defaults"],
+        ctx["sitting_rates"],
+        ctx["default_days"],
+        ctx["roster_eligibility"],
+        ctx["group_eligibility"],
+        ctx["examiner_custom_groups"],
+        ctx["payout_adjustments_by_examiner"],
         title=title,
         mode=mode,
         subject_id=subject_id,

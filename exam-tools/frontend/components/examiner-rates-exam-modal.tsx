@@ -1,45 +1,61 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Copy,
-  Loader2,
-  MapPin,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, Copy, Loader2, Pencil, X } from "lucide-react";
 
-import { DiscardChangesConfirmModal } from "@/components/discard-changes-confirm-modal";
 import { EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
+import { DiscardChangesConfirmModal } from "@/components/discard-changes-confirm-modal";
+import { ExaminerRatesEligibilityPanel } from "@/components/examiner-rates/examiner-rates-eligibility-panel";
+import { ExaminerRatesGroupsPanel } from "@/components/examiner-rates/examiner-rates-groups-panel";
+import { ExaminerRatesMarkingPanel } from "@/components/examiner-rates/examiner-rates-marking-panel";
+import { ExaminerRatesRoleMatrix } from "@/components/examiner-rates/examiner-rates-role-matrix";
+import { ExaminerRatesSectionNav } from "@/components/examiner-rates/examiner-rates-section-nav";
+import { ExaminerRatesSittingPanel } from "@/components/examiner-rates/examiner-rates-sitting-panel";
+import { ExaminerRatesTravelPanel } from "@/components/examiner-rates/examiner-rates-travel-panel";
+import { btnPrimary, btnSecondary } from "@/components/examiner-rates/shared";
 import { ExaminerRatesFormulaCallout } from "@/components/examiner-rates-formula-callout";
 import { OfficialRatesCopyModal } from "@/components/official-rates-copy-modal";
 import {
   copyExaminationExaminerAllowanceRates,
+  createExaminationAllowanceGroup,
+  deleteExaminationAllowanceGroup,
+  getExaminationExaminerDefaultDays,
   getExaminationExaminerMarkingRates,
   getExaminationExaminerRoleAllowanceRates,
+  getExaminationExaminerSittingAllowanceRates,
   getExaminationExaminerTravelRates,
+  getExaminationRosterAllowanceEligibility,
+  listExaminationAllowanceGroups,
+  putExaminationAllowanceGroupEligibility,
+  putExaminationExaminerDefaultDays,
   putExaminationExaminerMarkingRates,
   putExaminationExaminerRoleAllowanceRates,
+  putExaminationExaminerSittingAllowanceRates,
   putExaminationExaminerTravelRates,
+  putExaminationRosterAllowanceEligibility,
+  renameExaminationAllowanceGroup,
+  type AllowanceGroupRow,
   type Examination,
   type ExaminerAllowanceSubjectRef,
   type ExaminerTypeApi,
+  type RosterAllowanceEligibilityRow,
 } from "@/lib/api";
-import { formatGhsAmount } from "@/lib/format-ghs";
 import {
   EXAMINER_ALLOWANCE_TYPE_OPTIONS,
-  EXAMINER_MARKING_TAB,
-  EXAMINER_TRAVEL_TAB,
-  SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS,
+  EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS,
+  EXAMINER_RATES_SECTION_MARKING,
+  EXAMINER_RATES_SECTION_ROLE,
+  EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY,
+  EXAMINER_RATES_SECTION_SITTING,
+  EXAMINER_RATES_SECTION_TRAVEL,
+  ROSTER_ALLOWANCE_ELIGIBILITY_KEYS,
+  applyRegionZoneAssignment,
+  buildDefaultDaysSavePayload,
   buildMarkingRatesSavePayload,
   buildRoleRatesSavePayload,
-  applyRegionZoneAssignment,
+  buildSittingRatesSavePayload,
   buildTravelRatesSavePayload,
+  defaultDaysFromApi,
   filterMarkingSubjects,
   filterMarkingSubjectsBySearch,
   filterRegionOptionsBySearch,
@@ -48,93 +64,27 @@ import {
   markingRatesFromApi,
   newTravelZoneId,
   regionZoneAssignmentFromZones,
-  roleCellKey,
   roleRatesFromApi,
   serializeExaminerRatesDraft,
-  subjectTypeLabel,
+  sittingRatesFromApi,
   travelRatesFromApi,
   travelRoleFactorsFromApi,
   travelRoleZoneFactorKey,
   travelZonesFromApi,
-  type ExaminerAllowanceTypeApi,
-  type ExaminerRatesTab,
+  type DefaultDaysDraft,
+  type ExaminerRatesSectionId,
+  type MarkingDefaultsDraft,
   type MarkingRateDraft,
   type RoleRateDraft,
   type ScriptControlSubjectTypeFilter,
+  type SittingRateDraft,
   type TravelRateDraft,
   type TravelRoleFactorDraft,
   type TravelZoneDraft,
 } from "@/lib/examiner-rates-draft";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { officialAccountsBtnPrimary } from "@/lib/official-accounts-zone";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
-
-const rateAmountInputClass =
-  "h-9 w-full min-w-[4.5rem] rounded-md border border-input-border bg-input px-2 text-right text-sm tabular-nums text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60";
-
-const searchInputClass =
-  "h-9 w-full rounded-md border border-input-border bg-input pl-9 pr-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
-
-function RatesSectionHeader({
-  step,
-  title,
-  description,
-  action,
-}: {
-  step: number;
-  title: string;
-  description?: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-            {step}
-          </span>
-          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        </div>
-        {description ? <p className="mt-1 pl-8 text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
-    </div>
-  );
-}
-
-function InlineSearchField({
-  id,
-  value,
-  onChange,
-  placeholder,
-  className,
-}: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  className?: string;
-}) {
-  return (
-    <div className={cn("relative", className)}>
-      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <input
-        id={id}
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={searchInputClass}
-      />
-    </div>
-  );
-}
-
-const btnSecondary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-input-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
-const btnPrimary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
 
 type Props = {
   exam: Examination;
@@ -143,6 +93,23 @@ type Props = {
   onSaved?: () => void;
 };
 
+function serializeWhoQualifies(
+  eligibilityRows: RosterAllowanceEligibilityRow[],
+  allowanceGroups: AllowanceGroupRow[],
+): string {
+  return JSON.stringify({
+    eligibility: eligibilityRows.map((r) => ({
+      roster_source: r.roster_source,
+      allowances: r.allowances,
+    })),
+    groups: allowanceGroups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      allowances: g.allowances,
+    })),
+  });
+}
+
 export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Props) {
   const titleId = useId();
   const editToggleId = useId();
@@ -150,11 +117,21 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
   const [subjects, setSubjects] = useState<ExaminerAllowanceSubjectRef[]>([]);
   const [roleRates, setRoleRates] = useState<RoleRateDraft>({});
   const [markingRates, setMarkingRates] = useState<MarkingRateDraft>({});
+  const [markingDefaults, setMarkingDefaults] = useState<MarkingDefaultsDraft>({ paper1: "", paper2: "" });
+  const [sittingRates, setSittingRates] = useState<SittingRateDraft>({});
+  const [defaultDays, setDefaultDays] = useState<DefaultDaysDraft>({});
   const [travelRates, setTravelRates] = useState<TravelRateDraft>({});
   const [travelZones, setTravelZones] = useState<TravelZoneDraft>([]);
   const [travelRoleFactors, setTravelRoleFactors] = useState<TravelRoleFactorDraft>({});
+  const [eligibilityRows, setEligibilityRows] = useState<RosterAllowanceEligibilityRow[]>([]);
+  const [allowanceGroups, setAllowanceGroups] = useState<AllowanceGroupRow[]>([]);
+  const [selectedAllowanceGroupId, setSelectedAllowanceGroupId] = useState<string | null>(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [renameGroupName, setRenameGroupName] = useState("");
+  const [groupActionBusy, setGroupActionBusy] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState("");
-  const [activeTab, setActiveTab] = useState<ExaminerRatesTab>(EXAMINER_ALLOWANCE_TYPE_OPTIONS[0]!.value);
+  const [savedWhoSnapshot, setSavedWhoSnapshot] = useState("");
+  const [activeSection, setActiveSection] = useState<ExaminerRatesSectionId>(EXAMINER_RATES_SECTION_ROLE);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -188,13 +165,39 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     [travelRegionSearch],
   );
 
-  const dirty = useMemo(() => {
+  const amountsDirty = useMemo(() => {
     if (!savedSnapshot || !editing) return false;
     return (
-      serializeExaminerRatesDraft(roleRates, markingRates, travelRates, travelZones, travelRoleFactors) !==
-      savedSnapshot
+      serializeExaminerRatesDraft(
+        roleRates,
+        markingRates,
+        travelRates,
+        travelZones,
+        travelRoleFactors,
+        markingDefaults,
+        sittingRates,
+        defaultDays,
+      ) !== savedSnapshot
     );
-  }, [roleRates, markingRates, travelRates, travelZones, travelRoleFactors, savedSnapshot, editing]);
+  }, [
+    roleRates,
+    markingRates,
+    markingDefaults,
+    sittingRates,
+    defaultDays,
+    travelRates,
+    travelZones,
+    travelRoleFactors,
+    savedSnapshot,
+    editing,
+  ]);
+
+  const whoDirty = useMemo(() => {
+    if (!savedWhoSnapshot || !editing) return false;
+    return serializeWhoQualifies(eligibilityRows, allowanceGroups) !== savedWhoSnapshot;
+  }, [eligibilityRows, allowanceGroups, savedWhoSnapshot, editing]);
+
+  const dirty = amountsDirty || whoDirty;
 
   const regionZoneAssignment = useMemo(
     () => regionZoneAssignmentFromZones(travelZones),
@@ -206,10 +209,42 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     [regionZoneAssignment],
   );
 
+  const sectionHints = useMemo(() => {
+    const roleFilled = Object.values(roleRates).filter((v) => v.trim()).length;
+    const roleTotal = EXAMINER_ALLOWANCE_TYPE_OPTIONS.length * EXAMINER_TYPE_OPTIONS.length;
+    const sittingFilled = Object.values(sittingRates).filter((v) => v.trim()).length;
+    const markingFilled = Object.values(markingRates).filter((v) => v.trim()).length;
+    const customGroups = allowanceGroups.filter((g) => !g.is_general).length;
+    return {
+      [EXAMINER_RATES_SECTION_ROLE]: `${roleFilled}/${roleTotal} cells set`,
+      [EXAMINER_RATES_SECTION_SITTING]:
+        sittingFilled > 0 ? `${sittingFilled}/4 rates set` : "Daily rate × days",
+      [EXAMINER_RATES_SECTION_MARKING]:
+        subjects.length === 0
+          ? "No timetable subjects"
+          : `${markingFilled} subject rates`,
+      [EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY]: `${eligibilityRows.length} sources`,
+      [EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS]:
+        customGroups === 0 ? "General only" : `${customGroups} custom group${customGroups === 1 ? "" : "s"}`,
+      [EXAMINER_RATES_SECTION_TRAVEL]: `${assignedTravelRegionCount}/16 regions`,
+    };
+  }, [
+    roleRates,
+    sittingRates,
+    markingRates,
+    subjects.length,
+    eligibilityRows.length,
+    allowanceGroups,
+    assignedTravelRegionCount,
+  ]);
+
   const applyRatesFromApi = useCallback(
     (
       roleDraft: RoleRateDraft,
       markingDraft: MarkingRateDraft,
+      markingDefaultsDraft: MarkingDefaultsDraft,
+      sittingDraft: SittingRateDraft,
+      defaultDaysDraft: DefaultDaysDraft,
       travelDraft: TravelRateDraft,
       travelZoneDraft: TravelZoneDraft,
       travelFactorDraft: TravelRoleFactorDraft,
@@ -221,10 +256,16 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
         travelDraft,
         travelZoneDraft,
         travelFactorDraft,
+        markingDefaultsDraft,
+        sittingDraft,
+        defaultDaysDraft,
       );
       setSubjects(subs);
       setRoleRates(roleDraft);
       setMarkingRates(markingDraft);
+      setMarkingDefaults(markingDefaultsDraft);
+      setSittingRates(sittingDraft);
+      setDefaultDays(defaultDaysDraft);
       setTravelRates(travelDraft);
       setTravelZones(travelZoneDraft);
       setTravelRoleFactors(travelFactorDraft);
@@ -241,14 +282,31 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     setSaveError(null);
     setSaveSuccess(false);
     try {
-      const [roleData, markingData, travelData] = await Promise.all([
-        getExaminationExaminerRoleAllowanceRates(exam.id),
-        getExaminationExaminerMarkingRates(exam.id),
-        getExaminationExaminerTravelRates(exam.id),
-      ]);
+      const [roleData, markingData, travelData, sittingData, defaultDaysData, eligibilityData, groupsData] =
+        await Promise.all([
+          getExaminationExaminerRoleAllowanceRates(exam.id),
+          getExaminationExaminerMarkingRates(exam.id),
+          getExaminationExaminerTravelRates(exam.id),
+          getExaminationExaminerSittingAllowanceRates(exam.id),
+          getExaminationExaminerDefaultDays(exam.id),
+          getExaminationRosterAllowanceEligibility(exam.id),
+          listExaminationAllowanceGroups(exam.id),
+        ]);
+      const markingParsed = markingRatesFromApi(markingData);
+      setEligibilityRows(eligibilityData.rows);
+      setAllowanceGroups(groupsData.groups);
+      setSelectedAllowanceGroupId((prev) => {
+        if (prev && groupsData.groups.some((g) => g.id === prev)) return prev;
+        return groupsData.groups[0]?.id ?? null;
+      });
+      setRenameGroupName(groupsData.groups[0]?.name ?? "");
+      setSavedWhoSnapshot(serializeWhoQualifies(eligibilityData.rows, groupsData.groups));
       applyRatesFromApi(
         roleRatesFromApi(roleData),
-        markingRatesFromApi(markingData),
+        markingParsed.rates,
+        markingParsed.defaults,
+        sittingRatesFromApi(sittingData),
+        defaultDaysFromApi(defaultDaysData),
         travelRatesFromApi(travelData),
         travelZonesFromApi(travelData),
         travelRoleFactorsFromApi(travelData),
@@ -263,6 +321,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       setTravelZones([]);
       setTravelRoleFactors({});
       setSavedSnapshot("");
+      setSavedWhoSnapshot("");
     } finally {
       setBusy(false);
     }
@@ -297,11 +356,15 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     setSaveError(null);
     setSaveSuccess(false);
     const rolePayload = buildRoleRatesSavePayload(roleRates);
-    const markingPayload = buildMarkingRatesSavePayload(markingRates);
+    const markingPayload = buildMarkingRatesSavePayload(markingRates, markingDefaults);
+    const sittingPayload = buildSittingRatesSavePayload(sittingRates);
+    const defaultDaysPayload = buildDefaultDaysSavePayload(defaultDays);
     const travelPayload = buildTravelRatesSavePayload(travelRates, travelZones, travelRoleFactors);
     const errors = {
       ...rolePayload.roleErrors,
       ...markingPayload.markingErrors,
+      ...sittingPayload.sittingErrors,
+      ...defaultDaysPayload.defaultDaysErrors,
       ...travelPayload.travelErrors,
       ...travelPayload.travelZoneErrors,
       ...travelPayload.travelFactorErrors,
@@ -316,8 +379,32 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       if (rolePayload.items.length > 0) {
         await putExaminationExaminerRoleAllowanceRates(exam.id, rolePayload.items);
       }
-      if (markingPayload.items.length > 0) {
-        await putExaminationExaminerMarkingRates(exam.id, markingPayload.items);
+      if (
+        markingPayload.payload.items.length > 0 ||
+        markingPayload.payload.default_rate_paper_1_ghs != null ||
+        markingPayload.payload.default_rate_paper_2_ghs != null
+      ) {
+        await putExaminationExaminerMarkingRates(exam.id, markingPayload.payload);
+      }
+      await putExaminationExaminerSittingAllowanceRates(exam.id, sittingPayload.items);
+      await putExaminationExaminerDefaultDays(exam.id, defaultDaysPayload.items);
+      const eligibilityCells = eligibilityRows.flatMap((row) =>
+        ROSTER_ALLOWANCE_ELIGIBILITY_KEYS.map((key) => ({
+          roster_source: row.roster_source,
+          allowance_key: key,
+          enabled: Boolean(row.allowances[key]),
+        })),
+      );
+      await putExaminationRosterAllowanceEligibility(exam.id, eligibilityCells);
+      for (const group of allowanceGroups) {
+        await putExaminationAllowanceGroupEligibility(
+          exam.id,
+          group.id,
+          ROSTER_ALLOWANCE_ELIGIBILITY_KEYS.map((key) => ({
+            allowance_key: key,
+            enabled: Boolean(group.allowances[key]),
+          })),
+        );
       }
       if (
         travelPayload.items.length > 0 ||
@@ -336,8 +423,12 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
         travelRates,
         travelZones,
         travelRoleFactors,
+        markingDefaults,
+        sittingRates,
+        defaultDays,
       );
       setSavedSnapshot(snapshot);
+      setSavedWhoSnapshot(serializeWhoQualifies(eligibilityRows, allowanceGroups));
       setSaveSuccess(true);
       setEditing(false);
       onSaved?.();
@@ -364,6 +455,10 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     }
   }
 
+  function markDirty() {
+    setSaveSuccess(false);
+  }
+
   function updateRoleCell(key: string, value: string) {
     setRoleRates((prev) => ({ ...prev, [key]: value }));
     setCellErrors((prev) => {
@@ -371,7 +466,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       delete next[key];
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function updateMarkingCell(subjectId: number, paperNumber: number, value: string) {
@@ -382,7 +477,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       delete next[key];
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function updateTravelCell(region: string, value: string) {
@@ -392,12 +487,12 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       delete next[region];
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function addTravelZone() {
     setTravelZones((prev) => [...prev, { id: newTravelZoneId(), name: `Zone ${prev.length + 1}`, regions: [] }]);
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function removeTravelZone(zoneId: string) {
@@ -417,24 +512,22 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       }
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function updateTravelZoneName(zoneId: string, value: string) {
-    setTravelZones((prev) =>
-      prev.map((zone) => (zone.id === zoneId ? { ...zone, name: value } : zone)),
-    );
+    setTravelZones((prev) => prev.map((zone) => (zone.id === zoneId ? { ...zone, name: value } : zone)));
     setCellErrors((prev) => {
       const next = { ...prev };
       delete next[`zone:${zoneId}`];
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function updateRegionZoneAssignment(region: string, zoneId: string) {
     setTravelZones((prev) => applyRegionZoneAssignment(prev, region, zoneId));
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function updateTravelRoleZoneFactor(role: ExaminerTypeApi, zoneId: string, value: string) {
@@ -445,7 +538,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       delete next[key];
       return next;
     });
-    setSaveSuccess(false);
+    markDirty();
   }
 
   function formatTravelRoleFactorDisplay(raw: string): string {
@@ -456,15 +549,65 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
     return String(n);
   }
 
-  const tabButtons: { id: ExaminerRatesTab; label: string }[] = [
-    ...EXAMINER_ALLOWANCE_TYPE_OPTIONS.map((o) => ({ id: o.value, label: o.label })),
-    { id: EXAMINER_MARKING_TAB, label: "Marking" },
-    { id: EXAMINER_TRAVEL_TAB, label: "T & T" },
-  ];
+  const selectedAllowanceGroup =
+    allowanceGroups.find((g) => g.id === selectedAllowanceGroupId) ?? allowanceGroups[0] ?? null;
 
-  const activeAllowanceTab = EXAMINER_ALLOWANCE_TYPE_OPTIONS.some((o) => o.value === activeTab)
-    ? (activeTab as ExaminerAllowanceTypeApi)
-    : null;
+  async function handleCreateGroup() {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setGroupActionBusy(true);
+    setSaveError(null);
+    try {
+      const created = await createExaminationAllowanceGroup(exam.id, name);
+      setAllowanceGroups((prev) => [...prev, created]);
+      setSelectedAllowanceGroupId(created.id);
+      setNewGroupName("");
+      setRenameGroupName(created.name);
+      markDirty();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not create group.");
+    } finally {
+      setGroupActionBusy(false);
+    }
+  }
+
+  async function handleRenameGroup() {
+    if (!selectedAllowanceGroup || selectedAllowanceGroup.is_general) return;
+    const name = renameGroupName.trim();
+    if (!name || name === selectedAllowanceGroup.name) return;
+    setGroupActionBusy(true);
+    setSaveError(null);
+    try {
+      const updated = await renameExaminationAllowanceGroup(exam.id, selectedAllowanceGroup.id, name);
+      setAllowanceGroups((prev) => prev.map((g) => (g.id === updated.id ? { ...g, ...updated } : g)));
+      markDirty();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not rename group.");
+    } finally {
+      setGroupActionBusy(false);
+    }
+  }
+
+  async function handleDeleteGroup() {
+    if (!selectedAllowanceGroup || selectedAllowanceGroup.is_general) return;
+    if (!window.confirm(`Delete allowance group “${selectedAllowanceGroup.name}”?`)) return;
+    setGroupActionBusy(true);
+    setSaveError(null);
+    try {
+      await deleteExaminationAllowanceGroup(exam.id, selectedAllowanceGroup.id);
+      setAllowanceGroups((prev) => {
+        const next = prev.filter((g) => g.id !== selectedAllowanceGroup.id);
+        setSelectedAllowanceGroupId(next[0]?.id ?? null);
+        setRenameGroupName(next[0]?.name ?? "");
+        return next;
+      });
+      markDirty();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not delete group.");
+    } finally {
+      setGroupActionBusy(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
@@ -481,7 +624,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
               Examiner rates — {examLabel}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Flat role allowances, per-subject marking rates, and regional T &amp; T.
+              Set amounts, who can receive them, and travel.
             </p>
           </div>
           <button
@@ -510,476 +653,147 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
               Loading rates…
             </div>
           ) : (
-            <>
-              <div className="mt-4 flex flex-wrap gap-2 border-b border-border pb-3">
-                {tabButtons.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    className={cn(
-                      "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                      activeTab === tab.id
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+            <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-start">
+              <ExaminerRatesSectionNav
+                activeSection={activeSection}
+                onSelect={setActiveSection}
+                hints={sectionHints}
+              />
+              <div className="min-w-0 flex-1">
+                {activeSection === EXAMINER_RATES_SECTION_ROLE ? (
+                  <ExaminerRatesRoleMatrix
+                    editing={editing}
+                    saving={saving}
+                    roleRates={roleRates}
+                    cellErrors={cellErrors}
+                    onChange={updateRoleCell}
+                  />
+                ) : null}
+
+                {activeSection === EXAMINER_RATES_SECTION_SITTING ? (
+                  <ExaminerRatesSittingPanel
+                    editing={editing}
+                    sittingRates={sittingRates}
+                    defaultDays={defaultDays}
+                    onSittingChange={(role, value) => {
+                      setSittingRates((prev) => ({ ...prev, [role]: value }));
+                      markDirty();
+                    }}
+                    onDefaultDaysChange={(role, value) => {
+                      setDefaultDays((prev) => ({ ...prev, [role]: value }));
+                      markDirty();
+                    }}
+                  />
+                ) : null}
+
+                {activeSection === EXAMINER_RATES_SECTION_MARKING ? (
+                  <ExaminerRatesMarkingPanel
+                    editing={editing}
+                    saving={saving}
+                    subjects={subjects}
+                    searchedSubjects={searchedMarkingSubjects}
+                    markingRates={markingRates}
+                    markingDefaults={markingDefaults}
+                    cellErrors={cellErrors}
+                    markingSubjectSearch={markingSubjectSearch}
+                    markingSubjectTypeFilter={markingSubjectTypeFilter}
+                    onDefaultsChange={(next) => {
+                      setMarkingDefaults(next);
+                      markDirty();
+                    }}
+                    onSearchChange={setMarkingSubjectSearch}
+                    onTypeFilterChange={setMarkingSubjectTypeFilter}
+                    onMarkingCellChange={updateMarkingCell}
+                    onApplyDefaults={() =>
+                      void putExaminationExaminerMarkingRates(exam.id, {
+                        items: [],
+                        default_rate_paper_1_ghs: markingDefaults.paper1.trim() || null,
+                        default_rate_paper_2_ghs: markingDefaults.paper2.trim() || null,
+                        apply_defaults_to_unset: true,
+                      }).then(() => loadRates())
+                    }
+                  />
+                ) : null}
+
+                {activeSection === EXAMINER_RATES_SECTION_ROSTER_ELIGIBILITY ? (
+                  <ExaminerRatesEligibilityPanel
+                    editing={editing}
+                    saving={saving}
+                    eligibilityRows={eligibilityRows}
+                    onToggle={(rosterSource, key, enabled) => {
+                      setEligibilityRows((prev) =>
+                        prev.map((r) =>
+                          r.roster_source === rosterSource
+                            ? { ...r, allowances: { ...r.allowances, [key]: enabled } }
+                            : r,
+                        ),
+                      );
+                      markDirty();
+                    }}
+                  />
+                ) : null}
+
+                {activeSection === EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS ? (
+                  <ExaminerRatesGroupsPanel
+                    examinationId={exam.id}
+                    editing={editing}
+                    saving={saving}
+                    groupActionBusy={groupActionBusy}
+                    allowanceGroups={allowanceGroups}
+                    selectedGroup={selectedAllowanceGroup}
+                    newGroupName={newGroupName}
+                    renameGroupName={renameGroupName}
+                    onSelectGroup={(group) => {
+                      setSelectedAllowanceGroupId(group.id);
+                      setRenameGroupName(group.name);
+                    }}
+                    onNewGroupNameChange={setNewGroupName}
+                    onRenameGroupNameChange={setRenameGroupName}
+                    onCreate={() => void handleCreateGroup()}
+                    onRename={() => void handleRenameGroup()}
+                    onDelete={() => void handleDeleteGroup()}
+                    onToggleAllowance={(groupId, key, enabled) => {
+                      setAllowanceGroups((prev) =>
+                        prev.map((g) =>
+                          g.id === groupId
+                            ? { ...g, allowances: { ...g.allowances, [key]: enabled } }
+                            : g,
+                        ),
+                      );
+                      markDirty();
+                    }}
+                    onMemberCountChange={(groupId, count) => {
+                      setAllowanceGroups((prev) =>
+                        prev.map((g) => (g.id === groupId ? { ...g, member_count: count } : g)),
+                      );
+                    }}
+                  />
+                ) : null}
+
+                {activeSection === EXAMINER_RATES_SECTION_TRAVEL ? (
+                  <ExaminerRatesTravelPanel
+                    editing={editing}
+                    saving={saving}
+                    travelRates={travelRates}
+                    travelZones={travelZones}
+                    travelRoleFactors={travelRoleFactors}
+                    cellErrors={cellErrors}
+                    travelRegionSearch={travelRegionSearch}
+                    searchedTravelRegions={searchedTravelRegions}
+                    regionZoneAssignment={regionZoneAssignment}
+                    assignedTravelRegionCount={assignedTravelRegionCount}
+                    onTravelRegionSearchChange={setTravelRegionSearch}
+                    onAddZone={addTravelZone}
+                    onRemoveZone={removeTravelZone}
+                    onUpdateZoneName={updateTravelZoneName}
+                    onAssignRegion={updateRegionZoneAssignment}
+                    onTravelRateChange={updateTravelCell}
+                    onRoleFactorChange={updateTravelRoleZoneFactor}
+                    formatTravelRoleFactorDisplay={formatTravelRoleFactorDisplay}
+                  />
+                ) : null}
               </div>
-
-              {activeTab === EXAMINER_TRAVEL_TAB ? (
-                <div className="mt-4 space-y-5">
-                  <div className="rounded-xl border border-primary/15 bg-primary/[0.04] px-4 py-3">
-                    <p className="text-sm text-foreground">
-                      <span className="font-medium">T &amp; T payable</span> = regional base amount × role factor
-                      for the examiner&apos;s zone (default 1).
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span className="rounded-full bg-background px-2.5 py-1">
-                        {travelZones.length} {travelZones.length === 1 ? "zone" : "zones"}
-                      </span>
-                      <span className="rounded-full bg-background px-2.5 py-1">
-                        {assignedTravelRegionCount}/{REGION_OPTIONS.length} regions assigned
-                      </span>
-                    </div>
-                  </div>
-
-                  <section className="overflow-hidden rounded-xl border border-border">
-                    <RatesSectionHeader
-                      step={1}
-                      title="T & T zones"
-                      description="Group regions into custom zones for role multipliers."
-                      action={
-                        editing ? (
-                          <button
-                            type="button"
-                            onClick={addTravelZone}
-                            disabled={saving}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-input-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-                          >
-                            <Plus className="size-3.5" />
-                            Add zone
-                          </button>
-                        ) : null
-                      }
-                    />
-                    {travelZones.length === 0 ? (
-                      <div className="px-4 py-8 text-center">
-                        <MapPin className="mx-auto size-8 text-muted-foreground/50" aria-hidden />
-                        <p className="mt-3 text-sm text-muted-foreground">
-                          No zones yet. Add at least one zone, then assign regions in step 2.
-                        </p>
-                        {editing ? (
-                          <button
-                            type="button"
-                            onClick={addTravelZone}
-                            disabled={saving}
-                            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
-                          >
-                            <Plus className="size-4" />
-                            Create first zone
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="grid gap-3 p-4 sm:grid-cols-2">
-                        {travelZones.map((zone) => (
-                          <div
-                            key={zone.id}
-                            className="rounded-lg border border-border bg-muted/20 p-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              {editing ? (
-                                <input
-                                  type="text"
-                                  disabled={saving}
-                                  className={cn(formInputClass, "min-w-0 flex-1")}
-                                  value={zone.name}
-                                  onChange={(e) => updateTravelZoneName(zone.id, e.target.value)}
-                                  aria-invalid={Boolean(cellErrors[`zone:${zone.id}`])}
-                                />
-                              ) : (
-                                <p className="font-medium text-foreground">{zone.name}</p>
-                              )}
-                              {editing ? (
-                                <button
-                                  type="button"
-                                  onClick={() => removeTravelZone(zone.id)}
-                                  disabled={saving}
-                                  className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                  aria-label={`Remove ${zone.name}`}
-                                >
-                                  <Trash2 className="size-4" />
-                                </button>
-                              ) : null}
-                            </div>
-                            {cellErrors[`zone:${zone.id}`] ? (
-                              <p className="mt-1 text-xs text-destructive">{cellErrors[`zone:${zone.id}`]}</p>
-                            ) : null}
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              {zone.regions.length} {zone.regions.length === 1 ? "region" : "regions"}
-                            </p>
-                            {zone.regions.length > 0 ? (
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                {zone.regions.map((region) => (
-                                  <span
-                                    key={region}
-                                    className="rounded-full bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
-                                  >
-                                    {region}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-
-                  {travelZones.length > 0 ? (
-                    <section className="overflow-hidden rounded-xl border border-border">
-                      <RatesSectionHeader
-                        step={2}
-                        title="Assign regions to zones"
-                        description="Each region can belong to one zone. Unassigned regions use factor 1."
-                      />
-                      <div className="border-b border-border px-4 py-3">
-                        <InlineSearchField
-                          id="travel-region-search"
-                          value={travelRegionSearch}
-                          onChange={setTravelRegionSearch}
-                          placeholder="Search regions…"
-                          className="max-w-sm"
-                        />
-                        {travelRegionSearch.trim() ? (
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            Showing {searchedTravelRegions.length} of {REGION_OPTIONS.length} regions
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[28rem] text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/40 text-left">
-                              <th className="px-4 py-2.5 font-semibold">Region</th>
-                              <th className="px-4 py-2.5 font-semibold">T &amp; T zone</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {searchedTravelRegions.length === 0 ? (
-                              <tr>
-                                <td colSpan={2} className="px-4 py-8 text-center text-muted-foreground">
-                                  No regions match your search.
-                                </td>
-                              </tr>
-                            ) : (
-                              searchedTravelRegions.map((region) => (
-                                <tr key={region.value} className="border-b border-border/60 last:border-0">
-                                  <td className="px-4 py-2">{region.label}</td>
-                                  <td className="px-4 py-2">
-                                    {editing ? (
-                                      <select
-                                        className={cn(formInputClass, "max-w-xs")}
-                                        disabled={saving}
-                                        value={regionZoneAssignment[region.value] ?? ""}
-                                        onChange={(e) =>
-                                          updateRegionZoneAssignment(region.value, e.target.value)
-                                        }
-                                      >
-                                        <option value="">Unassigned</option>
-                                        {travelZones.map((zone) => (
-                                          <option key={zone.id} value={zone.id}>
-                                            {zone.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <span className="text-muted-foreground">
-                                        {travelZones.find((z) => z.id === regionZoneAssignment[region.value])
-                                          ?.name ?? "Unassigned"}
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {travelZones.length > 0 ? (
-                    <section className="overflow-hidden rounded-xl border border-border">
-                      <RatesSectionHeader
-                        step={3}
-                        title="Role × zone multipliers"
-                        description="Leave blank to use 1. Only affects T & T, not other allowances."
-                      />
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[32rem] text-sm">
-                          <thead>
-                            <tr className="border-b border-border bg-muted/40 text-left">
-                              <th className="sticky left-0 z-10 bg-muted/40 px-4 py-2.5 font-semibold">
-                                Role
-                              </th>
-                              {travelZones.map((zone) => (
-                                <th key={zone.id} className="px-4 py-2.5 font-semibold text-right">
-                                  {zone.name}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {EXAMINER_TYPE_OPTIONS.map((role) => (
-                              <tr key={role.value} className="border-b border-border/60 last:border-0">
-                                <td className="sticky left-0 z-10 bg-card px-4 py-2 font-medium">
-                                  {role.label}
-                                </td>
-                                {travelZones.map((zone) => {
-                                  const key = travelRoleZoneFactorKey(role.value, zone.id);
-                                  return (
-                                    <td key={zone.id} className="px-4 py-2">
-                                      {editing ? (
-                                        <input
-                                          type="text"
-                                          inputMode="decimal"
-                                          disabled={saving}
-                                          className={rateAmountInputClass}
-                                          placeholder="1"
-                                          value={travelRoleFactors[key] ?? ""}
-                                          onChange={(e) =>
-                                            updateTravelRoleZoneFactor(role.value, zone.id, e.target.value)
-                                          }
-                                          aria-invalid={Boolean(cellErrors[key])}
-                                        />
-                                      ) : (
-                                        <span className="block text-right tabular-nums">
-                                          {formatTravelRoleFactorDisplay(travelRoleFactors[key] ?? "")}
-                                        </span>
-                                      )}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <section className="overflow-hidden rounded-xl border border-border">
-                    <RatesSectionHeader
-                      step={travelZones.length > 0 ? 4 : 2}
-                      title="Regional base amounts"
-                      description="One T & T amount per examiner home region, before the role × zone multiplier."
-                    />
-                    <div className="border-b border-border px-4 py-3">
-                      <InlineSearchField
-                        id="travel-base-region-search"
-                        value={travelRegionSearch}
-                        onChange={setTravelRegionSearch}
-                        placeholder="Search regions…"
-                        className="max-w-sm"
-                      />
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[28rem] text-sm">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40 text-left">
-                            <th className="px-4 py-2.5 font-semibold">Region</th>
-                            <th className="px-4 py-2.5 font-semibold text-right">T &amp; T (GHS)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {searchedTravelRegions.length === 0 ? (
-                            <tr>
-                              <td colSpan={2} className="px-4 py-8 text-center text-muted-foreground">
-                                No regions match your search.
-                              </td>
-                            </tr>
-                          ) : (
-                            searchedTravelRegions.map((region) => (
-                              <tr key={region.value} className="border-b border-border/60 last:border-0">
-                                <td className="px-4 py-2">{region.label}</td>
-                                <td className="px-4 py-2">
-                                  {editing ? (
-                                    <input
-                                      type="text"
-                                      inputMode="decimal"
-                                      disabled={saving}
-                                      className={rateAmountInputClass}
-                                      value={travelRates[region.value] ?? ""}
-                                      onChange={(e) => updateTravelCell(region.value, e.target.value)}
-                                      aria-invalid={Boolean(cellErrors[region.value])}
-                                    />
-                                  ) : (
-                                    <span className="block text-right tabular-nums">
-                                      {formatGhsAmount(travelRates[region.value] || null)}
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                </div>
-              ) : activeTab === EXAMINER_MARKING_TAB ? (
-                subjects.length === 0 ? (
-                  <p className="mt-6 text-sm text-muted-foreground">
-                    No subjects are on this examination timetable yet. Add timetable subjects before configuring
-                    marking rates.
-                  </p>
-                ) : (
-                  <>
-                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-                      <div className="w-full max-w-xs">
-                        <label className={formLabelClass} htmlFor="marking-subject-search">
-                          Search subjects
-                        </label>
-                        <InlineSearchField
-                          id="marking-subject-search"
-                          value={markingSubjectSearch}
-                          onChange={setMarkingSubjectSearch}
-                          placeholder="Code or name…"
-                          className="mt-1"
-                        />
-                      </div>
-                      <div className="w-full max-w-xs">
-                        <label className={formLabelClass} htmlFor="marking-subject-type-filter">
-                          Subject type
-                        </label>
-                        <select
-                          id="marking-subject-type-filter"
-                          className={cn(formInputClass, "mt-1")}
-                          value={markingSubjectTypeFilter}
-                          onChange={(e) =>
-                            setMarkingSubjectTypeFilter(e.target.value as ScriptControlSubjectTypeFilter)
-                          }
-                        >
-                          {SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {(markingSubjectSearch.trim() || markingSubjectTypeFilter !== "all") && (
-                        <p className="text-xs text-muted-foreground sm:pb-2">
-                          Showing {searchedMarkingSubjects.length} of {subjects.length} subjects
-                        </p>
-                      )}
-                    </div>
-                    <div className="mt-4 overflow-x-auto rounded-xl border border-border">
-                      <table className="w-full min-w-[36rem] text-sm">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40 text-left">
-                            <th className="px-3 py-2.5 font-semibold">Subject</th>
-                            <th className="px-3 py-2.5 font-semibold">Type</th>
-                            <th className="px-3 py-2.5 font-semibold text-right">Paper 1 (GHS)</th>
-                            <th className="px-3 py-2.5 font-semibold text-right">Paper 2 (GHS)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {searchedMarkingSubjects.length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">
-                                {markingSubjectSearch.trim()
-                                  ? "No subjects match your search."
-                                  : "No subjects match this type filter."}
-                              </td>
-                            </tr>
-                          ) : (
-                            searchedMarkingSubjects.map((s) => (
-                              <tr key={s.id} className="border-b border-border/60 last:border-0">
-                                <td className="px-3 py-2">
-                                  <span className="font-medium">{s.code || s.name}</span>
-                                  {s.code && s.name ? (
-                                    <span className="mt-0.5 block text-xs text-muted-foreground">{s.name}</span>
-                                  ) : null}
-                                </td>
-                                <td className="px-3 py-2 text-muted-foreground">{subjectTypeLabel(s.subject_type)}</td>
-                                {[1, 2].map((paperNumber) => {
-                                  const onTimetable = s.paper_numbers.includes(paperNumber);
-                                  const key = markingCellKey(s.id, paperNumber);
-                                  return (
-                                    <td key={paperNumber} className="px-3 py-2">
-                                      {!onTimetable ? (
-                                        <span className="block text-right text-muted-foreground">—</span>
-                                      ) : editing ? (
-                                        <input
-                                          type="text"
-                                          inputMode="decimal"
-                                          disabled={saving}
-                                          className={rateAmountInputClass}
-                                          value={markingRates[key] ?? ""}
-                                          onChange={(e) => updateMarkingCell(s.id, paperNumber, e.target.value)}
-                                          aria-invalid={Boolean(cellErrors[key])}
-                                          aria-label={`${s.code || s.name} paper ${paperNumber} rate`}
-                                        />
-                                      ) : (
-                                        <span className="block text-right tabular-nums">
-                                          {formatGhsAmount(markingRates[key] || null)}
-                                        </span>
-                                      )}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )
-              ) : activeAllowanceTab ? (
-                <div className="mt-4 overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full min-w-[24rem] text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/40 text-left">
-                        <th className="px-3 py-2.5 font-semibold">Role</th>
-                        <th className="px-3 py-2.5 font-semibold text-right">Amount (GHS)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {EXAMINER_TYPE_OPTIONS.map((role) => {
-                        const key = roleCellKey(activeAllowanceTab, role.value);
-                        return (
-                          <tr key={role.value} className="border-b border-border/60 last:border-0">
-                            <td className="px-3 py-2 font-medium">{role.label}</td>
-                            <td className="px-3 py-2">
-                              {editing ? (
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  disabled={saving}
-                                  className={rateAmountInputClass}
-                                  value={roleRates[key] ?? ""}
-                                  onChange={(e) => updateRoleCell(key, e.target.value)}
-                                  aria-invalid={Boolean(cellErrors[key])}
-                                />
-                              ) : (
-                                <span className="block text-right tabular-nums">
-                                  {formatGhsAmount(roleRates[key] || null)}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-            </>
+            </div>
           )}
         </div>
 

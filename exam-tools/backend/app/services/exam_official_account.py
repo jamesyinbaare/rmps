@@ -95,6 +95,7 @@ def normalize_account_for_save(
     bank_name: str,
     bank_code: str,
     for_update: bool = False,
+    for_bulk_import: bool = False,
 ) -> str:
     """Validate user input and return the 13-digit value to store."""
     account = _digits_only(account_number)
@@ -103,26 +104,36 @@ def normalize_account_for_save(
 
     kind = resolve_bank_kind(bank_name)
     if kind == AccountBankKind.ABSA:
-        if len(account) != ABSA_ACCOUNT_INPUT_LEN:
-            raise ValueError(
-                "ABSA account must be exactly 7 digits (6-digit branch code is added automatically)"
-            )
         branch = normalize_branch_code(bank_code)
-        stored = branch + account
-        if len(stored) != FULL_ACCOUNT_LEN:
-            raise ValueError("Invalid branch code for ABSA; contact support to fix the bank directory")
-        return stored
+        if len(account) == ABSA_ACCOUNT_INPUT_LEN:
+            stored = branch + account
+            if len(stored) != FULL_ACCOUNT_LEN:
+                raise ValueError("Invalid branch code for ABSA; contact support to fix the bank directory")
+            return stored
+        if (for_update or for_bulk_import) and len(account) == FULL_ACCOUNT_LEN:
+            if account.startswith(branch):
+                return account
+            if for_bulk_import:
+                suffix = account[-ABSA_ACCOUNT_INPUT_LEN:]
+                if len(suffix) == ABSA_ACCOUNT_INPUT_LEN:
+                    return branch + suffix
+            raise ValueError(
+                "ABSA account must be 7 digits, or 13 digits with the selected branch bank code"
+            )
+        raise ValueError(
+            "ABSA account must be exactly 7 digits (6-digit branch code is added automatically)"
+        )
 
     if kind == AccountBankKind.ADB:
         if len(account) == ADB_ACCOUNT_INPUT_LEN:
             return account[ADB_TRIM_PREFIX_LEN:]
         if len(account) == FULL_ACCOUNT_LEN:
-            if for_update:
+            if for_update or for_bulk_import:
                 return account
             raise ValueError("ADB account must be exactly 16 digits")
-        if for_update:
+        if for_update or for_bulk_import:
             raise ValueError(
-                "ADB account must be 16 digits, or 13 digits when keeping the saved account number"
+                "ADB account must be 16 digits, or 13 digits when using the saved account number"
             )
         raise ValueError("ADB account must be exactly 16 digits")
 

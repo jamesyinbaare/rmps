@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Upload } from "lucide-react";
+import { officialAccountsBtnSecondary } from "@/lib/official-accounts-zone";
 
 import { CommandBarBorderField } from "@/components/command-bar-border-field";
 import { EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
@@ -50,7 +51,10 @@ type Props = {
   exportDisabled: boolean;
   exportDisabledReason?: string;
   exportBusy: string | null;
+  exportSectionId?: string;
   onExport: (key: string) => void;
+  onUpload?: () => void;
+  uploadDisabled?: boolean;
 };
 
 export function ExaminerPayoutsCommandBar({
@@ -67,9 +71,12 @@ export function ExaminerPayoutsCommandBar({
   exportDisabled,
   exportDisabledReason,
   exportBusy,
+  exportSectionId = SECTION_ID,
   onExport,
+  onUpload,
+  uploadDisabled,
 }: Props) {
-  const exportBusyKey = exportBusy?.startsWith(`${SECTION_ID}:`)
+  const exportBusyKey = exportBusy?.startsWith(`${exportSectionId}:`)
     ? exportBusy.split(":")[1]
     : null;
 
@@ -143,6 +150,18 @@ export function ExaminerPayoutsCommandBar({
           role="toolbar"
           aria-label="Examiner bank account actions"
         >
+          {onUpload ? (
+            <button
+              type="button"
+              className={cn(bySubjectBtnClass, "bg-background text-foreground border-border")}
+              aria-label="Upload special examiners"
+              title="Upload special examiners"
+              disabled={!examSelected || uploadDisabled}
+              onClick={onUpload}
+            >
+              <Upload className="size-4 shrink-0" aria-hidden />
+            </button>
+          ) : null}
           {bySubjectHref ? (
             <Link
               href={bySubjectHref}

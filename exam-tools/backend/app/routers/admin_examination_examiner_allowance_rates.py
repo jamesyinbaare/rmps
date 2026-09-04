@@ -12,32 +12,49 @@ from app.dependencies.auth import SuperAdminOrFinanceOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     ExaminerAllowanceType,
+    ExaminerRosterSource,
     ExaminerType,
     Examination,
+    ExaminationExaminerDefaultDays,
+    ExaminationExaminerMarkingDefault,
     ExaminationExaminerMarkingRate,
     ExaminationExaminerRoleAllowanceRate,
+    ExaminationExaminerSittingAllowanceRate,
     ExaminationExaminerTravelRate,
     ExaminationExaminerTravelRoleFactor,
     ExaminationExaminerTravelZone,
     ExaminationExaminerTravelZoneRegion,
+    ExaminationRosterAllowanceEligibility,
     Region,
+    RosterAllowanceKey,
     Subject,
     SubjectType,
 )
 from app.schemas.examination_examiner_allowance_rate import (
     ExaminerAllowanceRatesCopyResponse,
     ExaminerAllowanceSubjectRef,
+    ExaminerDefaultDaysCell,
     ExaminerMarkingRateRow,
     ExaminerRoleAllowanceRateCell,
+    ExaminerSittingAllowanceRateCell,
     ExaminerTravelRateRow,
     ExaminerTravelRoleFactorRow,
     ExaminerTravelZoneRow,
+    ExaminationExaminerDefaultDaysPut,
+    ExaminationExaminerDefaultDaysResponse,
     ExaminationExaminerMarkingRatesPut,
     ExaminationExaminerMarkingRatesResponse,
     ExaminationExaminerRoleAllowanceRatesPut,
     ExaminationExaminerRoleAllowanceRatesResponse,
+    ExaminationExaminerSittingAllowanceRatesPut,
+    ExaminationExaminerSittingAllowanceRatesResponse,
     ExaminationExaminerTravelRatesPut,
     ExaminationExaminerTravelRatesResponse,
+)
+from app.schemas.examination_roster_allowance_eligibility import (
+    ExaminationRosterAllowanceEligibilityPut,
+    ExaminationRosterAllowanceEligibilityResponse,
+    RosterAllowanceEligibilityRow,
 )
 from app.services.examiner_compensation import (
     allowance_type_from_api_label,
@@ -46,6 +63,15 @@ from app.services.examiner_compensation import (
     region_str,
 )
 from app.services.examiner_roster import parse_region
+from app.services.examiner_roster_allowance_eligibility import (
+    ALLOWANCE_KEY_LABELS,
+    ROSTER_SOURCE_LABELS,
+    ROSTER_SOURCES,
+    default_eligibility_enabled,
+    load_roster_allowance_eligibility_map,
+    replace_roster_allowance_eligibility,
+    roster_allowance_key_from_api_label,
+)
 from app.services.script_control import ordered_subject_papers_on_examination_timetable
 
 router = APIRouter(prefix="/admin/examinations", tags=["admin-examination-examiner-allowance-rates"])
@@ -71,8 +97,101 @@ def _subject_ref(subject: Subject, paper_numbers: list[int]) -> ExaminerAllowanc
     )
 
 
+def _roster_source_from_api_label(label: str) -> ExaminerRosterSource:
+    raw = label.strip().lower()
+    if raw == "payout_override":
+        raw = "special"
+    return ExaminerRosterSource.from_stored(raw)
+
+
+@router.get(
+    "/{exam_id}/examiner-roster-allowance-eligibility",
+    response_model=ExaminationRosterAllowanceEligibilityResponse,
+)
+async def get_examination_roster_allowance_eligibility(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationRosterAllowanceEligibilityResponse:
+    await _load_examination(session, exam_id)
+    eligibility = await load_roster_allowance_eligibility_map(session, exam_id)
+    rows: list[RosterAllowanceEligibilityRow] = []
+    for roster_source in ROSTER_SOURCES:
+        rows.append(
+            RosterAllowanceEligibilityRow(
+                roster_source=roster_source.value,
+                label=ROSTER_SOURCE_LABELS[roster_source],
+                allowances={
+                    key.value: eligibility.get((roster_source, key), default_eligibility_enabled(roster_source, key))
+                    for key in RosterAllowanceKey
+                },
+            )
+        )
+    return ExaminationRosterAllowanceEligibilityResponse(rows=rows)
+
+
+@router.put(
+    "/{exam_id}/examiner-roster-allowance-eligibility",
+    response_model=ExaminationRosterAllowanceEligibilityResponse,
+)
+async def put_examination_roster_allowance_eligibility(
+    exam_id: int,
+    body: ExaminationRosterAllowanceEligibilityPut,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationRosterAllowanceEligibilityResponse:
+    await _load_examination(session, exam_id)
+    items: list[tuple[ExaminerRosterSource, RosterAllowanceKey, bool]] = []
+    for cell in body.cells:
+        roster_source = _roster_source_from_api_label(cell.roster_source)
+        allowance_key = roster_allowance_key_from_api_label(cell.allowance_key)
+        items.append((roster_source, allowance_key, bool(cell.enabled)))
+    await replace_roster_allowance_eligibility(session, exam_id, items)
+    await session.commit()
+    eligibility = await load_roster_allowance_eligibility_map(session, exam_id)
+    rows = [
+        RosterAllowanceEligibilityRow(
+            roster_source=roster_source.value,
+            label=ROSTER_SOURCE_LABELS[roster_source],
+            allowances={
+                key.value: eligibility.get((roster_source, key), default_eligibility_enabled(roster_source, key))
+                for key in RosterAllowanceKey
+            },
+        )
+        for roster_source in ROSTER_SOURCES
+    ]
+    return ExaminationRosterAllowanceEligibilityResponse(rows=rows)
+
+
 async def _timetable_subject_papers(session: DBSessionDep, exam_id: int) -> list[tuple[Subject, list[int]]]:
     return await ordered_subject_papers_on_examination_timetable(session, exam_id)
+
+
+async def _load_marking_defaults_row(
+    session: DBSessionDep, exam_id: int
+) -> ExaminationExaminerMarkingDefault | None:
+    return await session.get(ExaminationExaminerMarkingDefault, exam_id)
+
+
+async def _upsert_marking_defaults(
+    session: DBSessionDep,
+    exam_id: int,
+    *,
+    default_rate_paper_1_ghs: Decimal | None,
+    default_rate_paper_2_ghs: Decimal | None,
+) -> None:
+    now = datetime.utcnow()
+    row = await session.get(ExaminationExaminerMarkingDefault, exam_id)
+    if row is None:
+        row = ExaminationExaminerMarkingDefault(
+            examination_id=exam_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+    row.default_rate_paper_1_ghs = default_rate_paper_1_ghs
+    row.default_rate_paper_2_ghs = default_rate_paper_2_ghs
+    row.updated_at = now
 
 
 @router.get("/{exam_id}/examiner-role-allowance-rates", response_model=ExaminationExaminerRoleAllowanceRatesResponse)
@@ -186,10 +305,17 @@ async def get_examination_examiner_marking_rates(
                 )
             )
 
+    defaults_row = await _load_marking_defaults_row(session, exam_id)
     return ExaminationExaminerMarkingRatesResponse(
         examination_id=exam_id,
         subjects=subject_refs,
         items=items,
+        default_rate_paper_1_ghs=(
+            cast(Decimal | None, defaults_row.default_rate_paper_1_ghs) if defaults_row else None
+        ),
+        default_rate_paper_2_ghs=(
+            cast(Decimal | None, defaults_row.default_rate_paper_2_ghs) if defaults_row else None
+        ),
     )
 
 
@@ -203,6 +329,31 @@ async def put_examination_examiner_marking_rates(
     await _load_examination(session, exam_id)
     subject_papers = await _timetable_subject_papers(session, exam_id)
     valid_keys = {(int(s.id), pn) for s, papers in subject_papers for pn in papers}
+
+    if body.default_rate_paper_1_ghs is not None or body.default_rate_paper_2_ghs is not None:
+        existing_defaults = await _load_marking_defaults_row(session, exam_id)
+        await _upsert_marking_defaults(
+            session,
+            exam_id,
+            default_rate_paper_1_ghs=(
+                body.default_rate_paper_1_ghs
+                if body.default_rate_paper_1_ghs is not None
+                else (
+                    cast(Decimal | None, existing_defaults.default_rate_paper_1_ghs)
+                    if existing_defaults
+                    else None
+                )
+            ),
+            default_rate_paper_2_ghs=(
+                body.default_rate_paper_2_ghs
+                if body.default_rate_paper_2_ghs is not None
+                else (
+                    cast(Decimal | None, existing_defaults.default_rate_paper_2_ghs)
+                    if existing_defaults
+                    else None
+                )
+            ),
+        )
 
     seen: set[tuple[int, int]] = set()
     for item in body.items:
@@ -241,8 +392,167 @@ async def put_examination_examiner_marking_rates(
         existing.rate_per_script_ghs = item.rate_per_script_ghs
         existing.updated_at = now
 
+    if body.apply_defaults_to_unset:
+        defaults_row = await _load_marking_defaults_row(session, exam_id)
+        p1 = cast(Decimal | None, defaults_row.default_rate_paper_1_ghs) if defaults_row else None
+        p2 = cast(Decimal | None, defaults_row.default_rate_paper_2_ghs) if defaults_row else None
+        for subject_id, paper_number in valid_keys:
+            stmt = select(ExaminationExaminerMarkingRate).where(
+                ExaminationExaminerMarkingRate.examination_id == exam_id,
+                ExaminationExaminerMarkingRate.subject_id == subject_id,
+                ExaminationExaminerMarkingRate.paper_number == paper_number,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            default_rate = p1 if paper_number == 1 else p2 if paper_number == 2 else None
+            if default_rate is None:
+                continue
+            now = datetime.utcnow()
+            if existing is None:
+                session.add(
+                    ExaminationExaminerMarkingRate(
+                        examination_id=exam_id,
+                        subject_id=subject_id,
+                        paper_number=paper_number,
+                        rate_per_script_ghs=default_rate,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            elif existing.rate_per_script_ghs is None:
+                existing.rate_per_script_ghs = default_rate
+                existing.updated_at = now
+
     await session.commit()
     return await get_examination_examiner_marking_rates(exam_id, session, _)
+
+
+@router.get(
+    "/{exam_id}/examiner-sitting-allowance-rates",
+    response_model=ExaminationExaminerSittingAllowanceRatesResponse,
+)
+async def get_examination_examiner_sitting_allowance_rates(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationExaminerSittingAllowanceRatesResponse:
+    await _load_examination(session, exam_id)
+    stmt = select(ExaminationExaminerSittingAllowanceRate).where(
+        ExaminationExaminerSittingAllowanceRate.examination_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    by_type: dict[str, Decimal | None] = {}
+    for row in result.scalars().all():
+        et = row.examiner_type
+        et_val = et.value if isinstance(et, ExaminerType) else str(et)
+        by_type[et_val] = cast(Decimal | None, row.daily_rate_ghs)
+    items = [
+        ExaminerSittingAllowanceRateCell(
+            examiner_type=et.value,
+            daily_rate_ghs=by_type.get(et.value),
+        )
+        for et in ExaminerType
+    ]
+    return ExaminationExaminerSittingAllowanceRatesResponse(examination_id=exam_id, items=items)
+
+
+@router.put(
+    "/{exam_id}/examiner-sitting-allowance-rates",
+    response_model=ExaminationExaminerSittingAllowanceRatesResponse,
+)
+async def put_examination_examiner_sitting_allowance_rates(
+    exam_id: int,
+    body: ExaminationExaminerSittingAllowanceRatesPut,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationExaminerSittingAllowanceRatesResponse:
+    await _load_examination(session, exam_id)
+    seen: set[ExaminerType] = set()
+    for item in body.items:
+        try:
+            et = examiner_type_from_api_label(item.examiner_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if et in seen:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Duplicate type: {et.value}")
+        seen.add(et)
+        stmt = select(ExaminationExaminerSittingAllowanceRate).where(
+            ExaminationExaminerSittingAllowanceRate.examination_id == exam_id,
+            ExaminationExaminerSittingAllowanceRate.examiner_type == et,
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        now = datetime.utcnow()
+        if existing is None:
+            existing = ExaminationExaminerSittingAllowanceRate(
+                examination_id=exam_id,
+                examiner_type=et,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(existing)
+        existing.daily_rate_ghs = item.daily_rate_ghs
+        existing.updated_at = now
+    await session.commit()
+    return await get_examination_examiner_sitting_allowance_rates(exam_id, session, _)
+
+
+@router.get("/{exam_id}/examiner-default-days", response_model=ExaminationExaminerDefaultDaysResponse)
+async def get_examination_examiner_default_days(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationExaminerDefaultDaysResponse:
+    await _load_examination(session, exam_id)
+    stmt = select(ExaminationExaminerDefaultDays).where(
+        ExaminationExaminerDefaultDays.examination_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    by_type: dict[str, int | None] = {}
+    for row in result.scalars().all():
+        et = row.examiner_type
+        et_val = et.value if isinstance(et, ExaminerType) else str(et)
+        by_type[et_val] = int(row.default_days) if row.default_days is not None else None
+    items = [
+        ExaminerDefaultDaysCell(examiner_type=et.value, default_days=by_type.get(et.value))
+        for et in ExaminerType
+    ]
+    return ExaminationExaminerDefaultDaysResponse(examination_id=exam_id, items=items)
+
+
+@router.put("/{exam_id}/examiner-default-days", response_model=ExaminationExaminerDefaultDaysResponse)
+async def put_examination_examiner_default_days(
+    exam_id: int,
+    body: ExaminationExaminerDefaultDaysPut,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> ExaminationExaminerDefaultDaysResponse:
+    await _load_examination(session, exam_id)
+    seen: set[ExaminerType] = set()
+    for item in body.items:
+        try:
+            et = examiner_type_from_api_label(item.examiner_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if et in seen:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Duplicate type: {et.value}")
+        seen.add(et)
+        stmt = select(ExaminationExaminerDefaultDays).where(
+            ExaminationExaminerDefaultDays.examination_id == exam_id,
+            ExaminationExaminerDefaultDays.examiner_type == et,
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        now = datetime.utcnow()
+        if existing is None:
+            existing = ExaminationExaminerDefaultDays(
+                examination_id=exam_id,
+                examiner_type=et,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(existing)
+        existing.default_days = item.default_days
+        existing.updated_at = now
+    await session.commit()
+    return await get_examination_examiner_default_days(exam_id, session, _)
 
 
 @router.get("/{exam_id}/examiner-travel-rates", response_model=ExaminationExaminerTravelRatesResponse)
@@ -526,6 +836,21 @@ async def copy_examination_examiner_allowance_rates(
         )
     )
     await session.execute(
+        delete(ExaminationExaminerMarkingDefault).where(
+            ExaminationExaminerMarkingDefault.examination_id == exam_id,
+        )
+    )
+    await session.execute(
+        delete(ExaminationExaminerSittingAllowanceRate).where(
+            ExaminationExaminerSittingAllowanceRate.examination_id == exam_id,
+        )
+    )
+    await session.execute(
+        delete(ExaminationExaminerDefaultDays).where(
+            ExaminationExaminerDefaultDays.examination_id == exam_id,
+        )
+    )
+    await session.execute(
         delete(ExaminationExaminerTravelRate).where(
             ExaminationExaminerTravelRate.examination_id == exam_id,
         )
@@ -535,12 +860,42 @@ async def copy_examination_examiner_allowance_rates(
             ExaminationExaminerTravelZone.examination_id == exam_id,
         )
     )
+    await session.execute(
+        delete(ExaminationRosterAllowanceEligibility).where(
+            ExaminationRosterAllowanceEligibility.examination_id == exam_id,
+        )
+    )
+    from app.models import (
+        ExaminationAllowanceGroup,
+        ExaminationAllowanceGroupEligibility,
+    )
+    from app.services.examiner_allowance_groups import (
+        ensure_general_group,
+        list_allowance_groups,
+    )
+
+    # Replace custom groups + eligibility (not members); keep General memberships.
+    target_groups = await list_allowance_groups(session, exam_id)
+    for g in target_groups:
+        if not g.is_general:
+            await session.delete(g)
+    await session.flush()
+    general = await ensure_general_group(session, exam_id)
 
     src_role_stmt = select(ExaminationExaminerRoleAllowanceRate).where(
         ExaminationExaminerRoleAllowanceRate.examination_id == source_exam_id,
     )
     src_marking_stmt = select(ExaminationExaminerMarkingRate).where(
         ExaminationExaminerMarkingRate.examination_id == source_exam_id,
+    )
+    src_marking_defaults_stmt = select(ExaminationExaminerMarkingDefault).where(
+        ExaminationExaminerMarkingDefault.examination_id == source_exam_id,
+    )
+    src_sitting_stmt = select(ExaminationExaminerSittingAllowanceRate).where(
+        ExaminationExaminerSittingAllowanceRate.examination_id == source_exam_id,
+    )
+    src_default_days_stmt = select(ExaminationExaminerDefaultDays).where(
+        ExaminationExaminerDefaultDays.examination_id == source_exam_id,
     )
     src_travel_stmt = select(ExaminationExaminerTravelRate).where(
         ExaminationExaminerTravelRate.examination_id == source_exam_id,
@@ -553,6 +908,9 @@ async def copy_examination_examiner_allowance_rates(
     )
     src_travel_factor_stmt = select(ExaminationExaminerTravelRoleFactor).where(
         ExaminationExaminerTravelRoleFactor.examination_id == source_exam_id,
+    )
+    src_eligibility_stmt = select(ExaminationRosterAllowanceEligibility).where(
+        ExaminationRosterAllowanceEligibility.examination_id == source_exam_id,
     )
     now = datetime.utcnow()
     zone_id_map: dict[UUID, UUID] = {}
@@ -604,6 +962,37 @@ async def copy_examination_examiner_allowance_rates(
                 updated_at=now,
             )
         )
+    src_defaults = await session.get(ExaminationExaminerMarkingDefault, source_exam_id)
+    if src_defaults is not None:
+        session.add(
+            ExaminationExaminerMarkingDefault(
+                examination_id=exam_id,
+                default_rate_paper_1_ghs=src_defaults.default_rate_paper_1_ghs,
+                default_rate_paper_2_ghs=src_defaults.default_rate_paper_2_ghs,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    for row in (await session.execute(src_sitting_stmt)).scalars().all():
+        session.add(
+            ExaminationExaminerSittingAllowanceRate(
+                examination_id=exam_id,
+                examiner_type=row.examiner_type,
+                daily_rate_ghs=row.daily_rate_ghs,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    for row in (await session.execute(src_default_days_stmt)).scalars().all():
+        session.add(
+            ExaminationExaminerDefaultDays(
+                examination_id=exam_id,
+                examiner_type=row.examiner_type,
+                default_days=row.default_days,
+                created_at=now,
+                updated_at=now,
+            )
+        )
     for row in (await session.execute(src_travel_stmt)).scalars().all():
         session.add(
             ExaminationExaminerTravelRate(
@@ -628,6 +1017,70 @@ async def copy_examination_examiner_allowance_rates(
                 updated_at=now,
             )
         )
+    for row in (await session.execute(src_eligibility_stmt)).scalars().all():
+        session.add(
+            ExaminationRosterAllowanceEligibility(
+                id=uuid4(),
+                examination_id=exam_id,
+                roster_source=row.roster_source,
+                allowance_key=row.allowance_key,
+                enabled=row.enabled,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    src_groups = await list_allowance_groups(session, source_exam_id)
+    src_general = next((g for g in src_groups if g.is_general), None)
+    if src_general is not None:
+        for row in src_general.eligibility or []:
+            existing = next(
+                (
+                    e
+                    for e in (general.eligibility or [])
+                    if str(e.allowance_key) == str(row.allowance_key)
+                ),
+                None,
+            )
+            if existing is None:
+                session.add(
+                    ExaminationAllowanceGroupEligibility(
+                        id=uuid4(),
+                        group_id=general.id,
+                        allowance_key=row.allowance_key,
+                        enabled=bool(row.enabled),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                existing.enabled = bool(row.enabled)
+                existing.updated_at = now
+        general.updated_at = now
+    for src_group in src_groups:
+        if src_group.is_general:
+            continue
+        new_group = ExaminationAllowanceGroup(
+            id=uuid4(),
+            examination_id=exam_id,
+            name=src_group.name,
+            is_general=False,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(new_group)
+        await session.flush()
+        for row in src_group.eligibility or []:
+            session.add(
+                ExaminationAllowanceGroupEligibility(
+                    id=uuid4(),
+                    group_id=new_group.id,
+                    allowance_key=row.allowance_key,
+                    enabled=bool(row.enabled),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
     await session.commit()
     return ExaminerAllowanceRatesCopyResponse(examination_id=exam_id)

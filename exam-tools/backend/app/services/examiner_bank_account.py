@@ -56,6 +56,7 @@ async def upsert_for_examiner(
     examiner_id: UUID,
     bank_branch_id: UUID,
     account_number: str,
+    bulk_import: bool = False,
 ) -> ExaminerBankAccount:
     bb = await session.get(BankBranch, bank_branch_id)
     if bb is None:
@@ -68,6 +69,7 @@ async def upsert_for_examiner(
         bank_name=cast(str, bb.bank_name),
         bank_code=cast(str, bb.bank_code),
         for_update=for_update,
+        for_bulk_import=bulk_import,
     )
 
     now = datetime.utcnow()
@@ -81,12 +83,12 @@ async def upsert_for_examiner(
         )
         session.add(row)
         await session.flush()
-        await session.refresh(row, attribute_names=["bank_branch"])
+        row.bank_branch = bb
         return row
 
     existing.bank_branch_id = bank_branch_id
     existing.account_number = normalized
     existing.updated_at = now
+    existing.bank_branch = bb
     await session.flush()
-    await session.refresh(existing, attribute_names=["bank_branch"])
     return existing

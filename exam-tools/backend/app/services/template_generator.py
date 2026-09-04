@@ -56,6 +56,8 @@ def generate_examiners_bulk_template() -> bytes:
             "examiner_type": ["AE", "CE"],
             "region": ["Greater Accra", "Ashanti"],
             "gender": ["Female", "Male"],
+            "report_count": ["", "2"],
+            "allowance_groups": ["", "Sitting eligible"],
         }
     )
 
