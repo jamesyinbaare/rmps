@@ -3146,6 +3146,9 @@ export type ScoreImportJobStatus = {
   dry_run?: boolean;
   errors_file_available?: boolean;
   file_checksum?: string | null;
+  phase?: string | null;
+  apply_total?: number;
+  apply_done?: number;
 };
 
 export async function downloadScoreImportTemplate(options: {

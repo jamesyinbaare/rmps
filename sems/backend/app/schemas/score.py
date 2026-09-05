@@ -512,3 +512,6 @@ class ScoreImportJobStatusResponse(BaseModel):
     dry_run: bool = False
     errors_file_available: bool = False
     file_checksum: str | None = None
+    phase: str | None = None
+    apply_total: int = 0
+    apply_done: int = 0

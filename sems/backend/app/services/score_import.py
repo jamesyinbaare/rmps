@@ -440,6 +440,9 @@ async def process_score_import_job(tracking_id: int) -> None:
                 errors=[],
                 errors_truncated=False,
                 errors_file_path=None,
+                phase="parsing",
+                apply_total=0,
+                apply_done=0,
             )
 
             if not file_path:
@@ -461,6 +464,9 @@ async def process_score_import_job(tracking_id: int) -> None:
                     errors_truncated=result.errors_truncated,
                     dry_run=result.dry_run,
                     file_checksum=result.file_checksum,
+                    phase=result.phase,
+                    apply_total=result.apply_total,
+                    apply_done=result.apply_done,
                 )
 
             result = await import_scores(
@@ -503,6 +509,9 @@ async def process_score_import_job(tracking_id: int) -> None:
                 errors_file_path=errors_file_path,
                 dry_run=result.dry_run,
                 file_checksum=result.file_checksum,
+                phase="done",
+                apply_total=result.apply_total,
+                apply_done=result.apply_done,
             )
         except Exception as exc:
             logger.exception("Score import job %s failed", tracking_id)

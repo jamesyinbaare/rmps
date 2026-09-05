@@ -1,10 +1,11 @@
-"""High-throughput score import pipeline: parse → lookup maps → classify → staging apply."""
+"""High-throughput score import pipeline: parse → lookup maps → classify → bulk apply."""
 
 from __future__ import annotations
 
 import csv
 import hashlib
 import io
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 import pandas as pd
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -41,11 +42,15 @@ PaperTestType = Literal[1, 2]
 LARGE_IMPORT_ROW_THRESHOLD = 5000
 MAX_STORED_IMPORT_ERRORS = 500
 IMPORT_APPLY_BATCH_SIZE = 2000
-IMPORT_PROGRESS_EVERY = 5000
-IMPORT_STAGING_INSERT_BATCH = 5000
+IMPORT_PROGRESS_EVERY = 5000  # legacy alias; apply now heartbeats every batch
 IN_CHUNK_SIZE = 10_000
+# Weighted progress: classify 40%, apply 60%
+PROGRESS_CLASSIFY_WEIGHT = 0.4
+PROGRESS_APPLY_WEIGHT = 0.6
 SKIP_SCORE_TOKENS = frozenset({"N/A", "NA"})
 METHOD = DataExtractionMethod.MANUAL_ENTRY_PHYSICAL
+ImportPhase = Literal["parsing", "classifying", "applying", "done"]
+LOOKUP_CHUNK_SIZE = 5_000
 
 REQUIRED_COLUMNS = ("index_number", "subject_code", "score")
 OPTIONAL_COLUMNS = ("subject_name",)
@@ -99,6 +104,10 @@ class ScoreImportResult:
     all_errors: list[ScoreImportRowError] = field(default_factory=list)
     dry_run: bool = False
     file_checksum: str | None = None
+    phase: ImportPhase = "parsing"
+    apply_total: int = 0
+    apply_done: int = 0
+    classify_frac: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +120,10 @@ class ScoreImportResult:
             "errors_truncated": self.errors_truncated,
             "dry_run": self.dry_run,
             "file_checksum": self.file_checksum,
+            "phase": self.phase,
+            "apply_total": self.apply_total,
+            "apply_done": self.apply_done,
+            "classify_frac": self.classify_frac,
         }
 
     def record_error(self, err: ScoreImportRowError) -> None:
@@ -120,6 +133,23 @@ class ScoreImportResult:
             self.errors.append(err)
         else:
             self.errors_truncated = True
+
+    def weighted_processed_rows(self) -> int:
+        """Map classify+apply progress onto total_rows for the UI bar."""
+        total = max(self.total_rows, 1)
+        if self.phase in ("parsing", "classifying"):
+            # classify_frac (0..1) advances during scoped lookup heartbeats
+            frac = min(max(self.classify_frac, 0.0), 1.0)
+            return int(total * PROGRESS_CLASSIFY_WEIGHT * max(frac, 0.05))
+        if self.phase == "applying":
+            apply_frac = (
+                self.apply_done / self.apply_total if self.apply_total > 0 else 0.0
+            )
+            return int(
+                total
+                * (PROGRESS_CLASSIFY_WEIGHT + PROGRESS_APPLY_WEIGHT * apply_frac)
+            )
+        return total
 
 
 @dataclass
@@ -370,15 +400,47 @@ def extract_import_row_tuples(df: pd.DataFrame) -> list[tuple[int, str | None, s
     return out
 
 
+def collect_file_lookup_keys(
+    rows: list[tuple[int, str | None, str | None, str | None]],
+) -> tuple[set[str], set[str]]:
+    """Distinct non-empty index numbers and subject codes from parsed file rows."""
+    indexes: set[str] = set()
+    codes: set[str] = set()
+    for _row, index_number, subject_code, _score in rows:
+        if index_number:
+            indexes.add(index_number)
+        if subject_code:
+            codes.add(subject_code.upper())
+    return indexes, codes
+
+
 async def load_import_lookups(
     session: AsyncSession,
     *,
     exam_id: int,
     school_id: int | None,
     test_type: PaperTestType,
+    index_numbers: set[str] | None = None,
+    subject_codes: set[str] | None = None,
+    progress_callback: Any | None = None,
+    progress_result: ScoreImportResult | None = None,
 ) -> ImportLookups:
-    """Load slim ID maps — no ORM graph of subject registrations."""
-    _ = test_type  # reserved for future paper-specific filters
+    """
+    Load slim ID maps scoped to keys present in the upload file.
+
+    Never loads every registration for the exam — that caused Matching-rows hangs
+    on national exams. Falls back to whole-exam only when index_numbers is None
+    (tests / legacy callers).
+    """
+    _ = test_type
+
+    async def _heartbeat(frac: float) -> None:
+        if progress_callback and progress_result is not None:
+            progress_result.phase = "classifying"
+            progress_result.classify_frac = frac
+            await progress_callback(progress_result.weighted_processed_rows(), progress_result)
+
+    await _heartbeat(0.05)
 
     es_stmt = (
         select(
@@ -399,33 +461,119 @@ async def load_import_lookups(
             if raw and str(raw).strip():
                 subject_by_code[str(raw).strip().upper()] = info
 
-    reg_stmt = (
-        select(ExamRegistration.id, ExamRegistration.index_number)
-        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
-        .where(ExamRegistration.exam_id == exam_id)
-    )
-    if school_id is not None:
-        reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
-    reg_rows = (await session.execute(reg_stmt)).all()
+    await _heartbeat(0.15)
+
+    # Restrict to subjects referenced in the file when provided
+    if subject_codes is not None:
+        needed_es_ids = {
+            info.id
+            for code, info in subject_by_code.items()
+            if code in subject_codes
+        }
+    else:
+        needed_es_ids = {info.id for info in subject_by_code.values()}
 
     reg_by_index: dict[str, int] = {}
-    stripped_buckets: dict[str, list[int]] = {}
-    for reg_id, index_number in reg_rows:
-        if not index_number:
-            continue
-        key = str(index_number).strip()
-        reg_by_index[key] = reg_id
-        stripped = key.lstrip("0") or "0"
-        stripped_buckets.setdefault(stripped, []).append(reg_id)
+    reg_by_stripped_index: dict[str, int] = {}
 
-    reg_by_stripped_index: dict[str, int] = {
-        stripped: ids[0] for stripped, ids in stripped_buckets.items() if len(ids) == 1
-    }
+    if index_numbers is None:
+        # Legacy whole-exam path (avoid for large exams)
+        reg_stmt = (
+            select(ExamRegistration.id, ExamRegistration.index_number)
+            .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+            .where(ExamRegistration.exam_id == exam_id)
+        )
+        if school_id is not None:
+            reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
+        reg_rows = (await session.execute(reg_stmt)).all()
+        stripped_buckets: dict[str, list[int]] = {}
+        for reg_id, index_number in reg_rows:
+            if not index_number:
+                continue
+            key = str(index_number).strip()
+            reg_by_index[key] = reg_id
+            stripped = key.lstrip("0") or "0"
+            stripped_buckets.setdefault(stripped, []).append(reg_id)
+        reg_by_stripped_index = {
+            stripped: ids[0] for stripped, ids in stripped_buckets.items() if len(ids) == 1
+        }
+        await _heartbeat(0.55)
+    else:
+        index_list = sorted(index_numbers)
+        total_chunks = max(1, (len(index_list) + LOOKUP_CHUNK_SIZE - 1) // LOOKUP_CHUNK_SIZE)
+        for chunk_i, chunk in enumerate(_chunked(index_list, LOOKUP_CHUNK_SIZE)):
+            reg_stmt = (
+                select(ExamRegistration.id, ExamRegistration.index_number)
+                .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+                .where(
+                    ExamRegistration.exam_id == exam_id,
+                    ExamRegistration.index_number.in_(chunk),
+                )
+            )
+            if school_id is not None:
+                reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
+            for reg_id, index_number in (await session.execute(reg_stmt)).all():
+                if not index_number:
+                    continue
+                key = str(index_number).strip()
+                reg_by_index[key] = reg_id
+            await _heartbeat(0.15 + 0.35 * ((chunk_i + 1) / total_chunks))
 
-    reg_ids = list(reg_by_index.values())
+        # Narrow leading-zero fallback for file indexes that did not exact-match
+        unmatched = [idx for idx in index_list if idx not in reg_by_index]
+        if unmatched:
+            stripped_needed = sorted({(idx.lstrip("0") or "0") for idx in unmatched})
+            stripped_buckets: dict[str, list[tuple[int, str]]] = {}
+            stripped_expr = func.coalesce(
+                func.nullif(
+                    func.regexp_replace(ExamRegistration.index_number, r"^0+", ""),
+                    "",
+                ),
+                "0",
+            )
+            for chunk in _chunked(stripped_needed, LOOKUP_CHUNK_SIZE):
+                reg_stmt = (
+                    select(ExamRegistration.id, ExamRegistration.index_number)
+                    .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+                    .where(
+                        ExamRegistration.exam_id == exam_id,
+                        stripped_expr.in_(chunk),
+                    )
+                )
+                if school_id is not None:
+                    reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
+                for reg_id, index_number in (await session.execute(reg_stmt)).all():
+                    if not index_number:
+                        continue
+                    key = str(index_number).strip()
+                    stripped = key.lstrip("0") or "0"
+                    stripped_buckets.setdefault(stripped, []).append((reg_id, key))
+
+            for stripped, pairs in stripped_buckets.items():
+                if len(pairs) != 1:
+                    continue
+                reg_id, key = pairs[0]
+                reg_by_stripped_index[stripped] = reg_id
+                reg_by_index.setdefault(key, reg_id)
+
+        await _heartbeat(0.60)
+
+    reg_ids = list(dict.fromkeys(reg_by_index.values()))
     sr_lookup: dict[tuple[int, int], tuple[int, ExistingScoreInfo]] = {}
 
-    for chunk in _chunked(reg_ids):
+    if not reg_ids or not needed_es_ids:
+        await _heartbeat(1.0)
+        return ImportLookups(
+            subject_by_code=subject_by_code,
+            reg_by_index=reg_by_index,
+            reg_by_stripped_index=reg_by_stripped_index,
+            sr_lookup=sr_lookup,
+        )
+
+    needed_es_list = list(needed_es_ids)
+    reg_chunks = list(_chunked(reg_ids, LOOKUP_CHUNK_SIZE))
+    total_sr_chunks = max(1, len(reg_chunks))
+    for chunk_i, chunk in enumerate(reg_chunks):
         sr_stmt = (
             select(
                 SubjectRegistration.id,
@@ -437,7 +585,10 @@ async def load_import_lookups(
                 SubjectScore.pract_raw_score,
             )
             .outerjoin(SubjectScore, SubjectScore.subject_registration_id == SubjectRegistration.id)
-            .where(SubjectRegistration.exam_registration_id.in_(chunk))
+            .where(
+                SubjectRegistration.exam_registration_id.in_(chunk),
+                SubjectRegistration.exam_subject_id.in_(needed_es_list),
+            )
         )
         for sr_id, er_id, es_id, score_id, obj_raw, essay_raw, pract_raw in (
             await session.execute(sr_stmt)
@@ -451,7 +602,9 @@ async def load_import_lookups(
                     pract_raw_score=pract_raw,
                 ),
             )
+        await _heartbeat(0.60 + 0.40 * ((chunk_i + 1) / total_sr_chunks))
 
+    await _heartbeat(1.0)
     return ImportLookups(
         subject_by_code=subject_by_code,
         reg_by_index=reg_by_index,
@@ -616,219 +769,215 @@ def classify_import_rows(
     return result, ready
 
 
-async def _ensure_staging_table(session: AsyncSession) -> None:
-    await session.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS score_import_staging (
-                id BIGSERIAL PRIMARY KEY,
-                job_key VARCHAR(64) NOT NULL,
-                row_num INTEGER NOT NULL,
-                subject_registration_id INTEGER,
-                subject_score_id INTEGER,
-                parsed_score VARCHAR(10),
-                total_score DOUBLE PRECISION,
-                status VARCHAR(16) NOT NULL DEFAULT 'ready'
-            )
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS ix_score_import_staging_job_key
-            ON score_import_staging (job_key)
-            """
-        )
-    )
-
-
-async def cleanup_staging(session: AsyncSession, job_key: str) -> None:
-    await session.execute(
-        text("DELETE FROM score_import_staging WHERE job_key = :job_key"),
-        {"job_key": job_key},
-    )
-    await session.commit()
-
-
-async def apply_ready_rows_via_staging(
+async def _bulk_update_scores(
     session: AsyncSession,
     *,
-    job_key: str,
+    test_type: PaperTestType,
+    rows: list[ReadyApplyRow],
+    method_value: str,
+    now: datetime,
+) -> None:
+    if not rows:
+        return
+    payload = json.dumps(
+        [
+            {
+                "id": r.subject_score_id,
+                "parsed": r.parsed_score,
+                "total_score": r.total_score,
+            }
+            for r in rows
+            if r.subject_score_id is not None
+        ]
+    )
+    if test_type == 1:
+        await session.execute(
+            text(
+                """
+                UPDATE subject_scores AS ss
+                SET
+                    obj_raw_score = data.parsed,
+                    obj_extraction_method = CAST(:method AS dataextractionmethod),
+                    total_score = data.total_score,
+                    updated_at = :now
+                FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS data(
+                    id int,
+                    parsed text,
+                    total_score float8
+                )
+                WHERE ss.id = data.id
+                """
+            ),
+            {"payload": payload, "method": method_value, "now": now},
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                UPDATE subject_scores AS ss
+                SET
+                    essay_raw_score = data.parsed,
+                    essay_extraction_method = CAST(:method AS dataextractionmethod),
+                    total_score = data.total_score,
+                    updated_at = :now
+                FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS data(
+                    id int,
+                    parsed text,
+                    total_score float8
+                )
+                WHERE ss.id = data.id
+                """
+            ),
+            {"payload": payload, "method": method_value, "now": now},
+        )
+
+
+async def _bulk_insert_scores(
+    session: AsyncSession,
+    *,
+    test_type: PaperTestType,
+    rows: list[ReadyApplyRow],
+    method_value: str,
+    now: datetime,
+) -> None:
+    if not rows:
+        return
+    payload = json.dumps(
+        [
+            {
+                "sr_id": r.subject_registration_id,
+                "parsed": r.parsed_score,
+                "total_score": r.total_score,
+            }
+            for r in rows
+            if r.subject_score_id is None
+        ]
+    )
+    if test_type == 1:
+        await session.execute(
+            text(
+                """
+                INSERT INTO subject_scores (
+                    subject_registration_id,
+                    obj_raw_score,
+                    essay_raw_score,
+                    pract_raw_score,
+                    total_score,
+                    obj_extraction_method,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    data.sr_id,
+                    data.parsed,
+                    NULL,
+                    NULL,
+                    data.total_score,
+                    CAST(:method AS dataextractionmethod),
+                    :now,
+                    :now
+                FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS data(
+                    sr_id int,
+                    parsed text,
+                    total_score float8
+                )
+                """
+            ),
+            {"payload": payload, "method": method_value, "now": now},
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                INSERT INTO subject_scores (
+                    subject_registration_id,
+                    obj_raw_score,
+                    essay_raw_score,
+                    pract_raw_score,
+                    total_score,
+                    essay_extraction_method,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    data.sr_id,
+                    NULL,
+                    data.parsed,
+                    NULL,
+                    data.total_score,
+                    CAST(:method AS dataextractionmethod),
+                    :now,
+                    :now
+                FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS data(
+                    sr_id int,
+                    parsed text,
+                    total_score float8
+                )
+                """
+            ),
+            {"payload": payload, "method": method_value, "now": now},
+        )
+
+
+async def apply_ready_rows(
+    session: AsyncSession,
+    *,
     ready: list[ReadyApplyRow],
     test_type: PaperTestType,
     progress_callback: Any | None = None,
     result: ScoreImportResult,
 ) -> None:
-    """Load ready rows into staging and set-based UPDATE/INSERT subject_scores."""
+    """Set-based UPDATE/INSERT via jsonb_to_recordset — no staging table."""
+    result.phase = "applying"
+    result.apply_total = len(ready)
+    result.apply_done = 0
+
     if not ready:
+        result.phase = "done"
         if progress_callback:
-            await progress_callback(result.total_rows, result)
+            await progress_callback(result.weighted_processed_rows(), result)
         return
 
-    await _ensure_staging_table(session)
-    await session.execute(
-        text("DELETE FROM score_import_staging WHERE job_key = :job_key"),
-        {"job_key": job_key},
-    )
-    await session.commit()
+    if progress_callback:
+        await progress_callback(result.weighted_processed_rows(), result)
 
     method_value = METHOD.value
-    processed = 0
-    total_ready = len(ready)
 
     for batch in _chunked(ready, IMPORT_APPLY_BATCH_SIZE):
-        await session.execute(
-            text("DELETE FROM score_import_staging WHERE job_key = :job_key"),
-            {"job_key": job_key},
+        # Heartbeat before SQL so UI leaves Applying 0 / N immediately
+        if progress_callback:
+            await progress_callback(result.weighted_processed_rows(), result)
+
+        now = datetime.utcnow()
+        updates = [r for r in batch if r.subject_score_id is not None]
+        inserts = [r for r in batch if r.subject_score_id is None]
+        await _bulk_update_scores(
+            session,
+            test_type=test_type,
+            rows=updates,
+            method_value=method_value,
+            now=now,
         )
-
-        # Multi-row insert into staging
-        values_sql: list[str] = []
-        params: dict[str, Any] = {"job_key": job_key}
-        for i, row in enumerate(batch):
-            values_sql.append(
-                f"(:job_key, :row_num_{i}, :sr_id_{i}, :ss_id_{i}, :parsed_{i}, :total_{i}, 'ready')"
-            )
-            params[f"row_num_{i}"] = row.row_num
-            params[f"sr_id_{i}"] = row.subject_registration_id
-            params[f"ss_id_{i}"] = row.subject_score_id
-            params[f"parsed_{i}"] = row.parsed_score
-            params[f"total_{i}"] = row.total_score
-
-        await session.execute(
-            text(
-                f"""
-                INSERT INTO score_import_staging
-                    (job_key, row_num, subject_registration_id, subject_score_id,
-                     parsed_score, total_score, status)
-                VALUES {", ".join(values_sql)}
-                """
-            ),
-            params,
+        await _bulk_insert_scores(
+            session,
+            test_type=test_type,
+            rows=inserts,
+            method_value=method_value,
+            now=now,
         )
-
-        if test_type == 1:
-            await session.execute(
-                text(
-                    """
-                    UPDATE subject_scores AS ss
-                    SET
-                        obj_raw_score = st.parsed_score,
-                        obj_extraction_method = CAST(:method AS dataextractionmethod),
-                        total_score = st.total_score,
-                        updated_at = :now
-                    FROM score_import_staging AS st
-                    WHERE st.job_key = :job_key
-                      AND st.status = 'ready'
-                      AND st.subject_score_id IS NOT NULL
-                      AND ss.id = st.subject_score_id
-                    """
-                ),
-                {"job_key": job_key, "method": method_value, "now": datetime.utcnow()},
-            )
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO subject_scores (
-                        subject_registration_id,
-                        obj_raw_score,
-                        essay_raw_score,
-                        pract_raw_score,
-                        total_score,
-                        obj_extraction_method,
-                        created_at,
-                        updated_at
-                    )
-                    SELECT
-                        st.subject_registration_id,
-                        st.parsed_score,
-                        NULL,
-                        NULL,
-                        st.total_score,
-                        CAST(:method AS dataextractionmethod),
-                        :now,
-                        :now
-                    FROM score_import_staging AS st
-                    WHERE st.job_key = :job_key
-                      AND st.status = 'ready'
-                      AND st.subject_score_id IS NULL
-                    """
-                ),
-                {"job_key": job_key, "method": method_value, "now": datetime.utcnow()},
-            )
-        else:
-            await session.execute(
-                text(
-                    """
-                    UPDATE subject_scores AS ss
-                    SET
-                        essay_raw_score = st.parsed_score,
-                        essay_extraction_method = CAST(:method AS dataextractionmethod),
-                        total_score = st.total_score,
-                        updated_at = :now
-                    FROM score_import_staging AS st
-                    WHERE st.job_key = :job_key
-                      AND st.status = 'ready'
-                      AND st.subject_score_id IS NOT NULL
-                      AND ss.id = st.subject_score_id
-                    """
-                ),
-                {"job_key": job_key, "method": method_value, "now": datetime.utcnow()},
-            )
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO subject_scores (
-                        subject_registration_id,
-                        obj_raw_score,
-                        essay_raw_score,
-                        pract_raw_score,
-                        total_score,
-                        essay_extraction_method,
-                        created_at,
-                        updated_at
-                    )
-                    SELECT
-                        st.subject_registration_id,
-                        NULL,
-                        st.parsed_score,
-                        NULL,
-                        st.total_score,
-                        CAST(:method AS dataextractionmethod),
-                        :now,
-                        :now
-                    FROM score_import_staging AS st
-                    WHERE st.job_key = :job_key
-                      AND st.status = 'ready'
-                      AND st.subject_score_id IS NULL
-                    """
-                ),
-                {"job_key": job_key, "method": method_value, "now": datetime.utcnow()},
-            )
-
         await session.commit()
-        processed += len(batch)
 
-        if progress_callback and (
-            processed % IMPORT_PROGRESS_EVERY < IMPORT_APPLY_BATCH_SIZE
-            or processed >= total_ready
-        ):
-            # Map apply progress onto total file rows proportionally for UI
-            approx = min(
-                result.total_rows,
-                int(result.total_rows * (processed / max(total_ready, 1))),
-            )
-            await progress_callback(approx, result)
+        result.apply_done += len(batch)
+        if progress_callback:
+            await progress_callback(result.weighted_processed_rows(), result)
 
-    await session.execute(
-        text("DELETE FROM score_import_staging WHERE job_key = :job_key"),
-        {"job_key": job_key},
-    )
-    await session.commit()
-
+    result.phase = "done"
     if progress_callback:
-        await progress_callback(result.total_rows, result)
+        await progress_callback(result.weighted_processed_rows(), result)
+
+
+# Backwards-compatible alias
+apply_ready_rows_via_staging = apply_ready_rows
 
 
 def build_errors_csv(errors: list[ScoreImportRowError]) -> bytes:
@@ -866,10 +1015,11 @@ async def import_scores_pipeline(
     preparsed_df: pd.DataFrame | None = None,
 ) -> ScoreImportResult:
     """
-    Full import pipeline: parse → lookups → classify → (optional) staging apply.
+    Full import pipeline: parse → file-scoped lookups → classify → bulk apply.
 
     Large files should set enforce_row_limit=False from the async job worker.
     """
+    _ = job_key  # retained for API compatibility with callers
     if test_type not in (1, 2):
         raise ValueError("test_type must be 1 (Paper 1) or 2 (Paper 2)")
 
@@ -885,7 +1035,6 @@ async def import_scores_pipeline(
             raise ValueError("School not found")
 
     checksum = file_checksum(file_content)
-    key = job_key or new_job_key()
 
     if preparsed_df is not None:
         df = preparsed_df
@@ -905,42 +1054,54 @@ async def import_scores_pipeline(
             f"{LARGE_IMPORT_ROW_THRESHOLD}. Use async import or filter by school."
         )
 
+    progress_result = ScoreImportResult(
+        total_rows=total_rows,
+        file_checksum=checksum,
+        dry_run=dry_run,
+        phase="classifying",
+        classify_frac=0.0,
+    )
     if progress_callback:
-        # Signal parse complete
-        early = ScoreImportResult(total_rows=total_rows, file_checksum=checksum, dry_run=dry_run)
-        await progress_callback(0, early)
+        await progress_callback(progress_result.weighted_processed_rows(), progress_result)
+
+    rows = extract_import_row_tuples(df)
+    file_indexes, file_codes = collect_file_lookup_keys(rows)
 
     lookups = await load_import_lookups(
-        session, exam_id=exam_id, school_id=school_id, test_type=test_type
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        test_type=test_type,
+        index_numbers=file_indexes,
+        subject_codes=file_codes,
+        progress_callback=progress_callback,
+        progress_result=progress_result,
     )
-    rows = extract_import_row_tuples(df)
     result, ready = classify_import_rows(
         rows, lookups, test_type=test_type, school_id=school_id
     )
     result.file_checksum = checksum
     result.dry_run = dry_run
-
-    if progress_callback:
-        await progress_callback(total_rows if dry_run else max(total_rows // 2, 1), result)
+    result.apply_total = len(ready)
+    result.apply_done = 0
+    result.classify_frac = 1.0
 
     if dry_run:
+        result.phase = "done"
         if progress_callback:
-            await progress_callback(total_rows, result)
+            await progress_callback(result.weighted_processed_rows(), result)
         return result
 
-    try:
-        await apply_ready_rows_via_staging(
-            session,
-            job_key=key,
-            ready=ready,
-            test_type=test_type,
-            progress_callback=progress_callback,
-            result=result,
-        )
-    finally:
-        try:
-            await cleanup_staging(session, key)
-        except Exception:
-            logger.exception("Failed to cleanup score import staging for %s", key)
+    if progress_callback:
+        result.phase = "applying"
+        await progress_callback(result.weighted_processed_rows(), result)
+
+    await apply_ready_rows(
+        session,
+        ready=ready,
+        test_type=test_type,
+        progress_callback=progress_callback,
+        result=result,
+    )
 
     return result

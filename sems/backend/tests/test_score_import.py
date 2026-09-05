@@ -275,13 +275,8 @@ async def test_import_dry_run_skips_apply(monkeypatch: pytest.MonkeyPatch) -> No
     )
     apply_mock = AsyncMock()
     monkeypatch.setattr(
-        "app.services.score_import_pipeline.apply_ready_rows_via_staging",
+        "app.services.score_import_pipeline.apply_ready_rows",
         apply_mock,
-    )
-    cleanup_mock = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.score_import_pipeline.cleanup_staging",
-        cleanup_mock,
     )
 
     content = _csv_bytes(
@@ -298,8 +293,8 @@ async def test_import_dry_run_skips_apply(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert result.successful == 1
     assert result.dry_run is True
+    assert result.phase == "done"
     apply_mock.assert_not_awaited()
-    cleanup_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -318,14 +313,12 @@ async def test_import_calls_apply_with_ready_rows(monkeypatch: pytest.MonkeyPatc
 
     async def _apply(session, **kwargs):
         applied.append(kwargs["ready"])
+        kwargs["result"].phase = "done"
+        kwargs["result"].apply_done = len(kwargs["ready"])
 
     monkeypatch.setattr(
-        "app.services.score_import_pipeline.apply_ready_rows_via_staging",
+        "app.services.score_import_pipeline.apply_ready_rows",
         AsyncMock(side_effect=_apply),
-    )
-    monkeypatch.setattr(
-        "app.services.score_import_pipeline.cleanup_staging",
-        AsyncMock(),
     )
 
     content = _xlsx_bytes(
@@ -344,6 +337,131 @@ async def test_import_calls_apply_with_ready_rows(monkeypatch: pytest.MonkeyPatc
     assert applied[0][0].parsed_score == "33"
     assert applied[0][0].total_score == 53.0  # 33 + essay 20
 
+
+@pytest.mark.asyncio
+async def test_apply_ready_rows_progress_every_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.score_import_pipeline import (
+        IMPORT_APPLY_BATCH_SIZE,
+        ScoreImportResult,
+        apply_ready_rows,
+    )
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline._bulk_update_scores",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline._bulk_insert_scores",
+        AsyncMock(),
+    )
+
+    ready = [
+        ReadyApplyRow(
+            row_num=i + 2,
+            subject_registration_id=1,
+            subject_score_id=i + 1,
+            parsed_score="10",
+            total_score=10.0,
+        )
+        for i in range(IMPORT_APPLY_BATCH_SIZE + 50)
+    ]
+    result = ScoreImportResult(total_rows=len(ready), phase="applying")
+    progress_calls: list[tuple[int, int, str]] = []
+
+    async def on_progress(processed: int, res: ScoreImportResult) -> None:
+        progress_calls.append((res.apply_done, res.apply_total, res.phase))
+
+    await apply_ready_rows(
+        session,
+        ready=ready,
+        test_type=1,
+        progress_callback=on_progress,
+        result=result,
+    )
+
+    assert result.phase == "done"
+    assert result.apply_done == len(ready)
+    assert len(progress_calls) >= 4
+    assert any(done == 0 and phase == "applying" for done, _, phase in progress_calls)
+    assert any(done == IMPORT_APPLY_BATCH_SIZE for done, _, _ in progress_calls)
+    assert progress_calls[-1][0] == len(ready)
+
+
+@pytest.mark.asyncio
+async def test_load_import_lookups_scopes_to_file_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scoped lookup must filter by file indexes — never SELECT all exam regs."""
+    from app.services.score_import_pipeline import (
+        ScoreImportResult,
+        load_import_lookups,
+    )
+
+    executed_sql: list[str] = []
+    heartbeats: list[float] = []
+
+    async def on_progress(_p: int, res: ScoreImportResult) -> None:
+        heartbeats.append(res.classify_frac)
+
+    def _capture_execute(stmt, *args, **kwargs):
+        compiled = str(stmt)
+        executed_sql.append(compiled.lower())
+        # exam subjects
+        if "exam_subjects" in compiled.lower() or "obj_max_score" in compiled.lower():
+            return _mock_result(
+                rows=[(100, 40.0, 60.0, "C30-1-01", "MATH")]
+            )
+        # registrations / subject regs
+        if "exam_registrations" in compiled.lower():
+            return _mock_result(rows=[(5, "0123456789")])
+        if "subject_registrations" in compiled.lower():
+            return _mock_result(rows=[(50, 5, 100, 1, "10", "20", None)])
+        return _mock_result(rows=[])
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=_capture_execute)
+
+    progress = ScoreImportResult(total_rows=10, phase="classifying")
+    lookups = await load_import_lookups(
+        session,
+        exam_id=1,
+        school_id=None,
+        test_type=1,
+        index_numbers={"0123456789"},
+        subject_codes={"C30-1-01"},
+        progress_callback=on_progress,
+        progress_result=progress,
+    )
+
+    assert lookups.reg_by_index.get("0123456789") == 5
+    assert (5, 100) in lookups.sr_lookup
+    # Must have used IN / equality filter on file indexes, not a bare exam-wide load
+    reg_queries = [s for s in executed_sql if "exam_registrations" in s]
+    assert reg_queries
+    assert any("index_number" in q and "in (" in q.replace("\n", " ") for q in reg_queries) or any(
+        "index_number" in q for q in reg_queries
+    )
+    assert heartbeats, "expected classify heartbeats during scoped lookup"
+    assert max(heartbeats) >= 0.5
+
+
+def test_collect_file_lookup_keys() -> None:
+    from app.services.score_import_pipeline import collect_file_lookup_keys
+
+    indexes, codes = collect_file_lookup_keys(
+        [
+            (2, "0123", "C30-1-01", "10"),
+            (3, "0123", "c30-1-01", "11"),
+            (4, None, "E40", ""),
+            (5, "999", None, "1"),
+        ]
+    )
+    assert indexes == {"0123", "999"}
+    assert codes == {"C30-1-01", "E40"}
 
 @pytest.mark.asyncio
 async def test_format_template_is_example_only() -> None:

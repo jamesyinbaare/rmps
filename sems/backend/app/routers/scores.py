@@ -4090,6 +4090,9 @@ async def get_score_import_job_status(
         dry_run=bool(metadata.get("dry_run")),
         errors_file_available=bool(metadata.get("errors_file_path")),
         file_checksum=metadata.get("file_checksum"),
+        phase=metadata.get("phase"),
+        apply_total=int(metadata.get("apply_total") or 0),
+        apply_done=int(metadata.get("apply_done") or 0),
     )
 
 

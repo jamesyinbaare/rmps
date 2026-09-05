@@ -877,9 +877,18 @@ export default function ScoreImportPage() {
               <div className="motion-safe:animate-in motion-safe:fade-in-0 space-y-3 overflow-hidden rounded-xl border border-primary/20 bg-primary/[0.03] p-4 duration-300">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                   <span className="font-medium">
-                    {jobProgress
-                      ? "Large file — importing in background…"
-                      : "Importing scores…"}
+                    {jobProgress?.phase === "classifying"
+                      ? Number(jobProgress.successful ?? 0) +
+                          Number(jobProgress.skipped ?? 0) +
+                          Number(jobProgress.failed ?? 0) ===
+                        0
+                        ? "Loading candidate matches…"
+                        : "Matching rows…"
+                      : jobProgress?.phase === "applying"
+                      ? `Applying ${Number(jobProgress.apply_done ?? 0).toLocaleString()} / ${Math.max(Number(jobProgress.apply_total ?? 0), 1).toLocaleString()} scores…`
+                        : jobProgress
+                          ? "Large file — importing in background…"
+                          : "Importing scores…"}
                   </span>
                   {jobProgress && (
                     <span className="tabular-nums text-muted-foreground">
@@ -907,6 +916,16 @@ export default function ScoreImportPage() {
                 </div>
                 {jobProgress && (
                   <p className="text-[11px] text-muted-foreground">
+                    {jobProgress.phase === "classifying" &&
+                    Number(jobProgress.successful ?? 0) +
+                      Number(jobProgress.skipped ?? 0) +
+                      Number(jobProgress.failed ?? 0) ===
+                      0
+                      ? "Looking up registrations for indexes in this file… · "
+                      : jobProgress.phase === "applying" &&
+                          (jobProgress.apply_total ?? 0) > 0
+                        ? `Write batch ${Number(jobProgress.apply_done ?? 0).toLocaleString()} / ${Number(jobProgress.apply_total).toLocaleString()} · `
+                        : null}
                     Updated {jobProgress.updated.toLocaleString()} · Skipped{" "}
                     {jobProgress.skipped.toLocaleString()} · Failed{" "}
                     {jobProgress.failed.toLocaleString()}
