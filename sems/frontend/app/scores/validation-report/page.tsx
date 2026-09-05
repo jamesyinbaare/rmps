@@ -163,7 +163,7 @@ type JobDockState = {
   error: string | null;
 };
 
-export default function ScoreValidationReportPage() {
+function ScoreValidationReportPage() {
   const router = useRouter();
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [exams, setExams] = useState<Exam[]>([]);
@@ -992,3 +992,5 @@ export default function ScoreValidationReportPage() {
     </DashboardLayout>
   );
 }
+
+export default ScoreValidationReportPage;
