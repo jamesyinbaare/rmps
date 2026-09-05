@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import io
 import logging
+import os
 import re
 import zipfile
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import xlsxwriter
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from weasyprint import HTML
+from weasyprint.text.fonts import FontConfiguration
 from PyPDF2 import PdfReader, PdfWriter
 
 from app.config import settings
@@ -43,9 +49,19 @@ from app.utils.score_utils import is_absent
 logger = logging.getLogger(__name__)
 
 LARGE_REPORT_ROW_THRESHOLD = 5000
+# Keep WeasyPrint concurrency low so background jobs don't OOM / starve the API worker.
+PDF_RENDER_MAX_WORKERS = 2
+# Merged single-PDF for many centres is unusable; coerce to zip above this.
+MERGED_PDF_SCHOOL_LIMIT = 50
+# Don't commit progress on every school — reduces DB load during large jobs.
+PROGRESS_FLUSH_MIN_INTERVAL_SEC = 2.0
 ReportFormat = Literal["xlsx", "pdf"]
 ReportPackaging = Literal["zip", "merged"]
 ReportStatus = Literal["entered", "missing", "invalid", "absent"]
+
+# Cached Jinja template / logo; invalidated when settings.templates_path changes.
+_jinja_cache: dict[str, Any] = {"path": None, "template": None, "logo_data_uri": None}
+_font_config: FontConfiguration | None = None
 
 PAPER_META: dict[int, dict[str, str]] = {
     1: {"field": "obj_raw_score", "label": "Paper 1 (Objectives)", "short": "P1"},
@@ -239,9 +255,16 @@ def classify_paper(
     subject_score: SubjectScore,
     exam_subject: ExamSubject,
     test_type: int,
+    *,
+    issues: list[dict[str, Any]] | None = None,
 ) -> tuple[ReportStatus, str | None, str | None]:
-    """Live-classify one required paper. Returns (status, message, expected)."""
-    issues = validate_subject_score(subject_score, exam_subject)
+    """Live-classify one required paper. Returns (status, message, expected).
+
+    Pass ``issues`` from a prior ``validate_subject_score`` call to avoid
+    re-validating the same SubjectScore for every paper.
+    """
+    if issues is None:
+        issues = validate_subject_score(subject_score, exam_subject)
     paper_issues = [i for i in issues if i.get("test_type") == test_type]
     max_score = paper_max_score(exam_subject, test_type)
     for issue in paper_issues:
@@ -269,13 +292,16 @@ def classify_score_papers(
 
     Returns list of (test_type, status, message, max_score, raw_score, expected).
     """
+    issues = validate_subject_score(subject_score, exam_subject)
     results: list[tuple[int, ReportStatus, str | None, float | None, str | None, str | None]] = []
     for test_type in (1, 2, 3):
         if test_types is not None and test_type not in test_types:
             continue
         if not paper_is_required(exam_subject, test_type):
             continue
-        status, message, expected = classify_paper(subject_score, exam_subject, test_type)
+        status, message, expected = classify_paper(
+            subject_score, exam_subject, test_type, issues=issues
+        )
         results.append(
             (
                 test_type,
@@ -297,11 +323,14 @@ def missing_p1_p2_label(
     Return P1, P2, or P1/P2 when any required Paper 1/2 score is missing.
     Returns None when neither required paper is missing (or none required).
     """
+    issues = validate_subject_score(subject_score, exam_subject)
     missing_shorts: list[str] = []
     for test_type in (1, 2):
         if not paper_is_required(exam_subject, test_type):
             continue
-        status, _, _ = classify_paper(subject_score, exam_subject, test_type)
+        status, _, _ = classify_paper(
+            subject_score, exam_subject, test_type, issues=issues
+        )
         if status == "missing":
             missing_shorts.append(PAPER_META[test_type]["short"])
     if not missing_shorts:
@@ -490,21 +519,53 @@ def parse_subject_ids(raw: str | list[int] | None) -> list[int] | None:
     return [int(p.strip()) for p in raw.split(",") if p.strip()]
 
 
+def parse_school_ids(raw: str | list[int] | None) -> list[int] | None:
+    """Parse comma-separated or list school IDs. Empty → None (all schools)."""
+    if raw is None or raw == "" or raw == []:
+        return None
+    if isinstance(raw, list):
+        values = [int(v) for v in raw]
+    else:
+        values = [int(p.strip()) for p in raw.split(",") if p.strip()]
+    return values or None
+
+
+def resolve_school_ids(
+    *,
+    school_ids: str | list[int] | None = None,
+    school_id: int | None = None,
+) -> list[int] | None:
+    """Prefer school_ids; fall back to singular school_id; None = all schools."""
+    parsed = parse_school_ids(school_ids)
+    if parsed is not None:
+        return parsed
+    if school_id is not None:
+        return [school_id]
+    return None
+
+
 def should_use_report_job(
     *,
-    school_id: int | None,
+    school_id: int | None = None,
+    school_ids: list[int] | None = None,
     report_format: ReportFormat,
     estimated_rows: int | None = None,
     school_count: int | None = None,
 ) -> bool:
-    # Multi-school always goes through jobs (zip packaging).
-    if school_id is None:
+    # PDF always goes through jobs (WeasyPrint cost / reliability).
+    if report_format == "pdf":
+        return True
+    # Multi-school / all-schools always goes through jobs (zip packaging).
+    resolved = (
+        school_ids
+        if school_ids is not None
+        else ([school_id] if school_id is not None else None)
+    )
+    if resolved is None or len(resolved) != 1:
         return True
     if school_count is not None and school_count > 1:
         return True
     if estimated_rows is not None and estimated_rows > LARGE_REPORT_ROW_THRESHOLD:
-        return True
-    if estimated_rows is not None and report_format == "pdf" and estimated_rows > 1500:
         return True
     return False
 
@@ -514,6 +575,7 @@ async def build_score_validation_report(
     *,
     exam_id: int,
     school_id: int | None = None,
+    school_ids: list[int] | None = None,
     subject_type: SubjectType | str | None = None,
     subject_ids: list[int] | None = None,
     test_types: list[int] | None = None,
@@ -523,6 +585,8 @@ async def build_score_validation_report(
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
     if not exam:
         raise ValueError("Examination not found")
+
+    resolved_school_ids = resolve_school_ids(school_ids=school_ids, school_id=school_id)
 
     subject_type_enum: SubjectType | None = None
     if subject_type is not None:
@@ -561,8 +625,8 @@ async def build_score_validation_report(
         .join(School, Candidate.school_id == School.id)
         .where(ExamSubject.exam_id == exam_id)
     )
-    if school_id is not None:
-        stmt = stmt.where(Candidate.school_id == school_id)
+    if resolved_school_ids is not None:
+        stmt = stmt.where(Candidate.school_id.in_(resolved_school_ids))
     if subject_type_enum is not None:
         stmt = stmt.where(Subject.subject_type == subject_type_enum)
     if subject_ids:
@@ -646,8 +710,15 @@ async def build_score_validation_report(
 
     school_label = None
     school_code_meta: str | None = None
-    if school_id is not None:
-        school_obj = (await session.execute(select(School).where(School.id == school_id))).scalar_one_or_none()
+    single_school_id = (
+        resolved_school_ids[0]
+        if resolved_school_ids is not None and len(resolved_school_ids) == 1
+        else None
+    )
+    if single_school_id is not None:
+        school_obj = (
+            await session.execute(select(School).where(School.id == single_school_id))
+        ).scalar_one_or_none()
         if school_obj:
             school_code_meta = school_obj.code
             school_label = f"{school_obj.code} — {school_obj.name}"
@@ -673,7 +744,7 @@ async def build_score_validation_report(
         exam_year=exam.year,
         exam_series=exam_series,
         exam_type=exam_type,
-        school_id=school_id,
+        school_id=single_school_id,
         school_label=school_label,
         school_code=school_code_meta,
         subject_type=_enum_value(subject_type_enum) if subject_type_enum else None,
@@ -690,27 +761,6 @@ async def build_score_validation_report(
         summary=build_summary(detail_rows),
         rows=detail_rows,
     )
-
-
-def report_to_preview_dict(
-    data: ScoreValidationReportData,
-    *,
-    page: int = 1,
-    page_size: int = 50,
-) -> dict[str, Any]:
-    page = max(1, page)
-    page_size = min(max(1, page_size), 200)
-    start = (page - 1) * page_size
-    end = start + page_size
-    page_rows = data.rows[start:end]
-    return {
-        "meta": asdict(data.meta),
-        "summary": asdict(data.summary),
-        "page": page,
-        "page_size": page_size,
-        "total_rows": len(data.rows),
-        "rows": [asdict(r) for r in page_rows],
-    }
 
 
 async def generate_report_filename(
@@ -993,10 +1043,58 @@ def _iter_school_subject_blocks(
     return blocks
 
 
-def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes:
+def _iter_school_row_groups(rows: list[ReportDetailRow]) -> list[list[ReportDetailRow]]:
+    """One row list per school (all papers/subjects), in school order."""
+    groups: list[list[ReportDetailRow]] = []
+    for school in group_rows_for_pdf(rows):
+        school_rows: list[ReportDetailRow] = []
+        for paper in school["papers"]:
+            for subject in paper["subjects"]:
+                school_rows.extend(subject["rows"])
+        if school_rows:
+            groups.append(school_rows)
+    return groups
+
+
+def _pdf_worker_count(n_tasks: int) -> int:
+    if n_tasks <= 1:
+        return 1
+    return min(PDF_RENDER_MAX_WORKERS, os.cpu_count() or 1, n_tasks)
+
+
+def _get_font_config() -> FontConfiguration:
+    global _font_config
+    if _font_config is None:
+        _font_config = FontConfiguration()
+    return _font_config
+
+
+def _get_validation_report_template() -> tuple[Template, Path]:
+    """Return cached Jinja template + templates dir (refresh if path changed)."""
     templates_dir = Path(settings.templates_path).resolve()
-    env = Environment(loader=FileSystemLoader(str(templates_dir)))
-    template = env.get_template("score_validation_report/main.html")
+    path_key = str(templates_dir)
+    if _jinja_cache["path"] != path_key or _jinja_cache["template"] is None:
+        env = Environment(loader=FileSystemLoader(path_key))
+        _jinja_cache["path"] = path_key
+        _jinja_cache["template"] = env.get_template("score_validation_report/main.html")
+        _jinja_cache["logo_data_uri"] = None
+    return _jinja_cache["template"], templates_dir
+
+
+def _logo_data_uri(templates_dir: Path) -> str:
+    """Embed crest as data-URI so WeasyPrint does not re-read the PNG per render."""
+    cached = _jinja_cache.get("logo_data_uri")
+    if cached:
+        return cached
+    logo_path = templates_dir / "score_sheets" / "logo-crest-only.png"
+    raw = logo_path.read_bytes()
+    uri = f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"
+    _jinja_cache["logo_data_uri"] = uri
+    return uri
+
+
+def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes:
+    template, templates_dir = _get_validation_report_template()
 
     report_status = primary_report_status(data.meta.statuses)
     columns = detail_columns_for_status(
@@ -1012,7 +1110,7 @@ def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes
         "status_count": getattr(data.summary, report_status),
         "columns": columns,
         "combine_p1_p2": data.meta.combine_p1_p2,
-        "logo_src": "score_sheets/logo-crest-only.png",
+        "logo_src": _logo_data_uri(templates_dir),
         "status_labels": {
             "entered": "Entered",
             "missing": "Missing",
@@ -1025,31 +1123,58 @@ def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes
     }
     html = template.render(context)
     base_url = templates_dir.as_uri() + "/"
-    return HTML(string=html, base_url=base_url).write_pdf()
+    return HTML(string=html, base_url=base_url).write_pdf(
+        font_config=_get_font_config()
+    )
 
 
-def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
-    """Render PDF with Page N/M numbering independent per school+subject block.
-
-    WeasyPrint's ``counter(pages)`` is document-wide, so each school+subject
-    block is rendered as its own PDF (Page 1/M … M/M) and the parts are merged.
-    """
-    blocks = _iter_school_subject_blocks(data.rows)
-    if not blocks:
-        return _render_validation_report_pdf_html(data)
-    if len(blocks) == 1:
-        return _render_validation_report_pdf_html(_slice_report_for_rows(data, blocks[0]))
-
+def _merge_pdf_parts(parts: list[bytes]) -> bytes:
     writer = PdfWriter()
-    for block_rows in blocks:
-        part = _render_validation_report_pdf_html(_slice_report_for_rows(data, block_rows))
+    for part in parts:
         reader = PdfReader(io.BytesIO(part))
         for page in reader.pages:
             writer.add_page(page)
-
     output = io.BytesIO()
     writer.write(output)
     return output.getvalue()
+
+
+def _render_school_pdf_parts_parallel(
+    school_slices: list[ScoreValidationReportData],
+) -> list[bytes]:
+    """Render one PDF per school in a bounded thread pool (no ProcessPool)."""
+    workers = _pdf_worker_count(len(school_slices))
+    if workers == 1:
+        return [_render_validation_report_pdf_html(s) for s in school_slices]
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(_render_validation_report_pdf_html, school_data)
+            for school_data in school_slices
+        ]
+        return [fut.result() for fut in futures]
+
+
+def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
+    """Render PDF with one WeasyPrint document per school.
+
+    Page numbers are continuous within a school (subjects page-break inside the
+    same document). Multi-school sync/small merges use a thread pool then
+    concatenate so numbering resets at each school boundary.
+    """
+    school_groups = _iter_school_row_groups(data.rows)
+    if not school_groups:
+        return _render_validation_report_pdf_html(data)
+    if len(school_groups) == 1:
+        return _render_validation_report_pdf_html(
+            _slice_report_for_rows(data, school_groups[0])
+        )
+
+    school_slices = [
+        _slice_report_for_rows(data, group_rows) for group_rows in school_groups
+    ]
+    parts = _render_school_pdf_parts_parallel(school_slices)
+    return _merge_pdf_parts(parts)
 
 
 def _render_report_file(data: ScoreValidationReportData, report_format: ReportFormat) -> bytes:
@@ -1058,37 +1183,72 @@ def _render_report_file(data: ScoreValidationReportData, report_format: ReportFo
     return generate_validation_report_excel(data)
 
 
-async def generate_score_validation_report_bytes(
+async def _render_per_school_files(
+    *,
+    data: ScoreValidationReportData,
+    school_ids: list[int],
+    report_format: ReportFormat,
+    progress: dict[str, Any] | None,
+    emit_progress: Callable[[], Awaitable[None]],
+    stage: str = "per_school",
+) -> list[tuple[str, bytes]]:
+    """Render one file per school with live progress (zip and merged PDF paths)."""
+    workers = _pdf_worker_count(len(school_ids))
+    sem = asyncio.Semaphore(workers)
+    rendered: list[tuple[str, bytes] | None] = [None] * len(school_ids)
+    done_count = 0
+    done_lock = asyncio.Lock()
+
+    async def _render_one(idx: int, sid: int) -> None:
+        nonlocal done_count
+        async with sem:
+            school_data = _slice_report_for_school(data, sid)
+            entry_name = _school_file_basename(school_data, report_format)
+            file_bytes = await asyncio.to_thread(
+                _render_report_file, school_data, report_format
+            )
+            rendered[idx] = (entry_name, file_bytes)
+            async with done_lock:
+                done_count += 1
+                current = done_count
+            if progress is not None:
+                progress.update(
+                    {
+                        "stage": stage,
+                        "schools_done": current,
+                        "schools_total": len(school_ids),
+                        "message": f"Generated {current} of {len(school_ids)} schools…",
+                    }
+                )
+                await emit_progress()
+
+    await asyncio.gather(
+        *[_render_one(idx, sid) for idx, sid in enumerate(school_ids)]
+    )
+    results: list[tuple[str, bytes]] = []
+    for item in rendered:
+        assert item is not None
+        results.append(item)
+    return results
+
+
+async def render_score_validation_report_from_data(
     session: AsyncSession,
+    data: ScoreValidationReportData,
     *,
     exam_id: int,
-    school_id: int | None = None,
     subject_type: SubjectType | str | None = None,
-    subject_ids: list[int] | None = None,
     test_types: list[int] | None = None,
     statuses: list[ReportStatus] | None = None,
     report_format: ReportFormat = "xlsx",
     progress: dict[str, Any] | None = None,
-    combine_p1_p2: bool = False,
+    on_progress: Callable[[], Awaitable[None]] | None = None,
     packaging: ReportPackaging = "zip",
-) -> tuple[bytes, str, ScoreValidationReportData]:
-    if progress is not None:
-        progress.update({"stage": "building", "message": "Building report rows…"})
-
-    data = await build_score_validation_report(
-        session,
-        exam_id=exam_id,
-        school_id=school_id,
-        subject_type=subject_type,
-        subject_ids=subject_ids,
-        test_types=test_types,
-        statuses=statuses,
-        combine_p1_p2=combine_p1_p2,
-    )
+) -> tuple[bytes, str]:
+    """Render already-built report rows to PDF/Excel/zip (CPU off the event loop)."""
     if not data.rows:
         raise ValueError("No score rows match the selected filters")
 
-    # Unique schools in row order
     school_ids: list[int] = []
     seen: set[int] = set()
     for row in data.rows:
@@ -1096,7 +1256,40 @@ async def generate_score_validation_report_bytes(
             seen.add(row.school_id)
             school_ids.append(row.school_id)
 
-    if progress is not None:
+    status_list: list[ReportStatus] = statuses or list(data.meta.statuses)  # type: ignore[arg-type]
+    effective_packaging: ReportPackaging = packaging
+
+    async def _emit_progress() -> None:
+        if on_progress is not None:
+            await on_progress()
+
+    if (
+        effective_packaging == "merged"
+        and report_format == "pdf"
+        and len(school_ids) > MERGED_PDF_SCHOOL_LIMIT
+    ):
+        logger.warning(
+            "Coercing merged PDF to zip for %s schools (limit %s)",
+            len(school_ids),
+            MERGED_PDF_SCHOOL_LIMIT,
+        )
+        effective_packaging = "zip"
+        if progress is not None:
+            progress.update(
+                {
+                    "stage": "per_school",
+                    "schools_total": len(school_ids),
+                    "schools_done": 0,
+                    "packaging_coerced": "zip",
+                    "message": (
+                        f"Too many schools for a single merged PDF "
+                        f"({len(school_ids)} > {MERGED_PDF_SCHOOL_LIMIT}); "
+                        "packaging as zip…"
+                    ),
+                }
+            )
+            await _emit_progress()
+    elif progress is not None:
         progress.update(
             {
                 "stage": "per_school",
@@ -1105,6 +1298,7 @@ async def generate_score_validation_report_bytes(
                 "message": f"Generating files for {len(school_ids)} school(s)…",
             }
         )
+        await _emit_progress()
 
     if len(school_ids) == 1:
         school_data = _slice_report_for_school(data, school_ids[0])
@@ -1114,11 +1308,11 @@ async def generate_score_validation_report_bytes(
             school_id=school_ids[0],
             subject_type=subject_type,
             test_types=test_types,
-            statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
+            statuses=status_list,
             report_format=report_format,
             combine_p1_p2=data.meta.combine_p1_p2,
         )
-        file_bytes = _render_report_file(school_data, report_format)
+        file_bytes = await asyncio.to_thread(_render_report_file, school_data, report_format)
         if progress is not None:
             progress.update(
                 {
@@ -1127,30 +1321,57 @@ async def generate_score_validation_report_bytes(
                     "message": "Report ready",
                 }
             )
-        return file_bytes, filename, data
+            await _emit_progress()
+        return file_bytes, filename
 
-    # Multi-school: merge into one file, or zip per-school files
-    if packaging == "merged":
-        if progress is not None:
-            progress.update(
-                {
-                    "stage": "rendering",
-                    "schools_total": len(school_ids),
-                    "schools_done": 0,
-                    "message": f"Rendering merged report for {len(school_ids)} schools…",
-                }
-            )
+    if effective_packaging == "merged":
         filename = await generate_report_filename(
             session,
             exam_id=exam_id,
             school_id=None,
             subject_type=subject_type,
             test_types=test_types,
-            statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
+            statuses=status_list,
             report_format=report_format,
             combine_p1_p2=data.meta.combine_p1_p2,
         )
-        file_bytes = _render_report_file(data, report_format)
+        if report_format == "pdf":
+            if progress is not None:
+                progress.update(
+                    {
+                        "stage": "rendering",
+                        "schools_total": len(school_ids),
+                        "schools_done": 0,
+                        "message": f"Rendering merged report for {len(school_ids)} schools…",
+                    }
+                )
+                await _emit_progress()
+            school_files = await _render_per_school_files(
+                data=data,
+                school_ids=school_ids,
+                report_format="pdf",
+                progress=progress,
+                emit_progress=_emit_progress,
+                stage="rendering",
+            )
+            if progress is not None:
+                progress.update({"stage": "merging", "message": "Merging school PDFs…"})
+                await _emit_progress()
+            parts = [fb for _name, fb in school_files]
+            file_bytes = await asyncio.to_thread(_merge_pdf_parts, parts)
+        else:
+            # Excel: one workbook over all schools (existing behavior)
+            if progress is not None:
+                progress.update(
+                    {
+                        "stage": "rendering",
+                        "schools_total": len(school_ids),
+                        "schools_done": 0,
+                        "message": f"Rendering merged report for {len(school_ids)} schools…",
+                    }
+                )
+                await _emit_progress()
+            file_bytes = await asyncio.to_thread(_render_report_file, data, report_format)
         if progress is not None:
             progress.update(
                 {
@@ -1160,26 +1381,27 @@ async def generate_score_validation_report_bytes(
                     "message": "Merged report ready",
                 }
             )
-        return file_bytes, filename, data
+            await _emit_progress()
+        return file_bytes, filename
 
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for idx, sid in enumerate(school_ids, start=1):
-            school_data = _slice_report_for_school(data, sid)
-            entry_name = _school_file_basename(school_data, report_format)
-            zf.writestr(entry_name, _render_report_file(school_data, report_format))
-            if progress is not None:
-                progress.update(
-                    {
-                        "stage": "per_school",
-                        "schools_done": idx,
-                        "schools_total": len(school_ids),
-                        "message": f"Generated {idx} of {len(school_ids)} schools…",
-                    }
-                )
+    # Multi-school zip: render schools in parallel, then package.
+    school_files = await _render_per_school_files(
+        data=data,
+        school_ids=school_ids,
+        report_format=report_format,
+        progress=progress,
+        emit_progress=_emit_progress,
+        stage="per_school",
+    )
 
     if progress is not None:
         progress.update({"stage": "zipping", "message": "Packaging zip…"})
+        await _emit_progress()
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for entry_name, file_bytes in school_files:
+            zf.writestr(entry_name, file_bytes)
 
     zip_name = await generate_report_filename(
         session,
@@ -1187,15 +1409,70 @@ async def generate_score_validation_report_bytes(
         school_id=None,
         subject_type=subject_type,
         test_types=test_types,
-        statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
+        statuses=status_list,
         report_format=report_format,
         combine_p1_p2=data.meta.combine_p1_p2,
     )
     zip_name = zip_name.rsplit(".", 1)[0] + ".zip"
     if progress is not None:
         progress.update({"stage": "ready", "message": "Report ready"})
+        await _emit_progress()
     zip_buf.seek(0)
-    return zip_buf.getvalue(), zip_name, data
+    return zip_buf.getvalue(), zip_name
+
+
+async def generate_score_validation_report_bytes(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    school_id: int | None = None,
+    school_ids: list[int] | None = None,
+    subject_type: SubjectType | str | None = None,
+    subject_ids: list[int] | None = None,
+    test_types: list[int] | None = None,
+    statuses: list[ReportStatus] | None = None,
+    report_format: ReportFormat = "xlsx",
+    progress: dict[str, Any] | None = None,
+    on_progress: Callable[[], Awaitable[None]] | None = None,
+    combine_p1_p2: bool = False,
+    packaging: ReportPackaging = "zip",
+) -> tuple[bytes, str, ScoreValidationReportData]:
+    if progress is not None:
+        progress.update({"stage": "building", "message": "Building report rows…"})
+        if on_progress is not None:
+            await on_progress()
+
+    data = await build_score_validation_report(
+        session,
+        exam_id=exam_id,
+        school_id=school_id,
+        school_ids=school_ids,
+        subject_type=subject_type,
+        subject_ids=subject_ids,
+        test_types=test_types,
+        statuses=statuses,
+        combine_p1_p2=combine_p1_p2,
+    )
+    if not data.rows:
+        raise ValueError("No score rows match the selected filters")
+
+    file_bytes, filename = await render_score_validation_report_from_data(
+        session,
+        data,
+        exam_id=exam_id,
+        subject_type=subject_type,
+        test_types=test_types,
+        statuses=statuses,
+        report_format=report_format,
+        progress=progress,
+        on_progress=on_progress,
+        packaging=packaging,
+    )
+    return file_bytes, filename, data
+
+
+class ValidationReportCancelled(Exception):
+    """Raised when a validation report job is cancelled by the user."""
 
 
 async def process_score_validation_report_job(tracking_id: int) -> None:
@@ -1213,25 +1490,62 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
             return
 
         metadata = dict(tracking.process_metadata or {})
+        if metadata.get("cancel_requested"):
+            metadata.update(
+                {
+                    "stage": "cancelled",
+                    "message": "Cancelled",
+                    "cancelled": True,
+                }
+            )
+            tracking.process_metadata = metadata
+            flag_modified(tracking, "process_metadata")
+            tracking.status = ProcessStatus.FAILED
+            tracking.error_message = "Cancelled by user"
+            tracking.completed_at = datetime.utcnow()
+            await session.commit()
+            return
+
         progress: dict[str, Any] = {
             "stage": "queued",
             "schools_done": 0,
             "schools_total": 0,
             "message": "Queued…",
         }
+        last_flush_at = 0.0
 
-        async def flush_progress() -> None:
+        async def ensure_not_cancelled() -> None:
             nonlocal tracking, metadata
+            await session.refresh(tracking)
+            metadata = dict(tracking.process_metadata or {})
+            if metadata.get("cancel_requested"):
+                raise ValidationReportCancelled("Cancelled by user")
+
+        async def flush_progress(*, force: bool = False) -> None:
+            nonlocal tracking, metadata, last_flush_at
+            await ensure_not_cancelled()
+            stage = str(progress.get("stage") or "")
+            # Always persist terminal / packaging stages so the UI does not lag.
+            if stage in {"ready", "merging", "zipping", "building", "failed"}:
+                force = True
+            now = datetime.utcnow().timestamp()
+            if (
+                not force
+                and last_flush_at
+                and (now - last_flush_at) < PROGRESS_FLUSH_MIN_INTERVAL_SEC
+            ):
+                return
             metadata.update(progress)
             tracking.process_metadata = metadata
             flag_modified(tracking, "process_metadata")
             await session.commit()
+            last_flush_at = now
 
         try:
             tracking.status = ProcessStatus.IN_PROGRESS
             tracking.started_at = datetime.utcnow()
             progress.update({"stage": "building", "message": "Preparing report…"})
-            await flush_progress()
+            await flush_progress(force=True)
 
             subject_type_raw = metadata.get("subject_type")
             report_format: ReportFormat = metadata.get("format") or "xlsx"
@@ -1240,21 +1554,23 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                 "merged" if packaging_raw == "merged" else "zip"
             )
 
-            # Re-bind progress dict so generate updates it; flush after return
             file_bytes, filename, data = await generate_score_validation_report_bytes(
                 session,
                 exam_id=metadata.get("exam_id") or tracking.exam_id,
                 school_id=metadata.get("school_id"),
+                school_ids=metadata.get("school_ids"),
                 subject_type=SubjectType(subject_type_raw) if subject_type_raw else None,
                 subject_ids=metadata.get("subject_ids"),
                 test_types=metadata.get("test_types"),
                 statuses=metadata.get("statuses"),
                 report_format=report_format,
                 progress=progress,
+                on_progress=flush_progress,
                 combine_p1_p2=bool(metadata.get("combine_p1_p2")),
                 packaging=packaging,
             )
-            await flush_progress()
+
+            await ensure_not_cancelled()
 
             export_dir = Path(settings.storage_path) / "validation_reports"
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -1285,6 +1601,34 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
             tracking.status = ProcessStatus.COMPLETED
             tracking.completed_at = datetime.utcnow()
             await session.commit()
+        except ValidationReportCancelled:
+            try:
+                await session.rollback()
+                tracking_result = await session.execute(
+                    select(ProcessTracking).where(ProcessTracking.id == tracking_id)
+                )
+                tracking = tracking_result.scalar_one_or_none()
+                if tracking:
+                    metadata = dict(tracking.process_metadata or {})
+                    metadata.update(
+                        {
+                            "stage": "cancelled",
+                            "message": "Cancelled",
+                            "cancelled": True,
+                        }
+                    )
+                    tracking.process_metadata = metadata
+                    flag_modified(tracking, "process_metadata")
+                    tracking.status = ProcessStatus.FAILED
+                    tracking.error_message = "Cancelled by user"
+                    tracking.completed_at = datetime.utcnow()
+                    await session.commit()
+            except Exception:
+                logger.error(
+                    "Failed to mark validation report job %s as cancelled",
+                    tracking_id,
+                    exc_info=True,
+                )
         except Exception as exc:
             logger.error("Score validation report job %s failed: %s", tracking_id, exc, exc_info=True)
             try:

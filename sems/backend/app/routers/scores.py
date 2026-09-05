@@ -8,6 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import and_, delete, func, or_, select, case
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.dependencies.auth import CurrentUserDep, OfficerDep
 from app.dependencies.database import DBSessionDep
@@ -70,7 +71,6 @@ from app.schemas.score import (
     ScoreUpdate,
     ScoreValidationReportJobCreateResponse,
     ScoreValidationReportJobStatusResponse,
-    ScoreValidationReportPreviewResponse,
     UnmatchedExtractionRecordResponse,
     UnmatchedIndexSuggestion,
     UnmatchedRecordsListResponse,
@@ -117,12 +117,12 @@ from app.services.score_import_pipeline import build_errors_csv
 from app.services.score_validation_report import (
     build_score_validation_report,
     generate_report_filename,
-    generate_score_validation_report_bytes,
     parse_statuses,
     parse_subject_ids,
     parse_test_types,
     process_score_validation_report_job,
-    report_to_preview_dict,
+    render_score_validation_report_from_data,
+    resolve_school_ids,
     should_use_report_job,
 )
 from app.services.issue_batch_service import (
@@ -3508,17 +3508,20 @@ def _parse_validation_report_filters(
     subject_ids: str | None,
     test_types: str | None,
     statuses: str | None,
-) -> tuple[list[int] | None, list[int] | None, list[str] | None]:
+    school_ids: str | None = None,
+    school_id: int | None = None,
+) -> tuple[list[int] | None, list[int] | None, list[int] | None, list[str] | None]:
     try:
         subject_ids_list = parse_subject_ids(subject_ids)
         test_types_list = parse_test_types(test_types)
         statuses_list = parse_statuses(statuses)
+        school_ids_list = resolve_school_ids(school_ids=school_ids, school_id=school_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     if subject_type is not None and subject_ids_list:
         # Allow both: subject_ids further narrow within type filter applied in query
         pass
-    return subject_ids_list, test_types_list, statuses_list
+    return school_ids_list, subject_ids_list, test_types_list, statuses_list
 
 
 def _validation_report_content_disposition(filename: str) -> str:
@@ -3526,58 +3529,13 @@ def _validation_report_content_disposition(filename: str) -> str:
     return f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
-@router.get("/validation-report/preview", response_model=ScoreValidationReportPreviewResponse)
-async def preview_score_validation_report(
-    session: DBSessionDep,
-    _user: OfficerDep,
-    exam_id: int = Query(..., description="Examination ID (required)"),
-    school_id: int | None = Query(None),
-    subject_type: SubjectType | None = Query(None),
-    subject_ids: str | None = Query(None, description="Comma-separated subject IDs"),
-    test_types: str | None = Query(None, description="Comma-separated papers: 1,2,3"),
-    statuses: str | None = Query(
-        None,
-        description="Exactly one status: entered, missing, invalid, or absent. Default: missing",
-    ),
-    combine_p1_p2: bool = Query(
-        False,
-        description="When true with status=missing: one row per candidate×subject with Missing papers P1, P2, or P1/P2",
-    ),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-) -> ScoreValidationReportPreviewResponse:
-    """Paginated live preview of score validation report rows."""
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
-        subject_type=subject_type,
-        subject_ids=subject_ids,
-        test_types=test_types,
-        statuses=statuses,
-    )
-    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
-    if not exam:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
-    try:
-        data = await build_score_validation_report(
-            session,
-            exam_id=exam_id,
-            school_id=school_id,
-            subject_type=subject_type,
-            subject_ids=subject_ids_list,
-            test_types=test_types_list,
-            statuses=statuses_list,  # type: ignore[arg-type]
-            combine_p1_p2=combine_p1_p2,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    return ScoreValidationReportPreviewResponse(**report_to_preview_dict(data, page=page, page_size=page_size))
-
-
 @router.get("/validation-report")
 async def download_score_validation_report(
     session: DBSessionDep,
     _user: OfficerDep,
     exam_id: int = Query(..., description="Examination ID (required)"),
-    school_id: int | None = Query(None),
+    school_id: int | None = Query(None, description="Single school (compat)"),
+    school_ids: str | None = Query(None, description="Comma-separated school IDs"),
     subject_type: SubjectType | None = Query(None),
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
@@ -3590,32 +3548,42 @@ async def download_score_validation_report(
     ),
 ):
     """Synchronous score validation report download (small scopes)."""
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+    school_ids_list, subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
         subject_type=subject_type,
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        school_ids=school_ids,
+        school_id=school_id,
     )
     try:
-        file_bytes, filename, data = await generate_score_validation_report_bytes(
+        data = await build_score_validation_report(
             session,
             exam_id=exam_id,
-            school_id=school_id,
+            school_ids=school_ids_list,
             subject_type=subject_type,
             subject_ids=subject_ids_list,
             test_types=test_types_list,
             statuses=statuses_list,  # type: ignore[arg-type]
-            report_format=format,
             combine_p1_p2=combine_p1_p2,
-            packaging=packaging,
         )
     except ValueError as e:
         detail = str(e)
-        code = status.HTTP_404_NOT_FOUND if "not found" in detail.lower() or "no score rows" in detail.lower() else status.HTTP_400_BAD_REQUEST
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
         raise HTTPException(status_code=code, detail=detail) from e
 
+    if not data.rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No score rows match the selected filters",
+        )
+
     if should_use_report_job(
-        school_id=school_id,
+        school_ids=school_ids_list,
         report_format=format,
         estimated_rows=data.meta.row_count,
     ):
@@ -3623,6 +3591,26 @@ async def download_score_validation_report(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Report is too large for synchronous download. Use POST /validation-report/jobs instead.",
         )
+
+    try:
+        file_bytes, filename = await render_score_validation_report_from_data(
+            session,
+            data,
+            exam_id=exam_id,
+            subject_type=subject_type,
+            test_types=test_types_list,
+            statuses=statuses_list,  # type: ignore[arg-type]
+            report_format=format,
+            packaging=packaging,
+        )
+    except ValueError as e:
+        detail = str(e)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower() or "no score rows" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=detail) from e
 
     media = (
         "application/zip"
@@ -3648,7 +3636,8 @@ async def start_score_validation_report_job(
     background_tasks: BackgroundTasks,
     _user: OfficerDep,
     exam_id: int = Query(...),
-    school_id: int | None = Query(None),
+    school_id: int | None = Query(None, description="Single school (compat)"),
+    school_ids: str | None = Query(None, description="Comma-separated school IDs"),
     subject_type: SubjectType | None = Query(None),
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
@@ -3665,34 +3654,40 @@ async def start_score_validation_report_job(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
 
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+    school_ids_list, subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
         subject_type=subject_type,
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        school_ids=school_ids,
+        school_id=school_id,
+    )
+    single_school_id = (
+        school_ids_list[0] if school_ids_list is not None and len(school_ids_list) == 1 else None
     )
     filename = await generate_report_filename(
         session,
         exam_id=exam_id,
-        school_id=school_id,
+        school_id=single_school_id,
         subject_type=subject_type,
         test_types=test_types_list,
         statuses=statuses_list,  # type: ignore[arg-type]
         report_format=format,
         combine_p1_p2=combine_p1_p2,
     )
-    # Merged multi-school keeps the natural extension; zip packaging uses .zip later
-    if school_id is None and packaging == "zip":
+    # Multi-school zip packaging uses .zip later
+    if single_school_id is None and packaging == "zip":
         filename = filename.rsplit(".", 1)[0] + ".zip"
 
     tracking = ProcessTracking(
         exam_id=exam_id,
         process_type=ProcessType.SCORE_VALIDATION_REPORT,
-        school_id=school_id,
+        school_id=single_school_id,
         status=ProcessStatus.PENDING,
         process_metadata={
             "exam_id": exam_id,
-            "school_id": school_id,
+            "school_id": single_school_id,
+            "school_ids": school_ids_list,
             "subject_type": subject_type.value if subject_type else None,
             "subject_ids": subject_ids_list,
             "test_types": test_types_list if not combine_p1_p2 else [1, 2],
@@ -3709,6 +3704,37 @@ async def start_score_validation_report_job(
     await session.refresh(tracking)
     background_tasks.add_task(process_score_validation_report_job, tracking.id)
     return ScoreValidationReportJobCreateResponse(job_id=tracking.id, status=tracking.status.value)
+
+
+def _validation_report_job_status_response(
+    tracking: ProcessTracking,
+) -> ScoreValidationReportJobStatusResponse:
+    metadata = tracking.process_metadata or {}
+    cancelled = bool(
+        metadata.get("cancelled")
+        or (
+            tracking.status == ProcessStatus.FAILED
+            and (
+                metadata.get("stage") == "cancelled"
+                or metadata.get("cancel_requested")
+            )
+        )
+    )
+    return ScoreValidationReportJobStatusResponse(
+        job_id=tracking.id,
+        exam_id=tracking.exam_id,
+        status=tracking.status.value,
+        filename=metadata.get("filename"),
+        message=metadata.get("message"),
+        error_message=tracking.error_message,
+        row_count=metadata.get("row_count"),
+        stage=metadata.get("stage"),
+        schools_done=metadata.get("schools_done"),
+        schools_total=metadata.get("schools_total"),
+        school_count=metadata.get("school_count"),
+        is_zip=metadata.get("is_zip"),
+        cancelled=cancelled or None,
+    )
 
 
 @router.get(
@@ -3730,21 +3756,69 @@ async def get_score_validation_report_job(
     ).scalar_one_or_none()
     if not tracking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
-    metadata = tracking.process_metadata or {}
-    return ScoreValidationReportJobStatusResponse(
-        job_id=tracking.id,
-        exam_id=tracking.exam_id,
-        status=tracking.status.value,
-        filename=metadata.get("filename"),
-        message=metadata.get("message"),
-        error_message=tracking.error_message,
-        row_count=metadata.get("row_count"),
-        stage=metadata.get("stage"),
-        schools_done=metadata.get("schools_done"),
-        schools_total=metadata.get("schools_total"),
-        school_count=metadata.get("school_count"),
-        is_zip=metadata.get("is_zip"),
-    )
+    return _validation_report_job_status_response(tracking)
+
+
+@router.post(
+    "/validation-report/jobs/{job_id}/cancel",
+    response_model=ScoreValidationReportJobStatusResponse,
+)
+async def cancel_score_validation_report_job(
+    job_id: int,
+    session: DBSessionDep,
+    _user: OfficerDep,
+) -> ScoreValidationReportJobStatusResponse:
+    """Request cancellation of a pending/in-progress validation report job."""
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.SCORE_VALIDATION_REPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
+
+    if tracking.status == ProcessStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already completed",
+        )
+
+    metadata = dict(tracking.process_metadata or {})
+    if tracking.status == ProcessStatus.FAILED and (
+        metadata.get("cancelled") or metadata.get("stage") == "cancelled"
+    ):
+        return _validation_report_job_status_response(tracking)
+
+    if tracking.status == ProcessStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already failed",
+        )
+
+    metadata["cancel_requested"] = True
+    if tracking.status == ProcessStatus.PENDING:
+        metadata.update(
+            {
+                "stage": "cancelled",
+                "message": "Cancelled",
+                "cancelled": True,
+            }
+        )
+        tracking.status = ProcessStatus.FAILED
+        tracking.error_message = "Cancelled by user"
+        tracking.completed_at = datetime.utcnow()
+    else:
+        metadata["stage"] = "cancelled"
+        metadata["message"] = "Cancelling…"
+
+    tracking.process_metadata = metadata
+    flag_modified(tracking, "process_metadata")
+    await session.commit()
+    await session.refresh(tracking)
+    return _validation_report_job_status_response(tracking)
 
 
 @router.get("/validation-report/jobs/{job_id}/file")

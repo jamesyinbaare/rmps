@@ -17,26 +17,53 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "score_import_staging",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("job_key", sa.String(length=64), nullable=False),
-        sa.Column("row_num", sa.Integer(), nullable=False),
-        sa.Column("subject_registration_id", sa.Integer(), nullable=True),
-        sa.Column("subject_score_id", sa.Integer(), nullable=True),
-        sa.Column("parsed_score", sa.String(length=10), nullable=True),
-        sa.Column("total_score", sa.Float(), nullable=True),
-        sa.Column("status", sa.String(length=16), nullable=False, server_default="ready"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_score_import_staging_job_key",
-        "score_import_staging",
-        ["job_key"],
-        unique=False,
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = inspector.get_table_names()
+
+    # Idempotent: table may already exist from a partial migrate / prior env.
+    if "score_import_staging" not in tables:
+        op.create_table(
+            "score_import_staging",
+            sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+            sa.Column("job_key", sa.String(length=64), nullable=False),
+            sa.Column("row_num", sa.Integer(), nullable=False),
+            sa.Column("subject_registration_id", sa.Integer(), nullable=True),
+            sa.Column("subject_score_id", sa.Integer(), nullable=True),
+            sa.Column("parsed_score", sa.String(length=10), nullable=True),
+            sa.Column("total_score", sa.Float(), nullable=True),
+            sa.Column(
+                "status",
+                sa.String(length=16),
+                nullable=False,
+                server_default="ready",
+            ),
+            sa.PrimaryKeyConstraint("id"),
+        )
+
+    inspector = sa.inspect(bind)
+    existing_indexes = {
+        idx["name"] for idx in inspector.get_indexes("score_import_staging")
+    }
+    if "ix_score_import_staging_job_key" not in existing_indexes:
+        op.create_index(
+            "ix_score_import_staging_job_key",
+            "score_import_staging",
+            ["job_key"],
+            unique=False,
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_score_import_staging_job_key", table_name="score_import_staging")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "score_import_staging" not in inspector.get_table_names():
+        return
+    existing_indexes = {
+        idx["name"] for idx in inspector.get_indexes("score_import_staging")
+    }
+    if "ix_score_import_staging_job_key" in existing_indexes:
+        op.drop_index(
+            "ix_score_import_staging_job_key", table_name="score_import_staging"
+        )
     op.drop_table("score_import_staging")
