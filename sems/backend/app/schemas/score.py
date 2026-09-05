@@ -461,3 +461,46 @@ class ScoreValidationReportPreviewResponse(BaseModel):
     page_size: int
     total_rows: int
     rows: list[ScoreValidationReportDetailRow]
+
+
+class ScoreImportErrorItem(BaseModel):
+    row: str
+    message: str
+    index_number: str | None = None
+    subject_code: str | None = None
+
+
+class ScoreImportResponse(BaseModel):
+    successful: int = 0
+    failed: int = 0
+    skipped: int = 0
+    updated: int = 0
+    errors: list[ScoreImportErrorItem] = Field(default_factory=list)
+    errors_truncated: bool = False
+    total_rows: int | None = None
+    job_id: int | None = None
+    async_job: bool = False
+
+
+class ScoreImportJobCreateResponse(BaseModel):
+    job_id: int
+    status: str
+    total_rows: int
+    async_job: bool = True
+
+
+class ScoreImportJobStatusResponse(BaseModel):
+    job_id: int
+    status: str
+    total_rows: int = 0
+    processed_rows: int = 0
+    successful: int = 0
+    failed: int = 0
+    skipped: int = 0
+    updated: int = 0
+    errors: list[ScoreImportErrorItem] = Field(default_factory=list)
+    errors_truncated: bool = False
+    filename: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

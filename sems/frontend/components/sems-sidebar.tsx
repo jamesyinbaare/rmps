@@ -114,6 +114,7 @@ const getNavMain = (
         { title: "Apply Scores", url: "/scores/data-entry/apply-scores" },
         { title: "Manual", url: "/scores/data-entry/manual" },
         { title: "Export Results", url: "/scores/export" },
+        { title: "Import Scores", url: "/scores/import" },
         { title: "Validation Report", url: "/scores/validation-report" },
         { title: "Unmatched Records", url: "/scores/unmatched-records" },
         { title: "Issues", url: "/scores/issues" },

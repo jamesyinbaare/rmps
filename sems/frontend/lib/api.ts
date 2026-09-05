@@ -2948,6 +2948,8 @@ export type ScoreValidationReportFilters = {
   /** Combined P1/P2 missing rows with Missing papers column */
   combine_p1_p2?: boolean;
   format?: "xlsx" | "pdf";
+  /** Multi-school delivery: zip (default) or single merged file */
+  packaging?: "zip" | "merged";
   page?: number;
   page_size?: number;
 };
@@ -3019,6 +3021,7 @@ function buildValidationReportParams(filters: ScoreValidationReportFilters): URL
   if (filters.status) params.set("statuses", filters.status);
   if (filters.combine_p1_p2) params.set("combine_p1_p2", "true");
   if (filters.format) params.set("format", filters.format);
+  if (filters.packaging) params.set("packaging", filters.packaging);
   if (filters.page != null) params.set("page", String(filters.page));
   if (filters.page_size != null) params.set("page_size", String(filters.page_size));
   return params;
@@ -3089,6 +3092,174 @@ export async function downloadScoreValidationReportJobFile(jobId: number): Promi
   );
   return downloadReportResponse(response, "score_validation_report.xlsx");
 }
+
+// --- CORE score import (Paper 1 or 2) ---
+
+export type ScoreImportPaper = 1 | 2;
+
+export type ScoreImportErrorItem = {
+  row: string;
+  message: string;
+  index_number?: string | null;
+  subject_code?: string | null;
+};
+
+export type ScoreImportResponse = {
+  successful: number;
+  failed: number;
+  skipped: number;
+  updated: number;
+  errors: ScoreImportErrorItem[];
+  errors_truncated?: boolean;
+  total_rows?: number | null;
+  job_id?: number | null;
+  async_job?: boolean;
+};
+
+export type ScoreImportJobCreateResponse = {
+  job_id: number;
+  status: string;
+  total_rows: number;
+  async_job: true;
+};
+
+export type ScoreImportJobStatus = {
+  job_id: number;
+  status: string;
+  total_rows: number;
+  processed_rows: number;
+  successful: number;
+  failed: number;
+  skipped: number;
+  updated: number;
+  errors: ScoreImportErrorItem[];
+  errors_truncated: boolean;
+  filename?: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
+export async function downloadScoreImportTemplate(options: {
+  test_type: ScoreImportPaper;
+  exam_id?: number;
+}): Promise<string> {
+  const params = new URLSearchParams();
+  params.set("test_type", String(options.test_type));
+  if (options.exam_id != null) params.set("exam_id", String(options.exam_id));
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/import/template?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+  return downloadReportResponse(
+    response,
+    `P${options.test_type}_score_import_format.xlsx`
+  );
+}
+
+export async function downloadMissingScoresImportTemplate(options: {
+  exam_id: number;
+  test_type: ScoreImportPaper;
+  subject_id: number;
+  school_id?: number;
+}): Promise<string> {
+  const params = new URLSearchParams();
+  params.set("exam_id", String(options.exam_id));
+  params.set("test_type", String(options.test_type));
+  params.set("subject_id", String(options.subject_id));
+  if (options.school_id != null) params.set("school_id", String(options.school_id));
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/import/template/missing?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+  return downloadReportResponse(
+    response,
+    `P${options.test_type}_missing_scores.xlsx`
+  );
+}
+
+export async function getScoreImportJob(jobId: number): Promise<ScoreImportJobStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/import/jobs/${jobId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<ScoreImportJobStatus>(response);
+}
+
+export async function importCoreScores(
+  options: {
+    exam_id: number;
+    test_type: ScoreImportPaper;
+    file: File;
+    school_id?: number;
+  },
+  onProgress?: (status: ScoreImportJobStatus) => void
+): Promise<ScoreImportResponse> {
+  const formData = new FormData();
+  formData.append("exam_id", String(options.exam_id));
+  formData.append("test_type", String(options.test_type));
+  formData.append("file", options.file);
+  if (options.school_id != null) {
+    formData.append("school_id", String(options.school_id));
+  }
+  // Auth only — omit Content-Type so the browser sets multipart boundary
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/import`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  // Large files are accepted as a background job
+  if (response.status === 202) {
+    const job = (await response.json()) as ScoreImportJobCreateResponse;
+    const terminal = new Set(["completed", "failed"]);
+    const pollMs = 1500;
+    const maxTransientFailures = 20; // ~30s of downtime (e.g. compose watch restart)
+    let transientFailures = 0;
+    let status = await getScoreImportJob(job.job_id);
+    onProgress?.(status);
+    while (!terminal.has(status.status)) {
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      try {
+        status = await getScoreImportJob(job.job_id);
+        transientFailures = 0;
+        onProgress?.(status);
+      } catch (err) {
+        transientFailures += 1;
+        if (transientFailures > maxTransientFailures) {
+          throw err instanceof Error
+            ? err
+            : new Error("Score import job status unavailable after retries");
+        }
+        // Backend may be restarting — keep waiting
+      }
+    }
+    if (status.status === "failed") {
+      throw new Error(status.error_message || "Score import job failed");
+    }
+    return {
+      successful: status.successful,
+      failed: status.failed,
+      skipped: status.skipped,
+      updated: status.updated,
+      errors: status.errors,
+      errors_truncated: status.errors_truncated,
+      total_rows: status.total_rows,
+      job_id: status.job_id,
+      async_job: true,
+    };
+  }
+
+  return handleResponse<ScoreImportResponse>(response);
+}
+
+/** Alias for CORE + ELECTIVE import */
+export const importScores = importCoreScores;
+
 
 export async function batchUpdateScoresForManualEntry(
   data: BatchScoreUpdate

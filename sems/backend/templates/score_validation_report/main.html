@@ -8,7 +8,7 @@
       size: A4 portrait;
       margin: 12mm 11mm 16mm 11mm;
       @bottom-left {
-        content: "{{ meta.school_label or 'Score correction' }} · {{ status_labels[report_status] }}";
+        content: element(blockFooter);
         font-size: 7pt;
         color: #6b7280;
         font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -129,8 +129,16 @@
     }
     .instruction strong { color: #92400e; }
 
-    .subject-block { page-break-inside: auto; }
+    .subject-block {
+      page-break-inside: auto;
+    }
     .page-break { page-break-before: always; }
+
+    .block-footer-running {
+      position: running(blockFooter);
+      font-size: 7pt;
+      color: #6b7280;
+    }
 
     .subject-bar {
       display: table;
@@ -212,12 +220,15 @@
     .sheet tr:nth-child(even) td.cell-data { background: #f8fafc; }
     .sheet td.cell-data { padding: 3px 5px; }
     .sheet td.col-num {
-      width: 28px;
+      width: 44px;
+      min-width: 44px;
       text-align: right;
-      padding-right: 5px;
+      padding: 3px 6px 3px 4px;
       color: #6b7280;
       font-size: 8pt;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
     }
     .sheet .index {
       font-family: "Courier New", Courier, monospace;
@@ -255,8 +266,8 @@
       text-align: center;
     }
 
-    .w-num { width: 28px; }
-    .w-index { width: 22%; }
+    .w-num { width: 44px; }
+    .w-index { width: 20%; }
     .w-name { width: auto; }
     .w-value { width: 14%; }
     .w-hint { width: 14%; }
@@ -283,31 +294,33 @@
       margin-right: 3px;
     }
 
-    .summary-strip {
-      margin-bottom: 12px;
-      border: 1pt solid #d1d5db;
+    .block-summary {
+      margin: 0 0 8px 0;
+      border: 1pt solid #c5dde5;
       overflow: hidden;
     }
-    .summary-strip table {
+    .block-summary table {
       width: 100%;
       border-collapse: collapse;
       font-size: 8pt;
     }
-    .summary-strip th {
-      background: #f3f4f6;
+    .block-summary th {
+      background: #e8f2f5;
       text-align: left;
       padding: 4px 8px;
-      color: #374151;
+      color: #0f3d4c;
       font-weight: bold;
-      border-bottom: 1pt solid #e5e7eb;
+      border-bottom: 1pt solid #c5dde5;
+      width: 28%;
     }
-    .summary-strip td {
+    .block-summary td {
       padding: 4px 8px;
       border-bottom: 0.5pt solid #e5e7eb;
+      color: #1f2937;
     }
-    .summary-strip tr:last-child td { border-bottom: none; }
-    .summary-strip .num {
-      text-align: right;
+    .block-summary tr:last-child th,
+    .block-summary tr:last-child td { border-bottom: none; }
+    .block-summary .num {
       font-variant-numeric: tabular-nums;
       font-weight: bold;
       color: #0f3d4c;
@@ -316,82 +329,15 @@
 </head>
 <body>
 
-  {% set block_count = namespace(n=0) %}
-  {% for school in sections %}
-    {% for paper in school.papers %}
-      {% for subject in paper.subjects %}
-        {% set block_count.n = block_count.n + 1 %}
-      {% endfor %}
-    {% endfor %}
-  {% endfor %}
-  {% set show_cover = block_count.n > 1 %}
-
-  {% if show_cover %}
-  <div class="masthead">
-    <div class="masthead-logo">
-      <img src="{{ logo_src }}" alt="" />
-    </div>
-    <div class="masthead-body">
-      <p class="masthead-kicker">Examinations · Score entry</p>
-      <h1 class="masthead-title">Score Correction Worksheet</h1>
-      <p class="masthead-meta">
-        {{ meta.exam_label }}
-        · {{ meta.school_label or "All schools" }}
-        · Generated {{ meta.generated_at }}
-      </p>
-    </div>
-    <div class="masthead-aside">
-      <span class="status-pill {{ report_status }}">{{ status_labels[report_status] }}</span>
-      <span class="status-count">{{ status_count }} row(s)</span>
-    </div>
-  </div>
-
-  <div class="instruction">
-    <strong>How to use:</strong>
-    Papers are separated — Paper 1, then Paper 2
-    {% if report_status == "missing" %}
-      · write each missing mark in the <strong>Score</strong> column.
-    {% elif report_status == "invalid" %}
-      · write the <strong>correct score</strong> in the highlighted column.
-    {% elif report_status == "absent" %}
-      · write a score only if the candidate sat the paper.
-    {% else %}
-      · use <strong>Correction</strong> only when changing a recorded mark.
-    {% endif %}
-  </div>
-
-  <div class="summary-strip">
-    <table>
-      <thead>
-        <tr>
-          <th>Paper</th>
-          <th>Subject</th>
-          <th style="width: 70px; text-align: right;">Rows</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for school in sections %}
-          {% for paper in school.papers %}
-            {% for subject in paper.subjects %}
-            <tr>
-              <td>{{ paper.paper_short }} — {{ paper.paper_label }}</td>
-              <td>{{ subject.subject_code }} — {{ subject.subject_name }}</td>
-              <td class="num">{{ subject.subtotals.total }}</td>
-            </tr>
-            {% endfor %}
-          {% endfor %}
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
-
   {% set ns = namespace(block_index=0) %}
   {% for school in sections %}
     {% for paper in school.papers %}
       {% for subject in paper.subjects %}
       {% set ns.block_index = ns.block_index + 1 %}
-      <div class="{% if show_cover or ns.block_index > 1 %}page-break {% endif %}subject-block">
+      <div class="{% if ns.block_index > 1 %}page-break {% endif %}subject-block">
+        <div class="block-footer-running">
+          {{ school.school_code }} · {{ subject.subject_code }} · {{ status_labels[report_status] }}
+        </div>
 
         <div class="masthead">
           <div class="masthead-logo">
@@ -404,7 +350,7 @@
           </div>
           <div class="masthead-aside">
             <span class="status-pill {{ report_status }}">{{ status_labels[report_status] }}</span>
-            <span class="status-count">{{ subject.subtotals.total }} on this page</span>
+            <span class="status-count">{{ subject.subtotals.total }} {{ status_labels[report_status] | lower }}</span>
           </div>
         </div>
 
@@ -421,16 +367,38 @@
           <strong>Centre:</strong> {{ school.school_code }} — {{ school.school_name }}
         </div>
 
-        <div class="meta-chips">
-          {% if combine_p1_p2 %}
-          <strong>Papers:</strong> Paper 1 or 2 (combined)
-          <span class="meta-sep">·</span>
-          <strong>Write-in:</strong> P1 and P2 score columns
-          {% else %}
-          <strong>Paper:</strong> {{ paper.paper_label }}
-          <span class="meta-sep">·</span>
-          <strong>Maximum mark:</strong> {{ subject.max_score or "—" }}
-          {% endif %}
+        <div class="block-summary">
+          <table>
+            <tbody>
+              <tr>
+                <th>Centre</th>
+                <td>{{ school.school_code }} — {{ school.school_name }}</td>
+              </tr>
+              <tr>
+                <th>Subject</th>
+                <td>{{ subject.subject_code }} — {{ subject.subject_name }} ({{ subject.subject_type }})</td>
+              </tr>
+              {% if combine_p1_p2 %}
+              <tr>
+                <th>Papers</th>
+                <td>Paper 1 or 2 (combined) · Write-in: P1 and P2 score columns</td>
+              </tr>
+              {% else %}
+              <tr>
+                <th>Paper</th>
+                <td>{{ paper.paper_label }}</td>
+              </tr>
+              <tr>
+                <th>Maximum mark</th>
+                <td>{{ subject.max_score or "—" }}</td>
+              </tr>
+              {% endif %}
+              <tr>
+                <th>{{ status_labels[report_status] }}</th>
+                <td class="num">{{ status_count_label(subject.subtotals.total) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <div class="instruction">
@@ -504,7 +472,7 @@
             Highlighted cells are for handwriting
           </div>
           <div class="right">
-            {{ paper.paper_short }} · {{ subject.subject_code }} · {{ subject.subtotals.total }} row(s)
+            {{ paper.paper_short }} · {{ subject.subject_code }} · {{ status_count_label(subject.subtotals.total) }}
           </div>
         </div>
 

@@ -4,8 +4,8 @@ import logging
 from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import and_, delete, func, or_, select, case
 
 from app.dependencies.auth import CurrentUserDep, OfficerDep
@@ -61,6 +61,10 @@ from app.schemas.score import (
     ResolveUnmatchedRecordRequest,
     ResultsExportJobCreateResponse,
     ResultsExportJobStatusResponse,
+    ScoreImportErrorItem,
+    ScoreImportJobCreateResponse,
+    ScoreImportJobStatusResponse,
+    ScoreImportResponse,
     ScoreResponse,
     ScoreUpdate,
     ScoreValidationReportJobCreateResponse,
@@ -94,6 +98,17 @@ from app.services.results_export import (
     parse_export_test_types,
     process_results_export_job,
 )
+from app.services.score_import import (
+    LARGE_IMPORT_ROW_THRESHOLD,
+    generate_missing_scores_import_template,
+    generate_score_import_template,
+    import_scores,
+    normalize_score_import_columns,
+    start_score_import_job,
+    validate_score_import_columns,
+)
+from app.services.storage import storage_service
+from app.services.subject_upload import SubjectUploadParseError, parse_upload_file
 from app.services.score_validation_report import (
     build_score_validation_report,
     generate_report_filename,
@@ -3564,6 +3579,10 @@ async def download_score_validation_report(
     statuses: str | None = Query(None),
     combine_p1_p2: bool = Query(False),
     format: Literal["xlsx", "pdf"] = Query("xlsx"),
+    packaging: Literal["zip", "merged"] = Query(
+        "zip",
+        description="Multi-school delivery: zip (one file per school) or merged (single file)",
+    ),
 ):
     """Synchronous score validation report download (small scopes)."""
     subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
@@ -3583,6 +3602,7 @@ async def download_score_validation_report(
             statuses=statuses_list,  # type: ignore[arg-type]
             report_format=format,
             combine_p1_p2=combine_p1_p2,
+            packaging=packaging,
         )
     except ValueError as e:
         detail = str(e)
@@ -3630,6 +3650,10 @@ async def start_score_validation_report_job(
     statuses: str | None = Query(None),
     combine_p1_p2: bool = Query(False),
     format: Literal["xlsx", "pdf"] = Query("xlsx"),
+    packaging: Literal["zip", "merged"] = Query(
+        "zip",
+        description="Multi-school delivery: zip or merged single file",
+    ),
 ) -> ScoreValidationReportJobCreateResponse:
     """Start a background score validation report job for large scopes."""
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
@@ -3652,6 +3676,10 @@ async def start_score_validation_report_job(
         report_format=format,
         combine_p1_p2=combine_p1_p2,
     )
+    # Merged multi-school keeps the natural extension; zip packaging uses .zip later
+    if school_id is None and packaging == "zip":
+        filename = filename.rsplit(".", 1)[0] + ".zip"
+
     tracking = ProcessTracking(
         exam_id=exam_id,
         process_type=ProcessType.SCORE_VALIDATION_REPORT,
@@ -3666,6 +3694,7 @@ async def start_score_validation_report_job(
             "statuses": statuses_list,
             "combine_p1_p2": combine_p1_p2,
             "format": format,
+            "packaging": packaging,
             "filename": filename,
             "message": "Queued",
         },
@@ -3752,4 +3781,213 @@ async def download_score_validation_report_job_file(
         media_type=media,
         filename=filename,
         headers={"Content-Disposition": _validation_report_content_disposition(filename)},
+    )
+
+
+@router.get("/import/template")
+async def download_score_import_template(
+    session: DBSessionDep,
+    _user: OfficerDep,
+    # Use int (not Literal[1,2]): query strings are str and fail Literal int enum checks
+    test_type: int = Query(..., ge=1, le=2, description="1 = Paper 1 (Objectives), 2 = Paper 2 (Essay)"),
+    exam_id: int | None = Query(None, description="Optional examination ID (filename only)"),
+) -> StreamingResponse:
+    """Download format-only Excel template for score import (example rows, not prefilled)."""
+    try:
+        template_bytes, filename = await generate_score_import_template(
+            session,
+            test_type=test_type,  # type: ignore[arg-type]
+            exam_id=exam_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.error("Failed to generate score import template: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {e}",
+        ) from e
+
+    encoded = quote(filename, safe="")
+    return StreamingResponse(
+        iter([template_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded}'
+        },
+    )
+
+
+@router.get("/import/template/missing")
+async def download_missing_scores_import_template(
+    session: DBSessionDep,
+    _user: OfficerDep,
+    exam_id: int = Query(..., description="Examination ID"),
+    test_type: int = Query(..., ge=1, le=2, description="1 = Paper 1, 2 = Paper 2"),
+    subject_id: int = Query(..., description="Subject ID (must be on the examination)"),
+    school_id: int | None = Query(None, description="Optional school filter"),
+) -> StreamingResponse:
+    """Download prefilled template for candidates missing a score for subject + paper."""
+    try:
+        template_bytes, filename = await generate_missing_scores_import_template(
+            session,
+            exam_id=exam_id,
+            test_type=test_type,  # type: ignore[arg-type]
+            subject_id=subject_id,
+            school_id=school_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.error("Failed to generate missing scores template: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {e}",
+        ) from e
+
+    encoded = quote(filename, safe="")
+    return StreamingResponse(
+        iter([template_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded}'
+        },
+    )
+
+
+@router.post("/import")
+async def import_subject_scores(
+    session: DBSessionDep,
+    _user: OfficerDep,
+    exam_id: int = Form(..., description="Examination ID"),
+    # Use int (not Literal[1,2]): multipart form values are str and fail Literal int enum checks
+    test_type: int = Form(..., ge=1, le=2, description="1 = Paper 1, 2 = Paper 2"),
+    file: UploadFile = File(...),
+    school_id: int | None = Form(None, description="Optional school scope for index lookup"),
+) -> ScoreImportResponse | ScoreImportJobCreateResponse:
+    """Import CORE and ELECTIVE scores. Large files (>5k rows) run as a background job."""
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+
+    filename = file.filename or "scores.xlsx"
+
+    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+
+    try:
+        df = parse_upload_file(file_content, filename)
+        df = normalize_score_import_columns(df)
+        validate_score_import_columns(df)
+    except (SubjectUploadParseError, ValueError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    total_rows = len(df)
+
+    # Large files: async job
+    if total_rows > LARGE_IMPORT_ROW_THRESHOLD:
+        file_path, _ = await storage_service.save(file_content, filename)
+        tracking = ProcessTracking(
+            exam_id=exam_id,
+            school_id=school_id,
+            process_type=ProcessType.SCORE_IMPORT,
+            status=ProcessStatus.PENDING,
+            process_metadata={
+                "filename": filename,
+                "file_path": file_path,
+                "test_type": test_type,
+                "school_id": school_id,
+                "total_rows": total_rows,
+                "processed_rows": 0,
+                "successful": 0,
+                "failed": 0,
+                "skipped": 0,
+                "updated": 0,
+                "errors": [],
+                "errors_truncated": False,
+            },
+        )
+        session.add(tracking)
+        await session.commit()
+        await session.refresh(tracking)
+        start_score_import_job(tracking.id)
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=ScoreImportJobCreateResponse(
+                job_id=tracking.id,
+                status=tracking.status.value,
+                total_rows=total_rows,
+                async_job=True,
+            ).model_dump(),
+        )
+
+    try:
+        result = await import_scores(
+            session,
+            exam_id=exam_id,
+            test_type=test_type,  # type: ignore[arg-type]
+            file_content=file_content,
+            filename=filename,
+            school_id=school_id,
+            enforce_row_limit=False,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.error("Score import failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import scores: {e}",
+        ) from e
+
+    return ScoreImportResponse(
+        successful=result.successful,
+        failed=result.failed,
+        skipped=result.skipped,
+        updated=result.updated,
+        errors=[ScoreImportErrorItem(**err.as_dict()) for err in result.errors],
+        errors_truncated=result.errors_truncated,
+        total_rows=result.total_rows,
+        async_job=False,
+    )
+
+
+@router.get("/import/jobs/{job_id}", response_model=ScoreImportJobStatusResponse)
+async def get_score_import_job_status(
+    job_id: int,
+    session: DBSessionDep,
+    _user: OfficerDep,
+) -> ScoreImportJobStatusResponse:
+    """Poll status/progress for an async score import job."""
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.SCORE_IMPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score import job not found")
+
+    metadata = tracking.process_metadata or {}
+    errors_raw = metadata.get("errors") or []
+    errors = [ScoreImportErrorItem.model_validate(err) for err in errors_raw]
+
+    return ScoreImportJobStatusResponse(
+        job_id=tracking.id,
+        status=tracking.status.value,
+        total_rows=int(metadata.get("total_rows") or 0),
+        processed_rows=int(metadata.get("processed_rows") or 0),
+        successful=int(metadata.get("successful") or 0),
+        failed=int(metadata.get("failed") or 0),
+        skipped=int(metadata.get("skipped") or 0),
+        updated=int(metadata.get("updated") or 0),
+        errors=errors,
+        errors_truncated=bool(metadata.get("errors_truncated")),
+        filename=metadata.get("filename"),
+        error_message=tracking.error_message,
+        started_at=tracking.started_at,
+        completed_at=tracking.completed_at,
     )
