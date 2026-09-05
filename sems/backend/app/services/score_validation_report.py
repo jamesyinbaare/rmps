@@ -115,7 +115,7 @@ def detail_columns_for_status(
 ) -> list[DetailColumn]:
     """Adaptive detail columns for a single report status.
 
-    Paper and max score live in section headers (PDF/Excel), not row columns —
+    Paper and max score live in section headers (PDF), not row columns —
     except combined P1/P2 missing mode, which shows Missing papers per row.
     """
     base = [
@@ -141,6 +141,26 @@ def detail_columns_for_status(
     return [
         *base,
         DetailColumn("raw_score", "Score"),
+    ]
+
+
+def excel_columns_for_status(
+    status: ReportStatus,
+    *,
+    combine_p1_p2: bool = False,
+) -> list[DetailColumn]:
+    """Flat Excel columns: identity fields + status-adaptive detail columns."""
+    identity = [
+        DetailColumn("school_code", "School code"),
+        DetailColumn("subject_code", "Original subject code"),
+        DetailColumn("subject_name", "Subject name"),
+    ]
+    if status == "missing" and combine_p1_p2:
+        return [*identity, *detail_columns_for_status(status, combine_p1_p2=True)]
+    return [
+        *identity,
+        DetailColumn("paper_short", "Paper"),
+        *detail_columns_for_status(status, combine_p1_p2=False),
     ]
 
 
@@ -874,6 +894,7 @@ def _school_file_basename(data: ScoreValidationReportData, report_format: Report
 
 
 def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
+    """Single flat worksheet: school + subject identity columns, all rows together."""
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
 
@@ -893,109 +914,65 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
 
     meta = data.meta
     report_status = primary_report_status(meta.statuses)
-    columns = detail_columns_for_status(
+    columns = excel_columns_for_status(
         report_status,
-        combine_p1_p2=meta.combine_p1_p2,
+        combine_p1_p2=bool(meta.combine_p1_p2),
+    )
+    sheet_name = {
+        "entered": "Entered",
+        "missing": "Missing",
+        "invalid": "Invalid",
+        "absent": "Absent",
+    }.get(report_status, "Scores")
+
+    sorted_rows = sorted(
+        data.rows,
+        key=lambda r: (
+            r.school_code or "",
+            r.test_type,
+            r.subject_code or "",
+            r.index_number or "",
+        ),
     )
 
-    # One sheet per school + paper + subject (centres never mixed on a sheet)
-    by_block: dict[
-        tuple[str, str, int, str, str, str], list[ReportDetailRow]
-    ] = defaultdict(list)
-    for row in data.rows:
-        key = (
-            row.school_code,
-            row.school_name,
-            row.test_type,
-            row.subject_code,
-            row.subject_name,
-            row.subject_type,
-        )
-        by_block[key].append(row)
+    count_phrase = status_count_label(
+        len(sorted_rows),
+        report_status,
+        combine_p1_p2=bool(meta.combine_p1_p2),
+    )
 
-    multi_school = len({row.school_id for row in data.rows}) > 1
-    used_sheet_names: set[str] = set()
-    for (
-        school_code,
-        school_name,
-        _test_type,
-        subject_code,
-        subject_name,
-        subject_type,
-    ), block_rows in sorted(
-        by_block.items(),
-        key=lambda x: (x[0][0], x[0][2], x[0][3]),
-    ):
-        first = block_rows[0]
-        paper_short = first.paper_short
-        paper_label = first.paper_label
-        max_label = _section_max_score(block_rows) or "—"
-        status_count = len(block_rows)
-        count_phrase = status_count_label(
-            status_count,
-            report_status,
-            combine_p1_p2=bool(meta.combine_p1_p2),
-        )
+    ws = workbook.add_worksheet(sheet_name)
+    ws.write(0, 0, meta.exam_label or "Score validation report", title_fmt)
+    ws.write(1, 0, "Status", label_fmt)
+    ws.write(1, 1, f"{sheet_name} · {count_phrase}", muted_fmt)
 
-        if meta.combine_p1_p2:
-            sheet_title_extra = (
-                f"{paper_label} · Missing papers per candidate · {count_phrase}"
-            )
-        else:
-            sheet_title_extra = (
-                f"{paper_label} · Maximum mark: {max_label} · {count_phrase}"
-            )
+    header_row = 3
+    num_fmt = workbook.add_format({"border": 1, "align": "right", "font_color": "#546E7A"})
+    ws.write(header_row, 0, "#", header_fmt)
+    for col, column in enumerate(columns, start=1):
+        ws.write(header_row, col, column.header, header_fmt)
 
-        paper_part = "P1P2" if meta.combine_p1_p2 else paper_short
-        subject_part = subject_code or subject_name or "Subject"
-        if multi_school:
-            base_name = sanitize_filename_part(
-                f"{school_code}_{paper_part}_{subject_part}"
-            )[:31] or "Sheet"
-        else:
-            base_name = sanitize_filename_part(f"{paper_part}_{subject_part}")[:31] or "Sheet"
-        sheet_name = base_name
-        n = 2
-        while sheet_name in used_sheet_names:
-            suffix = f"_{n}"
-            sheet_name = f"{base_name[: 31 - len(suffix)]}{suffix}"
-            n += 1
-        used_sheet_names.add(sheet_name)
+    ws.set_column(0, 0, 6)
+    for col, column in enumerate(columns, start=1):
+        width = 28 if column.key in {"candidate_name", "subject_name"} else 16
+        if column.key == "index_number":
+            width = 14
+        ws.set_column(col, col, width)
 
-        detail_ws = workbook.add_worksheet(sheet_name)
-        detail_ws.write(
-            0, 0, f"{subject_code} — {subject_name} ({subject_type})", title_fmt
-        )
-        detail_ws.write(1, 0, "Centre", label_fmt)
-        detail_ws.write(1, 1, f"{school_code} — {school_name}", muted_fmt)
-        detail_ws.write(2, 0, "Summary", label_fmt)
-        detail_ws.write(2, 1, sheet_title_extra, muted_fmt)
-
-        # Column 0 = row number; remaining columns follow adaptive headers
-        header_row = 4
-        num_fmt = workbook.add_format({"border": 1, "align": "right", "font_color": "#546E7A"})
-        detail_ws.write(header_row, 0, "#", header_fmt)
+    row_fmt = status_formats[report_status]
+    for n_row, row in enumerate(sorted_rows, start=1):
+        row_idx = header_row + n_row
+        ws.write(row_idx, 0, n_row, num_fmt)
         for col, column in enumerate(columns, start=1):
-            detail_ws.write(header_row, col, column.header, header_fmt)
+            ws.write(row_idx, col, row_cell_value(row, column.key), row_fmt)
 
-        detail_ws.set_column(0, 0, 12)
-        for col, column in enumerate(columns, start=1):
-            detail_ws.set_column(col, col, 18 if column.key != "candidate_name" else 28)
-
-        row_fmt = status_formats[report_status]
-        for n_row, row in enumerate(block_rows, start=1):
-            row_idx = header_row + n_row
-            detail_ws.write(row_idx, 0, n_row, num_fmt)
-            for col, column in enumerate(columns, start=1):
-                detail_ws.write(row_idx, col, row_cell_value(row, column.key), row_fmt)
-
-        last_col = len(columns)  # includes # at col 0
-        if block_rows:
-            detail_ws.autofilter(header_row, 0, header_row + len(block_rows), last_col)
-        detail_ws.freeze_panes(header_row + 1, 0)
-        detail_ws.set_portrait()
-        detail_ws.fit_to_pages(1, 0)
-        detail_ws.repeat_rows(header_row)
+    last_col = len(columns)
+    if sorted_rows:
+        ws.autofilter(header_row, 0, header_row + len(sorted_rows), last_col)
+    ws.freeze_panes(header_row + 1, 0)
+    ws.set_portrait()
+    ws.fit_to_pages(1, 0)
+    ws.repeat_rows(header_row)
 
     workbook.close()
     output.seek(0)
@@ -1475,6 +1452,39 @@ class ValidationReportCancelled(Exception):
     """Raised when a validation report job is cancelled by the user."""
 
 
+async def _mark_validation_report_job_terminal(
+    sessionmanager: Any,
+    tracking_id: int,
+    *,
+    stage: str,
+    message: str,
+    error_message: str,
+    cancelled: bool = False,
+) -> None:
+    """Mark a job terminal using a fresh session (safe if the job session is poisoned)."""
+    async with sessionmanager.session() as recovery_session:
+        tracking_result = await recovery_session.execute(
+            select(ProcessTracking).where(ProcessTracking.id == tracking_id)
+        )
+        tracking = tracking_result.scalar_one_or_none()
+        if not tracking:
+            return
+        metadata = dict(tracking.process_metadata or {})
+        metadata.update(
+            {
+                "stage": stage,
+                "message": message,
+                **({"cancelled": True} if cancelled else {}),
+            }
+        )
+        tracking.process_metadata = metadata
+        flag_modified(tracking, "process_metadata")
+        tracking.status = ProcessStatus.FAILED
+        tracking.error_message = error_message
+        tracking.completed_at = datetime.utcnow()
+        await recovery_session.commit()
+
+
 async def process_score_validation_report_job(tracking_id: int) -> None:
     """Background entry: generate PDF/Excel validation report and store on disk."""
     from app.dependencies.database import get_sessionmanager
@@ -1513,33 +1523,46 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
             "message": "Queued…",
         }
         last_flush_at = 0.0
+        # AsyncSession is not safe for concurrent use; parallel school renders
+        # must serialize refresh/commit through this lock.
+        flush_lock = asyncio.Lock()
 
-        async def ensure_not_cancelled() -> None:
+        async def ensure_not_cancelled(*, already_locked: bool = False) -> None:
             nonlocal tracking, metadata
-            await session.refresh(tracking)
-            metadata = dict(tracking.process_metadata or {})
-            if metadata.get("cancel_requested"):
-                raise ValidationReportCancelled("Cancelled by user")
+
+            async def _check() -> None:
+                nonlocal tracking, metadata
+                await session.refresh(tracking)
+                metadata = dict(tracking.process_metadata or {})
+                if metadata.get("cancel_requested"):
+                    raise ValidationReportCancelled("Cancelled by user")
+
+            if already_locked:
+                await _check()
+            else:
+                async with flush_lock:
+                    await _check()
 
         async def flush_progress(*, force: bool = False) -> None:
             nonlocal tracking, metadata, last_flush_at
-            await ensure_not_cancelled()
-            stage = str(progress.get("stage") or "")
-            # Always persist terminal / packaging stages so the UI does not lag.
-            if stage in {"ready", "merging", "zipping", "building", "failed"}:
-                force = True
-            now = datetime.utcnow().timestamp()
-            if (
-                not force
-                and last_flush_at
-                and (now - last_flush_at) < PROGRESS_FLUSH_MIN_INTERVAL_SEC
-            ):
-                return
-            metadata.update(progress)
-            tracking.process_metadata = metadata
-            flag_modified(tracking, "process_metadata")
-            await session.commit()
-            last_flush_at = now
+            async with flush_lock:
+                await ensure_not_cancelled(already_locked=True)
+                stage = str(progress.get("stage") or "")
+                # Always persist terminal / packaging stages so the UI does not lag.
+                if stage in {"ready", "merging", "zipping", "building", "failed"}:
+                    force = True
+                now = datetime.utcnow().timestamp()
+                if (
+                    not force
+                    and last_flush_at
+                    and (now - last_flush_at) < PROGRESS_FLUSH_MIN_INTERVAL_SEC
+                ):
+                    return
+                metadata.update(progress)
+                tracking.process_metadata = metadata
+                flag_modified(tracking, "process_metadata")
+                await session.commit()
+                last_flush_at = now
 
         try:
             tracking.status = ProcessStatus.IN_PROGRESS
@@ -1595,12 +1618,13 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                     "is_zip": safe_name.endswith(".zip"),
                 }
             )
-            metadata.update(progress)
-            tracking.process_metadata = metadata
-            flag_modified(tracking, "process_metadata")
-            tracking.status = ProcessStatus.COMPLETED
-            tracking.completed_at = datetime.utcnow()
-            await session.commit()
+            async with flush_lock:
+                metadata.update(progress)
+                tracking.process_metadata = metadata
+                flag_modified(tracking, "process_metadata")
+                tracking.status = ProcessStatus.COMPLETED
+                tracking.completed_at = datetime.utcnow()
+                await session.commit()
         except ValidationReportCancelled:
             try:
                 await session.rollback()
@@ -1625,10 +1649,25 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                     await session.commit()
             except Exception:
                 logger.error(
-                    "Failed to mark validation report job %s as cancelled",
+                    "Failed to mark validation report job %s as cancelled on primary session",
                     tracking_id,
                     exc_info=True,
                 )
+                try:
+                    await _mark_validation_report_job_terminal(
+                        sessionmanager,
+                        tracking_id,
+                        stage="cancelled",
+                        message="Cancelled",
+                        error_message="Cancelled by user",
+                        cancelled=True,
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to mark validation report job %s as cancelled",
+                        tracking_id,
+                        exc_info=True,
+                    )
         except Exception as exc:
             logger.error("Score validation report job %s failed: %s", tracking_id, exc, exc_info=True)
             try:
@@ -1652,4 +1691,22 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                     tracking.completed_at = datetime.utcnow()
                     await session.commit()
             except Exception:
-                logger.error("Failed to mark validation report job %s as failed", tracking_id, exc_info=True)
+                logger.error(
+                    "Failed to mark validation report job %s as failed on primary session",
+                    tracking_id,
+                    exc_info=True,
+                )
+                try:
+                    await _mark_validation_report_job_terminal(
+                        sessionmanager,
+                        tracking_id,
+                        stage="failed",
+                        message="Report failed",
+                        error_message=str(exc),
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to mark validation report job %s as failed",
+                        tracking_id,
+                        exc_info=True,
+                    )
