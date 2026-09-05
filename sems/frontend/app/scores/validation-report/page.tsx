@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronsUpDown,
+  ChevronDown,
   Download,
   FileSpreadsheet,
   FileText,
@@ -26,175 +24,64 @@ import {
   type SchoolRegionFilterValue,
 } from "@/components/SchoolMultiSelectFilter";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { examLabel } from "@/components/results/exam-label";
 import { DATA_ENTRY_EXAM_STORAGE_KEY } from "@/hooks/useDataEntryExamScope";
 import {
+  isValidationReportCancelled,
+  useValidationReportJob,
+  validationReportJobProgress,
+  validationReportJobStageLabel,
+  type ValidationReportFormat,
+} from "@/hooks/useValidationReportJob";
+import {
   downloadScoreValidationReport,
-  downloadScoreValidationReportJobFile,
   getAllExams,
   getAllSchools,
   getAllSubjects,
   getCurrentUser,
-  getScoreValidationReportJob,
-  previewScoreValidationReport,
-  startScoreValidationReportJob,
-  type ScoreValidationReportDetailRow,
+  ScoreValidationReportHttpError,
   type ScoreValidationReportFilters,
-  type ScoreValidationReportJobStatus,
   type ScoreValidationReportStatus,
-  type ScoreValidationReportSummary,
 } from "@/lib/api";
 import { normalizeRole } from "@/lib/role-utils";
 import { cn } from "@/lib/utils";
 import type { Exam, School, Subject } from "@/types/document";
 
-const PREVIEW_PAGE_SIZE = 50;
-const PREVIEW_DEBOUNCE_MS = 350;
-const JOB_POLL_MS = 1500;
-const SYNC_ROW_LIMIT = 5000;
-const JOB_STORAGE_KEY = "sems.validation_report.job";
-
-type StoredJob = { jobId: number; format: "xlsx" | "pdf" };
-
-function readStoredJob(): StoredJob | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(JOB_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as StoredJob;
-    if (parsed?.jobId && (parsed.format === "xlsx" || parsed.format === "pdf")) {
-      return parsed;
-    }
-  } catch {
-    // Legacy: plain job id string
-    const jobId = parseInt(raw, 10);
-    if (!Number.isNaN(jobId)) return { jobId, format: "xlsx" };
-  }
-  return null;
-}
-
-function writeStoredJob(job: StoredJob): void {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(job));
-}
-
-function clearStoredJob(): void {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(JOB_STORAGE_KEY);
-}
-
-const PAPER_OPTIONS: { id: number; label: string; short: string }[] = [
-  { id: 1, label: "Paper 1 (Objectives)", short: "P1" },
-  { id: 2, label: "Paper 2 (Essay)", short: "P2" },
-  { id: 3, label: "Paper 3 (Practical)", short: "P3" },
+const PAPER_CHIPS: { id: number; short: string; label: string }[] = [
+  { id: 1, short: "P1", label: "Objectives" },
+  { id: 2, short: "P2", label: "Essay" },
+  { id: 3, short: "P3", label: "Practical" },
 ];
 
-const STATUS_OPTIONS: { id: ScoreValidationReportStatus; label: string; hint: string }[] = [
-  { id: "missing", label: "Missing", hint: "Write-in score worksheet" },
-  { id: "invalid", label: "Invalid", hint: "Value, expected, correct score" },
-  { id: "entered", label: "Entered", hint: "Recorded score + correction" },
-  { id: "absent", label: "Absent", hint: "Write-in if sat" },
+const STATUS_OPTIONS: {
+  id: ScoreValidationReportStatus;
+  label: string;
+  hint: string;
+  icon: typeof MinusCircle;
+  accent: string;
+  selected: string;
+}[] = [
+  {
+    id: "missing",
+    label: "Missing",
+    hint: "Write-in score worksheet",
+    icon: MinusCircle,
+    accent: "text-amber-700",
+    selected:
+      "border-amber-400/80 bg-amber-50 shadow-[0_0_0_1px_rgba(251,191,36,0.35)] scale-[1.02]",
+  },
+  {
+    id: "invalid",
+    label: "Invalid",
+    hint: "Out of range or wrong value",
+    icon: XCircle,
+    accent: "text-red-700",
+    selected:
+      "border-red-400/80 bg-red-50 shadow-[0_0_0_1px_rgba(248,113,113,0.35)] scale-[1.02]",
+  },
 ];
-
-function previewCountLabel(
-  status: ScoreValidationReportStatus,
-  count: number,
-  combineP1P2: boolean
-): string {
-  const n = count.toLocaleString();
-  if (combineP1P2) {
-    return count === 1
-      ? `${n} candidate missing papers`
-      : `${n} candidates missing papers`;
-  }
-  const noun = count === 1 ? "score" : "scores";
-  return `${n} ${status} ${noun}`;
-}
-
-type PreviewColumn = { key: string; header: string };
-
-function previewColumnsForStatus(
-  status: ScoreValidationReportStatus,
-  combineP1P2: boolean
-): PreviewColumn[] {
-  const base: PreviewColumn[] = [
-    { key: "index_number", header: "Index" },
-    { key: "candidate_name", header: "Candidate" },
-  ];
-  if (status === "missing" && combineP1P2) {
-    return [...base, { key: "missing_papers", header: "Missing papers" }];
-  }
-  base.push({ key: "paper_label", header: "Paper" });
-  if (status === "invalid") {
-    return [
-      ...base,
-      { key: "raw_score", header: "Value" },
-      { key: "expected", header: "Expected" },
-    ];
-  }
-  if (status === "entered") {
-    return [...base, { key: "raw_score", header: "Score" }];
-  }
-  return base;
-}
-
-function cellValue(row: ScoreValidationReportDetailRow, key: string): string {
-  if (key === "raw_score") return row.raw_score ?? "—";
-  if (key === "max_score") {
-    if (row.max_score == null) return "—";
-    return Number.isInteger(row.max_score) ? String(row.max_score) : String(row.max_score);
-  }
-  if (key === "expected") return row.expected ?? "—";
-  if (key === "missing_papers") return row.missing_papers || row.paper_short || "—";
-  if (key === "paper_label") return row.paper_short || row.paper_label;
-  const value = row[key as keyof ScoreValidationReportDetailRow];
-  return value == null ? "—" : String(value);
-}
-
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "entered":
-      return "bg-emerald-100 text-emerald-800";
-    case "missing":
-      return "bg-amber-100 text-amber-900";
-    case "invalid":
-      return "bg-red-100 text-red-800";
-    case "absent":
-      return "bg-slate-200 text-slate-700";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-}
-
-type JobDockState = {
-  jobId: number;
-  format: "xlsx" | "pdf";
-  status: ScoreValidationReportJobStatus | null;
-  error: string | null;
-};
 
 function ScoreValidationReportPage() {
   const router = useRouter();
@@ -207,30 +94,29 @@ function ScoreValidationReportPage() {
   const [schoolIds, setSchoolIds] = useState<number[]>([]);
   const [regionFilter, setRegionFilter] = useState<SchoolRegionFilterValue>("ALL");
   const [packaging, setPackaging] = useState<"zip" | "merged">("zip");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>("ALL");
   const [subjectIds, setSubjectIds] = useState<number[]>([]);
   const [testTypes, setTestTypes] = useState<number[]>([]);
   const [combineP1P2, setCombineP1P2] = useState(false);
   const [selectedStatus, setSelectedStatus] =
     useState<ScoreValidationReportStatus>("missing");
-  const [papersOpen, setPapersOpen] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [summary, setSummary] = useState<ScoreValidationReportSummary | null>(null);
-  const [rows, setRows] = useState<ScoreValidationReportDetailRow[]>([]);
-  const [totalRows, setTotalRows] = useState(0);
-  const [page, setPage] = useState(1);
-  const [startingFormat, setStartingFormat] = useState<"xlsx" | "pdf" | null>(null);
-  const [jobDock, setJobDock] = useState<JobDockState | null>(null);
+  const [reportFormat, setReportFormat] = useState<ValidationReportFormat>("xlsx");
 
-  const previewReqId = useRef(0);
-  const pollCancelRef = useRef(false);
+  const {
+    jobDock,
+    starting,
+    setStarting,
+    cancelling,
+    startJob,
+    cancelJob,
+    dismiss,
+    downloadReadyFile,
+  } = useValidationReportJob({ enabled: !loadingAuth });
 
+  const hasExam = examId != null;
   const isMultiSchool = schoolIds.length !== 1;
-
-  const columns = useMemo(
-    () => previewColumnsForStatus(selectedStatus, combineP1P2),
-    [selectedStatus, combineP1P2]
-  );
+  const effectiveStatus = combineP1P2 ? "missing" : selectedStatus;
 
   useEffect(() => {
     let cancelled = false;
@@ -280,225 +166,145 @@ function ScoreValidationReportPage() {
     [exams]
   );
 
-  const buildFilters = useCallback(
-    (overrides?: Partial<ScoreValidationReportFilters>): ScoreValidationReportFilters | null => {
-      if (!examId) return null;
-      const status = combineP1P2 ? "missing" : selectedStatus;
-      return {
-        exam_id: examId,
-        school_ids: schoolIds.length ? schoolIds : undefined,
-        subject_type: subjectTypeFilter === "ALL" ? undefined : subjectTypeFilter,
-        subject_ids: subjectIds.length ? subjectIds : undefined,
-        test_types: combineP1P2
-          ? [1, 2]
-          : testTypes.length
-            ? [...testTypes].sort((a, b) => a - b)
-            : undefined,
-        status,
-        combine_p1_p2: combineP1P2 || undefined,
-        packaging: schoolIds.length !== 1 ? packaging : undefined,
-        page,
-        page_size: PREVIEW_PAGE_SIZE,
-        ...overrides,
-      };
-    },
-    [
-      examId,
-      schoolIds,
-      packaging,
-      subjectTypeFilter,
-      subjectIds,
-      testTypes,
-      selectedStatus,
-      combineP1P2,
-      page,
-    ]
+  const selectedExam = useMemo(
+    () => exams.find((exam) => exam.id === examId) ?? null,
+    [exams, examId]
   );
 
-  const loadPreview = useCallback(async () => {
-    const filters = buildFilters();
-    if (!filters) {
-      setSummary(null);
-      setRows([]);
-      setTotalRows(0);
-      return;
-    }
-    const reqId = ++previewReqId.current;
-    setPreviewLoading(true);
-    try {
-      const data = await previewScoreValidationReport(filters);
-      if (reqId !== previewReqId.current) return;
-      setSummary(data.summary);
-      setRows(data.rows);
-      setTotalRows(data.total_rows);
-    } catch (err) {
-      if (reqId !== previewReqId.current) return;
-      toast.error(err instanceof Error ? err.message : "Failed to load preview");
-      setSummary(null);
-      setRows([]);
-      setTotalRows(0);
-    } finally {
-      if (reqId === previewReqId.current) setPreviewLoading(false);
-    }
-  }, [buildFilters]);
+  const papersLabel = useMemo(() => {
+    if (combineP1P2) return "P1/P2 combined";
+    if (testTypes.length === 0) return "All papers";
+    return testTypes
+      .slice()
+      .sort((a, b) => a - b)
+      .map((id) => PAPER_CHIPS.find((p) => p.id === id)?.short ?? `P${id}`)
+      .join(", ");
+  }, [combineP1P2, testTypes]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadPreview();
-    }, PREVIEW_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [loadPreview]);
-
-  const pollJob = useCallback(async (jobId: number, format: "xlsx" | "pdf") => {
-    pollCancelRef.current = false;
-    // Same idea as score-import polling: tolerate brief backend restarts / network blips
-    // instead of surfacing an uncaught TypeError: Failed to fetch.
-    const maxTransientFailures = 40; // ~60s at JOB_POLL_MS
-    let transientFailures = 0;
-    for (;;) {
-      if (pollCancelRef.current) return;
-      try {
-        const job = await getScoreValidationReportJob(jobId);
-        transientFailures = 0;
-        setJobDock({ jobId, format, status: job, error: null });
-        if (job.status === "completed") {
-          clearStoredJob();
-          toast.success(
-            job.is_zip
-              ? "Zip ready — download from the report panel"
-              : "Report ready — download from the report panel"
-          );
-          return;
-        }
-        if (job.status === "failed") {
-          clearStoredJob();
-          setJobDock({
-            jobId,
-            format,
-            status: job,
-            error: job.error_message || "Report job failed",
-          });
-          return;
-        }
-      } catch (err) {
-        transientFailures += 1;
-        const message =
-          err instanceof Error ? err.message : "Report job status unavailable";
-        setJobDock((prev) =>
-          prev && prev.jobId === jobId
-            ? {
-                ...prev,
-                error:
-                  transientFailures > 3
-                    ? `Reconnecting… (${message})`
-                    : prev.error,
-              }
-            : prev
-        );
-        if (transientFailures > maxTransientFailures) {
-          clearStoredJob();
-          setJobDock({
-            jobId,
-            format,
-            status: null,
-            error: message || "Failed to reach the server while checking job status",
-          });
-          toast.error("Lost connection while generating report — try again");
-          return;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
+  const schoolsLabel = useMemo(() => {
+    if (schoolIds.length === 0) return "All schools";
+    if (schoolIds.length === 1) {
+      const school = schools.find((item) => item.id === schoolIds[0]);
+      return school ? school.code : "1 school";
     }
-  }, []);
+    return `${schoolIds.length} schools`;
+  }, [schoolIds, schools]);
 
-  // Resume in-flight job after navigation back to this page
-  useEffect(() => {
-    if (loadingAuth) return;
-    const stored = readStoredJob();
-    if (!stored) return;
-    setJobDock({
-      jobId: stored.jobId,
-      format: stored.format,
-      status: null,
-      error: null,
-    });
-    void pollJob(stored.jobId, stored.format);
-    return () => {
-      pollCancelRef.current = true;
+  const subjectsLabel = useMemo(() => {
+    if (subjectIds.length === 0) {
+      if (subjectTypeFilter === "CORE") return "All core";
+      if (subjectTypeFilter === "ELECTIVE") return "All elective";
+      return "All subjects";
+    }
+    if (subjectIds.length === 1) {
+      const subject = subjects.find((item) => item.id === subjectIds[0]);
+      return subject ? subject.code : "1 subject";
+    }
+    return `${subjectIds.length} subjects`;
+  }, [subjectIds, subjectTypeFilter, subjects]);
+
+  const statusMeta = STATUS_OPTIONS.find((s) => s.id === effectiveStatus)!;
+
+  const recipeChips = useMemo(() => {
+    const chips: string[] = [];
+    chips.push(selectedExam ? examLabel(selectedExam) : "No examination");
+    chips.push(schoolsLabel);
+    if (isMultiSchool && packaging === "merged") chips.push("Merged file");
+    else if (isMultiSchool) chips.push("Zip per school");
+    chips.push(subjectsLabel);
+    chips.push(papersLabel);
+    chips.push(statusMeta.label);
+    chips.push(reportFormat === "pdf" ? "PDF" : "Excel");
+    return chips;
+  }, [
+    selectedExam,
+    schoolsLabel,
+    isMultiSchool,
+    packaging,
+    subjectsLabel,
+    papersLabel,
+    statusMeta.label,
+    reportFormat,
+  ]);
+
+  const buildFilters = useCallback((): ScoreValidationReportFilters | null => {
+    if (!examId) return null;
+    return {
+      exam_id: examId,
+      school_ids: schoolIds.length ? schoolIds : undefined,
+      subject_type: subjectTypeFilter === "ALL" ? undefined : subjectTypeFilter,
+      subject_ids: subjectIds.length ? subjectIds : undefined,
+      test_types: combineP1P2
+        ? [1, 2]
+        : testTypes.length
+          ? [...testTypes].sort((a, b) => a - b)
+          : undefined,
+      status: effectiveStatus,
+      combine_p1_p2: combineP1P2 || undefined,
+      packaging: schoolIds.length !== 1 ? packaging : undefined,
+      format: reportFormat,
     };
-  }, [loadingAuth, pollJob]);
+  }, [
+    examId,
+    schoolIds,
+    packaging,
+    subjectTypeFilter,
+    subjectIds,
+    testTypes,
+    effectiveStatus,
+    combineP1P2,
+    reportFormat,
+  ]);
 
-  const handleDownload = async (format: "xlsx" | "pdf") => {
-    const filters = buildFilters({ format, page: undefined, page_size: undefined });
+  const handleGenerate = async () => {
+    const filters = buildFilters();
     if (!filters) {
       toast.error("Select an examination first");
       return;
     }
-    setStartingFormat(format);
+    setStarting(true);
     try {
       const useJob =
-        (filters.school_ids?.length ?? 0) !== 1 ||
-        totalRows > SYNC_ROW_LIMIT ||
-        (format === "pdf" && totalRows > 1500);
+        reportFormat === "pdf" || (filters.school_ids?.length ?? 0) !== 1;
 
       if (useJob) {
-        const { job_id } = await startScoreValidationReportJob(filters);
-        writeStoredJob({ jobId: job_id, format });
-        setJobDock({
-          jobId: job_id,
-          format,
-          status: {
-            job_id,
-            exam_id: filters.exam_id,
-            status: "pending",
-            message: "Queued…",
-            stage: "queued",
-          },
-          error: null,
-        });
-        toast.message("Report started in the background — you can keep working");
-        void pollJob(job_id, format);
+        await startJob(filters, reportFormat);
       } else {
-        await downloadScoreValidationReport(filters);
-        toast.success(format === "pdf" ? "PDF downloaded" : "Excel downloaded");
+        try {
+          await downloadScoreValidationReport(filters);
+          toast.success("Excel downloaded");
+        } catch (err) {
+          if (err instanceof ScoreValidationReportHttpError && err.status === 413) {
+            toast.message("Report is large — generating in the background");
+            await startJob(filters, reportFormat);
+          } else {
+            throw err;
+          }
+        }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Download failed");
+      toast.error(err instanceof Error ? err.message : "Generate failed");
     } finally {
-      setStartingFormat(null);
+      setStarting(false);
     }
   };
 
-  const handleDownloadJobFile = async () => {
-    if (!jobDock) return;
-    try {
-      await downloadScoreValidationReportJobFile(jobDock.jobId);
-      toast.success("Download started");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Download failed");
-    }
+  const togglePaper = (paperId: number) => {
+    setCombineP1P2(false);
+    setTestTypes((prev) => {
+      if (prev.includes(paperId)) {
+        return prev.filter((id) => id !== paperId);
+      }
+      return [...prev, paperId].sort((a, b) => a - b);
+    });
   };
 
-  const dismissJobDock = () => {
-    pollCancelRef.current = true;
-    clearStoredJob();
-    setJobDock(null);
-  };
-
-  const totalPages = Math.max(1, Math.ceil(totalRows / PREVIEW_PAGE_SIZE));
-  const statusCount = summary ? summary[selectedStatus] : 0;
-  const jobProgress =
-    jobDock?.status?.schools_total && jobDock.status.schools_total > 0
-      ? Math.round(
-          ((jobDock.status.schools_done ?? 0) / jobDock.status.schools_total) * 100
-        )
-      : jobDock?.status?.status === "completed"
-        ? 100
-        : jobDock?.status?.stage === "building"
-          ? 15
-          : jobDock?.status?.stage === "zipping"
-            ? 90
-            : 8;
+  const jobProgress = validationReportJobProgress(jobDock);
+  const jobCancelled = isValidationReportCancelled(jobDock?.status);
+  const jobRunning =
+    !!jobDock &&
+    !jobCancelled &&
+    (jobDock.status?.status === "pending" || jobDock.status?.status === "in_progress");
 
   if (loadingAuth) {
     return (
@@ -512,531 +318,493 @@ function ScoreValidationReportPage() {
 
   return (
     <DashboardLayout>
-      <TopBar
-        title={
-          <div className="flex min-w-0 items-baseline gap-3">
-            <span>Validation Report</span>
-            <span className="hidden truncate text-sm font-normal text-muted-foreground lg:inline">
-              One status at a time · zip or merge for multiple schools
-            </span>
-          </div>
-        }
-        showSearch={false}
-      />
+      <TopBar title="Validation Report" showSearch={false} />
 
-      <div className="space-y-4 p-4 pb-28 lg:p-6">
-        <div className="grid gap-3 rounded-lg border bg-card p-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Examination
+      <div className="relative overflow-hidden">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10"
+          style={{
+            background:
+              "radial-gradient(ellipse 80% 50% at 10% -10%, color-mix(in oklab, var(--clet-primary) 18%, transparent), transparent 55%), radial-gradient(ellipse 70% 45% at 95% 0%, color-mix(in oklab, var(--chart-2) 16%, transparent), transparent 50%), linear-gradient(180deg, color-mix(in oklab, var(--clet-primary) 4%, transparent), transparent 42%)",
+          }}
+        />
+
+        <div className="space-y-6 p-4 pb-36 lg:p-6 xl:p-8">
+          <header className="validation-fade-up max-w-2xl">
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+              Validation report
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground sm:text-base">
+              Find missing or invalid scores, then export Excel or PDF.
             </p>
-            <SearchableSelect
-              options={examOptions}
-              value={examId ?? ""}
-              onValueChange={(value) => {
-                const id = typeof value === "number" ? value : parseInt(String(value), 10);
-                setExamId(Number.isNaN(id) ? undefined : id);
-                setPage(1);
-                if (!Number.isNaN(id) && typeof window !== "undefined") {
-                  window.sessionStorage.setItem(DATA_ENTRY_EXAM_STORAGE_KEY, String(id));
-                }
-              }}
-              placeholder="Select examination"
-            />
-          </div>
+          </header>
 
-          <div className="space-y-1 md:col-span-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Schools
-            </p>
-            <SchoolMultiSelectFilter
-              schools={schools}
-              value={schoolIds}
-              onChange={(ids) => {
-                setSchoolIds(ids);
-                setPage(1);
-              }}
-              region={regionFilter}
-              onRegionChange={(value) => {
-                setRegionFilter(value);
-                setPage(1);
-              }}
-            />
-          </div>
-
-          {isMultiSchool && (
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Multi-school delivery
-              </p>
-              <div
-                role="group"
-                aria-label="Multi-school delivery"
-                className="flex rounded-md border bg-background p-0.5"
+          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
+            <div className="space-y-5">
+              {/* Scope */}
+              <section
+                className="validation-fade-up rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm backdrop-blur-sm sm:p-5"
+                style={{ animationDelay: "60ms" }}
               >
-                <button
-                  type="button"
-                  onClick={() => setPackaging("zip")}
-                  className={cn(
-                    "flex-1 rounded-sm px-3 py-2 text-center text-sm transition-colors",
-                    packaging === "zip"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                  )}
-                >
-                  Zip (separate)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPackaging("merged")}
-                  className={cn(
-                    "flex-1 rounded-sm px-3 py-2 text-center text-sm transition-colors",
-                    packaging === "merged"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                  )}
-                >
-                  Merged file
-                </button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {packaging === "zip"
-                  ? "One PDF/Excel per school, packaged as a zip."
-                  : "All schools combined into a single PDF or Excel file."}
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-1 md:col-span-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Subjects
-            </p>
-            <SubjectMultiSelectFilter
-              subjects={subjects}
-              value={subjectIds}
-              onChange={(ids) => {
-                setSubjectIds(ids);
-                setPage(1);
-              }}
-              subjectType={subjectTypeFilter}
-              onSubjectTypeChange={(value) => {
-                setSubjectTypeFilter(value);
-                setPage(1);
-              }}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Papers
-            </p>
-            <Popover open={papersOpen} onOpenChange={setPapersOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 w-full justify-between font-normal"
-                >
-                  <span className="truncate">
-                    {combineP1P2
-                      ? "Paper 1 or 2 (combined)"
-                      : testTypes.length === 0
-                        ? "All papers"
-                        : testTypes.length === 1
-                          ? PAPER_OPTIONS.find((p) => p.id === testTypes[0])?.label
-                          : `${testTypes.length} papers`}
+                <div className="mb-4 flex items-baseline gap-3">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[color:var(--clet-primary)] text-xs font-bold text-[color:var(--clet-on-primary)]">
+                    1
                   </span>
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
-                <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      setCombineP1P2(false);
-                      setTestTypes([]);
-                      setPage(1);
-                    }}
-                  >
-                    Clear (all)
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                    disabled={combineP1P2}
-                    onClick={() => {
-                      setCombineP1P2(false);
-                      setTestTypes(PAPER_OPTIONS.map((p) => p.id));
-                      setPage(1);
-                    }}
-                  >
-                    Select all
-                  </button>
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-tight">Scope</h2>
+                    <p className="text-xs text-muted-foreground">Examination and centres</p>
+                  </div>
                 </div>
-                <label className="mb-1 flex cursor-pointer items-center gap-2 rounded-md border border-amber-200/80 bg-amber-50/50 px-2 py-1.5 dark:border-amber-900/40 dark:bg-amber-950/20">
-                  <Checkbox
-                    checked={combineP1P2}
-                    onCheckedChange={(value) => {
-                      const on = value === true;
-                      setCombineP1P2(on);
-                      if (on) {
-                        setTestTypes([1, 2]);
-                        setSelectedStatus("missing");
-                      }
-                      setPage(1);
-                    }}
-                  />
-                  <span className="text-sm font-medium">Paper 1 or 2 (combined)</span>
-                </label>
-                <p className="mb-2 px-1 text-[11px] text-muted-foreground">
-                  One row per candidate when P1 and/or P2 is missing. Shows Missing papers as P1,
-                  P2, or P1/P2.
-                </p>
-                <div className="space-y-1">
-                  {PAPER_OPTIONS.map((paper) => {
-                    const checked = !combineP1P2 && testTypes.includes(paper.id);
-                    return (
-                      <label
-                        key={paper.id}
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Examination
+                    </p>
+                    <SearchableSelect
+                      options={examOptions}
+                      value={examId ?? ""}
+                      onValueChange={(value) => {
+                        const id =
+                          typeof value === "number" ? value : parseInt(String(value), 10);
+                        setExamId(Number.isNaN(id) ? undefined : id);
+                        if (!Number.isNaN(id) && typeof window !== "undefined") {
+                          window.sessionStorage.setItem(
+                            DATA_ENTRY_EXAM_STORAGE_KEY,
+                            String(id)
+                          );
+                        }
+                      }}
+                      placeholder="Select examination"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Schools
+                    </p>
+                    <SchoolMultiSelectFilter
+                      schools={schools}
+                      value={schoolIds}
+                      onChange={setSchoolIds}
+                      region={regionFilter}
+                      onRegionChange={setRegionFilter}
+                      fullWidth
+                      disabled={!hasExam}
+                    />
+                  </div>
+
+                  {isMultiSchool && (
+                    <div className="rounded-lg border border-dashed border-border/80">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+                        onClick={() => setAdvancedOpen((open) => !open)}
+                      >
+                        Advanced delivery
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 transition-transform",
+                            advancedOpen && "rotate-180"
+                          )}
+                        />
+                      </button>
+                      {advancedOpen && (
+                        <div className="space-y-2 border-t border-border/70 px-3 py-3">
+                          <p className="text-[11px] text-muted-foreground">
+                            Default is one file per school in a zip. Choose merged for a single
+                            combined file.
+                          </p>
+                          <div
+                            role="group"
+                            aria-label="Multi-school delivery"
+                            className="flex rounded-lg border bg-background p-1"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setPackaging("zip")}
+                              className={cn(
+                                "flex-1 rounded-md px-3 py-2 text-sm transition-colors",
+                                packaging === "zip"
+                                  ? "bg-[color:var(--clet-primary)] text-[color:var(--clet-on-primary)]"
+                                  : "text-muted-foreground hover:bg-muted/60"
+                              )}
+                            >
+                              Zip
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPackaging("merged")}
+                              className={cn(
+                                "flex-1 rounded-md px-3 py-2 text-sm transition-colors",
+                                packaging === "merged"
+                                  ? "bg-[color:var(--clet-primary)] text-[color:var(--clet-on-primary)]"
+                                  : "text-muted-foreground hover:bg-muted/60"
+                              )}
+                            >
+                              Merged
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Coverage */}
+              <section
+                className={cn(
+                  "validation-fade-up rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm backdrop-blur-sm transition-opacity sm:p-5",
+                  !hasExam && "pointer-events-none opacity-45"
+                )}
+                style={{ animationDelay: "120ms" }}
+                aria-disabled={!hasExam}
+              >
+                <div className="mb-4 flex items-baseline gap-3">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[color:var(--chart-2)] text-xs font-bold text-white">
+                    2
+                  </span>
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-tight">Coverage</h2>
+                    <p className="text-xs text-muted-foreground">
+                      {hasExam ? "Subjects and papers" : "Select an examination first"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Subjects
+                    </p>
+                    <SubjectMultiSelectFilter
+                      subjects={subjects}
+                      value={subjectIds}
+                      onChange={setSubjectIds}
+                      subjectType={subjectTypeFilter}
+                      onSubjectTypeChange={setSubjectTypeFilter}
+                      fullWidth
+                      disabled={!hasExam}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Papers
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {PAPER_CHIPS.map((paper) => {
+                        const active = !combineP1P2 && testTypes.includes(paper.id);
+                        return (
+                          <button
+                            key={paper.id}
+                            type="button"
+                            disabled={!hasExam}
+                            onClick={() => togglePaper(paper.id)}
+                            className={cn(
+                              "rounded-lg border px-3 py-2 text-left transition-all duration-200",
+                              active
+                                ? "border-[color:var(--clet-primary)] bg-[color:color-mix(in_oklab,var(--clet-primary)_12%,transparent)]"
+                                : "border-border/80 bg-background hover:border-foreground/20"
+                            )}
+                          >
+                            <span className="block text-sm font-semibold">{paper.short}</span>
+                            <span className="block text-[10px] text-muted-foreground">
+                              {paper.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        disabled={!hasExam}
+                        onClick={() => {
+                          setCombineP1P2(true);
+                          setTestTypes([1, 2]);
+                          setSelectedStatus("missing");
+                        }}
                         className={cn(
-                          "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60",
-                          combineP1P2 && "opacity-50"
+                          "rounded-lg border px-3 py-2 text-left transition-all duration-200",
+                          combineP1P2
+                            ? "border-amber-400 bg-amber-50"
+                            : "border-border/80 bg-background hover:border-foreground/20"
                         )}
                       >
-                        <Checkbox
-                          checked={checked}
-                          disabled={combineP1P2}
-                          onCheckedChange={(value) => {
-                            const on = value === true;
+                        <span className="block text-sm font-semibold">P1/P2</span>
+                        <span className="block text-[10px] text-muted-foreground">Combined</span>
+                      </button>
+                      {(combineP1P2 || testTypes.length > 0) && (
+                        <button
+                          type="button"
+                          disabled={!hasExam}
+                          onClick={() => {
                             setCombineP1P2(false);
-                            setTestTypes((prev) => {
-                              if (on) {
-                                return prev.includes(paper.id)
-                                  ? prev
-                                  : [...prev, paper.id].sort((a, b) => a - b);
-                              }
-                              return prev.filter((id) => id !== paper.id);
-                            });
-                            setPage(1);
+                            setTestTypes([]);
                           }}
-                        />
-                        <span className="text-sm">{paper.label}</span>
-                      </label>
+                          className="rounded-lg px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          All papers
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Status */}
+              <section
+                className={cn(
+                  "validation-fade-up rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm backdrop-blur-sm transition-opacity sm:p-5",
+                  !hasExam && "pointer-events-none opacity-45"
+                )}
+                style={{ animationDelay: "180ms" }}
+                aria-disabled={!hasExam}
+              >
+                <div className="mb-4 flex items-baseline gap-3">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[color:var(--chart-3)] text-xs font-bold text-slate-900">
+                    3
+                  </span>
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-tight">Status</h2>
+                    <p className="text-xs text-muted-foreground">
+                      {combineP1P2
+                        ? "Combined papers use Missing"
+                        : hasExam
+                          ? "One status per report"
+                          : "Select an examination first"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {STATUS_OPTIONS.map((opt) => {
+                    const Icon = opt.icon;
+                    const selected = effectiveStatus === opt.id;
+                    const lockedOut = combineP1P2 && opt.id !== "missing";
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={!hasExam || lockedOut}
+                        onClick={() => setSelectedStatus(opt.id)}
+                        className={cn(
+                          "group flex items-start gap-3 rounded-xl border border-border/80 bg-background/80 px-3.5 py-3 text-left transition-all duration-200",
+                          selected && opt.selected,
+                          !selected &&
+                            !lockedOut &&
+                            hasExam &&
+                            "hover:border-foreground/20 hover:bg-muted/40",
+                          lockedOut && "cursor-not-allowed opacity-40"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/70",
+                            selected && "bg-background/80",
+                            opt.accent
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold tracking-tight">
+                            {opt.label}
+                          </span>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                            {opt.hint}
+                          </span>
+                        </span>
+                      </button>
                     );
                   })}
                 </div>
-                <p className="mt-2 px-1 text-[11px] text-muted-foreground">
-                  {combineP1P2
-                    ? "Combined mode uses Missing status and lists P1/P2 gaps together."
-                    : "Exports keep Paper 1 and Paper 2 on separate pages/sheets."}
-                </p>
-              </PopoverContent>
-            </Popover>
-          </div>
+              </section>
+            </div>
 
-          <div className="space-y-1 md:col-span-2 xl:col-span-3">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Status (one at a time)
-            </p>
-            <Select
-              value={combineP1P2 ? "missing" : selectedStatus}
-              disabled={combineP1P2}
-              onValueChange={(value) => {
-                setSelectedStatus(value as ScoreValidationReportStatus);
-                setPage(1);
-              }}
+            {/* Deliver */}
+            <aside
+              className="validation-fade-up xl:sticky xl:top-4"
+              style={{ animationDelay: "220ms" }}
             >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.id} value={opt.id}>
-                    {opt.label} — {opt.hint}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+              <div className="relative overflow-hidden rounded-2xl border border-[color:color-mix(in_oklab,var(--clet-primary)_35%,var(--border))] bg-background/85 p-5 shadow-lg backdrop-blur-md">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-[color:var(--clet-primary)] opacity-[0.08] blur-2xl"
+                />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-border px-3 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Matching rows
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Generate
                 </p>
-                <p className="mt-0.5 text-xl font-semibold tabular-nums">
-                  {previewLoading && !summary ? "—" : totalRows.toLocaleString()}
-                </p>
-              </div>
-              <AlertCircle className="h-4 w-4 text-muted-foreground" />
-            </div>
-          </div>
-          <div
-            className={cn(
-              "rounded-lg border px-3 py-2.5",
-              selectedStatus === "missing" && "border-amber-200 bg-amber-50/50",
-              selectedStatus === "invalid" && "border-red-200 bg-red-50/40",
-              selectedStatus === "entered" && "border-emerald-200 bg-emerald-50/50",
-              selectedStatus === "absent" && "border-slate-200 bg-slate-50/60"
-            )}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {STATUS_OPTIONS.find((s) => s.id === selectedStatus)?.label}
-                </p>
-                <p className="mt-0.5 text-xl font-semibold tabular-nums">
-                  {previewLoading && !summary ? "—" : statusCount.toLocaleString()}
-                </p>
-              </div>
-              {selectedStatus === "missing" ? (
-                <MinusCircle className="h-4 w-4 text-muted-foreground" />
-              ) : selectedStatus === "invalid" ? (
-                <XCircle className="h-4 w-4 text-muted-foreground" />
-              ) : selectedStatus === "entered" ? (
-                <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <AlertCircle className="h-4 w-4 text-muted-foreground" />
-              )}
-            </div>
-          </div>
-        </div>
+                <h2 className="mt-1 text-lg font-semibold tracking-tight">Report recipe</h2>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={() => void handleDownload("xlsx")}
-            disabled={!examId || startingFormat != null}
-          >
-            {startingFormat === "xlsx" ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-            )}
-            Download Excel
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => void handleDownload("pdf")}
-            disabled={!examId || startingFormat != null}
-          >
-            {startingFormat === "pdf" ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <FileText className="mr-2 h-4 w-4" />
-            )}
-            Download PDF
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => void loadPreview()}
-            disabled={!examId || previewLoading}
-          >
-            {previewLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-2 h-4 w-4" />
-            )}
-            Refresh preview
-          </Button>
-          {!examId && (
-            <span className="text-sm text-muted-foreground">Select an examination to begin</span>
-          )}
-          {isMultiSchool && examId && (
-            <span className="text-sm text-muted-foreground">
-              {packaging === "zip"
-                ? "Multiple schools → one file per school (zip)"
-                : "Multiple schools → single merged file"}
-            </span>
-          )}
-        </div>
-
-        <div className="rounded-lg border">
-          <div className="flex items-center justify-between border-b px-3 py-2">
-            <p className="text-sm font-medium">
-              Preview{" "}
-              <span className="font-normal text-muted-foreground">
-                ({previewCountLabel(selectedStatus, totalRows, combineP1P2)})
-              </span>
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || previewLoading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                Previous
-              </Button>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                Page {page} / {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || previewLoading}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10 text-right text-muted-foreground">#</TableHead>
-                  {columns.map((col) => (
-                    <TableHead key={col.key}>{col.header}</TableHead>
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {recipeChips.map((chip) => (
+                    <span
+                      key={chip}
+                      className="inline-flex max-w-full truncate rounded-md border border-border/80 bg-muted/40 px-2 py-1 text-[11px] font-medium text-foreground/90"
+                    >
+                      {chip}
+                    </span>
                   ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {!examId ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length + 1}
-                      className="text-center text-muted-foreground"
-                    >
-                      Select an examination to preview rows
-                    </TableCell>
-                  </TableRow>
-                ) : previewLoading && rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={columns.length + 1} className="text-center text-muted-foreground">
-                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                    </TableCell>
-                  </TableRow>
-                ) : rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length + 1}
-                      className="text-center text-muted-foreground"
-                    >
-                      No rows match the current filters
-                    </TableCell>
-                  </TableRow>
+                </div>
+
+                <div
+                  role="group"
+                  aria-label="Report format"
+                  className="mt-5 flex rounded-lg border bg-background p-1"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setReportFormat("xlsx")}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors",
+                      reportFormat === "xlsx"
+                        ? "bg-[color:var(--clet-primary)] text-[color:var(--clet-on-primary)]"
+                        : "text-muted-foreground hover:bg-muted/60"
+                    )}
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5" />
+                    Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportFormat("pdf")}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors",
+                      reportFormat === "pdf"
+                        ? "bg-[color:var(--clet-primary)] text-[color:var(--clet-on-primary)]"
+                        : "text-muted-foreground hover:bg-muted/60"
+                    )}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    PDF
+                  </button>
+                </div>
+
+                <Button
+                  className="mt-3 h-11 w-full text-sm font-semibold"
+                  onClick={() => void handleGenerate()}
+                  disabled={!hasExam || starting}
+                >
+                  {starting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : reportFormat === "pdf" ? (
+                    <FileText className="mr-2 h-4 w-4" />
+                  ) : (
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  )}
+                  Generate report
+                </Button>
+
+                {!hasExam ? (
+                  <p className="mt-3 text-center text-xs text-amber-700">
+                    Select an examination to enable generation
+                  </p>
                 ) : (
-                  rows.map((row, idx) => (
-                    <TableRow
-                      key={`${row.candidate_id}-${row.subject_id}-${row.test_type}-${idx}`}
-                    >
-                      <TableCell className="text-right text-muted-foreground tabular-nums">
-                        {(page - 1) * PREVIEW_PAGE_SIZE + idx + 1}
-                      </TableCell>
-                      {columns.map((col) => (
-                        <TableCell
-                          key={col.key}
-                          className={cn(
-                            col.key === "index_number" && "font-mono text-xs",
-                            (col.key === "paper_label" || col.key === "expected") &&
-                              "whitespace-nowrap"
-                          )}
-                        >
-                          {col.key === "index_number" ? (
-                            <div>
-                              <div className="font-mono text-xs">{row.index_number}</div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {row.school_code} · {row.subject_code}
-                              </div>
-                            </div>
-                          ) : (
-                            cellValue(row, col.key)
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
+                  <p className="mt-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+                    {reportFormat === "pdf" || isMultiSchool
+                      ? "Runs in the background — download starts when ready"
+                      : "Downloads immediately when small enough"}
+                  </p>
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            </aside>
           </div>
         </div>
-
-        <p className="text-xs text-muted-foreground">
-          Sorted by paper, then subject, then index. Each paper+subject starts on a new page
-          (PDF) or sheet (Excel). Multi-school exports run in the background and download as a
-          zip.
-        </p>
       </div>
 
       {jobDock && (
-        <div className="fixed inset-x-4 bottom-4 z-40 mx-auto max-w-lg rounded-2xl border border-border/80 bg-background/95 p-4 shadow-2xl backdrop-blur-md">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 space-y-1">
-              <p className="text-sm font-semibold tracking-tight">
-                {jobDock.status?.status === "completed"
-                  ? "Report ready"
-                  : jobDock.status?.status === "failed"
-                    ? "Report failed"
-                    : "Generating report…"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {jobDock.error ||
-                  jobDock.status?.message ||
-                  "Working in the background — feel free to keep filtering."}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0"
-              onClick={dismissJobDock}
-              aria-label="Dismiss"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {jobDock.status?.status !== "failed" && (
-            <div className="mt-3 space-y-1.5">
-              <Progress value={jobProgress} className="h-2" />
-              <div className="flex justify-between text-[11px] text-muted-foreground">
-                <span className="capitalize">{jobDock.status?.stage || "queued"}</span>
-                <span>
-                  {jobDock.status?.schools_total
-                    ? `${jobDock.status.schools_done ?? 0} / ${jobDock.status.schools_total} schools`
-                    : jobDock.status?.row_count != null
-                      ? `${jobDock.status.row_count.toLocaleString()} rows`
-                      : ""}
-                </span>
+        <div className="fixed inset-x-4 bottom-4 z-40 mx-auto max-w-lg animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="overflow-hidden rounded-2xl border border-border/80 bg-background/95 p-4 shadow-2xl backdrop-blur-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-semibold tracking-tight">
+                  {jobCancelled
+                    ? "Report cancelled"
+                    : jobDock.status?.status === "completed"
+                      ? "Report ready"
+                      : jobDock.status?.status === "failed"
+                        ? "Report failed"
+                        : "Generating report…"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {jobCancelled
+                    ? "Generation stopped."
+                    : jobDock.error ||
+                      jobDock.status?.message ||
+                      "Working in the background."}
+                </p>
               </div>
-            </div>
-          )}
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {jobDock.status?.status === "completed" && (
-              <Button size="sm" onClick={() => void handleDownloadJobFile()}>
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                {jobDock.status.is_zip ? "Download zip" : "Download file"}
-              </Button>
-            )}
-            {jobDock.status?.status === "failed" && (
               <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => void handleDownload(jobDock.format)}
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={dismiss}
+                aria-label="Dismiss"
               >
-                Retry
+                <X className="h-4 w-4" />
               </Button>
+            </div>
+
+            {!jobCancelled && jobDock.status?.status !== "failed" && (
+              <div className="mt-3 space-y-1.5">
+                <Progress
+                  value={jobProgress}
+                  className="h-2 transition-[width] duration-500 ease-out"
+                />
+                <div className="flex justify-between text-[11px] text-muted-foreground">
+                  <span>
+                    {validationReportJobStageLabel(
+                      jobDock.status?.stage,
+                      jobDock.status?.status,
+                      jobCancelled
+                    )}
+                  </span>
+                  <span>
+                    {jobDock.status?.schools_total
+                      ? `${jobDock.status.schools_done ?? 0} / ${jobDock.status.schools_total} schools`
+                      : jobDock.status?.row_count != null
+                        ? `${jobDock.status.row_count.toLocaleString()} rows`
+                        : ""}
+                  </span>
+                </div>
+              </div>
             )}
-            {(jobDock.status?.status === "pending" ||
-              jobDock.status?.status === "in_progress") && (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase",
-                  statusBadgeClass("missing")
-                )}
-              >
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Running
-              </span>
-            )}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {jobDock.status?.status === "completed" && !jobCancelled && (
+                <Button
+                  size="sm"
+                  onClick={() => void downloadReadyFile(jobDock.jobId)}
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  {jobDock.status.is_zip ? "Download zip again" : "Download again"}
+                </Button>
+              )}
+              {jobDock.status?.status === "failed" && !jobCancelled && (
+                <Button size="sm" variant="secondary" onClick={() => void handleGenerate()}>
+                  Retry
+                </Button>
+              )}
+              {jobRunning && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={cancelling}
+                  onClick={() => void cancelJob()}
+                >
+                  {cancelling ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {cancelling || jobDock.status?.stage === "cancelled"
+                    ? "Cancelling…"
+                    : "Cancel"}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}

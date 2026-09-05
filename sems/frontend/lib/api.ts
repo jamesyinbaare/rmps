@@ -2951,50 +2951,6 @@ export type ScoreValidationReportFilters = {
   format?: "xlsx" | "pdf";
   /** Multi-school delivery: zip (default) or single merged file */
   packaging?: "zip" | "merged";
-  page?: number;
-  page_size?: number;
-};
-
-export type ScoreValidationReportDetailRow = {
-  school_id: number;
-  school_code: string;
-  school_name: string;
-  subject_id: number;
-  subject_code: string;
-  subject_name: string;
-  subject_type: string;
-  candidate_id: number;
-  index_number: string;
-  candidate_name: string;
-  test_type: number;
-  paper_label: string;
-  paper_short: string;
-  raw_score: string | null;
-  max_score: number | null;
-  status: ScoreValidationReportStatus;
-  message: string | null;
-  extraction_method: string | null;
-  expected: string | null;
-  missing_papers: string | null;
-};
-
-export type ScoreValidationReportSummary = {
-  total: number;
-  entered: number;
-  missing: number;
-  invalid: number;
-  absent: number;
-  by_school: Array<Record<string, string | number>>;
-  by_subject: Array<Record<string, string | number>>;
-};
-
-export type ScoreValidationReportPreview = {
-  meta: Record<string, unknown>;
-  summary: ScoreValidationReportSummary;
-  page: number;
-  page_size: number;
-  total_rows: number;
-  rows: ScoreValidationReportDetailRow[];
 };
 
 export type ScoreValidationReportJobStatus = {
@@ -3010,7 +2966,18 @@ export type ScoreValidationReportJobStatus = {
   schools_total?: number | null;
   school_count?: number | null;
   is_zip?: boolean | null;
+  cancelled?: boolean | null;
 };
+
+export class ScoreValidationReportHttpError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ScoreValidationReportHttpError";
+    this.status = status;
+  }
+}
 
 function buildValidationReportParams(filters: ScoreValidationReportFilters): URLSearchParams {
   const params = new URLSearchParams();
@@ -3023,28 +2990,17 @@ function buildValidationReportParams(filters: ScoreValidationReportFilters): URL
   if (filters.combine_p1_p2) params.set("combine_p1_p2", "true");
   if (filters.format) params.set("format", filters.format);
   if (filters.packaging) params.set("packaging", filters.packaging);
-  if (filters.page != null) params.set("page", String(filters.page));
-  if (filters.page_size != null) params.set("page_size", String(filters.page_size));
   return params;
-}
-
-export async function previewScoreValidationReport(
-  filters: ScoreValidationReportFilters
-): Promise<ScoreValidationReportPreview> {
-  const params = buildValidationReportParams(filters);
-  const response = await fetch(
-    `${API_BASE_URL}/api/v1/scores/validation-report/preview?${params.toString()}`,
-    { headers: getAuthHeaders() }
-  );
-  return handleResponse<ScoreValidationReportPreview>(response);
 }
 
 async function downloadReportResponse(response: Response, fallback: string): Promise<string> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Failed to download report" }));
-    throw new Error(
-      typeof error.detail === "string" ? error.detail : error.detail?.[0]?.msg || "Failed to download report"
-    );
+    const message =
+      typeof error.detail === "string"
+        ? error.detail
+        : error.detail?.[0]?.msg || "Failed to download report";
+    throw new ScoreValidationReportHttpError(message, response.status);
   }
   const filename = filenameFromContentDisposition(response.headers.get("Content-Disposition"), fallback);
   const blob = await response.blob();
@@ -3083,6 +3039,16 @@ export async function getScoreValidationReportJob(
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/validation-report/jobs/${jobId}`, {
     headers: getAuthHeaders(),
   });
+  return handleResponse<ScoreValidationReportJobStatus>(response);
+}
+
+export async function cancelScoreValidationReportJob(
+  jobId: number
+): Promise<ScoreValidationReportJobStatus> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/validation-report/jobs/${jobId}/cancel`,
+    { method: "POST", headers: getAuthHeaders() }
+  );
   return handleResponse<ScoreValidationReportJobStatus>(response);
 }
 

@@ -12,7 +12,7 @@ import zipfile
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -552,6 +552,9 @@ def should_use_report_job(
     estimated_rows: int | None = None,
     school_count: int | None = None,
 ) -> bool:
+    # PDF always goes through jobs (WeasyPrint cost / reliability).
+    if report_format == "pdf":
+        return True
     # Multi-school / all-schools always goes through jobs (zip packaging).
     resolved = (
         school_ids
@@ -563,8 +566,6 @@ def should_use_report_job(
     if school_count is not None and school_count > 1:
         return True
     if estimated_rows is not None and estimated_rows > LARGE_REPORT_ROW_THRESHOLD:
-        return True
-    if estimated_rows is not None and report_format == "pdf" and estimated_rows > 1500:
         return True
     return False
 
@@ -760,27 +761,6 @@ async def build_score_validation_report(
         summary=build_summary(detail_rows),
         rows=detail_rows,
     )
-
-
-def report_to_preview_dict(
-    data: ScoreValidationReportData,
-    *,
-    page: int = 1,
-    page_size: int = 50,
-) -> dict[str, Any]:
-    page = max(1, page)
-    page_size = min(max(1, page_size), 200)
-    start = (page - 1) * page_size
-    end = start + page_size
-    page_rows = data.rows[start:end]
-    return {
-        "meta": asdict(data.meta),
-        "summary": asdict(data.summary),
-        "page": page,
-        "page_size": page_size,
-        "total_rows": len(data.rows),
-        "rows": [asdict(r) for r in page_rows],
-    }
 
 
 async def generate_report_filename(
@@ -1491,6 +1471,10 @@ async def generate_score_validation_report_bytes(
     return file_bytes, filename, data
 
 
+class ValidationReportCancelled(Exception):
+    """Raised when a validation report job is cancelled by the user."""
+
+
 async def process_score_validation_report_job(tracking_id: int) -> None:
     """Background entry: generate PDF/Excel validation report and store on disk."""
     from app.dependencies.database import get_sessionmanager
@@ -1506,6 +1490,22 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
             return
 
         metadata = dict(tracking.process_metadata or {})
+        if metadata.get("cancel_requested"):
+            metadata.update(
+                {
+                    "stage": "cancelled",
+                    "message": "Cancelled",
+                    "cancelled": True,
+                }
+            )
+            tracking.process_metadata = metadata
+            flag_modified(tracking, "process_metadata")
+            tracking.status = ProcessStatus.FAILED
+            tracking.error_message = "Cancelled by user"
+            tracking.completed_at = datetime.utcnow()
+            await session.commit()
+            return
+
         progress: dict[str, Any] = {
             "stage": "queued",
             "schools_done": 0,
@@ -1514,8 +1514,16 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
         }
         last_flush_at = 0.0
 
+        async def ensure_not_cancelled() -> None:
+            nonlocal tracking, metadata
+            await session.refresh(tracking)
+            metadata = dict(tracking.process_metadata or {})
+            if metadata.get("cancel_requested"):
+                raise ValidationReportCancelled("Cancelled by user")
+
         async def flush_progress(*, force: bool = False) -> None:
             nonlocal tracking, metadata, last_flush_at
+            await ensure_not_cancelled()
             stage = str(progress.get("stage") or "")
             # Always persist terminal / packaging stages so the UI does not lag.
             if stage in {"ready", "merging", "zipping", "building", "failed"}:
@@ -1562,6 +1570,8 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                 packaging=packaging,
             )
 
+            await ensure_not_cancelled()
+
             export_dir = Path(settings.storage_path) / "validation_reports"
             export_dir.mkdir(parents=True, exist_ok=True)
             ext = Path(filename).suffix.lstrip(".") or ("pdf" if report_format == "pdf" else "xlsx")
@@ -1591,6 +1601,34 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
             tracking.status = ProcessStatus.COMPLETED
             tracking.completed_at = datetime.utcnow()
             await session.commit()
+        except ValidationReportCancelled:
+            try:
+                await session.rollback()
+                tracking_result = await session.execute(
+                    select(ProcessTracking).where(ProcessTracking.id == tracking_id)
+                )
+                tracking = tracking_result.scalar_one_or_none()
+                if tracking:
+                    metadata = dict(tracking.process_metadata or {})
+                    metadata.update(
+                        {
+                            "stage": "cancelled",
+                            "message": "Cancelled",
+                            "cancelled": True,
+                        }
+                    )
+                    tracking.process_metadata = metadata
+                    flag_modified(tracking, "process_metadata")
+                    tracking.status = ProcessStatus.FAILED
+                    tracking.error_message = "Cancelled by user"
+                    tracking.completed_at = datetime.utcnow()
+                    await session.commit()
+            except Exception:
+                logger.error(
+                    "Failed to mark validation report job %s as cancelled",
+                    tracking_id,
+                    exc_info=True,
+                )
         except Exception as exc:
             logger.error("Score validation report job %s failed: %s", tracking_id, exc, exc_info=True)
             try:

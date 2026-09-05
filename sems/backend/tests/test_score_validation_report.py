@@ -341,9 +341,9 @@ def test_should_use_report_job() -> None:
     assert should_use_report_job(school_ids=[1], report_format="xlsx", estimated_rows=100) is False
     assert should_use_report_job(school_id=1, report_format="xlsx", estimated_rows=6000) is True
     assert should_use_report_job(school_id=1, report_format="xlsx", school_count=3) is True
-    # Sync PDF path must reject before render when over the PDF row threshold.
-    assert should_use_report_job(school_id=1, report_format="pdf", estimated_rows=1500) is False
-    assert should_use_report_job(school_id=1, report_format="pdf", estimated_rows=1501) is True
+    # PDF always uses the job path.
+    assert should_use_report_job(school_id=1, report_format="pdf", estimated_rows=10) is True
+    assert should_use_report_job(school_id=1, report_format="pdf", estimated_rows=1500) is True
     assert should_use_report_job(school_id=1, report_format="xlsx", estimated_rows=1501) is False
     # school_ids takes precedence over singular school_id
     assert should_use_report_job(
