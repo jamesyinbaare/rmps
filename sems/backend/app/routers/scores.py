@@ -117,12 +117,13 @@ from app.services.score_import_pipeline import build_errors_csv
 from app.services.score_validation_report import (
     build_score_validation_report,
     generate_report_filename,
-    generate_score_validation_report_bytes,
     parse_statuses,
     parse_subject_ids,
     parse_test_types,
     process_score_validation_report_job,
+    render_score_validation_report_from_data,
     report_to_preview_dict,
+    resolve_school_ids,
     should_use_report_job,
 )
 from app.services.issue_batch_service import (
@@ -3508,17 +3509,20 @@ def _parse_validation_report_filters(
     subject_ids: str | None,
     test_types: str | None,
     statuses: str | None,
-) -> tuple[list[int] | None, list[int] | None, list[str] | None]:
+    school_ids: str | None = None,
+    school_id: int | None = None,
+) -> tuple[list[int] | None, list[int] | None, list[int] | None, list[str] | None]:
     try:
         subject_ids_list = parse_subject_ids(subject_ids)
         test_types_list = parse_test_types(test_types)
         statuses_list = parse_statuses(statuses)
+        school_ids_list = resolve_school_ids(school_ids=school_ids, school_id=school_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     if subject_type is not None and subject_ids_list:
         # Allow both: subject_ids further narrow within type filter applied in query
         pass
-    return subject_ids_list, test_types_list, statuses_list
+    return school_ids_list, subject_ids_list, test_types_list, statuses_list
 
 
 def _validation_report_content_disposition(filename: str) -> str:
@@ -3531,7 +3535,8 @@ async def preview_score_validation_report(
     session: DBSessionDep,
     _user: OfficerDep,
     exam_id: int = Query(..., description="Examination ID (required)"),
-    school_id: int | None = Query(None),
+    school_id: int | None = Query(None, description="Single school (compat)"),
+    school_ids: str | None = Query(None, description="Comma-separated school IDs"),
     subject_type: SubjectType | None = Query(None),
     subject_ids: str | None = Query(None, description="Comma-separated subject IDs"),
     test_types: str | None = Query(None, description="Comma-separated papers: 1,2,3"),
@@ -3547,11 +3552,13 @@ async def preview_score_validation_report(
     page_size: int = Query(50, ge=1, le=200),
 ) -> ScoreValidationReportPreviewResponse:
     """Paginated live preview of score validation report rows."""
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+    school_ids_list, subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
         subject_type=subject_type,
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        school_ids=school_ids,
+        school_id=school_id,
     )
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
     if not exam:
@@ -3560,7 +3567,7 @@ async def preview_score_validation_report(
         data = await build_score_validation_report(
             session,
             exam_id=exam_id,
-            school_id=school_id,
+            school_ids=school_ids_list,
             subject_type=subject_type,
             subject_ids=subject_ids_list,
             test_types=test_types_list,
@@ -3577,7 +3584,8 @@ async def download_score_validation_report(
     session: DBSessionDep,
     _user: OfficerDep,
     exam_id: int = Query(..., description="Examination ID (required)"),
-    school_id: int | None = Query(None),
+    school_id: int | None = Query(None, description="Single school (compat)"),
+    school_ids: str | None = Query(None, description="Comma-separated school IDs"),
     subject_type: SubjectType | None = Query(None),
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
@@ -3590,32 +3598,42 @@ async def download_score_validation_report(
     ),
 ):
     """Synchronous score validation report download (small scopes)."""
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+    school_ids_list, subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
         subject_type=subject_type,
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        school_ids=school_ids,
+        school_id=school_id,
     )
     try:
-        file_bytes, filename, data = await generate_score_validation_report_bytes(
+        data = await build_score_validation_report(
             session,
             exam_id=exam_id,
-            school_id=school_id,
+            school_ids=school_ids_list,
             subject_type=subject_type,
             subject_ids=subject_ids_list,
             test_types=test_types_list,
             statuses=statuses_list,  # type: ignore[arg-type]
-            report_format=format,
             combine_p1_p2=combine_p1_p2,
-            packaging=packaging,
         )
     except ValueError as e:
         detail = str(e)
-        code = status.HTTP_404_NOT_FOUND if "not found" in detail.lower() or "no score rows" in detail.lower() else status.HTTP_400_BAD_REQUEST
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
         raise HTTPException(status_code=code, detail=detail) from e
 
+    if not data.rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No score rows match the selected filters",
+        )
+
     if should_use_report_job(
-        school_id=school_id,
+        school_ids=school_ids_list,
         report_format=format,
         estimated_rows=data.meta.row_count,
     ):
@@ -3623,6 +3641,26 @@ async def download_score_validation_report(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Report is too large for synchronous download. Use POST /validation-report/jobs instead.",
         )
+
+    try:
+        file_bytes, filename = await render_score_validation_report_from_data(
+            session,
+            data,
+            exam_id=exam_id,
+            subject_type=subject_type,
+            test_types=test_types_list,
+            statuses=statuses_list,  # type: ignore[arg-type]
+            report_format=format,
+            packaging=packaging,
+        )
+    except ValueError as e:
+        detail = str(e)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower() or "no score rows" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=detail) from e
 
     media = (
         "application/zip"
@@ -3648,7 +3686,8 @@ async def start_score_validation_report_job(
     background_tasks: BackgroundTasks,
     _user: OfficerDep,
     exam_id: int = Query(...),
-    school_id: int | None = Query(None),
+    school_id: int | None = Query(None, description="Single school (compat)"),
+    school_ids: str | None = Query(None, description="Comma-separated school IDs"),
     subject_type: SubjectType | None = Query(None),
     subject_ids: str | None = Query(None),
     test_types: str | None = Query(None),
@@ -3665,34 +3704,40 @@ async def start_score_validation_report_job(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
 
-    subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
+    school_ids_list, subject_ids_list, test_types_list, statuses_list = _parse_validation_report_filters(
         subject_type=subject_type,
         subject_ids=subject_ids,
         test_types=test_types,
         statuses=statuses,
+        school_ids=school_ids,
+        school_id=school_id,
+    )
+    single_school_id = (
+        school_ids_list[0] if school_ids_list is not None and len(school_ids_list) == 1 else None
     )
     filename = await generate_report_filename(
         session,
         exam_id=exam_id,
-        school_id=school_id,
+        school_id=single_school_id,
         subject_type=subject_type,
         test_types=test_types_list,
         statuses=statuses_list,  # type: ignore[arg-type]
         report_format=format,
         combine_p1_p2=combine_p1_p2,
     )
-    # Merged multi-school keeps the natural extension; zip packaging uses .zip later
-    if school_id is None and packaging == "zip":
+    # Multi-school zip packaging uses .zip later
+    if single_school_id is None and packaging == "zip":
         filename = filename.rsplit(".", 1)[0] + ".zip"
 
     tracking = ProcessTracking(
         exam_id=exam_id,
         process_type=ProcessType.SCORE_VALIDATION_REPORT,
-        school_id=school_id,
+        school_id=single_school_id,
         status=ProcessStatus.PENDING,
         process_metadata={
             "exam_id": exam_id,
-            "school_id": school_id,
+            "school_id": single_school_id,
+            "school_ids": school_ids_list,
             "subject_type": subject_type.value if subject_type else None,
             "subject_ids": subject_ids_list,
             "test_types": test_types_list if not combine_p1_p2 else [1, 2],

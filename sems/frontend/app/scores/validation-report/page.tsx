@@ -21,6 +21,10 @@ import {
   SubjectMultiSelectFilter,
   type SubjectTypeFilterValue,
 } from "@/components/SubjectMultiSelectFilter";
+import {
+  SchoolMultiSelectFilter,
+  type SchoolRegionFilterValue,
+} from "@/components/SchoolMultiSelectFilter";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -71,7 +75,36 @@ const PREVIEW_PAGE_SIZE = 50;
 const PREVIEW_DEBOUNCE_MS = 350;
 const JOB_POLL_MS = 1500;
 const SYNC_ROW_LIMIT = 5000;
-const JOB_STORAGE_KEY = "sems.validation_report.job_id";
+const JOB_STORAGE_KEY = "sems.validation_report.job";
+
+type StoredJob = { jobId: number; format: "xlsx" | "pdf" };
+
+function readStoredJob(): StoredJob | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.sessionStorage.getItem(JOB_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredJob;
+    if (parsed?.jobId && (parsed.format === "xlsx" || parsed.format === "pdf")) {
+      return parsed;
+    }
+  } catch {
+    // Legacy: plain job id string
+    const jobId = parseInt(raw, 10);
+    if (!Number.isNaN(jobId)) return { jobId, format: "xlsx" };
+  }
+  return null;
+}
+
+function writeStoredJob(job: StoredJob): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(job));
+}
+
+function clearStoredJob(): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(JOB_STORAGE_KEY);
+}
 
 const PAPER_OPTIONS: { id: number; label: string; short: string }[] = [
   { id: 1, label: "Paper 1 (Objectives)", short: "P1" },
@@ -171,7 +204,8 @@ function ScoreValidationReportPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
 
   const [examId, setExamId] = useState<number | undefined>();
-  const [schoolId, setSchoolId] = useState<number | undefined>();
+  const [schoolIds, setSchoolIds] = useState<number[]>([]);
+  const [regionFilter, setRegionFilter] = useState<SchoolRegionFilterValue>("ALL");
   const [packaging, setPackaging] = useState<"zip" | "merged">("zip");
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>("ALL");
   const [subjectIds, setSubjectIds] = useState<number[]>([]);
@@ -190,6 +224,8 @@ function ScoreValidationReportPage() {
 
   const previewReqId = useRef(0);
   const pollCancelRef = useRef(false);
+
+  const isMultiSchool = schoolIds.length !== 1;
 
   const columns = useMemo(
     () => previewColumnsForStatus(selectedStatus, combineP1P2),
@@ -244,22 +280,13 @@ function ScoreValidationReportPage() {
     [exams]
   );
 
-  const schoolOptions = useMemo(
-    () =>
-      schools.map((school) => ({
-        value: school.id,
-        label: `${school.code} — ${school.name}`,
-      })),
-    [schools]
-  );
-
   const buildFilters = useCallback(
     (overrides?: Partial<ScoreValidationReportFilters>): ScoreValidationReportFilters | null => {
       if (!examId) return null;
       const status = combineP1P2 ? "missing" : selectedStatus;
       return {
         exam_id: examId,
-        school_id: schoolId,
+        school_ids: schoolIds.length ? schoolIds : undefined,
         subject_type: subjectTypeFilter === "ALL" ? undefined : subjectTypeFilter,
         subject_ids: subjectIds.length ? subjectIds : undefined,
         test_types: combineP1P2
@@ -269,7 +296,7 @@ function ScoreValidationReportPage() {
             : undefined,
         status,
         combine_p1_p2: combineP1P2 || undefined,
-        packaging: schoolId == null ? packaging : undefined,
+        packaging: schoolIds.length !== 1 ? packaging : undefined,
         page,
         page_size: PREVIEW_PAGE_SIZE,
         ...overrides,
@@ -277,7 +304,7 @@ function ScoreValidationReportPage() {
     },
     [
       examId,
-      schoolId,
+      schoolIds,
       packaging,
       subjectTypeFilter,
       subjectIds,
@@ -324,32 +351,61 @@ function ScoreValidationReportPage() {
 
   const pollJob = useCallback(async (jobId: number, format: "xlsx" | "pdf") => {
     pollCancelRef.current = false;
+    // Same idea as score-import polling: tolerate brief backend restarts / network blips
+    // instead of surfacing an uncaught TypeError: Failed to fetch.
+    const maxTransientFailures = 40; // ~60s at JOB_POLL_MS
+    let transientFailures = 0;
     for (;;) {
       if (pollCancelRef.current) return;
-      const job = await getScoreValidationReportJob(jobId);
-      setJobDock({ jobId, format, status: job, error: null });
-      if (job.status === "completed") {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(JOB_STORAGE_KEY);
+      try {
+        const job = await getScoreValidationReportJob(jobId);
+        transientFailures = 0;
+        setJobDock({ jobId, format, status: job, error: null });
+        if (job.status === "completed") {
+          clearStoredJob();
+          toast.success(
+            job.is_zip
+              ? "Zip ready — download from the report panel"
+              : "Report ready — download from the report panel"
+          );
+          return;
         }
-        toast.success(
-          job.is_zip
-            ? "Zip ready — download from the report panel"
-            : "Report ready — download from the report panel"
+        if (job.status === "failed") {
+          clearStoredJob();
+          setJobDock({
+            jobId,
+            format,
+            status: job,
+            error: job.error_message || "Report job failed",
+          });
+          return;
+        }
+      } catch (err) {
+        transientFailures += 1;
+        const message =
+          err instanceof Error ? err.message : "Report job status unavailable";
+        setJobDock((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                error:
+                  transientFailures > 3
+                    ? `Reconnecting… (${message})`
+                    : prev.error,
+              }
+            : prev
         );
-        return;
-      }
-      if (job.status === "failed") {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(JOB_STORAGE_KEY);
+        if (transientFailures > maxTransientFailures) {
+          clearStoredJob();
+          setJobDock({
+            jobId,
+            format,
+            status: null,
+            error: message || "Failed to reach the server while checking job status",
+          });
+          toast.error("Lost connection while generating report — try again");
+          return;
         }
-        setJobDock({
-          jobId,
-          format,
-          status: job,
-          error: job.error_message || "Report job failed",
-        });
-        return;
       }
       await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
     }
@@ -358,13 +414,15 @@ function ScoreValidationReportPage() {
   // Resume in-flight job after navigation back to this page
   useEffect(() => {
     if (loadingAuth) return;
-    const stored =
-      typeof window !== "undefined" ? window.sessionStorage.getItem(JOB_STORAGE_KEY) : null;
+    const stored = readStoredJob();
     if (!stored) return;
-    const jobId = parseInt(stored, 10);
-    if (Number.isNaN(jobId)) return;
-    setJobDock({ jobId, format: "xlsx", status: null, error: null });
-    void pollJob(jobId, "xlsx");
+    setJobDock({
+      jobId: stored.jobId,
+      format: stored.format,
+      status: null,
+      error: null,
+    });
+    void pollJob(stored.jobId, stored.format);
     return () => {
       pollCancelRef.current = true;
     };
@@ -379,15 +437,13 @@ function ScoreValidationReportPage() {
     setStartingFormat(format);
     try {
       const useJob =
-        !filters.school_id ||
+        (filters.school_ids?.length ?? 0) !== 1 ||
         totalRows > SYNC_ROW_LIMIT ||
         (format === "pdf" && totalRows > 1500);
 
       if (useJob) {
         const { job_id } = await startScoreValidationReportJob(filters);
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(JOB_STORAGE_KEY, String(job_id));
-        }
+        writeStoredJob({ jobId: job_id, format });
         setJobDock({
           jobId: job_id,
           format,
@@ -425,9 +481,7 @@ function ScoreValidationReportPage() {
 
   const dismissJobDock = () => {
     pollCancelRef.current = true;
-    if (typeof window !== "undefined") {
-      window.sessionStorage.removeItem(JOB_STORAGE_KEY);
-    }
+    clearStoredJob();
     setJobDock(null);
   };
 
@@ -463,7 +517,7 @@ function ScoreValidationReportPage() {
           <div className="flex min-w-0 items-baseline gap-3">
             <span>Validation Report</span>
             <span className="hidden truncate text-sm font-normal text-muted-foreground lg:inline">
-              One status at a time · zip or merge when all schools
+              One status at a time · zip or merge for multiple schools
             </span>
           </div>
         }
@@ -491,29 +545,26 @@ function ScoreValidationReportPage() {
             />
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-1 md:col-span-2">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              School
+              Schools
             </p>
-            <SearchableSelect
-              options={schoolOptions}
-              value={schoolId ?? "all"}
-              allowAll
-              allLabel="All schools"
-              onValueChange={(value) => {
-                if (value === "all" || value === "") {
-                  setSchoolId(undefined);
-                } else {
-                  const id = typeof value === "number" ? value : parseInt(String(value), 10);
-                  setSchoolId(Number.isNaN(id) ? undefined : id);
-                }
+            <SchoolMultiSelectFilter
+              schools={schools}
+              value={schoolIds}
+              onChange={(ids) => {
+                setSchoolIds(ids);
                 setPage(1);
               }}
-              placeholder="All schools"
+              region={regionFilter}
+              onRegionChange={(value) => {
+                setRegionFilter(value);
+                setPage(1);
+              }}
             />
           </div>
 
-          {schoolId == null && (
+          {isMultiSchool && (
             <div className="space-y-1">
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Multi-school delivery
@@ -795,11 +846,11 @@ function ScoreValidationReportPage() {
           {!examId && (
             <span className="text-sm text-muted-foreground">Select an examination to begin</span>
           )}
-          {!schoolId && examId && (
+          {isMultiSchool && examId && (
             <span className="text-sm text-muted-foreground">
               {packaging === "zip"
-                ? "All schools → one file per school (zip)"
-                : "All schools → single merged file"}
+                ? "Multiple schools → one file per school (zip)"
+                : "Multiple schools → single merged file"}
             </span>
           )}
         </div>

@@ -2939,7 +2939,8 @@ export type ScoreValidationReportStatus = "entered" | "missing" | "invalid" | "a
 
 export type ScoreValidationReportFilters = {
   exam_id: number;
-  school_id?: number;
+  /** Concrete school IDs; omit or empty = all schools */
+  school_ids?: number[];
   subject_type?: "CORE" | "ELECTIVE";
   subject_ids?: number[];
   test_types?: number[];
@@ -3014,7 +3015,7 @@ export type ScoreValidationReportJobStatus = {
 function buildValidationReportParams(filters: ScoreValidationReportFilters): URLSearchParams {
   const params = new URLSearchParams();
   params.set("exam_id", String(filters.exam_id));
-  if (filters.school_id != null) params.set("school_id", String(filters.school_id));
+  if (filters.school_ids?.length) params.set("school_ids", filters.school_ids.join(","));
   if (filters.subject_type) params.set("subject_type", filters.subject_type);
   if (filters.subject_ids?.length) params.set("subject_ids", filters.subject_ids.join(","));
   if (filters.test_types?.length) params.set("test_types", filters.test_types.join(","));
