@@ -3114,6 +3114,9 @@ export type ScoreImportResponse = {
   total_rows?: number | null;
   job_id?: number | null;
   async_job?: boolean;
+  dry_run?: boolean;
+  errors_file_available?: boolean;
+  file_checksum?: string | null;
 };
 
 export type ScoreImportJobCreateResponse = {
@@ -3121,6 +3124,8 @@ export type ScoreImportJobCreateResponse = {
   status: string;
   total_rows: number;
   async_job: true;
+  dry_run?: boolean;
+  resumed_existing?: boolean;
 };
 
 export type ScoreImportJobStatus = {
@@ -3138,6 +3143,12 @@ export type ScoreImportJobStatus = {
   error_message?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
+  dry_run?: boolean;
+  errors_file_available?: boolean;
+  file_checksum?: string | null;
+  phase?: string | null;
+  apply_total?: number;
+  apply_done?: number;
 };
 
 export async function downloadScoreImportTemplate(options: {
@@ -3185,12 +3196,21 @@ export async function getScoreImportJob(jobId: number): Promise<ScoreImportJobSt
   return handleResponse<ScoreImportJobStatus>(response);
 }
 
+export async function downloadScoreImportJobErrors(jobId: number): Promise<string> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/scores/import/jobs/${jobId}/errors`,
+    { headers: getAuthHeaders() }
+  );
+  return downloadReportResponse(response, `score_import_errors_job_${jobId}.csv`);
+}
+
 export async function importCoreScores(
   options: {
     exam_id: number;
     test_type: ScoreImportPaper;
     file: File;
     school_id?: number;
+    dry_run?: boolean;
   },
   onProgress?: (status: ScoreImportJobStatus) => void
 ): Promise<ScoreImportResponse> {
@@ -3200,6 +3220,9 @@ export async function importCoreScores(
   formData.append("file", options.file);
   if (options.school_id != null) {
     formData.append("school_id", String(options.school_id));
+  }
+  if (options.dry_run) {
+    formData.append("dry_run", "true");
   }
   // Auth only — omit Content-Type so the browser sets multipart boundary
   const headers: Record<string, string> = {};
@@ -3251,6 +3274,9 @@ export async function importCoreScores(
       total_rows: status.total_rows,
       job_id: status.job_id,
       async_job: true,
+      dry_run: status.dry_run,
+      errors_file_available: status.errors_file_available,
+      file_checksum: status.file_checksum,
     };
   }
 

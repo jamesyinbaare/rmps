@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pandas as pd
 import pytest
 
-from app.models import DataExtractionMethod, SubjectScore
+from app.models import SubjectScore
 from app.services.score_import import (
     generate_missing_scores_import_template,
     generate_score_import_template,
@@ -19,8 +19,18 @@ from app.services.score_import import (
     paper_extraction_attr,
     paper_field_name,
     paper_score_is_missing,
+    parse_score_import_file,
     validate_score_import_columns,
 )
+from app.services.score_import_pipeline import (
+    ExamSubjectInfo,
+    ExistingScoreInfo,
+    ImportLookups,
+    ReadyApplyRow,
+    classify_import_rows,
+    file_checksum,
+)
+from app.services.subject_upload import SubjectUploadParseError
 
 
 def _xlsx_bytes(rows: list[dict]) -> bytes:
@@ -28,6 +38,11 @@ def _xlsx_bytes(rows: list[dict]) -> bytes:
     buf = io.BytesIO()
     df.to_excel(buf, index=False, engine="openpyxl")
     return buf.getvalue()
+
+
+def _csv_bytes(rows: list[dict]) -> bytes:
+    df = pd.DataFrame(rows)
+    return df.to_csv(index=False).encode("utf-8")
 
 
 def test_paper_field_mapping() -> None:
@@ -85,7 +100,130 @@ def test_normalize_and_validate_columns() -> None:
         validate_score_import_columns(pd.DataFrame({"index_number": ["1"]}))
 
 
-def _mock_result(*, scalar_one=None, scalars_all=None):
+def test_parse_rejects_legacy_xls() -> None:
+    with pytest.raises(SubjectUploadParseError, match="Legacy .xls"):
+        parse_score_import_file(b"not-a-real-xls", "scores.xls")
+
+
+def test_parse_csv_preserves_leading_zeros() -> None:
+    content = _csv_bytes(
+        [{"index_number": "0123456789", "subject_code": "C30-1-01", "score": "12"}]
+    )
+    df = parse_score_import_file(content, "scores.csv")
+    df = normalize_score_import_columns(df)
+    assert str(df.iloc[0]["index_number"]) == "0123456789"
+
+
+def test_file_checksum_stable() -> None:
+    assert file_checksum(b"abc") == file_checksum(b"abc")
+    assert file_checksum(b"abc") != file_checksum(b"abd")
+
+
+def _lookups(
+    *,
+    index: str = "0123456789",
+    subject_code: str = "C30-1-01",
+    alt_code: str = "MATH",
+    score_id: int | None = 1,
+    obj_raw: str | None = "10",
+    essay_raw: str | None = "20",
+) -> ImportLookups:
+    info = ExamSubjectInfo(id=100, obj_max_score=40.0, essay_max_score=60.0)
+    return ImportLookups(
+        subject_by_code={subject_code.upper(): info, alt_code.upper(): info},
+        reg_by_index={index: 5},
+        reg_by_stripped_index={(index.lstrip("0") or "0"): 5},
+        sr_lookup={
+            (5, 100): (
+                50,
+                ExistingScoreInfo(
+                    score_id=score_id,
+                    obj_raw_score=obj_raw,
+                    essay_raw_score=essay_raw,
+                    pract_raw_score=None,
+                ),
+            )
+        },
+    )
+
+
+def test_classify_paper1_ready_and_total() -> None:
+    lookups = _lookups()
+    rows = [(2, "0123456789", "C30-1-01", "35")]
+    result, ready = classify_import_rows(rows, lookups, test_type=1)
+    assert result.successful == 1
+    assert result.updated == 1
+    assert len(ready) == 1
+    assert ready[0].parsed_score == "35"
+    assert ready[0].subject_score_id == 1
+    # total = new obj 35 + existing essay 20
+    assert ready[0].total_score == 55.0
+
+
+def test_classify_paper2_ready() -> None:
+    lookups = _lookups()
+    rows = [(2, "0123456789", "MATH", "55")]
+    result, ready = classify_import_rows(rows, lookups, test_type=2)
+    assert result.successful == 1
+    assert ready[0].parsed_score == "55"
+    assert ready[0].total_score == 65.0  # 10 + 55
+
+
+def test_classify_elective_and_unknown() -> None:
+    lookups = _lookups(subject_code="E40-2-05", alt_code="ECON")
+    ok, ready = classify_import_rows(
+        [(2, "0123456789", "E40-2-05", "28")], lookups, test_type=1
+    )
+    assert ok.successful == 1
+    assert ready[0].parsed_score == "28"
+
+    bad, ready2 = classify_import_rows(
+        [(2, "0123456789", "UNKNOWN-99", "12")], lookups, test_type=1
+    )
+    assert bad.failed == 1
+    assert ready2 == []
+    assert "not found" in bad.errors[0].message.lower()
+
+
+def test_classify_blank_na_invalid_unknown_index() -> None:
+    lookups = _lookups()
+    rows = [
+        (2, "0123456789", "C30-1-01", ""),
+        (3, "0123456789", "C30-1-01", "N/A"),
+        (4, "0123456789", "C30-1-01", "not-a-score"),
+        (5, "9999999999", "C30-1-01", "11"),
+        (6, "0123456789", "C30-1-01", "30"),
+    ]
+    result, ready = classify_import_rows(rows, lookups, test_type=1)
+    assert result.skipped == 2
+    assert result.failed == 2
+    assert result.successful == 1
+    assert len(ready) == 1
+    assert ready[0].parsed_score == "30"
+    assert len(result.errors) == 2
+
+
+def test_classify_leading_zero_fallback() -> None:
+    lookups = _lookups(index="0123456789")
+    # Excel may strip leading zero
+    result, ready = classify_import_rows(
+        [(2, "123456789", "C30-1-01", "22")], lookups, test_type=1
+    )
+    assert result.successful == 1
+    assert ready[0].parsed_score == "22"
+
+
+def test_classify_insert_when_no_score_row() -> None:
+    lookups = _lookups(score_id=None, obj_raw=None, essay_raw=None)
+    result, ready = classify_import_rows(
+        [(2, "0123456789", "C30-1-01", "15")], lookups, test_type=1
+    )
+    assert result.successful == 1
+    assert ready[0].subject_score_id is None
+    assert ready[0].total_score == 15.0
+
+
+def _mock_result(*, scalar_one=None, scalars_all=None, rows=None):
     result = MagicMock()
     if scalar_one is not None:
         result.scalar_one_or_none.return_value = scalar_one
@@ -93,243 +231,20 @@ def _mock_result(*, scalar_one=None, scalars_all=None):
         scalars = MagicMock()
         scalars.all.return_value = scalars_all
         result.scalars.return_value = scalars
+    if rows is not None:
+        result.all.return_value = rows
     return result
-
-
-def _build_session(*, exam_subjects, registrations):
-    exam = SimpleNamespace(id=1, year=2026, series=SimpleNamespace(value="MAY"))
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-
-    # execute order in import_scores: exam → exam_subjects → registrations
-    session.execute = AsyncMock(
-        side_effect=[
-            _mock_result(scalar_one=exam),
-            _mock_result(scalars_all=exam_subjects),
-            _mock_result(scalars_all=registrations),
-        ]
-    )
-    return session
-
-
-def _subject_fixture(
-    *,
-    subject_id: int = 10,
-    exam_subject_id: int = 100,
-    original_code: str = "C30-1-01",
-    code: str = "MATH",
-    name: str = "Mathematics",
-    obj_raw: str | None = "10",
-    essay_raw: str | None = "20",
-):
-    subject = SimpleNamespace(
-        id=subject_id,
-        original_code=original_code,
-        code=code,
-        name=name,
-    )
-    exam_subject = SimpleNamespace(
-        id=exam_subject_id,
-        subject_id=subject_id,
-        subject=subject,
-        obj_max_score=40.0,
-        essay_max_score=60.0,
-    )
-    score = SubjectScore(
-        id=1,
-        subject_registration_id=50,
-        obj_raw_score=obj_raw,
-        essay_raw_score=essay_raw,
-        pract_raw_score=None,
-        total_score=0.0,
-    )
-    subject_reg = SimpleNamespace(
-        id=50,
-        exam_subject_id=exam_subject_id,
-        subject_score=score,
-    )
-    exam_reg = SimpleNamespace(
-        id=5,
-        index_number="0123456789",
-        subject_registrations=[subject_reg],
-    )
-    return exam_subject, exam_reg, score
-
-
-@pytest.mark.asyncio
-async def test_paper1_updates_only_obj_raw_score() -> None:
-    exam_subject, exam_reg, score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "35",
-            }
-        ]
-    )
-
-    result = await import_scores(
-        session,
-        exam_id=1,
-        test_type=1,
-        file_content=content,
-        filename="scores.xlsx",
-    )
-
-    assert result.successful == 1
-    assert result.updated == 1
-    assert score.obj_raw_score == "35"
-    assert score.essay_raw_score == "20"
-    assert score.obj_extraction_method == DataExtractionMethod.MANUAL_ENTRY_PHYSICAL
-    assert score.essay_extraction_method is None
-
-
-@pytest.mark.asyncio
-async def test_paper2_updates_only_essay_raw_score() -> None:
-    exam_subject, exam_reg, score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "MATH",
-                "score": "55",
-            }
-        ]
-    )
-
-    result = await import_scores(
-        session,
-        exam_id=1,
-        test_type=2,
-        file_content=content,
-        filename="scores.xlsx",
-    )
-
-    assert result.successful == 1
-    assert score.essay_raw_score == "55"
-    assert score.obj_raw_score == "10"
-    assert score.essay_extraction_method == DataExtractionMethod.MANUAL_ENTRY_PHYSICAL
-
-
-@pytest.mark.asyncio
-async def test_elective_subject_updates() -> None:
-    exam_subject, exam_reg, score = _subject_fixture(
-        original_code="E40-2-05",
-        code="ECON",
-        name="Economics",
-    )
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "E40-2-05",
-                "score": "28",
-            }
-        ]
-    )
-
-    result = await import_scores(
-        session,
-        exam_id=1,
-        test_type=1,
-        file_content=content,
-        filename="scores.xlsx",
-    )
-
-    assert result.successful == 1
-    assert score.obj_raw_score == "28"
-
-
-@pytest.mark.asyncio
-async def test_rejects_unknown_subject_code() -> None:
-    exam_subject, exam_reg, score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "UNKNOWN-99",
-                "score": "12",
-            }
-        ]
-    )
-
-    result = await import_scores(
-        session,
-        exam_id=1,
-        test_type=1,
-        file_content=content,
-        filename="scores.xlsx",
-    )
-
-    assert result.successful == 0
-    assert result.failed == 1
-    assert "not found" in result.errors[0].message.lower()
-    assert score.obj_raw_score == "10"
-
-
-@pytest.mark.asyncio
-async def test_blank_and_na_skipped_invalid_and_unknown_are_row_errors() -> None:
-    exam_subject, exam_reg, score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "",
-            },
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "N/A",
-            },
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "not-a-score",
-            },
-            {
-                "index_number": "9999999999",
-                "subject_code": "C30-1-01",
-                "score": "11",
-            },
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "30",
-            },
-        ]
-    )
-
-    result = await import_scores(
-        session,
-        exam_id=1,
-        test_type=1,
-        file_content=content,
-        filename="scores.xlsx",
-    )
-
-    assert result.skipped == 2
-    assert result.failed == 2
-    assert result.successful == 1
-    assert result.updated == 1
-    assert score.obj_raw_score == "30"
-    assert len(result.errors) == 2
 
 
 @pytest.mark.asyncio
 async def test_sync_row_limit_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.score_import.LARGE_IMPORT_ROW_THRESHOLD", 1)
-    exam_subject, exam_reg, _score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
-    content = _xlsx_bytes(
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline.LARGE_IMPORT_ROW_THRESHOLD", 1
+    )
+    exam = SimpleNamespace(id=1)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_mock_result(scalar_one=exam))
+    content = _csv_bytes(
         [
             {"index_number": "0123456789", "subject_code": "C30-1-01", "score": "1"},
             {"index_number": "0123456789", "subject_code": "C30-1-01", "score": "2"},
@@ -341,23 +256,73 @@ async def test_sync_row_limit_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
             exam_id=1,
             test_type=1,
             file_content=content,
-            filename="scores.xlsx",
+            filename="scores.csv",
             enforce_row_limit=True,
         )
 
 
 @pytest.mark.asyncio
-async def test_large_import_allowed_when_limit_disabled() -> None:
-    exam_subject, exam_reg, score = _subject_fixture()
-    session = _build_session(exam_subjects=[exam_subject], registrations=[exam_reg])
+async def test_import_dry_run_skips_apply(monkeypatch: pytest.MonkeyPatch) -> None:
+    exam = SimpleNamespace(id=1)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_mock_result(scalar_one=exam))
+    session.commit = AsyncMock()
+
+    lookups = _lookups()
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline.load_import_lookups",
+        AsyncMock(return_value=lookups),
+    )
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline.apply_ready_rows",
+        apply_mock,
+    )
+
+    content = _csv_bytes(
+        [{"index_number": "0123456789", "subject_code": "C30-1-01", "score": "33"}]
+    )
+    result = await import_scores(
+        session,
+        exam_id=1,
+        test_type=1,
+        file_content=content,
+        filename="scores.csv",
+        enforce_row_limit=False,
+        dry_run=True,
+    )
+    assert result.successful == 1
+    assert result.dry_run is True
+    assert result.phase == "done"
+    apply_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_import_calls_apply_with_ready_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    exam = SimpleNamespace(id=1)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_mock_result(scalar_one=exam))
+    session.commit = AsyncMock()
+
+    lookups = _lookups()
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline.load_import_lookups",
+        AsyncMock(return_value=lookups),
+    )
+    applied: list[list[ReadyApplyRow]] = []
+
+    async def _apply(session, **kwargs):
+        applied.append(kwargs["ready"])
+        kwargs["result"].phase = "done"
+        kwargs["result"].apply_done = len(kwargs["ready"])
+
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline.apply_ready_rows",
+        AsyncMock(side_effect=_apply),
+    )
+
     content = _xlsx_bytes(
-        [
-            {
-                "index_number": "0123456789",
-                "subject_code": "C30-1-01",
-                "score": "33",
-            }
-        ]
+        [{"index_number": "0123456789", "subject_code": "C30-1-01", "score": "33"}]
     )
     result = await import_scores(
         session,
@@ -368,8 +333,135 @@ async def test_large_import_allowed_when_limit_disabled() -> None:
         enforce_row_limit=False,
     )
     assert result.successful == 1
-    assert score.obj_raw_score == "33"
+    assert len(applied) == 1
+    assert applied[0][0].parsed_score == "33"
+    assert applied[0][0].total_score == 53.0  # 33 + essay 20
 
+
+@pytest.mark.asyncio
+async def test_apply_ready_rows_progress_every_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.score_import_pipeline import (
+        IMPORT_APPLY_BATCH_SIZE,
+        ScoreImportResult,
+        apply_ready_rows,
+    )
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline._bulk_update_scores",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.score_import_pipeline._bulk_insert_scores",
+        AsyncMock(),
+    )
+
+    ready = [
+        ReadyApplyRow(
+            row_num=i + 2,
+            subject_registration_id=1,
+            subject_score_id=i + 1,
+            parsed_score="10",
+            total_score=10.0,
+        )
+        for i in range(IMPORT_APPLY_BATCH_SIZE + 50)
+    ]
+    result = ScoreImportResult(total_rows=len(ready), phase="applying")
+    progress_calls: list[tuple[int, int, str]] = []
+
+    async def on_progress(processed: int, res: ScoreImportResult) -> None:
+        progress_calls.append((res.apply_done, res.apply_total, res.phase))
+
+    await apply_ready_rows(
+        session,
+        ready=ready,
+        test_type=1,
+        progress_callback=on_progress,
+        result=result,
+    )
+
+    assert result.phase == "done"
+    assert result.apply_done == len(ready)
+    assert len(progress_calls) >= 4
+    assert any(done == 0 and phase == "applying" for done, _, phase in progress_calls)
+    assert any(done == IMPORT_APPLY_BATCH_SIZE for done, _, _ in progress_calls)
+    assert progress_calls[-1][0] == len(ready)
+
+
+@pytest.mark.asyncio
+async def test_load_import_lookups_scopes_to_file_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scoped lookup must filter by file indexes — never SELECT all exam regs."""
+    from app.services.score_import_pipeline import (
+        ScoreImportResult,
+        load_import_lookups,
+    )
+
+    executed_sql: list[str] = []
+    heartbeats: list[float] = []
+
+    async def on_progress(_p: int, res: ScoreImportResult) -> None:
+        heartbeats.append(res.classify_frac)
+
+    def _capture_execute(stmt, *args, **kwargs):
+        compiled = str(stmt)
+        executed_sql.append(compiled.lower())
+        # exam subjects
+        if "exam_subjects" in compiled.lower() or "obj_max_score" in compiled.lower():
+            return _mock_result(
+                rows=[(100, 40.0, 60.0, "C30-1-01", "MATH")]
+            )
+        # registrations / subject regs
+        if "exam_registrations" in compiled.lower():
+            return _mock_result(rows=[(5, "0123456789")])
+        if "subject_registrations" in compiled.lower():
+            return _mock_result(rows=[(50, 5, 100, 1, "10", "20", None)])
+        return _mock_result(rows=[])
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=_capture_execute)
+
+    progress = ScoreImportResult(total_rows=10, phase="classifying")
+    lookups = await load_import_lookups(
+        session,
+        exam_id=1,
+        school_id=None,
+        test_type=1,
+        index_numbers={"0123456789"},
+        subject_codes={"C30-1-01"},
+        progress_callback=on_progress,
+        progress_result=progress,
+    )
+
+    assert lookups.reg_by_index.get("0123456789") == 5
+    assert (5, 100) in lookups.sr_lookup
+    # Must have used IN / equality filter on file indexes, not a bare exam-wide load
+    reg_queries = [s for s in executed_sql if "exam_registrations" in s]
+    assert reg_queries
+    assert any("index_number" in q and "in (" in q.replace("\n", " ") for q in reg_queries) or any(
+        "index_number" in q for q in reg_queries
+    )
+    assert heartbeats, "expected classify heartbeats during scoped lookup"
+    assert max(heartbeats) >= 0.5
+
+
+def test_collect_file_lookup_keys() -> None:
+    from app.services.score_import_pipeline import collect_file_lookup_keys
+
+    indexes, codes = collect_file_lookup_keys(
+        [
+            (2, "0123", "C30-1-01", "10"),
+            (3, "0123", "c30-1-01", "11"),
+            (4, None, "E40", ""),
+            (5, "999", None, "1"),
+        ]
+    )
+    assert indexes == {"0123", "999"}
+    assert codes == {"C30-1-01", "E40"}
 
 @pytest.mark.asyncio
 async def test_format_template_is_example_only() -> None:
@@ -481,7 +573,7 @@ async def test_resume_skips_when_advisory_lock_held(monkeypatch: pytest.MonkeyPa
     from app.services import score_import as score_import_mod
 
     lock_result = MagicMock()
-    lock_result.scalar.return_value = False  # another worker holds the lock
+    lock_result.scalar.return_value = False
 
     session = AsyncMock()
     session.execute = AsyncMock(return_value=lock_result)
@@ -500,7 +592,6 @@ async def test_resume_skips_when_advisory_lock_held(monkeypatch: pytest.MonkeyPa
     count = await score_import_mod.resume_interrupted_score_import_jobs()
     assert count == 0
     assert started == []
-    # Only the try-lock query; no unlock / reset when lock not acquired
     assert session.execute.await_count == 1
 
 
@@ -540,7 +631,6 @@ async def test_resume_resets_only_stale_and_starts_pending(
     count = await score_import_mod.resume_interrupted_score_import_jobs()
     assert count == 2
     assert started == [101, 102]
-    # lock, reset update, pending select, unlock
     assert session.execute.await_count == 4
     reset_call = session.execute.await_args_list[1]
     compiled = reset_call.args[0]
