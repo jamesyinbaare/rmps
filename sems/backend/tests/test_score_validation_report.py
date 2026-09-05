@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import zipfile
 from pathlib import Path
@@ -389,7 +390,7 @@ def _sample_report_data(
     return ScoreValidationReportData(meta=meta, summary=build_summary(rows), rows=rows)
 
 
-def test_excel_export_adaptive_columns_and_subject_sheets() -> None:
+def test_excel_export_single_flat_sheet() -> None:
     rows = [
         _detail_row(status="invalid", raw_score="99", expected="0–40", message="too high"),
         _detail_row(
@@ -411,33 +412,58 @@ def test_excel_export_adaptive_columns_and_subject_sheets() -> None:
     assert excel_bytes[:2] == b"PK"
 
     wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
+    assert wb.sheetnames == ["Invalid"]
     assert "Summary" not in wb.sheetnames
-    math_ws = wb["P1_MATH"]
-    # Row 1 title, 2 centre, 3 summary, 5 headers, 6+ data
-    assert math_ws.cell(2, 1).value == "Centre"
-    assert "SCH01" in (math_ws.cell(2, 2).value or "")
-    assert math_ws.cell(3, 1).value == "Summary"
-    assert "1 invalid score" in (math_ws.cell(3, 2).value or "")
-    assert "row" not in (math_ws.cell(3, 2).value or "").lower()
-    headers = [math_ws.cell(5, c).value for c in range(1, 6)]
-    assert headers == ["#", "Index number", "Candidate name", "Value", "Expected"]
-    assert math_ws.cell(6, 1).value == 1
-    assert math_ws.cell(6, 4).value == "99"
-    assert math_ws.cell(6, 5).value == "0–40"
-    assert "MATH" in (math_ws.cell(1, 1).value or "")
+    assert "P1_MATH" not in wb.sheetnames
+    assert "P2_ENG" not in wb.sheetnames
 
-    assert "P2_ENG" in wb.sheetnames
-    assert "MATH" not in wb.sheetnames  # no mixed paper-free subject sheet
+    ws = wb["Invalid"]
+    assert ws.cell(2, 1).value == "Status"
+    assert "2 invalid scores" in (ws.cell(2, 2).value or "")
+    assert "row" not in (ws.cell(2, 2).value or "").lower()
+
+    headers = [ws.cell(4, c).value for c in range(1, 10)]
+    assert headers == [
+        "#",
+        "School code",
+        "Original subject code",
+        "Subject name",
+        "Paper",
+        "Index number",
+        "Candidate name",
+        "Value",
+        "Expected",
+    ]
+    # Sorted by school, paper, subject — MATH/P1 then ENG/P2
+    assert ws.cell(5, 1).value == 1
+    assert ws.cell(5, 2).value == "SCH01"
+    assert ws.cell(5, 3).value == "MATH"
+    assert ws.cell(5, 5).value == "P1"
+    assert ws.cell(5, 8).value == "99"
+    assert ws.cell(5, 9).value == "0–40"
+
+    assert ws.cell(6, 3).value == "ENG"
+    assert ws.cell(6, 5).value == "P2"
+    assert ws.cell(6, 8).value == "abc"
 
     missing_data = _sample_report_data(status="missing")
     missing_wb = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(missing_data)))
-    assert "Summary" not in missing_wb.sheetnames
-    missing_headers = [missing_wb["P1_MATH"].cell(5, c).value for c in range(1, 5)]
-    assert missing_headers == ["#", "Index number", "Candidate name", None]
+    assert missing_wb.sheetnames == ["Missing"]
+    missing_headers = [missing_wb["Missing"].cell(4, c).value for c in range(1, 9)]
+    assert missing_headers == [
+        "#",
+        "School code",
+        "Original subject code",
+        "Subject name",
+        "Paper",
+        "Index number",
+        "Candidate name",
+        None,
+    ]
 
 
-def test_excel_multi_school_separate_subject_sheets() -> None:
-    """Merged multi-school workbook: one sheet per school+subject, no global Summary."""
+def test_excel_multi_school_single_sheet() -> None:
+    """Merged multi-school workbook: one sheet with school + subject code columns."""
     rows = [
         _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
         _detail_row(
@@ -464,21 +490,26 @@ def test_excel_multi_school_separate_subject_sheets() -> None:
     ]
     data = _sample_report_data(status="missing", rows=rows)
     wb = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(data)))
+    assert wb.sheetnames == ["Missing"]
     assert "Summary" not in wb.sheetnames
-    assert "A01_P1_MATH" in wb.sheetnames
-    assert "B01_P1_MATH" in wb.sheetnames
-    assert "A01_P1_ENG" in wb.sheetnames
-    # Schools must not share a paper+subject sheet
-    assert "P1_MATH" not in wb.sheetnames
+    assert "A01_P1_MATH" not in wb.sheetnames
+    assert "B01_P1_MATH" not in wb.sheetnames
 
-    a_math = wb["A01_P1_MATH"]
-    assert "Alpha" in (a_math.cell(2, 2).value or "")
-    assert "1 missing score" in (a_math.cell(3, 2).value or "")
-    assert a_math.cell(6, 1).value == 1
-
-    b_math = wb["B01_P1_MATH"]
-    assert "Beta" in (b_math.cell(2, 2).value or "")
-    assert "1 missing score" in (b_math.cell(3, 2).value or "")
+    ws = wb["Missing"]
+    assert "3 missing scores" in (ws.cell(2, 2).value or "")
+    headers = [ws.cell(4, c).value for c in range(1, 8)]
+    assert headers[:5] == [
+        "#",
+        "School code",
+        "Original subject code",
+        "Subject name",
+        "Paper",
+    ]
+    school_codes = {ws.cell(r, 2).value for r in range(5, 8)}
+    subject_codes = {ws.cell(r, 3).value for r in range(5, 8)}
+    assert school_codes == {"A01", "B01"}
+    assert subject_codes == {"MATH", "ENG"}
+    assert ws.cell(5, 1).value == 1
 
 
 def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -707,12 +738,24 @@ def test_pdf_combine_p1_p2_has_dual_score_columns(monkeypatch: pytest.MonkeyPatc
     assert "row(s)" not in html
 
     excel = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(data)))
-    # Combined sheet names use P1P2
-    combined_sheet = next(n for n in excel.sheetnames if "P1P2" in n or "MATH" in n)
-    summary = excel[combined_sheet].cell(3, 2).value or ""
+    assert excel.sheetnames == ["Missing"]
+    ws = excel["Missing"]
+    summary = ws.cell(2, 2).value or ""
     assert "candidates missing papers" in summary
     assert "missing scores" not in summary
     assert "row" not in summary.lower()
+    headers = [ws.cell(4, c).value for c in range(1, 9)]
+    assert headers == [
+        "#",
+        "School code",
+        "Original subject code",
+        "Subject name",
+        "Index number",
+        "Candidate name",
+        "Missing papers",
+        None,
+    ]
+    assert ws.cell(5, 7).value in {"P1/P2", "P1"}
 
     pdf_bytes = generate_validation_report_pdf(data)
     assert isinstance(pdf_bytes, (bytes, bytearray))
@@ -1201,3 +1244,80 @@ def test_early_size_rejection_skips_render(monkeypatch: pytest.MonkeyPatch) -> N
         assert render_called["value"] is False
 
     asyncio.run(run())
+
+
+def test_locked_progress_flush_never_overlaps_under_gather() -> None:
+    """Job flush_progress must serialize session I/O across concurrent school renders."""
+    flush_lock = asyncio.Lock()
+    in_flight = 0
+    peak = 0
+
+    async def flush_progress(*, force: bool = False) -> None:
+        nonlocal in_flight, peak
+        async with flush_lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.005)
+            in_flight -= 1
+
+    async def run() -> None:
+        await asyncio.gather(*[flush_progress() for _ in range(24)])
+
+    asyncio.run(run())
+    assert peak == 1
+
+
+def test_render_per_school_files_progress_serialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parallel school renders must not overlap on_progress when lock-wrapped like the job."""
+    from app.services import score_validation_report as svr
+
+    rows = [
+        _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
+        _detail_row(
+            school_id=2,
+            school_code="B01",
+            school_name="Beta",
+            status="missing",
+        ),
+        _detail_row(
+            school_id=3,
+            school_code="C01",
+            school_name="Gamma",
+            status="missing",
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    progress: dict = {}
+    flush_lock = asyncio.Lock()
+    in_flight = 0
+    peak = 0
+
+    async def emit_progress() -> None:
+        nonlocal in_flight, peak
+        async with flush_lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        await asyncio.sleep(0.01)
+        return b"xlsx-bytes"
+
+    monkeypatch.setattr(svr.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(svr, "_pdf_worker_count", lambda _n: 3)
+
+    async def run() -> None:
+        files = await svr._render_per_school_files(
+            data=data,
+            school_ids=[1, 2, 3],
+            report_format="xlsx",
+            progress=progress,
+            emit_progress=emit_progress,
+        )
+        assert len(files) == 3
+
+    asyncio.run(run())
+    assert peak == 1
+    assert progress.get("schools_done") == 3
+    assert progress.get("schools_total") == 3
