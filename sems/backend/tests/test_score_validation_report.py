@@ -364,21 +364,73 @@ def test_excel_export_adaptive_columns_and_subject_sheets() -> None:
     assert excel_bytes[:2] == b"PK"
 
     wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
+    assert "Summary" not in wb.sheetnames
     math_ws = wb["P1_MATH"]
-    headers = [math_ws.cell(4, c).value for c in range(1, 6)]
+    # Row 1 title, 2 centre, 3 summary, 5 headers, 6+ data
+    assert math_ws.cell(2, 1).value == "Centre"
+    assert "SCH01" in (math_ws.cell(2, 2).value or "")
+    assert math_ws.cell(3, 1).value == "Summary"
+    assert "1 invalid row" in (math_ws.cell(3, 2).value or "")
+    headers = [math_ws.cell(5, c).value for c in range(1, 6)]
     assert headers == ["#", "Index number", "Candidate name", "Value", "Expected"]
-    assert math_ws.cell(5, 1).value == 1
-    assert math_ws.cell(5, 4).value == "99"
-    assert math_ws.cell(5, 5).value == "0–40"
-    assert "P1" in math_ws.cell(1, 1).value or "Maximum" in (math_ws.cell(2, 1).value or "")
+    assert math_ws.cell(6, 1).value == 1
+    assert math_ws.cell(6, 4).value == "99"
+    assert math_ws.cell(6, 5).value == "0–40"
+    assert "MATH" in (math_ws.cell(1, 1).value or "")
 
     assert "P2_ENG" in wb.sheetnames
     assert "MATH" not in wb.sheetnames  # no mixed paper-free subject sheet
 
     missing_data = _sample_report_data(status="missing")
     missing_wb = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(missing_data)))
-    missing_headers = [missing_wb["P1_MATH"].cell(4, c).value for c in range(1, 5)]
+    assert "Summary" not in missing_wb.sheetnames
+    missing_headers = [missing_wb["P1_MATH"].cell(5, c).value for c in range(1, 5)]
     assert missing_headers == ["#", "Index number", "Candidate name", None]
+
+
+def test_excel_multi_school_separate_subject_sheets() -> None:
+    """Merged multi-school workbook: one sheet per school+subject, no global Summary."""
+    rows = [
+        _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
+        _detail_row(
+            school_id=2,
+            school_code="B01",
+            school_name="Beta",
+            candidate_id=2,
+            index_number="2",
+            candidate_name="Bob",
+            status="missing",
+        ),
+        _detail_row(
+            school_id=1,
+            school_code="A01",
+            school_name="Alpha",
+            subject_id=2,
+            subject_code="ENG",
+            subject_name="English",
+            candidate_id=3,
+            index_number="3",
+            candidate_name="Cara",
+            status="missing",
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    wb = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(data)))
+    assert "Summary" not in wb.sheetnames
+    assert "A01_P1_MATH" in wb.sheetnames
+    assert "B01_P1_MATH" in wb.sheetnames
+    assert "A01_P1_ENG" in wb.sheetnames
+    # Schools must not share a paper+subject sheet
+    assert "P1_MATH" not in wb.sheetnames
+
+    a_math = wb["A01_P1_MATH"]
+    assert "Alpha" in (a_math.cell(2, 2).value or "")
+    assert "1 missing row" in (a_math.cell(3, 2).value or "")
+    assert a_math.cell(6, 1).value == 1
+
+    b_math = wb["B01_P1_MATH"]
+    assert "Beta" in (b_math.cell(2, 2).value or "")
+    assert "1 missing row" in (b_math.cell(3, 2).value or "")
 
 
 def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -429,7 +481,13 @@ def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None
     )
     assert "page-break" in html
     assert "MATH" in html and "ENG" in html
-    assert "Score Correction Worksheet" in html or "Score correction worksheet" in html
+    assert "Score correction worksheet" in html
+    assert "summary-strip" not in html  # no aggregate cover summary
+    assert html.count('class="block-summary"') == 2  # one per subject
+    assert 'content: "Page " counter(page) " / " counter(pages)' in (
+        templates / "score_validation_report" / "main.html"
+    ).read_text()
+    assert "width: 44px" in (templates / "score_validation_report" / "main.html").read_text()
     assert "col-score" in html
     assert ">Score</th>" in html or "Correct score" in html
     assert "Maximum mark" in html
@@ -438,6 +496,56 @@ def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Issue message" not in html
     assert "Extraction method" not in html
     assert "A4 portrait" in (templates / "score_validation_report" / "main.html").read_text()
+
+
+def test_pdf_no_aggregate_cover_multi_school(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each school+subject gets its own summary; no single cover listing all blocks."""
+    templates = Path(__file__).resolve().parents[1] / "templates"
+    monkeypatch.setattr(
+        "app.services.score_validation_report.settings.templates_path",
+        str(templates),
+    )
+    from jinja2 import Environment, FileSystemLoader
+
+    rows = [
+        _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
+        _detail_row(
+            school_id=2,
+            school_code="B01",
+            school_name="Beta",
+            candidate_id=2,
+            index_number="2",
+            candidate_name="Bob",
+            subject_id=2,
+            subject_code="ENG",
+            subject_name="English",
+            status="missing",
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    env = Environment(loader=FileSystemLoader(str(templates)))
+    template = env.get_template("score_validation_report/main.html")
+    html = template.render(
+        meta=data.meta,
+        summary=data.summary,
+        sections=group_rows_for_pdf(data.rows),
+        report_status="missing",
+        status_count=2,
+        columns=detail_columns_for_status("missing"),
+        logo_src="score_sheets/logo-crest-only.png",
+        status_labels={
+            "entered": "Entered",
+            "missing": "Missing",
+            "invalid": "Invalid",
+            "absent": "Absent",
+        },
+    )
+    assert "summary-strip" not in html
+    assert "Examinations · Score entry" not in html  # old cover kicker
+    assert html.count('class="block-summary"') == 2
+    assert "A01 — Alpha" in html
+    assert "B01 — Beta" in html
+    assert "MATH" in html and "ENG" in html
 
 
 def test_pdf_invalid_has_correct_score_column(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -536,8 +644,8 @@ def test_pdf_combine_p1_p2_has_dual_score_columns(monkeypatch: pytest.MonkeyPatc
     assert ">P2</th>" in html
     assert html.count("col-score-dual write-box") >= 2
     assert "P1 and/or <strong>P2</strong>" in html or "P1</strong> and/or <strong>P2" in html
-    # Single Score write column should not be the only write-in for combined mode
-    assert "Write-in:</strong> P1 and P2 score columns" in html
+    assert "Write-in: P1 and P2 score columns" in html
+    assert "block-summary" in html
 
     pdf_bytes = generate_validation_report_pdf(data)
     assert isinstance(pdf_bytes, (bytes, bytearray))
@@ -587,5 +695,67 @@ def test_slice_and_multi_school_zip_structure() -> None:
     assert len(names) == 2
     assert any("A01" in n for n in names)
     assert any("B01" in n for n in names)
-    for name in names:
-        assert name.endswith(".xlsx")
+
+
+def test_merged_multi_school_pdf_is_single_document() -> None:
+    """Merged packaging renders one PDF covering all schools (no zip)."""
+    from PyPDF2 import PdfReader
+
+    rows = [
+        _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
+        _detail_row(
+            school_id=2,
+            school_code="B01",
+            school_name="Beta",
+            candidate_id=2,
+            index_number="2",
+            candidate_name="Bob",
+            status="missing",
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    pdf_bytes = generate_validation_report_pdf(data)
+    assert pdf_bytes[:4] == b"%PDF"
+    assert len(pdf_bytes) > 100
+    # Not a zip
+    assert pdf_bytes[:2] != b"PK"
+    # Each school+subject is rendered separately then merged → one page per block here
+    assert len(PdfReader(io.BytesIO(pdf_bytes)).pages) == 2
+
+
+def test_pdf_page_numbering_independent_per_school_subject() -> None:
+    """Two school+subject blocks → two merged parts; each part is its own Page 1/M doc."""
+    from PyPDF2 import PdfReader
+
+    from app.services.score_validation_report import (
+        _iter_school_subject_blocks,
+        _render_validation_report_pdf_html,
+        _slice_report_for_rows,
+    )
+
+    rows = [
+        _detail_row(school_id=1, school_code="A01", school_name="Alpha", status="missing"),
+        _detail_row(
+            school_id=1,
+            school_code="A01",
+            school_name="Alpha",
+            subject_id=2,
+            subject_code="ENG",
+            subject_name="English",
+            candidate_id=2,
+            index_number="2",
+            candidate_name="Bob",
+            status="missing",
+        ),
+    ]
+    data = _sample_report_data(status="missing", rows=rows)
+    blocks = _iter_school_subject_blocks(data.rows)
+    assert len(blocks) == 2
+
+    part_a = _render_validation_report_pdf_html(_slice_report_for_rows(data, blocks[0]))
+    part_b = _render_validation_report_pdf_html(_slice_report_for_rows(data, blocks[1]))
+    assert len(PdfReader(io.BytesIO(part_a)).pages) == 1
+    assert len(PdfReader(io.BytesIO(part_b)).pages) == 1
+
+    merged = generate_validation_report_pdf(data)
+    assert len(PdfReader(io.BytesIO(merged)).pages) == 2

@@ -32,6 +32,7 @@ from app.routers import (
 )
 from app.services.reducto_queue import reducto_queue_service
 from app.services.document_score_extraction import reset_stale_queue_statuses
+from app.services.score_import import resume_interrupted_score_import_jobs
 from app.config import logging_settings, settings
 from starlette.types import ASGIApp
 
@@ -136,6 +137,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     "reset stale extract queue statuses",
                     extra={"count": reset_count},
                 )
+        # Resume score imports killed by process restart (e.g. compose watch)
+        resumed = await resume_interrupted_score_import_jobs()
+        if resumed:
+            logger.info(
+                "resumed interrupted score import jobs",
+                extra={"count": resumed},
+            )
         # Start Reducto queue worker after orphans are pending (do not rehydrate)
         reducto_queue_service.start_worker()
         sweeper_task = asyncio.create_task(_abandoned_upload_sweeper_loop())

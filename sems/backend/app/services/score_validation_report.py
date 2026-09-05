@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from weasyprint import HTML
+from PyPDF2 import PdfReader, PdfWriter
 
 from app.config import settings
 from app.models import (
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 LARGE_REPORT_ROW_THRESHOLD = 5000
 ReportFormat = Literal["xlsx", "pdf"]
+ReportPackaging = Literal["zip", "merged"]
 ReportStatus = Literal["entered", "missing", "invalid", "absent"]
 
 PAPER_META: dict[int, dict[str, str]] = {
@@ -817,7 +819,6 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
     )
     label_fmt = workbook.add_format({"bold": True})
     muted_fmt = workbook.add_format({"font_color": "#666666"})
-    thin = workbook.add_format({"border": 1})
 
     status_formats = {
         "entered": workbook.add_format({"bg_color": "#E8F5E9", "border": 1}),
@@ -827,103 +828,70 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
     }
 
     meta = data.meta
-    summary = data.summary
     report_status = primary_report_status(meta.statuses)
     columns = detail_columns_for_status(
         report_status,
         combine_p1_p2=meta.combine_p1_p2,
     )
 
-    # --- Summary sheet ---
-    summary_ws = workbook.add_worksheet("Summary")
-    summary_ws.set_column(0, 0, 28)
-    summary_ws.set_column(1, 6, 14)
-    r = 0
-    summary_ws.write(r, 0, "Score Validation Report", title_fmt)
-    r += 1
-    summary_ws.write(r, 0, "Examination", label_fmt)
-    summary_ws.write(r, 1, meta.exam_label)
-    r += 1
-    summary_ws.write(r, 0, "Generated", label_fmt)
-    summary_ws.write(r, 1, meta.generated_at, muted_fmt)
-    r += 1
-    summary_ws.write(r, 0, "School", label_fmt)
-    summary_ws.write(r, 1, meta.school_label or "All schools")
-    r += 1
-    summary_ws.write(r, 0, "Status", label_fmt)
-    summary_ws.write(r, 1, report_status)
-    r += 1
-    summary_ws.write(r, 0, "Subject type", label_fmt)
-    summary_ws.write(r, 1, meta.subject_type or "All")
-    r += 1
-    summary_ws.write(r, 0, "Subjects", label_fmt)
-    summary_ws.write(r, 1, ", ".join(meta.subject_labels) if meta.subject_labels else "All")
-    r += 1
-    papers = (
-        "Paper 1 or 2 (combined)"
-        if meta.combine_p1_p2
-        else (
-            ", ".join(PAPER_META[t]["short"] for t in meta.test_types if t in PAPER_META)
-            if meta.test_types
-            else "All required papers"
-        )
-    )
-    summary_ws.write(r, 0, "Papers", label_fmt)
-    summary_ws.write(r, 1, papers)
-    r += 2
-
-    summary_ws.write(r, 0, "Totals", label_fmt)
-    r += 1
-    for col, label in enumerate(["Metric", "Count"]):
-        summary_ws.write(r, col, label, header_fmt)
-    r += 1
-    summary_ws.write(r, 0, "Total rows", thin)
-    summary_ws.write(r, 1, summary.total, thin)
-    r += 1
-    summary_ws.write(r, 0, report_status.capitalize(), thin)
-    summary_ws.write(r, 1, getattr(summary, report_status), status_formats[report_status])
-    r += 2
-
-    summary_ws.write(r, 0, "By subject", label_fmt)
-    r += 1
-    subject_headers = ["Subject code", "Subject name", "Total"]
-    for col, h in enumerate(subject_headers):
-        summary_ws.write(r, col, h, header_fmt)
-    r += 1
-    for item in summary.by_subject:
-        summary_ws.write(r, 0, item["subject_code"], thin)
-        summary_ws.write(r, 1, item["subject_name"], thin)
-        summary_ws.write(r, 2, item["total"], thin)
-        r += 1
-
-    # --- One detail sheet per paper + subject (papers never mixed) ---
-    by_block: dict[tuple[int, str, str, str], list[ReportDetailRow]] = defaultdict(list)
+    # One sheet per school + paper + subject (centres never mixed on a sheet)
+    by_block: dict[
+        tuple[str, str, int, str, str, str], list[ReportDetailRow]
+    ] = defaultdict(list)
     for row in data.rows:
-        key = (row.test_type, row.subject_code, row.subject_name, row.subject_type)
+        key = (
+            row.school_code,
+            row.school_name,
+            row.test_type,
+            row.subject_code,
+            row.subject_name,
+            row.subject_type,
+        )
         by_block[key].append(row)
 
+    multi_school = len({row.school_id for row in data.rows}) > 1
     used_sheet_names: set[str] = set()
-    for (test_type, subject_code, subject_name, subject_type), block_rows in sorted(
-        by_block.items(), key=lambda x: (x[0][0], x[0][1])
+    for (
+        school_code,
+        school_name,
+        _test_type,
+        subject_code,
+        subject_name,
+        subject_type,
+    ), block_rows in sorted(
+        by_block.items(),
+        key=lambda x: (x[0][0], x[0][2], x[0][3]),
     ):
-        paper_short = block_rows[0].paper_short
-        paper_label = block_rows[0].paper_label
+        first = block_rows[0]
+        paper_short = first.paper_short
+        paper_label = first.paper_label
         max_label = _section_max_score(block_rows) or "—"
+        status_count = len(block_rows)
+
         if meta.combine_p1_p2:
             sheet_title_extra = (
-                f"{paper_label} · Missing papers per candidate · {len(block_rows)} {report_status} row(s)"
+                f"{paper_label} · Missing papers per candidate · "
+                f"{status_count} {report_status} row(s)"
             )
         else:
             sheet_title_extra = (
-                f"{paper_label} · Maximum mark: {max_label} · {len(block_rows)} {report_status} row(s)"
+                f"{paper_label} · Maximum mark: {max_label} · "
+                f"{status_count} {report_status} row(s)"
             )
-        base_name = sanitize_filename_part(
-            f"{'P1P2' if meta.combine_p1_p2 else paper_short}_{subject_code or subject_name or 'Subject'}"
-        )[:28] or "Sheet"
+
+        paper_part = "P1P2" if meta.combine_p1_p2 else paper_short
+        subject_part = subject_code or subject_name or "Subject"
+        if multi_school:
+            base_name = sanitize_filename_part(
+                f"{school_code}_{paper_part}_{subject_part}"
+            )[:31] or "Sheet"
+        else:
+            base_name = sanitize_filename_part(f"{paper_part}_{subject_part}")[:31] or "Sheet"
         sheet_name = base_name
         n = 2
-        while sheet_name in used_sheet_names or sheet_name.lower() == "summary":
-            sheet_name = f"{base_name[:25]}_{n}"
+        while sheet_name in used_sheet_names:
+            suffix = f"_{n}"
+            sheet_name = f"{base_name[: 31 - len(suffix)]}{suffix}"
             n += 1
         used_sheet_names.add(sheet_name)
 
@@ -931,37 +899,84 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
         detail_ws.write(
             0, 0, f"{subject_code} — {subject_name} ({subject_type})", title_fmt
         )
-        detail_ws.write(1, 0, sheet_title_extra, muted_fmt)
+        detail_ws.write(1, 0, "Centre", label_fmt)
+        detail_ws.write(1, 1, f"{school_code} — {school_name}", muted_fmt)
+        detail_ws.write(2, 0, "Summary", label_fmt)
+        detail_ws.write(2, 1, sheet_title_extra, muted_fmt)
 
         # Column 0 = row number; remaining columns follow adaptive headers
+        header_row = 4
         num_fmt = workbook.add_format({"border": 1, "align": "right", "font_color": "#546E7A"})
-        detail_ws.set_column(0, 0, 6)
-        detail_ws.write(3, 0, "#", header_fmt)
+        detail_ws.write(header_row, 0, "#", header_fmt)
+        for col, column in enumerate(columns, start=1):
+            detail_ws.write(header_row, col, column.header, header_fmt)
+
+        detail_ws.set_column(0, 0, 12)
         for col, column in enumerate(columns, start=1):
             detail_ws.set_column(col, col, 18 if column.key != "candidate_name" else 28)
-            detail_ws.write(3, col, column.header, header_fmt)
 
         row_fmt = status_formats[report_status]
         for n_row, row in enumerate(block_rows, start=1):
-            row_idx = 3 + n_row
+            row_idx = header_row + n_row
             detail_ws.write(row_idx, 0, n_row, num_fmt)
             for col, column in enumerate(columns, start=1):
                 detail_ws.write(row_idx, col, row_cell_value(row, column.key), row_fmt)
 
         last_col = len(columns)  # includes # at col 0
         if block_rows:
-            detail_ws.autofilter(3, 0, 3 + len(block_rows), last_col)
-        detail_ws.freeze_panes(4, 0)
+            detail_ws.autofilter(header_row, 0, header_row + len(block_rows), last_col)
+        detail_ws.freeze_panes(header_row + 1, 0)
         detail_ws.set_portrait()
         detail_ws.fit_to_pages(1, 0)
-        detail_ws.repeat_rows(3)
+        detail_ws.repeat_rows(header_row)
 
     workbook.close()
     output.seek(0)
     return output.getvalue()
 
 
-def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
+def _slice_report_for_rows(
+    data: ScoreValidationReportData,
+    rows: list[ReportDetailRow],
+) -> ScoreValidationReportData:
+    """Build a one-block report (single school+subject) for independent PDF page numbering."""
+    if not rows:
+        raise ValueError("No rows to slice")
+    sample = rows[0]
+    meta = ReportMeta(
+        exam_id=data.meta.exam_id,
+        exam_label=data.meta.exam_label,
+        exam_year=data.meta.exam_year,
+        exam_series=data.meta.exam_series,
+        exam_type=data.meta.exam_type,
+        school_id=sample.school_id,
+        school_label=f"{sample.school_code} — {sample.school_name}",
+        school_code=sample.school_code,
+        subject_type=data.meta.subject_type,
+        subject_ids=data.meta.subject_ids,
+        subject_labels=data.meta.subject_labels,
+        test_types=data.meta.test_types,
+        statuses=list(data.meta.statuses),
+        generated_at=data.meta.generated_at,
+        row_count=len(rows),
+        combine_p1_p2=data.meta.combine_p1_p2,
+    )
+    return ScoreValidationReportData(meta=meta, summary=build_summary(rows), rows=rows)
+
+
+def _iter_school_subject_blocks(
+    rows: list[ReportDetailRow],
+) -> list[list[ReportDetailRow]]:
+    """Flat list of row groups in school → paper → subject order."""
+    blocks: list[list[ReportDetailRow]] = []
+    for school in group_rows_for_pdf(rows):
+        for paper in school["papers"]:
+            for subject in paper["subjects"]:
+                blocks.append(list(subject["rows"]))
+    return blocks
+
+
+def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes:
     templates_dir = Path(settings.templates_path).resolve()
     env = Environment(loader=FileSystemLoader(str(templates_dir)))
     template = env.get_template("score_validation_report/main.html")
@@ -993,6 +1008,30 @@ def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
     return HTML(string=html, base_url=base_url).write_pdf()
 
 
+def generate_validation_report_pdf(data: ScoreValidationReportData) -> bytes:
+    """Render PDF with Page N/M numbering independent per school+subject block.
+
+    WeasyPrint's ``counter(pages)`` is document-wide, so each school+subject
+    block is rendered as its own PDF (Page 1/M … M/M) and the parts are merged.
+    """
+    blocks = _iter_school_subject_blocks(data.rows)
+    if not blocks:
+        return _render_validation_report_pdf_html(data)
+    if len(blocks) == 1:
+        return _render_validation_report_pdf_html(_slice_report_for_rows(data, blocks[0]))
+
+    writer = PdfWriter()
+    for block_rows in blocks:
+        part = _render_validation_report_pdf_html(_slice_report_for_rows(data, block_rows))
+        reader = PdfReader(io.BytesIO(part))
+        for page in reader.pages:
+            writer.add_page(page)
+
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def _render_report_file(data: ScoreValidationReportData, report_format: ReportFormat) -> bytes:
     if report_format == "pdf":
         return generate_validation_report_pdf(data)
@@ -1011,6 +1050,7 @@ async def generate_score_validation_report_bytes(
     report_format: ReportFormat = "xlsx",
     progress: dict[str, Any] | None = None,
     combine_p1_p2: bool = False,
+    packaging: ReportPackaging = "zip",
 ) -> tuple[bytes, str, ScoreValidationReportData]:
     if progress is not None:
         progress.update({"stage": "building", "message": "Building report rows…"})
@@ -1069,7 +1109,39 @@ async def generate_score_validation_report_bytes(
             )
         return file_bytes, filename, data
 
-    # Multi-school → zip of per-school files
+    # Multi-school: merge into one file, or zip per-school files
+    if packaging == "merged":
+        if progress is not None:
+            progress.update(
+                {
+                    "stage": "rendering",
+                    "schools_total": len(school_ids),
+                    "schools_done": 0,
+                    "message": f"Rendering merged report for {len(school_ids)} schools…",
+                }
+            )
+        filename = await generate_report_filename(
+            session,
+            exam_id=exam_id,
+            school_id=None,
+            subject_type=subject_type,
+            test_types=test_types,
+            statuses=statuses or list(data.meta.statuses),  # type: ignore[arg-type]
+            report_format=report_format,
+            combine_p1_p2=data.meta.combine_p1_p2,
+        )
+        file_bytes = _render_report_file(data, report_format)
+        if progress is not None:
+            progress.update(
+                {
+                    "stage": "ready",
+                    "schools_done": len(school_ids),
+                    "schools_total": len(school_ids),
+                    "message": "Merged report ready",
+                }
+            )
+        return file_bytes, filename, data
+
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for idx, sid in enumerate(school_ids, start=1):
@@ -1143,6 +1215,10 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
 
             subject_type_raw = metadata.get("subject_type")
             report_format: ReportFormat = metadata.get("format") or "xlsx"
+            packaging_raw = metadata.get("packaging") or "zip"
+            packaging: ReportPackaging = (
+                "merged" if packaging_raw == "merged" else "zip"
+            )
 
             # Re-bind progress dict so generate updates it; flush after return
             file_bytes, filename, data = await generate_score_validation_report_bytes(
@@ -1156,6 +1232,7 @@ async def process_score_validation_report_job(tracking_id: int) -> None:
                 report_format=report_format,
                 progress=progress,
                 combine_p1_p2=bool(metadata.get("combine_p1_p2")),
+                packaging=packaging,
             )
             await flush_progress()
 

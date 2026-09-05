@@ -277,7 +277,11 @@ async def ensure_process_type_enum_values(manager: DatabaseSessionManager) -> No
     try:
         async with manager._engine.connect() as conn:
             await conn.execution_options(isolation_level="AUTOCOMMIT")
-            for label in ("RESULTS_EXPORT", "SCORE_VALIDATION_REPORT"):
+            for label in (
+                "RESULTS_EXPORT",
+                "SCORE_VALIDATION_REPORT",
+                "SCORE_IMPORT",
+            ):
                 await conn.execute(
                     text(f"ALTER TYPE processtype ADD VALUE IF NOT EXISTS '{label}'")
                 )

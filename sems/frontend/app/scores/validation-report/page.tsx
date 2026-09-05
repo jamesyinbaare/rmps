@@ -157,6 +157,7 @@ export default function ScoreValidationReportPage() {
 
   const [examId, setExamId] = useState<number | undefined>();
   const [schoolId, setSchoolId] = useState<number | undefined>();
+  const [packaging, setPackaging] = useState<"zip" | "merged">("zip");
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilterValue>("ALL");
   const [subjectIds, setSubjectIds] = useState<number[]>([]);
   const [testTypes, setTestTypes] = useState<number[]>([]);
@@ -253,6 +254,7 @@ export default function ScoreValidationReportPage() {
             : undefined,
         status,
         combine_p1_p2: combineP1P2 || undefined,
+        packaging: schoolId == null ? packaging : undefined,
         page,
         page_size: PREVIEW_PAGE_SIZE,
         ...overrides,
@@ -261,6 +263,7 @@ export default function ScoreValidationReportPage() {
     [
       examId,
       schoolId,
+      packaging,
       subjectTypeFilter,
       subjectIds,
       testTypes,
@@ -445,7 +448,7 @@ export default function ScoreValidationReportPage() {
           <div className="flex min-w-0 items-baseline gap-3">
             <span>Validation Report</span>
             <span className="hidden truncate text-sm font-normal text-muted-foreground lg:inline">
-              One status at a time · one file per school · zip when multiple
+              One status at a time · zip or merge when all schools
             </span>
           </div>
         }
@@ -481,7 +484,7 @@ export default function ScoreValidationReportPage() {
               options={schoolOptions}
               value={schoolId ?? "all"}
               allowAll
-              allLabel="All schools (zip)"
+              allLabel="All schools"
               onValueChange={(value) => {
                 if (value === "all" || value === "") {
                   setSchoolId(undefined);
@@ -494,6 +497,49 @@ export default function ScoreValidationReportPage() {
               placeholder="All schools"
             />
           </div>
+
+          {schoolId == null && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Multi-school delivery
+              </p>
+              <div
+                role="group"
+                aria-label="Multi-school delivery"
+                className="flex rounded-md border bg-background p-0.5"
+              >
+                <button
+                  type="button"
+                  onClick={() => setPackaging("zip")}
+                  className={cn(
+                    "flex-1 rounded-sm px-3 py-2 text-center text-sm transition-colors",
+                    packaging === "zip"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                >
+                  Zip (separate)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPackaging("merged")}
+                  className={cn(
+                    "flex-1 rounded-sm px-3 py-2 text-center text-sm transition-colors",
+                    packaging === "merged"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                >
+                  Merged file
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {packaging === "zip"
+                  ? "One PDF/Excel per school, packaged as a zip."
+                  : "All schools combined into a single PDF or Excel file."}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1 md:col-span-2">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -736,7 +782,9 @@ export default function ScoreValidationReportPage() {
           )}
           {!schoolId && examId && (
             <span className="text-sm text-muted-foreground">
-              All schools → one file per school, delivered as a zip
+              {packaging === "zip"
+                ? "All schools → one file per school (zip)"
+                : "All schools → single merged file"}
             </span>
           )}
         </div>

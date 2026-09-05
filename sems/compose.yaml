@@ -21,6 +21,11 @@ services:
             - ./backend/.venv/
             - .venv
             - ./backend/storage/
+            - ./backend/**/__pycache__/
+            - ./backend/**/*.pyc
+            - ./backend/.pytest_cache/
+            - ./backend/**/.pytest_cache/
+            - ./backend/tests/
         - action: rebuild
           path: ./backend/pyproject.toml
     restart: always
