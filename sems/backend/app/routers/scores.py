@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import io
 import logging
 from typing import Any, Literal
 from urllib.parse import quote
@@ -100,15 +101,19 @@ from app.services.results_export import (
 )
 from app.services.score_import import (
     LARGE_IMPORT_ROW_THRESHOLD,
+    file_checksum,
+    find_idempotent_score_import_job,
     generate_missing_scores_import_template,
     generate_score_import_template,
     import_scores,
     normalize_score_import_columns,
+    parse_score_import_file,
     start_score_import_job,
     validate_score_import_columns,
 )
 from app.services.storage import storage_service
-from app.services.subject_upload import SubjectUploadParseError, parse_upload_file
+from app.services.subject_upload import SubjectUploadParseError
+from app.services.score_import_pipeline import build_errors_csv
 from app.services.score_validation_report import (
     build_score_validation_report,
     generate_report_filename,
@@ -3864,6 +3869,7 @@ async def import_subject_scores(
     test_type: int = Form(..., ge=1, le=2, description="1 = Paper 1, 2 = Paper 2"),
     file: UploadFile = File(...),
     school_id: int | None = Form(None, description="Optional school scope for index lookup"),
+    dry_run: bool = Form(False, description="Validate and match without writing scores"),
 ) -> ScoreImportResponse | ScoreImportJobCreateResponse:
     """Import CORE and ELECTIVE scores. Large files (>5k rows) run as a background job."""
     file_content = await file.read()
@@ -3871,13 +3877,40 @@ async def import_subject_scores(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
 
     filename = file.filename or "scores.xlsx"
+    checksum = file_checksum(file_content)
 
     exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
 
+    # Idempotent resume for non-dry-run uploads of the same file fingerprint
+    if not dry_run:
+        existing = await find_idempotent_score_import_job(
+            session,
+            exam_id=exam_id,
+            test_type=test_type,
+            school_id=school_id,
+            checksum=checksum,
+        )
+        if existing is not None:
+            meta = existing.process_metadata or {}
+            total_rows = int(meta.get("total_rows") or 0)
+            if existing.status == ProcessStatus.PENDING:
+                start_score_import_job(existing.id)
+            return JSONResponse(
+                status_code=status.HTTP_202_ACCEPTED,
+                content=ScoreImportJobCreateResponse(
+                    job_id=existing.id,
+                    status=existing.status.value,
+                    total_rows=total_rows,
+                    async_job=True,
+                    dry_run=False,
+                    resumed_existing=True,
+                ).model_dump(),
+            )
+
     try:
-        df = parse_upload_file(file_content, filename)
+        df = parse_score_import_file(file_content, filename)
         df = normalize_score_import_columns(df)
         validate_score_import_columns(df)
     except (SubjectUploadParseError, ValueError) as e:
@@ -3885,7 +3918,7 @@ async def import_subject_scores(
 
     total_rows = len(df)
 
-    # Large files: async job
+    # Large files (or dry-run of large files): async job — pass preparsed only for sync path
     if total_rows > LARGE_IMPORT_ROW_THRESHOLD:
         file_path, _ = await storage_service.save(file_content, filename)
         tracking = ProcessTracking(
@@ -3906,6 +3939,8 @@ async def import_subject_scores(
                 "updated": 0,
                 "errors": [],
                 "errors_truncated": False,
+                "dry_run": dry_run,
+                "file_checksum": checksum,
             },
         )
         session.add(tracking)
@@ -3919,6 +3954,7 @@ async def import_subject_scores(
                 status=tracking.status.value,
                 total_rows=total_rows,
                 async_job=True,
+                dry_run=dry_run,
             ).model_dump(),
         )
 
@@ -3931,6 +3967,8 @@ async def import_subject_scores(
             filename=filename,
             school_id=school_id,
             enforce_row_limit=False,
+            dry_run=dry_run,
+            preparsed_df=df,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -3941,6 +3979,62 @@ async def import_subject_scores(
             detail=f"Failed to import scores: {e}",
         ) from e
 
+    errors_file_available = False
+    if result.all_errors:
+        # Persist error artifact for sync imports so UI can download full list
+        try:
+            csv_bytes = build_errors_csv(result.all_errors)
+            err_path, _ = await storage_service.save(
+                csv_bytes,
+                f"score_import_errors_sync_{exam_id}_{checksum[:12]}.csv",
+            )
+            errors_file_available = True
+            # Stash path on a lightweight ProcessTracking row for download endpoint
+            tracking = ProcessTracking(
+                exam_id=exam_id,
+                school_id=school_id,
+                process_type=ProcessType.SCORE_IMPORT,
+                status=ProcessStatus.COMPLETED,
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+                process_metadata={
+                    "filename": filename,
+                    "test_type": test_type,
+                    "school_id": school_id,
+                    "total_rows": result.total_rows,
+                    "processed_rows": result.total_rows,
+                    "successful": result.successful,
+                    "failed": result.failed,
+                    "skipped": result.skipped,
+                    "updated": result.updated,
+                    "errors": [e.as_dict() for e in result.errors],
+                    "errors_truncated": result.errors_truncated,
+                    "errors_file_path": err_path,
+                    "dry_run": dry_run,
+                    "file_checksum": checksum,
+                    "sync_import": True,
+                },
+            )
+            session.add(tracking)
+            await session.commit()
+            await session.refresh(tracking)
+            return ScoreImportResponse(
+                successful=result.successful,
+                failed=result.failed,
+                skipped=result.skipped,
+                updated=result.updated,
+                errors=[ScoreImportErrorItem(**err.as_dict()) for err in result.errors],
+                errors_truncated=result.errors_truncated,
+                total_rows=result.total_rows,
+                job_id=tracking.id,
+                async_job=False,
+                dry_run=dry_run,
+                errors_file_available=True,
+                file_checksum=checksum,
+            )
+        except Exception:
+            logger.exception("Failed to persist sync import error artifact")
+
     return ScoreImportResponse(
         successful=result.successful,
         failed=result.failed,
@@ -3950,6 +4044,9 @@ async def import_subject_scores(
         errors_truncated=result.errors_truncated,
         total_rows=result.total_rows,
         async_job=False,
+        dry_run=dry_run,
+        errors_file_available=errors_file_available,
+        file_checksum=checksum,
     )
 
 
@@ -3990,4 +4087,68 @@ async def get_score_import_job_status(
         error_message=tracking.error_message,
         started_at=tracking.started_at,
         completed_at=tracking.completed_at,
+        dry_run=bool(metadata.get("dry_run")),
+        errors_file_available=bool(metadata.get("errors_file_path")),
+        file_checksum=metadata.get("file_checksum"),
+    )
+
+
+@router.get("/import/jobs/{job_id}/errors")
+async def download_score_import_job_errors(
+    job_id: int,
+    session: DBSessionDep,
+    _user: OfficerDep,
+) -> StreamingResponse:
+    """Download full error CSV for a score import job (when truncated or any failures)."""
+    tracking = (
+        await session.execute(
+            select(ProcessTracking).where(
+                ProcessTracking.id == job_id,
+                ProcessTracking.process_type == ProcessType.SCORE_IMPORT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not tracking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Score import job not found")
+
+    metadata = tracking.process_metadata or {}
+    errors_file_path = metadata.get("errors_file_path")
+    if not errors_file_path:
+        # Fall back to inline errors if no artifact was stored
+        errors_raw = metadata.get("errors") or []
+        if not errors_raw:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No import errors available for this job",
+            )
+        from app.services.score_import_pipeline import ScoreImportRowError as _Err
+
+        csv_bytes = build_errors_csv(
+            [
+                _Err(
+                    row=int(e.get("row") or 0),
+                    index_number=e.get("index_number"),
+                    subject_code=e.get("subject_code"),
+                    message=e.get("message") or "",
+                )
+                for e in errors_raw
+            ]
+        )
+    else:
+        try:
+            csv_bytes = await storage_service.retrieve(errors_file_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Error artifact file not found",
+            ) from exc
+
+    filename = f"score_import_errors_job_{job_id}.csv"
+    encoded = quote(filename, safe="")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded}"
+        },
     )

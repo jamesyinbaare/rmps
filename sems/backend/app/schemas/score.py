@@ -480,6 +480,9 @@ class ScoreImportResponse(BaseModel):
     total_rows: int | None = None
     job_id: int | None = None
     async_job: bool = False
+    dry_run: bool = False
+    errors_file_available: bool = False
+    file_checksum: str | None = None
 
 
 class ScoreImportJobCreateResponse(BaseModel):
@@ -487,6 +490,8 @@ class ScoreImportJobCreateResponse(BaseModel):
     status: str
     total_rows: int
     async_job: bool = True
+    dry_run: bool = False
+    resumed_existing: bool = False
 
 
 class ScoreImportJobStatusResponse(BaseModel):
@@ -504,3 +509,6 @@ class ScoreImportJobStatusResponse(BaseModel):
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    dry_run: bool = False
+    errors_file_available: bool = False
+    file_checksum: str | None = None

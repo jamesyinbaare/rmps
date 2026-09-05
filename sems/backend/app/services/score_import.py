@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import re
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
@@ -17,7 +16,6 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import (
     Candidate,
-    DataExtractionMethod,
     Exam,
     ExamRegistration,
     ExamSubject,
@@ -27,173 +25,62 @@ from app.models import (
     School,
     Subject,
     SubjectRegistration,
-    SubjectScore,
 )
-from app.services.subject_upload import SubjectUploadParseError, parse_upload_file
-from app.utils.score_utils import is_absent, parse_score_value, validate_score_range
+from app.services.score_import_pipeline import (
+    IMPORT_PROGRESS_EVERY,
+    LARGE_IMPORT_ROW_THRESHOLD,
+    MAX_STORED_IMPORT_ERRORS,
+    ScoreImportResult,
+    ScoreImportRowError,
+    build_errors_csv,
+    file_checksum,
+    import_scores_pipeline,
+    is_skip_score_value,
+    new_job_key,
+    normalize_score_import_columns,
+    paper_extraction_attr,
+    paper_field_name,
+    paper_is_required_for_import,
+    paper_score_is_missing,
+    parse_score_import_file,
+    validate_score_import_columns,
+)
 
 logger = logging.getLogger(__name__)
 
-LARGE_IMPORT_ROW_THRESHOLD = 5000
-MAX_STORED_IMPORT_ERRORS = 500
-IMPORT_COMMIT_EVERY = 500
-IMPORT_PROGRESS_EVERY = 250
-# Only one uvicorn worker should resume interrupted imports on startup.
+# Re-export constants / types used by router + tests
+__all__ = [
+    "LARGE_IMPORT_ROW_THRESHOLD",
+    "MAX_STORED_IMPORT_ERRORS",
+    "IMPORT_PROGRESS_EVERY",
+    "IMPORT_COMMIT_EVERY",
+    "ScoreImportResult",
+    "ScoreImportRowError",
+    "import_scores",
+    "import_core_scores",
+    "normalize_score_import_columns",
+    "validate_score_import_columns",
+    "parse_score_import_file",
+    "is_skip_score_value",
+    "paper_field_name",
+    "paper_extraction_attr",
+    "paper_score_is_missing",
+    "generate_score_import_template",
+    "generate_missing_scores_import_template",
+    "start_score_import_job",
+    "process_score_import_job",
+    "resume_interrupted_score_import_jobs",
+    "is_stale_in_progress",
+    "find_idempotent_score_import_job",
+    "file_checksum",
+]
+
+# Back-compat alias (old commit cadence); apply uses IMPORT_APPLY_BATCH_SIZE now.
+IMPORT_COMMIT_EVERY = 2000
+
 SCORE_IMPORT_RESUME_LOCK_KEY = 874_291_556_301
-# Do not reset IN_PROGRESS jobs claimed moments ago by a sibling worker.
 STALE_IMPORT_IN_PROGRESS_SECONDS = 5 * 60
 PaperTestType = Literal[1, 2]
-SKIP_SCORE_TOKENS = frozenset({"N/A", "NA"})
-
-REQUIRED_COLUMNS = ("index_number", "subject_code", "score")
-OPTIONAL_COLUMNS = ("subject_name",)
-
-COLUMN_ALIASES: dict[str, str] = {
-    "index_number": "index_number",
-    "index": "index_number",
-    "indexnumber": "index_number",
-    "candidate_index": "index_number",
-    "candidate_index_number": "index_number",
-    "subject_code": "subject_code",
-    "subjectcode": "subject_code",
-    "code": "subject_code",
-    "original_code": "subject_code",
-    "score": "score",
-    "raw_score": "score",
-    "mark": "score",
-    "marks": "score",
-    "subject_name": "subject_name",
-    "subjectname": "subject_name",
-    "name": "subject_name",
-}
-
-
-@dataclass
-class ScoreImportRowError:
-    row: int
-    index_number: str | None = None
-    subject_code: str | None = None
-    message: str = ""
-
-    def as_dict(self) -> dict[str, str]:
-        out: dict[str, str] = {"row": str(self.row), "message": self.message}
-        if self.index_number is not None:
-            out["index_number"] = self.index_number
-        if self.subject_code is not None:
-            out["subject_code"] = self.subject_code
-        return out
-
-
-@dataclass
-class ScoreImportResult:
-    successful: int = 0
-    failed: int = 0
-    skipped: int = 0
-    updated: int = 0
-    total_rows: int = 0
-    errors: list[ScoreImportRowError] = field(default_factory=list)
-    errors_truncated: bool = False
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "successful": self.successful,
-            "failed": self.failed,
-            "skipped": self.skipped,
-            "updated": self.updated,
-            "total_rows": self.total_rows,
-            "errors": [e.as_dict() for e in self.errors],
-            "errors_truncated": self.errors_truncated,
-        }
-
-
-def _normalize_header(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"[\s\-]+", "_", text)
-    return text
-
-
-def normalize_score_import_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename columns to canonical names using aliases."""
-    rename: dict[str, str] = {}
-    used_targets: set[str] = set()
-    for col in df.columns:
-        key = _normalize_header(col)
-        target = COLUMN_ALIASES.get(key)
-        if target and target not in used_targets:
-            rename[col] = target
-            used_targets.add(target)
-    return df.rename(columns=rename)
-
-
-def validate_score_import_columns(df: pd.DataFrame) -> None:
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"Missing required column(s): {', '.join(missing)}. "
-            f"Expected: {', '.join(REQUIRED_COLUMNS)}"
-        )
-
-
-def _cell_str(value: Any) -> str | None:
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if isinstance(value, str) and not value.strip():
-        return None
-    # Avoid "12.0" for integer Excel numbers
-    if isinstance(value, float) and value == int(value):
-        return str(int(value))
-    if isinstance(value, int):
-        return str(value)
-    text = str(value).strip()
-    return text or None
-
-
-def is_skip_score_value(score_text: str | None) -> bool:
-    """Blank or N/A / NA means skip (do not update / not registered)."""
-    if score_text is None:
-        return True
-    normalized = score_text.strip().upper()
-    if not normalized:
-        return True
-    return normalized in SKIP_SCORE_TOKENS
-
-
-def paper_field_name(test_type: PaperTestType) -> str:
-    return "obj_raw_score" if test_type == 1 else "essay_raw_score"
-
-
-def paper_extraction_attr(test_type: PaperTestType) -> str:
-    return "obj_extraction_method" if test_type == 1 else "essay_extraction_method"
-
-
-def paper_max_for_exam_subject(exam_subject: ExamSubject, test_type: PaperTestType) -> float | None:
-    if test_type == 1:
-        return exam_subject.obj_max_score
-    return exam_subject.essay_max_score
-
-
-def paper_is_required_for_import(exam_subject: ExamSubject, test_type: PaperTestType) -> bool:
-    max_score = paper_max_for_exam_subject(exam_subject, test_type)
-    return max_score is not None and max_score > 0
-
-
-def paper_score_is_missing(subject_score: SubjectScore | None, test_type: PaperTestType) -> bool:
-    if subject_score is None:
-        return True
-    raw = getattr(subject_score, paper_field_name(test_type), None)
-    if raw is None:
-        return True
-    if isinstance(raw, str) and not raw.strip():
-        return True
-    return False
-
-
-def subject_lookup_keys(subject: Subject) -> set[str]:
-    keys: set[str] = set()
-    for raw in (subject.original_code, subject.code):
-        if raw and str(raw).strip():
-            keys.add(str(raw).strip().upper())
-    return keys
 
 
 def _subject_display_code(subject: Subject) -> str:
@@ -224,14 +111,13 @@ def _write_score_import_xlsx(
         ws.column_dimensions["B"].width = 16
         ws.column_dimensions["C"].width = 36
         ws.column_dimensions["D"].width = 12
-        # Force text cells — pandas treats "N/A"/"NA" as missing when writing Excel
         for row_idx, row in enumerate(rows, start=2):
             for col_idx, key in enumerate(
                 ("index_number", "subject_code", "subject_name", "score"), start=1
             ):
                 raw = row.get(key, "")
-                text = "" if raw is None else str(raw)
-                cell = ws.cell(row=row_idx, column=col_idx, value=text)
+                text_val = "" if raw is None else str(raw)
+                cell = ws.cell(row=row_idx, column=col_idx, value=text_val)
                 if col_idx in (1, 2, 4):
                     cell.number_format = "@"
 
@@ -246,11 +132,7 @@ async def generate_score_import_template(
     test_type: PaperTestType,
     exam_id: int | None = None,
 ) -> tuple[bytes, str]:
-    """
-    Build a format-only Excel template (example rows, not real candidates).
-
-    Optional exam_id only affects the download filename when provided.
-    """
+    """Build a format-only Excel template (example rows, not real candidates)."""
     if test_type not in (1, 2):
         raise ValueError("test_type must be 1 (Paper 1) or 2 (Paper 2)")
 
@@ -293,10 +175,7 @@ async def generate_missing_scores_import_template(
     subject_id: int,
     school_id: int | None = None,
 ) -> tuple[bytes, str]:
-    """
-    Prefill rows for candidates registered for subject_id with a missing score
-    on the selected paper.
-    """
+    """Prefill rows for candidates registered for subject_id with a missing score."""
     if test_type not in (1, 2):
         raise ValueError("test_type must be 1 (Paper 1) or 2 (Paper 2)")
 
@@ -318,7 +197,14 @@ async def generate_missing_scores_import_template(
     if not exam_subject:
         raise ValueError("Subject is not offered on this examination")
 
-    if not paper_is_required_for_import(exam_subject, test_type):
+    from app.services.score_import_pipeline import ExamSubjectInfo
+
+    info = ExamSubjectInfo(
+        id=exam_subject.id,
+        obj_max_score=exam_subject.obj_max_score,
+        essay_max_score=exam_subject.essay_max_score,
+    )
+    if not paper_is_required_for_import(info, test_type):
         raise ValueError(f"Paper {test_type} is not required for this subject")
 
     if school_id is not None:
@@ -364,7 +250,10 @@ async def generate_missing_scores_import_template(
             {
                 "index_number": "",
                 "subject_code": subject_code,
-                "subject_name": f"{subject_name} — no missing {('P1' if test_type == 1 else 'P2')} scores in scope",
+                "subject_name": (
+                    f"{subject_name} — no missing "
+                    f"{('P1' if test_type == 1 else 'P2')} scores in scope"
+                ),
                 "score": "",
             }
         ]
@@ -390,257 +279,85 @@ async def import_scores(
     school_id: int | None = None,
     enforce_row_limit: bool = True,
     progress_callback: Any | None = None,
+    dry_run: bool = False,
+    job_key: str | None = None,
+    preparsed_df: pd.DataFrame | None = None,
 ) -> ScoreImportResult:
     """
     Import CORE and ELECTIVE subject scores for one paper from an Excel/CSV file.
 
     Blank and N/A score cells are skipped. Non-blank values overwrite the selected paper field.
-
-    When enforce_row_limit is True, files above LARGE_IMPORT_ROW_THRESHOLD raise ValueError
-    (callers should start an async job instead).
+    When dry_run is True, validation/matching runs but no scores are written.
     """
-    if test_type not in (1, 2):
-        raise ValueError("test_type must be 1 (Paper 1) or 2 (Paper 2)")
-
-    exam = (await session.execute(select(Exam).where(Exam.id == exam_id))).scalar_one_or_none()
-    if not exam:
-        raise ValueError("Examination not found")
-
-    if school_id is not None:
-        school = (await session.execute(select(School).where(School.id == school_id))).scalar_one_or_none()
-        if not school:
-            raise ValueError("School not found")
-
-    try:
-        df = parse_upload_file(file_content, filename)
-    except SubjectUploadParseError as exc:
-        raise ValueError(str(exc)) from exc
-
-    df = normalize_score_import_columns(df)
-    validate_score_import_columns(df)
-
-    total_rows = len(df)
-    if enforce_row_limit and total_rows > LARGE_IMPORT_ROW_THRESHOLD:
-        raise ValueError(
-            f"File has {total_rows} rows; maximum for synchronous import is {LARGE_IMPORT_ROW_THRESHOLD}. "
-            "Use async import or filter by school."
-        )
-
-    # Load all exam subjects for this exam (CORE + ELECTIVE)
-    es_stmt = (
-        select(ExamSubject)
-        .join(Subject, ExamSubject.subject_id == Subject.id)
-        .where(ExamSubject.exam_id == exam_id)
-        .options(selectinload(ExamSubject.subject))
+    return await import_scores_pipeline(
+        session,
+        exam_id=exam_id,
+        test_type=test_type,
+        file_content=file_content,
+        filename=filename,
+        school_id=school_id,
+        enforce_row_limit=enforce_row_limit,
+        progress_callback=progress_callback,
+        dry_run=dry_run,
+        job_key=job_key,
+        preparsed_df=preparsed_df,
     )
-    exam_subjects = (await session.execute(es_stmt)).scalars().all()
-    subject_by_code: dict[str, ExamSubject] = {}
-    for es in exam_subjects:
-        for key in subject_lookup_keys(es.subject):
-            subject_by_code[key] = es
 
-    # Load exam registrations (+ optional school filter)
-    reg_stmt = (
-        select(ExamRegistration)
-        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
-        .where(ExamRegistration.exam_id == exam_id)
-        .options(
-            selectinload(ExamRegistration.subject_registrations)
-            .selectinload(SubjectRegistration.subject_score),
-            selectinload(ExamRegistration.subject_registrations).selectinload(
-                SubjectRegistration.exam_subject
+
+async def find_idempotent_score_import_job(
+    session: AsyncSession,
+    *,
+    exam_id: int,
+    test_type: int,
+    school_id: int | None,
+    checksum: str,
+) -> ProcessTracking | None:
+    """
+    Return an in-flight SCORE_IMPORT job for the same file fingerprint.
+
+    Matches PENDING / IN_PROGRESS jobs with identical
+    (exam_id, test_type, school_id, file_checksum). Completed jobs are not
+    reused so operators can re-import the same file intentionally.
+    """
+    stmt = (
+        select(ProcessTracking)
+        .where(
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.SCORE_IMPORT,
+            ProcessTracking.status.in_(
+                [
+                    ProcessStatus.PENDING,
+                    ProcessStatus.IN_PROGRESS,
+                ]
             ),
         )
+        .order_by(ProcessTracking.id.desc())
+        .limit(50)
     )
     if school_id is not None:
-        reg_stmt = reg_stmt.where(Candidate.school_id == school_id)
-    registrations = (await session.execute(reg_stmt)).scalars().all()
-    reg_by_index: dict[str, ExamRegistration] = {
-        (r.index_number or "").strip(): r for r in registrations if r.index_number
-    }
+        stmt = stmt.where(ProcessTracking.school_id == school_id)
+    else:
+        stmt = stmt.where(ProcessTracking.school_id.is_(None))
 
-    def resolve_registration(index_number: str) -> ExamRegistration | None:
-        """Match index; tolerate Excel stripping leading zeros from numeric cells."""
-        exact = reg_by_index.get(index_number)
-        if exact is not None:
-            return exact
-        stripped = index_number.lstrip("0") or "0"
-        matches = [
-            reg
-            for key, reg in reg_by_index.items()
-            if (key.lstrip("0") or "0") == stripped
-        ]
-        return matches[0] if len(matches) == 1 else None
-
-    def record_error(result: ScoreImportResult, err: ScoreImportRowError) -> None:
-        result.failed += 1
-        if len(result.errors) < MAX_STORED_IMPORT_ERRORS:
-            result.errors.append(err)
-        else:
-            result.errors_truncated = True
-
-    result = ScoreImportResult(total_rows=total_rows)
-    field_name = paper_field_name(test_type)
-    extraction_attr = paper_extraction_attr(test_type)
-    method = DataExtractionMethod.MANUAL_ENTRY_PHYSICAL
-    pending_writes = 0
-
-    for offset, (_, series) in enumerate(df.iterrows()):
-        excel_row = offset + 2  # header is row 1
-        index_number = _cell_str(series.get("index_number"))
-        subject_code_raw = _cell_str(series.get("subject_code"))
-        score_raw = series.get("score")
-
-        # Blank or N/A → skip (do not clear; N/A = not registered / ignore)
-        score_text = _cell_str(score_raw)
-        if is_skip_score_value(score_text):
-            result.skipped += 1
-        elif not index_number:
-            record_error(
-                result,
-                ScoreImportRowError(
-                    row=excel_row,
-                    subject_code=subject_code_raw,
-                    message="index_number is required",
-                ),
-            )
-        elif not subject_code_raw:
-            record_error(
-                result,
-                ScoreImportRowError(
-                    row=excel_row,
-                    index_number=index_number,
-                    message="subject_code is required",
-                ),
-            )
-        else:
-            subject_key = subject_code_raw.upper()
-            exam_subject = subject_by_code.get(subject_key)
-            if not exam_subject:
-                record_error(
-                    result,
-                    ScoreImportRowError(
-                        row=excel_row,
-                        index_number=index_number,
-                        subject_code=subject_code_raw,
-                        message="Subject not found for this examination",
-                    ),
-                )
-            elif not paper_is_required_for_import(exam_subject, test_type):
-                record_error(
-                    result,
-                    ScoreImportRowError(
-                        row=excel_row,
-                        index_number=index_number,
-                        subject_code=subject_code_raw,
-                        message=f"Paper {test_type} is not required for this subject",
-                    ),
-                )
-            else:
-                exam_reg = resolve_registration(index_number)
-                if not exam_reg:
-                    record_error(
-                        result,
-                        ScoreImportRowError(
-                            row=excel_row,
-                            index_number=index_number,
-                            subject_code=subject_code_raw,
-                            message="Candidate index number not found for this examination"
-                            + (" / school" if school_id is not None else ""),
-                        ),
-                    )
-                else:
-                    subject_reg = next(
-                        (
-                            sr
-                            for sr in exam_reg.subject_registrations
-                            if sr.exam_subject_id == exam_subject.id
-                        ),
-                        None,
-                    )
-                    if not subject_reg:
-                        record_error(
-                            result,
-                            ScoreImportRowError(
-                                row=excel_row,
-                                index_number=index_number,
-                                subject_code=subject_code_raw,
-                                message="Candidate is not registered for this subject",
-                            ),
-                        )
-                    else:
-                        subject_score = subject_reg.subject_score
-                        if not subject_score:
-                            subject_score = SubjectScore(
-                                subject_registration_id=subject_reg.id,
-                                total_score=0.0,
-                            )
-                            session.add(subject_score)
-                            await session.flush()
-                            subject_reg.subject_score = subject_score
-
-                        try:
-                            parsed = parse_score_value(score_text)
-                        except ValueError as exc:
-                            record_error(
-                                result,
-                                ScoreImportRowError(
-                                    row=excel_row,
-                                    index_number=index_number,
-                                    subject_code=subject_code_raw,
-                                    message=str(exc),
-                                ),
-                            )
-                        else:
-                            max_score = paper_max_for_exam_subject(exam_subject, test_type)
-                            out_of_range = False
-                            if max_score is not None and parsed is not None and not is_absent(parsed):
-                                ok, err = validate_score_range(parsed, max_score)
-                                if not ok:
-                                    record_error(
-                                        result,
-                                        ScoreImportRowError(
-                                            row=excel_row,
-                                            index_number=index_number,
-                                            subject_code=subject_code_raw,
-                                            message=err or "Score out of range",
-                                        ),
-                                    )
-                                    out_of_range = True
-                            if not out_of_range:
-                                setattr(subject_score, field_name, parsed)
-                                setattr(subject_score, extraction_attr, method)
-                                result.successful += 1
-                                result.updated += 1
-                                pending_writes += 1
-
-        processed = offset + 1
-        if pending_writes >= IMPORT_COMMIT_EVERY:
-            await session.commit()
-            pending_writes = 0
-        if progress_callback and (
-            processed % IMPORT_PROGRESS_EVERY == 0 or processed == total_rows
+    rows = (await session.execute(stmt)).scalars().all()
+    for row in rows:
+        meta = row.process_metadata or {}
+        if (
+            int(meta.get("test_type") or 0) == int(test_type)
+            and meta.get("file_checksum") == checksum
+            and not meta.get("dry_run")
         ):
-            await progress_callback(processed, result)
-
-    await session.commit()
-    if progress_callback:
-        await progress_callback(total_rows, result)
-    return result
+            return row
+    return None
 
 
 async def process_score_import_job(tracking_id: int) -> None:
-    """Background entry point: process a saved score import job.
-
-    Uses an atomic claim so only one worker processes a job when multiple
-    uvicorn workers (or startup resume) race to start the same tracking id.
-    """
+    """Background entry point: process a saved score import job."""
     from app.dependencies.database import get_sessionmanager
     from app.services.storage import storage_service
 
     sessionmanager = get_sessionmanager()
 
-    # Claim PENDING (or re-claim after restart reset) so dual workers don't double-run.
     async with sessionmanager.session() as claim_session:
         claimed = (
             await claim_session.execute(
@@ -680,7 +397,9 @@ async def process_score_import_job(tracking_id: int) -> None:
         filename = metadata.get("filename") or "scores.xlsx"
         test_type = int(metadata.get("test_type") or 1)
         school_id = metadata.get("school_id")
+        dry_run = bool(metadata.get("dry_run"))
         exam_id = tracking.exam_id
+        job_key = new_job_key(tracking_id=tracking_id)
 
         async def _persist_progress(
             *,
@@ -688,7 +407,6 @@ async def process_score_import_job(tracking_id: int) -> None:
             error_message: str | None = None,
             **extra: Any,
         ) -> None:
-            """Update job progress in a separate session so import ORM state stays intact."""
             async with sessionmanager.session() as progress_session:
                 row = (
                     await progress_session.execute(
@@ -721,6 +439,7 @@ async def process_score_import_job(tracking_id: int) -> None:
                 updated=0,
                 errors=[],
                 errors_truncated=False,
+                errors_file_path=None,
             )
 
             if not file_path:
@@ -740,6 +459,8 @@ async def process_score_import_job(tracking_id: int) -> None:
                     updated=result.updated,
                     errors=[e.as_dict() for e in result.errors],
                     errors_truncated=result.errors_truncated,
+                    dry_run=result.dry_run,
+                    file_checksum=result.file_checksum,
                 )
 
             result = await import_scores(
@@ -751,7 +472,23 @@ async def process_score_import_job(tracking_id: int) -> None:
                 school_id=int(school_id) if school_id is not None else None,
                 enforce_row_limit=False,
                 progress_callback=on_progress,
+                dry_run=dry_run,
+                job_key=job_key,
             )
+
+            errors_file_path = None
+            if result.all_errors:
+                try:
+                    csv_bytes = build_errors_csv(result.all_errors)
+                    errors_file_path, _ = await storage_service.save(
+                        csv_bytes,
+                        f"score_import_errors_{tracking_id}.csv",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist error artifact for score import job %s",
+                        tracking_id,
+                    )
 
             await _persist_progress(
                 status=ProcessStatus.COMPLETED,
@@ -763,6 +500,9 @@ async def process_score_import_job(tracking_id: int) -> None:
                 updated=result.updated,
                 errors=[e.as_dict() for e in result.errors],
                 errors_truncated=result.errors_truncated,
+                errors_file_path=errors_file_path,
+                dry_run=result.dry_run,
+                file_checksum=result.file_checksum,
             )
         except Exception as exc:
             logger.exception("Score import job %s failed", tracking_id)
@@ -772,7 +512,9 @@ async def process_score_import_job(tracking_id: int) -> None:
                     error_message=str(exc),
                 )
             except Exception:
-                logger.exception("Failed to mark score import job %s as failed", tracking_id)
+                logger.exception(
+                    "Failed to mark score import job %s as failed", tracking_id
+                )
 
 
 def start_score_import_job(tracking_id: int) -> None:
@@ -803,12 +545,7 @@ def is_stale_in_progress(
 
 
 async def resume_interrupted_score_import_jobs() -> int:
-    """After a process restart, re-queue SCORE_IMPORT jobs that were cut off mid-run.
-
-    Only one worker leads (Postgres advisory lock). Fresh IN_PROGRESS claims from a
-    sibling worker are left alone; only stale IN_PROGRESS jobs are reset to PENDING.
-    Atomic claim inside process_score_import_job still prevents double-processing.
-    """
+    """After a process restart, re-queue SCORE_IMPORT jobs that were cut off mid-run."""
     from app.dependencies.database import get_sessionmanager
 
     sessionmanager = get_sessionmanager()

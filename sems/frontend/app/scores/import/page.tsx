@@ -33,6 +33,7 @@ import { examLabel } from "@/components/results/exam-label";
 import { DATA_ENTRY_EXAM_STORAGE_KEY } from "@/hooks/useDataEntryExamScope";
 import {
   downloadMissingScoresImportTemplate,
+  downloadScoreImportJobErrors,
   downloadScoreImportTemplate,
   getAllExams,
   getAllSchools,
@@ -57,6 +58,7 @@ const RULE_CHIPS = [
   { label: "Blank → skip", hint: "Empty score cells are ignored" },
   { label: "N/A → skip", hint: "Not registered / ignore row" },
   { label: "Filled → overwrite", hint: "Replaces existing marks for that paper" },
+  { label: "CSV preferred", hint: "For 70k+ rows, CSV parses much faster than Excel" },
 ] as const;
 
 const FLOW_STEPS = [
@@ -123,6 +125,7 @@ export default function ScoreImportPage() {
   const [jobProgress, setJobProgress] = useState<ScoreImportJobStatus | null>(null);
   const [result, setResult] = useState<ScoreImportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingErrors, setDownloadingErrors] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,12 +250,14 @@ export default function ScoreImportPage() {
       : 0;
 
   const validateAndSetFile = (selectedFile: File) => {
-    const validExtensions = [".xlsx", ".xls", ".csv"];
+    const validExtensions = [".xlsx", ".csv"];
     const ext = selectedFile.name
       .toLowerCase()
       .substring(selectedFile.name.lastIndexOf("."));
     if (!validExtensions.includes(ext)) {
-      setError("Invalid file type. Please select an Excel (.xlsx, .xls) or CSV (.csv) file.");
+      setError(
+        "Invalid file type. Please select Excel (.xlsx) or CSV (.csv). Legacy .xls is not supported."
+      );
       setFile(null);
       return;
     }
@@ -354,7 +359,8 @@ export default function ScoreImportPage() {
     }
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (opts?: { dryRun?: boolean }) => {
+    const useDryRun = opts?.dryRun === true;
     if (examId == null) {
       setError("Select an examination first");
       return;
@@ -378,12 +384,17 @@ export default function ScoreImportPage() {
           test_type: testType,
           file,
           school_id: schoolId ?? undefined,
+          dry_run: useDryRun,
         },
         (status) => setJobProgress(status)
       );
       setResult(response);
       setJobProgress(null);
-      if (response.failed === 0) {
+      if (response.dry_run) {
+        toast.success(
+          `Dry run: ${response.updated} would update, ${response.failed} failed, ${response.skipped} skipped`
+        );
+      } else if (response.failed === 0) {
         toast.success(`Updated ${response.updated} ${paperShortLabel} score(s)`);
       } else {
         toast.warning(
@@ -396,6 +407,22 @@ export default function ScoreImportPage() {
       toast.error(message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDownloadErrors = async () => {
+    if (result?.job_id == null) {
+      toast.error("No error report available");
+      return;
+    }
+    setDownloadingErrors(true);
+    try {
+      await downloadScoreImportJobErrors(result.job_id);
+      toast.success("Error report downloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download errors");
+    } finally {
+      setDownloadingErrors(false);
     }
   };
 
@@ -762,7 +789,7 @@ export default function ScoreImportPage() {
                     browse
                   </span>
                   {" · "}
-                  .xlsx · .xls · .csv
+                  .xlsx · .csv (CSV preferred for large files)
                 </p>
               </div>
             ) : (
@@ -829,7 +856,7 @@ export default function ScoreImportPage() {
               ref={fileInputRef}
               id="score-import-file"
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".xlsx,.csv"
               className="hidden"
               disabled={!scopeReady || uploading}
               onChange={(e) => {
@@ -888,37 +915,52 @@ export default function ScoreImportPage() {
               </div>
             )}
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <p className="text-xs text-muted-foreground">
                 {!scopeReady
                   ? "Select examination and paper to enable import."
                   : !file
                     ? "Drop or browse a file to continue."
                     : uploading
-                      ? "Please wait while scores are applied…"
-                      : `Ready to overwrite ${selectedPaper?.short} only.`}
+                      ? "Please wait…"
+                      : `Validate first for large files, then import ${selectedPaper?.short} only.`}
               </p>
-              <Button
-                type="button"
-                size="lg"
-                className="w-full sm:w-auto sm:min-w-[11rem]"
-                onClick={handleUpload}
-                disabled={!canImport}
-              >
-                {uploading ? (
-                  <>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  className="w-full sm:w-auto"
+                  onClick={() => void handleUpload({ dryRun: true })}
+                  disabled={!canImport}
+                >
+                  {uploading ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Importing…
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    {paperShortLabel
-                      ? `Import ${selectedPaper?.short} scores`
-                      : "Import scores"}
-                  </>
-                )}
-              </Button>
+                  ) : null}
+                  Validate
+                </Button>
+                <Button
+                  type="button"
+                  size="lg"
+                  className="w-full sm:w-auto sm:min-w-[11rem]"
+                  onClick={() => void handleUpload({ dryRun: false })}
+                  disabled={!canImport}
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Importing…
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="mr-2 h-4 w-4" />
+                      {paperShortLabel
+                        ? `Import ${selectedPaper?.short} scores`
+                        : "Import scores"}
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         </section>
@@ -1018,15 +1060,39 @@ export default function ScoreImportPage() {
             {result.errors.length === 0 ? (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-600/25 bg-emerald-600/5 px-3 py-2.5 text-sm text-emerald-800 dark:text-emerald-400">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                All rows applied — no errors.
+                {result.dry_run
+                  ? "Dry run complete — all rows would apply with no errors."
+                  : "All rows applied — no errors."}
               </div>
             ) : (
               <div className="space-y-2">
-                {result.errors_truncated && (
-                  <p className="text-xs text-muted-foreground">
-                    Showing the first errors only; additional failures were truncated.
-                  </p>
-                )}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {result.errors_truncated ? (
+                    <p className="text-xs text-muted-foreground">
+                      Showing the first errors only; download the full report for all failures.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {result.dry_run ? "Dry run errors (nothing written)." : "Row errors"}
+                    </p>
+                  )}
+                  {(result.errors_file_available || result.job_id != null) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={downloadingErrors || result.job_id == null}
+                      onClick={() => void handleDownloadErrors()}
+                    >
+                      {downloadingErrors ? (
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-3.5 w-3.5" />
+                      )}
+                      Download errors CSV
+                    </Button>
+                  )}
+                </div>
                 <div className="max-h-80 overflow-auto rounded-xl border">
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-card">
