@@ -30,7 +30,28 @@ from app.services.score_validation_report import (
     parse_test_types,
     primary_report_status,
     should_use_report_job,
+    status_count_label,
 )
+
+
+def _template_count_label(report_status: str, *, combine_p1_p2: bool = False):
+    return lambda n: status_count_label(n, report_status, combine_p1_p2=combine_p1_p2)
+
+
+def test_status_count_label_normal_and_combine() -> None:
+    assert status_count_label(1, "missing") == "1 missing score"
+    assert status_count_label(30, "missing") == "30 missing scores"
+    assert status_count_label(1, "invalid") == "1 invalid score"
+    assert status_count_label(2, "entered") == "2 entered scores"
+    assert status_count_label(1, "absent") == "1 absent score"
+    assert (
+        status_count_label(1, "missing", combine_p1_p2=True)
+        == "1 candidate missing papers"
+    )
+    assert (
+        status_count_label(30, "missing", combine_p1_p2=True)
+        == "30 candidates missing papers"
+    )
 
 
 def _make_score(**kwargs) -> SubjectScore:
@@ -370,7 +391,8 @@ def test_excel_export_adaptive_columns_and_subject_sheets() -> None:
     assert math_ws.cell(2, 1).value == "Centre"
     assert "SCH01" in (math_ws.cell(2, 2).value or "")
     assert math_ws.cell(3, 1).value == "Summary"
-    assert "1 invalid row" in (math_ws.cell(3, 2).value or "")
+    assert "1 invalid score" in (math_ws.cell(3, 2).value or "")
+    assert "row" not in (math_ws.cell(3, 2).value or "").lower()
     headers = [math_ws.cell(5, c).value for c in range(1, 6)]
     assert headers == ["#", "Index number", "Candidate name", "Value", "Expected"]
     assert math_ws.cell(6, 1).value == 1
@@ -425,12 +447,12 @@ def test_excel_multi_school_separate_subject_sheets() -> None:
 
     a_math = wb["A01_P1_MATH"]
     assert "Alpha" in (a_math.cell(2, 2).value or "")
-    assert "1 missing row" in (a_math.cell(3, 2).value or "")
+    assert "1 missing score" in (a_math.cell(3, 2).value or "")
     assert a_math.cell(6, 1).value == 1
 
     b_math = wb["B01_P1_MATH"]
     assert "Beta" in (b_math.cell(2, 2).value or "")
-    assert "1 missing row" in (b_math.cell(3, 2).value or "")
+    assert "1 missing score" in (b_math.cell(3, 2).value or "")
 
 
 def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -478,12 +500,15 @@ def test_pdf_export_subject_page_breaks(monkeypatch: pytest.MonkeyPatch) -> None
             "invalid": "Invalid",
             "absent": "Absent",
         },
+        status_count_label=_template_count_label(report_status),
     )
     assert "page-break" in html
     assert "MATH" in html and "ENG" in html
     assert "Score correction worksheet" in html
     assert "summary-strip" not in html  # no aggregate cover summary
     assert html.count('class="block-summary"') == 2  # one per subject
+    assert "1 missing score" in html
+    assert "row(s)" not in html
     assert 'content: "Page " counter(page) " / " counter(pages)' in (
         templates / "score_validation_report" / "main.html"
     ).read_text()
@@ -539,6 +564,7 @@ def test_pdf_no_aggregate_cover_multi_school(monkeypatch: pytest.MonkeyPatch) ->
             "invalid": "Invalid",
             "absent": "Absent",
         },
+        status_count_label=_template_count_label("missing"),
     )
     assert "summary-strip" not in html
     assert "Examinations · Score entry" not in html  # old cover kicker
@@ -576,10 +602,13 @@ def test_pdf_invalid_has_correct_score_column(monkeypatch: pytest.MonkeyPatch) -
             "invalid": "Invalid",
             "absent": "Absent",
         },
+        status_count_label=_template_count_label("invalid"),
     )
     assert "Correct score" in html
     assert ">Expected</th>" not in html
     assert "bad-value" in html
+    assert "1 invalid score" in html
+    assert "row(s)" not in html
     pdf_bytes = generate_validation_report_pdf(data)
     assert pdf_bytes[:4] == b"%PDF"
 
@@ -638,6 +667,7 @@ def test_pdf_combine_p1_p2_has_dual_score_columns(monkeypatch: pytest.MonkeyPatc
             "invalid": "Invalid",
             "absent": "Absent",
         },
+        status_count_label=_template_count_label("missing", combine_p1_p2=True),
     )
     assert "Missing papers" in html
     assert ">P1</th>" in html
@@ -646,6 +676,17 @@ def test_pdf_combine_p1_p2_has_dual_score_columns(monkeypatch: pytest.MonkeyPatc
     assert "P1 and/or <strong>P2</strong>" in html or "P1</strong> and/or <strong>P2" in html
     assert "Write-in: P1 and P2 score columns" in html
     assert "block-summary" in html
+    assert "2 candidates missing papers" in html
+    assert "missing scores" not in html
+    assert "row(s)" not in html
+
+    excel = openpyxl.load_workbook(io.BytesIO(generate_validation_report_excel(data)))
+    # Combined sheet names use P1P2
+    combined_sheet = next(n for n in excel.sheetnames if "P1P2" in n or "MATH" in n)
+    summary = excel[combined_sheet].cell(3, 2).value or ""
+    assert "candidates missing papers" in summary
+    assert "missing scores" not in summary
+    assert "row" not in summary.lower()
 
     pdf_bytes = generate_validation_report_pdf(data)
     assert isinstance(pdf_bytes, (bytes, bytearray))

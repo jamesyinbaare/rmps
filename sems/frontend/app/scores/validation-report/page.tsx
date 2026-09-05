@@ -86,6 +86,21 @@ const STATUS_OPTIONS: { id: ScoreValidationReportStatus; label: string; hint: st
   { id: "absent", label: "Absent", hint: "Write-in if sat" },
 ];
 
+function previewCountLabel(
+  status: ScoreValidationReportStatus,
+  count: number,
+  combineP1P2: boolean
+): string {
+  const n = count.toLocaleString();
+  if (combineP1P2) {
+    return count === 1
+      ? `${n} candidate missing papers`
+      : `${n} candidates missing papers`;
+  }
+  const noun = count === 1 ? "score" : "scores";
+  return `${n} ${status} ${noun}`;
+}
+
 type PreviewColumn = { key: string; header: string };
 
 function previewColumnsForStatus(
@@ -794,8 +809,7 @@ export default function ScoreValidationReportPage() {
             <p className="text-sm font-medium">
               Preview{" "}
               <span className="font-normal text-muted-foreground">
-                ({totalRows.toLocaleString()} {selectedStatus} row
-                {totalRows === 1 ? "" : "s"})
+                ({previewCountLabel(selectedStatus, totalRows, combineP1P2)})
               </span>
             </p>
             <div className="flex items-center gap-2">

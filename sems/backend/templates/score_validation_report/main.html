@@ -395,7 +395,7 @@
               {% endif %}
               <tr>
                 <th>{{ status_labels[report_status] }}</th>
-                <td class="num">{{ subject.subtotals.total }} row(s)</td>
+                <td class="num">{{ status_count_label(subject.subtotals.total) }}</td>
               </tr>
             </tbody>
           </table>
@@ -472,7 +472,7 @@
             Highlighted cells are for handwriting
           </div>
           <div class="right">
-            {{ paper.paper_short }} · {{ subject.subject_code }} · {{ subject.subtotals.total }} row(s)
+            {{ paper.paper_short }} · {{ subject.subject_code }} · {{ status_count_label(subject.subtotals.total) }}
           </div>
         </div>
 

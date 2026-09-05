@@ -455,6 +455,20 @@ def primary_report_status(statuses: list[str] | list[ReportStatus] | None) -> Re
     return DEFAULT_STATUS
 
 
+def status_count_label(
+    count: int,
+    status: ReportStatus | str,
+    *,
+    combine_p1_p2: bool = False,
+) -> str:
+    """Short plural-aware count for UI / PDF / Excel (not 'row(s)')."""
+    if combine_p1_p2:
+        noun = "candidate" if count == 1 else "candidates"
+        return f"{count} {noun} missing papers"
+    noun = "score" if count == 1 else "scores"
+    return f"{count} {status} {noun}"
+
+
 def parse_test_types(raw: str | list[int] | None) -> list[int] | None:
     if raw is None or raw == "" or raw == []:
         return None
@@ -867,16 +881,19 @@ def generate_validation_report_excel(data: ScoreValidationReportData) -> bytes:
         paper_label = first.paper_label
         max_label = _section_max_score(block_rows) or "—"
         status_count = len(block_rows)
+        count_phrase = status_count_label(
+            status_count,
+            report_status,
+            combine_p1_p2=bool(meta.combine_p1_p2),
+        )
 
         if meta.combine_p1_p2:
             sheet_title_extra = (
-                f"{paper_label} · Missing papers per candidate · "
-                f"{status_count} {report_status} row(s)"
+                f"{paper_label} · Missing papers per candidate · {count_phrase}"
             )
         else:
             sheet_title_extra = (
-                f"{paper_label} · Maximum mark: {max_label} · "
-                f"{status_count} {report_status} row(s)"
+                f"{paper_label} · Maximum mark: {max_label} · {count_phrase}"
             )
 
         paper_part = "P1P2" if meta.combine_p1_p2 else paper_short
@@ -1002,6 +1019,9 @@ def _render_validation_report_pdf_html(data: ScoreValidationReportData) -> bytes
             "invalid": "Invalid",
             "absent": "Absent",
         },
+        "status_count_label": lambda n: status_count_label(
+            n, report_status, combine_p1_p2=bool(data.meta.combine_p1_p2)
+        ),
     }
     html = template.render(context)
     base_url = templates_dir.as_uri() + "/"
