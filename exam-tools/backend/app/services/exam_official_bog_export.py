@@ -79,6 +79,8 @@ class BogExportRow:
     allocated_scripts: int | None = None
     # Counts aligned to script_paper_numbers passed into bog_workbook_bytes.
     paper_script_counts: tuple[int, ...] = ()
+    # Optional amount/int columns inserted before Amount (e.g. allowances breakdown).
+    extra_values: tuple[Decimal | int, ...] = ()
 
 
 _FILL_INCOMPLETE = PatternFill(fill_type="solid", fgColor="FDE68A")
@@ -296,10 +298,12 @@ def bog_workbook_bytes(
     include_workforce_detail: bool = False,
     work_unit_label: str = "Scripts",
     script_paper_numbers: list[int] | None = None,
+    extra_headers_before_amount: list[tuple[str, int]] | None = None,
 ) -> bytes:
     rows = prebuilt_rows if prebuilt_rows is not None else bog_export_rows(pairs, rates_by_designation)
     total = bog_grand_total(rows)
     papers = list(script_paper_numbers or [])
+    extras = list(extra_headers_before_amount or [])
 
     wb = Workbook()
     ws = wb.active
@@ -366,6 +370,20 @@ def bog_workbook_bytes(
         amount_col = AMOUNT_COLUMN
         allocated_col = None
         paper_cols = []
+
+    extra_cols: list[int] = []
+    if extras:
+        insert_at = headers.index("Amount (GHS)")
+        for i, (label, width) in enumerate(extras):
+            headers.insert(insert_at + i, label)
+            widths.insert(insert_at + i, width)
+        extra_cols = [insert_at + 1 + i for i in range(len(extras))]
+        amount_col = headers.index("Amount (GHS)") + 1
+        designation_col = headers.index("Designation") + 1
+        if allocated_col is not None:
+            allocated_col = headers.index("Allocated scripts") + 1
+            paper_cols = [headers.index(f"Paper {paper} scripts") + 1 for paper in papers]
+
     ncols = len(headers)
     start_row = 1
 
@@ -399,6 +417,12 @@ def bog_workbook_bytes(
         for col_i, paper_col in enumerate(paper_cols):
             count = row.paper_script_counts[col_i] if col_i < len(row.paper_script_counts) else 0
             _write_int_cell(ws, r, paper_col, int(count))
+        for col_i, extra_col in enumerate(extra_cols):
+            value = row.extra_values[col_i] if col_i < len(row.extra_values) else 0
+            if isinstance(value, int) and not isinstance(value, bool):
+                _write_int_cell(ws, r, extra_col, value)
+            else:
+                _write_amount_cell(ws, r, extra_col, Decimal(value))
         _write_amount_cell(ws, r, amount_col, row.amount)
         _style_data_row(
             ws,

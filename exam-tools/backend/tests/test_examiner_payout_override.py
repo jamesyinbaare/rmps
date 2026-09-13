@@ -209,7 +209,7 @@ def test_read_payout_override_spreadsheet_aliases() -> None:
 
 @pytest.mark.asyncio
 async def test_assign_reference_code_accepts_explicit_subject_id(monkeypatch) -> None:
-    """Payout override examiners have no ExaminerSubject; subject_id must be passed explicitly."""
+    """Explicit subject_id still works for special examiners when provided."""
     from unittest.mock import AsyncMock
 
     import app.services.examiner_reference_code as ref_mod
@@ -241,3 +241,43 @@ async def test_assign_reference_code_accepts_explicit_subject_id(monkeypatch) ->
 
     code = await assign_reference_code_to_examiner(session, ex, subject_id=7)
     assert code == "MATH301-NAE1"
+
+
+@pytest.mark.asyncio
+async def test_assign_reference_code_special_without_subject(monkeypatch) -> None:
+    """Special examiners with no subjects get SPEC-{region}{role}{seq} codes."""
+    from unittest.mock import AsyncMock
+
+    import app.services.examiner_reference_code as ref_mod
+    from app.services.examiner_reference_code import (
+        SPECIAL_REFERENCE_PREFIX,
+        assign_reference_code_to_examiner,
+    )
+
+    ex = Examiner(
+        id=uuid4(),
+        examination_id=1,
+        name="Special No Subject",
+        examiner_type=ExaminerType.ASSISTANT,
+        region=Region.GREATER_ACCRA,
+        portal_token="tok4",
+        roster_source=ExaminerRosterSource.SPECIAL,
+    )
+    assert ex.subjects == []
+
+    session = AsyncMock()
+
+    async def fake_ensure(session, examination_id):
+        return False
+
+    async def fake_with_prefix(session, examination_id, region, examiner_type, subject_prefix):
+        assert subject_prefix == SPECIAL_REFERENCE_PREFIX
+        assert examination_id == 1
+        return "SPEC-SAE1"
+
+    monkeypatch.setattr(ref_mod, "ensure_default_region_groups", fake_ensure)
+    monkeypatch.setattr(ref_mod, "assign_reference_code_with_prefix", fake_with_prefix)
+
+    code = await assign_reference_code_to_examiner(session, ex)
+    assert code == "SPEC-SAE1"
+    assert ex.reference_code == "SPEC-SAE1"

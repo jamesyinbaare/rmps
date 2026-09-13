@@ -64,6 +64,7 @@ import {
 import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
 import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
 import { formatGhsAmount } from "@/lib/format-ghs";
+import { getMe, type UserMe } from "@/lib/auth";
 import type { VisibilityState } from "@tanstack/react-table";
 
 const SECTION_ID = "examiner-subject-summary";
@@ -140,12 +141,19 @@ function ExaminerAccountsBySubjectContent() {
     EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
   );
   const [urlHydrated, setUrlHydrated] = useState(false);
+  const [me, setMe] = useState<UserMe | null>(null);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedRowsKeyRef = useRef("");
   const pendingSubjectFromUrlRef = useRef<string | null>(null);
   const pendingPaperFromUrlRef = useRef<string | null | undefined>(undefined);
   const pendingCohortFromUrlRef = useRef<string | null>(null);
+
+  const canManagePayoutEdits = me?.role === "SUPER_ADMIN";
+
+  useEffect(() => {
+    void getMe().then(setMe).catch(() => setMe(null));
+  }, []);
 
   const parsedSubjectId = subjectId ? Number.parseInt(subjectId, 10) : null;
   const canLoad = examId != null && !!subjectId.trim();
@@ -921,24 +929,26 @@ function ExaminerAccountsBySubjectContent() {
               paperNumber={paperNumber}
               payoutView={payoutView}
               columnVisibility={columnVisibility}
-              onEditCeReportCount={openCeReportEdit}
+              onEditCeReportCount={canManagePayoutEdits ? openCeReportEdit : undefined}
             />
           </section>
         ) : null}
       </div>
 
-      <ExaminerCeReportCountModal
-        open={ceEditRow != null}
-        row={ceEditRow}
-        busy={ceEditBusy}
-        error={ceEditError}
-        value={ceReportCount}
-        onClose={() => {
-          if (!ceEditBusy) setCeEditRow(null);
-        }}
-        onSubmit={() => void saveCeReportCount()}
-        onValueChange={setCeReportCount}
-      />
+      {canManagePayoutEdits ? (
+        <ExaminerCeReportCountModal
+          open={ceEditRow != null}
+          row={ceEditRow}
+          busy={ceEditBusy}
+          error={ceEditError}
+          value={ceReportCount}
+          onClose={() => {
+            if (!ceEditBusy) setCeEditRow(null);
+          }}
+          onSubmit={() => void saveCeReportCount()}
+          onValueChange={setCeReportCount}
+        />
+      ) : null}
       <ExaminerAllowanceExportFieldsDialog
         open={excelExportOpen}
         onClose={() => {

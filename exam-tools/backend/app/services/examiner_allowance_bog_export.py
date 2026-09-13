@@ -54,6 +54,18 @@ _MODE_FILENAME_SLUGS: dict[ExaminerBogPayoutMode, str] = {
     ExaminerBogPayoutMode.ALL: "examiners",
 }
 
+# Breakdown columns for BoG allowances & marking (taxable lines are net payable).
+ALLOWANCES_MARKING_BREAKDOWN_HEADERS: list[tuple[str, int]] = [
+    ("Responsibility (GHS)", 14),
+    ("Inconvenience (GHS)", 14),
+    ("Report count", 12),
+    ("Chief Examiner's Report (GHS)", 16),
+    ("Vetting of Scripts (GHS)", 18),
+    ("Sitting allowance (GHS)", 16),
+    ("Marking (GHS)", 14),
+    ("Adjustments (GHS)", 14),
+]
+
 
 def payout_amount_for_mode(item: AdminExaminerAllowanceRow, mode: ExaminerBogPayoutMode) -> Decimal:
     if mode == ExaminerBogPayoutMode.TRAVEL_COMMUTING:
@@ -83,6 +95,21 @@ def include_script_paper_columns(mode: ExaminerBogPayoutMode) -> bool:
     return mode != ExaminerBogPayoutMode.TRAVEL_COMMUTING
 
 
+def allowances_marking_breakdown_values(
+    item: AdminExaminerAllowanceRow,
+) -> tuple[Decimal | int, ...]:
+    return (
+        item.responsibility_allowance_ghs,
+        item.inconvenience_allowance_ghs,
+        int(item.chief_examiners_report_count or 0),
+        item.chief_examiners_report_ghs,
+        item.vetting_net_ghs,
+        item.sitting_net_ghs,
+        item.marking_net_ghs,
+        item.adjustments_net_ghs,
+    )
+
+
 def bog_rows_from_admin_items(
     items: list[AdminExaminerAllowanceRow],
     mode: ExaminerBogPayoutMode = ExaminerBogPayoutMode.ALL,
@@ -94,6 +121,7 @@ def bog_rows_from_admin_items(
     serial = 0
     papers = list(paper_numbers or [])
     attach_scripts = include_script_paper_columns(mode)
+    include_breakdown = mode == ExaminerBogPayoutMode.ALLOWANCES_MARKING
     sorted_items = sorted(items, key=lambda r: (r.examiner_type, r.full_name.lower()))
     for item in sorted_items:
         account = (item.account_number or "").strip()
@@ -120,6 +148,7 @@ def bog_rows_from_admin_items(
                 reference_code=(item.reference_code or "").strip(),
                 allocated_scripts=allocated,
                 paper_script_counts=paper_counts,
+                extra_values=allowances_marking_breakdown_values(item) if include_breakdown else (),
             )
         )
     return rows
@@ -182,6 +211,11 @@ def examiner_bog_workbook_bytes(
         subject_id=subject_id,
         paper_numbers=papers,
     )
+    extras = (
+        ALLOWANCES_MARKING_BREAKDOWN_HEADERS
+        if mode == ExaminerBogPayoutMode.ALLOWANCES_MARKING
+        else None
+    )
     return bog_workbook_bytes(
         [],
         {},
@@ -189,6 +223,7 @@ def examiner_bog_workbook_bytes(
         prebuilt_rows=rows,
         include_phone=True,
         script_paper_numbers=papers if include_script_paper_columns(mode) else None,
+        extra_headers_before_amount=extras,
     )
 
 

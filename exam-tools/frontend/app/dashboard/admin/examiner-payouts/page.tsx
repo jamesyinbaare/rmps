@@ -39,6 +39,7 @@ import {
 import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
 import type { ExaminerAllowanceOptionalExportField } from "@/lib/examiner-allowance-export-fields";
 import { formatGhsAmount } from "@/lib/format-ghs";
+import { getMe, type UserMe } from "@/lib/auth";
 import {
   buildExaminerAccountsBySubjectHref,
   officialAccountsBtnSecondary,
@@ -112,9 +113,16 @@ function ExaminerPayoutsContent() {
   const [adjEditBusy, setAdjEditBusy] = useState(false);
   const [adjEditError, setAdjEditError] = useState<string | null>(null);
   const [urlHydrated, setUrlHydrated] = useState(false);
+  const [me, setMe] = useState<UserMe | null>(null);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedQueryKeyRef = useRef("");
+
+  const canManagePayoutEdits = me?.role === "SUPER_ADMIN";
+
+  useEffect(() => {
+    void getMe().then(setMe).catch(() => setMe(null));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -527,36 +535,40 @@ function ExaminerPayoutsContent() {
             }}
             payoutView={payoutView}
             columnVisibility={columnVisibility}
-            onEditCeReportCount={openCeReportEdit}
-            onEditPayoutAdjustments={openAdjustmentsEdit}
+            onEditCeReportCount={canManagePayoutEdits ? openCeReportEdit : undefined}
+            onEditPayoutAdjustments={canManagePayoutEdits ? openAdjustmentsEdit : undefined}
           />
         </section>
       </div>
 
-      <ExaminerCeReportCountModal
-        open={ceEditRow != null}
-        row={ceEditRow}
-        busy={ceEditBusy}
-        error={ceEditError}
-        value={ceReportCount}
-        onClose={() => {
-          if (!ceEditBusy) setCeEditRow(null);
-        }}
-        onSubmit={() => void saveCeReportCount()}
-        onValueChange={setCeReportCount}
-      />
-      <ExaminerPayoutAdjustmentsModal
-        open={adjEditRow != null}
-        row={adjEditRow}
-        busy={adjEditBusy}
-        error={adjEditError}
-        lines={adjLines}
-        onClose={() => {
-          if (!adjEditBusy) setAdjEditRow(null);
-        }}
-        onSubmit={() => void saveAdjustments()}
-        onLinesChange={setAdjLines}
-      />
+      {canManagePayoutEdits ? (
+        <ExaminerCeReportCountModal
+          open={ceEditRow != null}
+          row={ceEditRow}
+          busy={ceEditBusy}
+          error={ceEditError}
+          value={ceReportCount}
+          onClose={() => {
+            if (!ceEditBusy) setCeEditRow(null);
+          }}
+          onSubmit={() => void saveCeReportCount()}
+          onValueChange={setCeReportCount}
+        />
+      ) : null}
+      {canManagePayoutEdits ? (
+        <ExaminerPayoutAdjustmentsModal
+          open={adjEditRow != null}
+          row={adjEditRow}
+          busy={adjEditBusy}
+          error={adjEditError}
+          lines={adjLines}
+          onClose={() => {
+            if (!adjEditBusy) setAdjEditRow(null);
+          }}
+          onSubmit={() => void saveAdjustments()}
+          onLinesChange={setAdjLines}
+        />
+      ) : null}
       <ExaminerAllowanceExportFieldsDialog
         open={excelExportOpen}
         onClose={() => {

@@ -23,7 +23,7 @@ import {
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
-const cellPad = "px-3 py-2 align-top";
+const cellPad = "px-3 py-1.5 align-top";
 const stickyBg = "bg-card";
 const stickyBgIncomplete = "bg-amber-50/90 dark:bg-amber-950/40";
 
@@ -104,7 +104,7 @@ type Props = {
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   payoutView?: ExaminerPayoutView;
-  onEditAllocation: (row: AdminExaminerAllowanceRow) => void;
+  onEditAllocation?: (row: AdminExaminerAllowanceRow) => void;
   onEditCeReportCount?: (row: AdminExaminerAllowanceRow) => void;
   onEditPayoutAdjustments?: (row: AdminExaminerAllowanceRow) => void;
 };
@@ -143,7 +143,7 @@ export function ExaminerSpecialAccountsTable({
   }
 
   const emptyMessage = hasActiveFilters ? "No special examiners match these filters." : emptyLabel;
-  const colSpan = 7;
+  const colSpan = onEditAllocation ? 7 : 6;
 
   return (
     <div className={officialAccountsTableLayoutClass}>
@@ -201,7 +201,9 @@ export function ExaminerSpecialAccountsTable({
                     className="ml-auto"
                   />
                 </th>
-                <th className="px-3 py-1.5 font-medium text-muted-foreground"> </th>
+                {onEditAllocation ? (
+                  <th className="px-3 py-1.5 font-medium text-muted-foreground"> </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -257,15 +259,17 @@ export function ExaminerSpecialAccountsTable({
                           payoutView={payoutView}
                         />
                       </td>
-                      <td className={cn(cellPad, "whitespace-nowrap")}>
-                        <button
-                          type="button"
-                          className="text-xs text-primary underline-offset-2 hover:underline"
-                          onClick={() => onEditAllocation(row)}
-                        >
-                          Edit allocation
-                        </button>
-                      </td>
+                      {onEditAllocation ? (
+                        <td className={cn(cellPad, "whitespace-nowrap")}>
+                          <button
+                            type="button"
+                            className="text-xs text-primary underline-offset-2 hover:underline"
+                            onClick={() => onEditAllocation(row)}
+                          >
+                            Edit allocation
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}
@@ -324,15 +328,17 @@ export function ExaminerSpecialAccountsTable({
                     </span>
                   </div>
                 </dl>
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    className="text-xs text-primary underline-offset-2 hover:underline"
-                    onClick={() => onEditAllocation(row)}
-                  >
-                    Edit allocation
-                  </button>
-                </div>
+                {onEditAllocation ? (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline"
+                      onClick={() => onEditAllocation(row)}
+                    >
+                      Edit allocation
+                    </button>
+                  </div>
+                ) : null}
               </article>
             ))}
         </div>

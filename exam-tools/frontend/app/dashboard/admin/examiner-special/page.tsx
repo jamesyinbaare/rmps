@@ -42,6 +42,7 @@ import {
   type ExaminerPayoutView,
 } from "@/lib/examiner-payout-view";
 import { formatGhsAmount } from "@/lib/format-ghs";
+import { getMe, type UserMe } from "@/lib/auth";
 import {
   officialAccountsBtnSecondary,
   officialAccountsPageLayoutClass,
@@ -120,9 +121,17 @@ function ExaminerSpecialContent() {
   const [specialEditBusy, setSpecialEditBusy] = useState(false);
   const [specialEditError, setSpecialEditError] = useState<string | null>(null);
   const [urlHydrated, setUrlHydrated] = useState(false);
+  const [me, setMe] = useState<UserMe | null>(null);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedQueryKeyRef = useRef("");
+
+  const canUpload = me?.role === "SUPER_ADMIN";
+  const canManagePayoutEdits = me?.role === "SUPER_ADMIN";
+
+  useEffect(() => {
+    void getMe().then(setMe).catch(() => setMe(null));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -502,12 +511,16 @@ function ExaminerSpecialContent() {
           exportBusy={exportBusy}
           exportSectionId={SECTION_ID}
           onExport={(key) => void onExport(key)}
-          onUpload={() => {
-            setUploadOpen(true);
-            setUploadError(null);
-            setUploadResult(null);
-          }}
-          uploadDisabled={busy || uploadBusy || examId == null}
+          onUpload={
+            canUpload
+              ? () => {
+                  setUploadOpen(true);
+                  setUploadError(null);
+                  setUploadResult(null);
+                }
+              : undefined
+          }
+          uploadDisabled={!canUpload || busy || uploadBusy || examId == null}
         />
 
         {loadError ? (
@@ -576,70 +589,78 @@ function ExaminerSpecialContent() {
               syncUrl({ pageSize: size, page: 1 });
             }}
             payoutView={payoutView}
-            onEditAllocation={openSpecialAllocationEdit}
-            onEditCeReportCount={openCeReportEdit}
-            onEditPayoutAdjustments={openAdjustmentsEdit}
+            onEditAllocation={canManagePayoutEdits ? openSpecialAllocationEdit : undefined}
+            onEditCeReportCount={canManagePayoutEdits ? openCeReportEdit : undefined}
+            onEditPayoutAdjustments={canManagePayoutEdits ? openAdjustmentsEdit : undefined}
           />
         </section>
       </div>
 
-      <ExaminerSpecialAllocationModal
-        row={specialEditRow}
-        description={specialDescription}
-        paper1={specialPaper1}
-        paper2={specialPaper2}
-        busy={specialEditBusy}
-        error={specialEditError}
-        onDescriptionChange={setSpecialDescription}
-        onPaper1Change={setSpecialPaper1}
-        onPaper2Change={setSpecialPaper2}
-        onClose={() => {
-          if (!specialEditBusy) setSpecialEditRow(null);
-        }}
-        onSubmit={() => void saveSpecialAllocation()}
-      />
-      <ExaminerPayoutOverrideUploadModal
-        open={uploadOpen}
-        busy={uploadBusy}
-        error={uploadError}
-        result={uploadResult}
-        onClose={() => {
-          if (!uploadBusy) setUploadOpen(false);
-        }}
-        onDownloadTemplate={async () => {
-          if (examId == null) return;
-          try {
-            await downloadExaminerPayoutOverrideBulkTemplate(examId);
-          } catch (err) {
-            setUploadError(err instanceof Error ? err.message : "Template download failed");
-          }
-        }}
-        onFileSelected={(file) => void handleUploadFile(file)}
-      />
-      <ExaminerCeReportCountModal
-        open={ceEditRow != null}
-        row={ceEditRow}
-        busy={ceEditBusy}
-        error={ceEditError}
-        value={ceReportCount}
-        onClose={() => {
-          if (!ceEditBusy) setCeEditRow(null);
-        }}
-        onSubmit={() => void saveCeReportCount()}
-        onValueChange={setCeReportCount}
-      />
-      <ExaminerPayoutAdjustmentsModal
-        open={adjEditRow != null}
-        row={adjEditRow}
-        busy={adjEditBusy}
-        error={adjEditError}
-        lines={adjLines}
-        onClose={() => {
-          if (!adjEditBusy) setAdjEditRow(null);
-        }}
-        onSubmit={() => void saveAdjustments()}
-        onLinesChange={setAdjLines}
-      />
+      {canManagePayoutEdits ? (
+        <ExaminerSpecialAllocationModal
+          row={specialEditRow}
+          description={specialDescription}
+          paper1={specialPaper1}
+          paper2={specialPaper2}
+          busy={specialEditBusy}
+          error={specialEditError}
+          onDescriptionChange={setSpecialDescription}
+          onPaper1Change={setSpecialPaper1}
+          onPaper2Change={setSpecialPaper2}
+          onClose={() => {
+            if (!specialEditBusy) setSpecialEditRow(null);
+          }}
+          onSubmit={() => void saveSpecialAllocation()}
+        />
+      ) : null}
+      {canUpload ? (
+        <ExaminerPayoutOverrideUploadModal
+          open={uploadOpen}
+          busy={uploadBusy}
+          error={uploadError}
+          result={uploadResult}
+          onClose={() => {
+            if (!uploadBusy) setUploadOpen(false);
+          }}
+          onDownloadTemplate={async () => {
+            if (examId == null) return;
+            try {
+              await downloadExaminerPayoutOverrideBulkTemplate(examId);
+            } catch (err) {
+              setUploadError(err instanceof Error ? err.message : "Template download failed");
+            }
+          }}
+          onFileSelected={(file) => void handleUploadFile(file)}
+        />
+      ) : null}
+      {canManagePayoutEdits ? (
+        <ExaminerCeReportCountModal
+          open={ceEditRow != null}
+          row={ceEditRow}
+          busy={ceEditBusy}
+          error={ceEditError}
+          value={ceReportCount}
+          onClose={() => {
+            if (!ceEditBusy) setCeEditRow(null);
+          }}
+          onSubmit={() => void saveCeReportCount()}
+          onValueChange={setCeReportCount}
+        />
+      ) : null}
+      {canManagePayoutEdits ? (
+        <ExaminerPayoutAdjustmentsModal
+          open={adjEditRow != null}
+          row={adjEditRow}
+          busy={adjEditBusy}
+          error={adjEditError}
+          lines={adjLines}
+          onClose={() => {
+            if (!adjEditBusy) setAdjEditRow(null);
+          }}
+          onSubmit={() => void saveAdjustments()}
+          onLinesChange={setAdjLines}
+        />
+      ) : null}
       <ExaminerAllowanceExportFieldsDialog
         open={excelExportOpen}
         onClose={() => {

@@ -57,7 +57,7 @@ type Props = {
   onEditPayoutAdjustments?: (row: AdminExaminerAllowanceRow) => void;
 };
 
-const cellPad = "px-3 py-2 align-top";
+const cellPad = "px-3 py-1.5 align-top";
 const stickyBg = "bg-card";
 const stickyBgIncomplete = "bg-amber-50 dark:bg-amber-950/40";
 

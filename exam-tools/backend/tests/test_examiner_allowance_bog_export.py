@@ -170,7 +170,11 @@ def _row_with_papers(*, name: str = "Alice") -> AdminExaminerAllowanceRow:
 
 
 def test_bog_all_and_allowances_include_script_paper_columns() -> None:
-    from app.services.examiner_allowance_bog_export import ExaminerBogPayoutMode, bog_rows_from_admin_items
+    from app.services.examiner_allowance_bog_export import (
+        ALLOWANCES_MARKING_BREAKDOWN_HEADERS,
+        ExaminerBogPayoutMode,
+        bog_rows_from_admin_items,
+    )
 
     item = _row_with_papers()
     for mode in (ExaminerBogPayoutMode.ALL, ExaminerBogPayoutMode.ALLOWANCES_MARKING):
@@ -180,6 +184,11 @@ def test_bog_all_and_allowances_include_script_paper_columns() -> None:
             subject_id=1,
             paper_numbers=[1, 2],
         )
+        extras = (
+            ALLOWANCES_MARKING_BREAKDOWN_HEADERS
+            if mode == ExaminerBogPayoutMode.ALLOWANCES_MARKING
+            else None
+        )
         payload = bog_workbook_bytes(
             [],
             {},
@@ -187,11 +196,12 @@ def test_bog_all_and_allowances_include_script_paper_columns() -> None:
             prebuilt_rows=rows,
             include_phone=True,
             script_paper_numbers=[1, 2],
+            extra_headers_before_amount=extras,
         )
         wb = load_workbook(BytesIO(payload))
         ws = wb.active
         assert ws is not None
-        headers = [ws.cell(row=2, column=c).value for c in range(1, 16) if ws.cell(row=2, column=c).value]
+        headers = [ws.cell(row=2, column=c).value for c in range(1, 40) if ws.cell(row=2, column=c).value]
         assert "Allocated scripts" in headers
         assert "Paper 1 scripts" in headers
         assert "Paper 2 scripts" in headers
@@ -203,6 +213,77 @@ def test_bog_all_and_allowances_include_script_paper_columns() -> None:
         assert ws.cell(row=3, column=alloc_col).value == 30
         assert ws.cell(row=3, column=p1_col).value == 10
         assert ws.cell(row=3, column=p2_col).value == 20
+        if mode == ExaminerBogPayoutMode.ALLOWANCES_MARKING:
+            for label, _ in ALLOWANCES_MARKING_BREAKDOWN_HEADERS:
+                assert label in headers
+            assert headers.index("Paper 2 scripts") < headers.index("Responsibility (GHS)")
+            assert headers.index("Adjustments (GHS)") < headers.index("Amount (GHS)")
+        else:
+            assert "Responsibility (GHS)" not in headers
+
+
+def test_bog_allowances_marking_breakdown_uses_nets() -> None:
+    from app.services.examiner_allowance_bog_export import (
+        ALLOWANCES_MARKING_BREAKDOWN_HEADERS,
+        ExaminerBogPayoutMode,
+        bog_rows_from_admin_items,
+    )
+
+    item = _row(name="Alice", total="200.00").model_copy(
+        update={
+            "responsibility_allowance_ghs": Decimal("100"),
+            "inconvenience_allowance_ghs": Decimal("20"),
+            "chief_examiners_report_count": 2,
+            "chief_examiners_report_ghs": Decimal("50"),
+            "vetting_of_scripts_ghs": Decimal("80"),
+            "vetting_net_ghs": Decimal("72"),
+            "sitting_num_days": 4,
+            "sitting_daily_rate_ghs": Decimal("25"),
+            "sitting_allowance_ghs": Decimal("100"),
+            "sitting_net_ghs": Decimal("90"),
+            "marking_allowance_ghs": Decimal("200"),
+            "marking_net_ghs": Decimal("180"),
+            "adjustments_net_ghs": Decimal("15"),
+            "payout_allowances_marking_ghs": Decimal("527"),
+        }
+    )
+    rows = bog_rows_from_admin_items([item], ExaminerBogPayoutMode.ALLOWANCES_MARKING)
+    assert rows[0].amount == Decimal("527")
+    assert rows[0].extra_values == (
+        Decimal("100"),
+        Decimal("20"),
+        2,
+        Decimal("50"),
+        Decimal("72"),
+        Decimal("90"),
+        Decimal("180"),
+        Decimal("15"),
+    )
+    payload = bog_workbook_bytes(
+        [],
+        {},
+        title="Test",
+        prebuilt_rows=rows,
+        include_phone=True,
+        script_paper_numbers=[],
+        extra_headers_before_amount=ALLOWANCES_MARKING_BREAKDOWN_HEADERS,
+    )
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+    assert ws is not None
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 40) if ws.cell(row=2, column=c).value]
+    assert "Vetting tax (GHS)" not in headers
+    assert "Marking tax (GHS)" not in headers
+    assert "Sitting days" not in headers
+    assert "Sitting daily rate (GHS)" not in headers
+    vetting_col = headers.index("Vetting of Scripts (GHS)") + 1
+    sitting_col = headers.index("Sitting allowance (GHS)") + 1
+    marking_col = headers.index("Marking (GHS)") + 1
+    amount_col = headers.index("Amount (GHS)") + 1
+    assert ws.cell(row=3, column=vetting_col).value == 72.0
+    assert ws.cell(row=3, column=sitting_col).value == 90.0
+    assert ws.cell(row=3, column=marking_col).value == 180.0
+    assert ws.cell(row=3, column=amount_col).value == 527.0
 
 
 def test_bog_travel_mode_omits_script_paper_columns() -> None:
