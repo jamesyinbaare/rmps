@@ -14,12 +14,15 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     Examiner,
+    ExaminerRosterSource,
     ExaminerType,
     ExaminationExaminerRegionGroup,
     ExaminationExaminerRegionGroupRegion,
     Region,
     Subject,
 )
+
+SPECIAL_REFERENCE_PREFIX = "SPEC"
 
 ROLE_SHORT_CODES: dict[ExaminerType, str] = {
     ExaminerType.CHIEF: "CE",
@@ -161,20 +164,14 @@ async def _max_sequence_for_prefix_role(
     return max_seq
 
 
-async def assign_reference_code(
+async def assign_reference_code_with_prefix(
     session: AsyncSession,
     examination_id: int,
     region: Region | str,
     examiner_type: ExaminerType,
-    subject_id: int,
+    subject_prefix: str,
 ) -> str:
-    subject = await session.get(Subject, subject_id)
-    if subject is None:
-        raise ValueError("Subject not found.")
-    subject_prefix = subject_reference_prefix(
-        original_code=subject.original_code,
-        code=subject.code,
-    )
+    """Assign a unique code shaped as ``{subject_prefix}-{region}{role}{seq}``."""
     region_prefix = await resolve_group_prefix(session, examination_id, region)
     role_code = role_short_code(_examiner_type_value(examiner_type))
     prefix_role = f"{subject_prefix}-{region_prefix}{role_code}"
@@ -199,11 +196,38 @@ async def assign_reference_code(
     raise RuntimeError("Could not assign a unique examiner reference code.")
 
 
+async def assign_reference_code(
+    session: AsyncSession,
+    examination_id: int,
+    region: Region | str,
+    examiner_type: ExaminerType,
+    subject_id: int,
+) -> str:
+    subject = await session.get(Subject, subject_id)
+    if subject is None:
+        raise ValueError("Subject not found.")
+    subject_prefix = subject_reference_prefix(
+        original_code=subject.original_code,
+        code=subject.code,
+    )
+    return await assign_reference_code_with_prefix(
+        session,
+        examination_id,
+        region,
+        examiner_type,
+        subject_prefix,
+    )
+
+
 def _examiner_subject_id(examiner: Examiner) -> int:
     subject_ids = [int(es.subject_id) for es in examiner.subjects]
     if len(subject_ids) != 1:
         raise ValueError("Exactly one subject is required to assign a reference code.")
     return subject_ids[0]
+
+
+def _is_special_roster(examiner: Examiner) -> bool:
+    return ExaminerRosterSource.from_stored(examiner.roster_source) == ExaminerRosterSource.SPECIAL
 
 
 async def _set_reference_code_on_examiner(
@@ -212,14 +236,34 @@ async def _set_reference_code_on_examiner(
     *,
     subject_id: int | None = None,
 ) -> str:
-    resolved_subject_id = subject_id if subject_id is not None else _examiner_subject_id(examiner)
-    code = await assign_reference_code(
-        session,
-        int(examiner.examination_id),
-        examiner.region,
-        _examiner_type_value(examiner.examiner_type),
-        resolved_subject_id,
-    )
+    examination_id = int(examiner.examination_id)
+    region = examiner.region
+    examiner_type = _examiner_type_value(examiner.examiner_type)
+    if subject_id is not None:
+        code = await assign_reference_code(
+            session,
+            examination_id,
+            region,
+            examiner_type,
+            subject_id,
+        )
+    elif _is_special_roster(examiner):
+        code = await assign_reference_code_with_prefix(
+            session,
+            examination_id,
+            region,
+            examiner_type,
+            SPECIAL_REFERENCE_PREFIX,
+        )
+    else:
+        resolved_subject_id = _examiner_subject_id(examiner)
+        code = await assign_reference_code(
+            session,
+            examination_id,
+            region,
+            examiner_type,
+            resolved_subject_id,
+        )
     examiner.reference_code = code
     return code
 
@@ -235,7 +279,7 @@ async def assign_reference_code_to_examiner(
     await ensure_default_region_groups(session, int(examiner.examination_id))
     if subject_id is not None:
         return await _set_reference_code_on_examiner(session, examiner, subject_id=subject_id)
-    if "subjects" in sa_inspect(examiner).unloaded:
+    if not _is_special_roster(examiner) and "subjects" in sa_inspect(examiner).unloaded:
         await session.refresh(examiner, attribute_names=["subjects"])
     return await _set_reference_code_on_examiner(session, examiner, subject_id=None)
 

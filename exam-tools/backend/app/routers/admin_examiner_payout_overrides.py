@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import SuperAdminDep, SuperAdminOrFinanceOfficerDep
+from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import Examiner, ExaminerPayoutAdjustment, ExaminerPayoutOverride, ExaminerRosterSource, Examination
 from app.schemas.examiner_payout_override import (
@@ -117,7 +117,7 @@ async def upload_payout_overrides(
 @router.patch("/{examination_id}/examiners/{examiner_id}/payout-settings")
 async def update_examiner_payout_settings(
     session: DBSessionDep,
-    _admin: SuperAdminOrFinanceOfficerDep,
+    _admin: SuperAdminDep,
     examination_id: int,
     examiner_id: UUID,
     body: ExaminerPayoutSettingsUpdate,

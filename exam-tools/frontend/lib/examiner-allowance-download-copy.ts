@@ -31,8 +31,10 @@ export const EXAMINER_ALLOWANCE_DOWNLOAD_COPY: Record<
     includes: [
       "Identity, phone, reference code, subjects",
       "Bank details and bank status",
-      "Role allowances (responsibility, inconvenience, CER, vetting)",
-      "Internal commuting, marking pay, allocated scripts (total and per paper)",
+      "All allowances (responsibility, inconvenience, CER, vetting, sitting, marking, adjustments)",
+      "Report count for CER",
+      "Taxable allowances as net payable only (no separate gross/tax columns)",
+      "Internal commuting, allocated scripts (total and per paper)",
       "T&T, split payout totals, and overall total",
     ],
     formatNote: "Optional columns (subject names, travel zone) can be added before you download.",
@@ -61,14 +63,16 @@ export const EXAMINER_ALLOWANCE_DOWNLOAD_COPY: Record<
   bog_allowances_marking: {
     title: "BoG — Allowances & marking",
     summary:
-      "A Bank of Ghana payment file for allowances and marking only — without travel or commuting.",
+      "A Bank of Ghana payment file for allowances and marking only — without travel or commuting. Includes a per-allowance breakdown plus the bank payment total.",
     includes: [
-      "Role allowances (responsibility, inconvenience, chief examiner’s report, vetting)",
-      "Marking pay (net of tax where applicable)",
+      "Responsibility, inconvenience, CER (with report count)",
+      "Vetting, sitting, marking, and adjustments — taxable lines as net",
       "Allocated scripts (total and per paper)",
+      "Amount (GHS) total for bank payment",
     ],
     excludes: ["T&T (travel & transport)", "Internal commuting"],
-    formatNote: BOG_FORMAT_WITH_SCRIPTS,
+    formatNote:
+      "Bank of Ghana payment workbook: bank fields, allowance breakdown columns, allocated scripts, and Amount (GHS).",
   },
 };
 

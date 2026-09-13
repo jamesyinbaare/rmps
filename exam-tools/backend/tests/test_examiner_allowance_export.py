@@ -93,6 +93,76 @@ def test_parse_include_fields_allowlist() -> None:
     )
 
 
+def test_detail_workbook_core_allowance_headers_and_values() -> None:
+    item = _row().model_copy(
+        update={
+            "chief_examiners_report_count": 3,
+            "chief_examiners_report_ghs": Decimal("150"),
+            "sitting_num_days": 5,
+            "sitting_daily_rate_ghs": Decimal("40"),
+            "sitting_allowance_ghs": Decimal("200"),
+            "sitting_withholding_tax_ghs": Decimal("20"),
+            "sitting_net_ghs": Decimal("180"),
+            "responsibility_allowance_ghs": Decimal("100"),
+            "inconvenience_allowance_ghs": Decimal("50"),
+            "vetting_of_scripts_ghs": Decimal("80"),
+            "vetting_withholding_tax_ghs": Decimal("8"),
+            "vetting_net_ghs": Decimal("72"),
+            "marking_allowance_ghs": Decimal("300"),
+            "marking_withholding_tax_ghs": Decimal("30"),
+            "marking_net_ghs": Decimal("270"),
+            "adjustments_gross_ghs": Decimal("50"),
+            "adjustments_tax_ghs": Decimal("5"),
+            "adjustments_net_ghs": Decimal("45"),
+        }
+    )
+    payload = detail_workbook_bytes([item], title="Test")
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+    assert ws is not None
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 50) if ws.cell(row=2, column=c).value]
+
+    for label in (
+        "Responsibility (GHS)",
+        "Inconvenience (GHS)",
+        "Report count",
+        "Chief Examiner's Report (GHS)",
+        "Vetting of Scripts (GHS)",
+        "Sitting allowance (GHS)",
+        "Marking (GHS)",
+        "Adjustments (GHS)",
+    ):
+        assert label in headers
+
+    for absent in (
+        "Vetting tax (GHS)",
+        "Vetting net (GHS)",
+        "Sitting days",
+        "Sitting daily rate (GHS)",
+        "Sitting tax (GHS)",
+        "Sitting net (GHS)",
+        "Marking tax (GHS)",
+        "Marking net (GHS)",
+        "Adjustments tax (GHS)",
+        "Adjustments net (GHS)",
+    ):
+        assert absent not in headers
+
+    assert headers[headers.index("Report count") + 1] == "Chief Examiner's Report (GHS)"
+    assert headers[headers.index("Internal Commuting (GHS)") + 1] == "Sitting allowance (GHS)"
+
+    report_col = headers.index("Report count") + 1
+    vetting_col = headers.index("Vetting of Scripts (GHS)") + 1
+    sitting_col = headers.index("Sitting allowance (GHS)") + 1
+    marking_col = headers.index("Marking (GHS)") + 1
+    adj_col = headers.index("Adjustments (GHS)") + 1
+    assert ws.cell(row=3, column=report_col).value == 3
+    assert ws.cell(row=3, column=vetting_col).value == 72.0
+    assert ws.cell(row=3, column=sitting_col).value == 180.0
+    assert ws.cell(row=3, column=marking_col).value == 270.0
+    assert ws.cell(row=3, column=adj_col).value == 45.0
+
+
 def test_detail_workbook_optional_columns() -> None:
     payload = detail_workbook_bytes(
         [_row()],
@@ -102,7 +172,7 @@ def test_detail_workbook_optional_columns() -> None:
     wb = load_workbook(BytesIO(payload))
     ws = wb.active
     assert ws is not None
-    headers = [ws.cell(row=2, column=c).value for c in range(1, 30) if ws.cell(row=2, column=c).value]
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 50) if ws.cell(row=2, column=c).value]
     assert "Subject names" in headers
     assert "Travel zone" in headers
     assert headers[headers.index("Subjects") + 1] == "Subject names"
@@ -121,7 +191,7 @@ def test_detail_workbook_highlights_incomplete_bank() -> None:
     wb = load_workbook(BytesIO(payload))
     ws = wb.active
     assert ws is not None
-    headers = [ws.cell(row=2, column=c).value for c in range(1, 30) if ws.cell(row=2, column=c).value]
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 50) if ws.cell(row=2, column=c).value]
     assert "Bank status" in headers
     assert "Phone" in headers
     assert headers[0] == "Reference code"
@@ -225,7 +295,7 @@ def test_paper_script_helpers_and_detail_columns() -> None:
     wb = load_workbook(BytesIO(payload))
     ws = wb.active
     assert ws is not None
-    headers = [ws.cell(row=2, column=c).value for c in range(1, 40) if ws.cell(row=2, column=c).value]
+    headers = [ws.cell(row=2, column=c).value for c in range(1, 50) if ws.cell(row=2, column=c).value]
     alloc_idx = headers.index("Allocated scripts")
     assert headers[alloc_idx + 1] == "Paper 1 scripts"
     assert headers[alloc_idx + 2] == "Paper 2 scripts"
