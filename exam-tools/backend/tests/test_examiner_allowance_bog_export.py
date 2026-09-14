@@ -240,22 +240,22 @@ def test_bog_allowances_marking_breakdown_uses_nets() -> None:
             "sitting_num_days": 4,
             "sitting_daily_rate_ghs": Decimal("25"),
             "sitting_allowance_ghs": Decimal("100"),
-            "sitting_net_ghs": Decimal("90"),
+            "sitting_net_ghs": Decimal("100"),
             "marking_allowance_ghs": Decimal("200"),
             "marking_net_ghs": Decimal("180"),
             "adjustments_net_ghs": Decimal("15"),
-            "payout_allowances_marking_ghs": Decimal("527"),
+            "payout_allowances_marking_ghs": Decimal("537"),
         }
     )
     rows = bog_rows_from_admin_items([item], ExaminerBogPayoutMode.ALLOWANCES_MARKING)
-    assert rows[0].amount == Decimal("527")
+    assert rows[0].amount == Decimal("537")
     assert rows[0].extra_values == (
         Decimal("100"),
         Decimal("20"),
         2,
         Decimal("50"),
         Decimal("72"),
-        Decimal("90"),
+        Decimal("100"),
         Decimal("180"),
         Decimal("15"),
     )
@@ -281,9 +281,9 @@ def test_bog_allowances_marking_breakdown_uses_nets() -> None:
     marking_col = headers.index("Marking (GHS)") + 1
     amount_col = headers.index("Amount (GHS)") + 1
     assert ws.cell(row=3, column=vetting_col).value == 72.0
-    assert ws.cell(row=3, column=sitting_col).value == 90.0
+    assert ws.cell(row=3, column=sitting_col).value == 100.0
     assert ws.cell(row=3, column=marking_col).value == 180.0
-    assert ws.cell(row=3, column=amount_col).value == 527.0
+    assert ws.cell(row=3, column=amount_col).value == 537.0
 
 
 def test_bog_travel_mode_omits_script_paper_columns() -> None:

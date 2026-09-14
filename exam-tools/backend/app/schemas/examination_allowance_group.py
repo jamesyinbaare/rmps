@@ -1,14 +1,24 @@
 """Schemas for exam-scoped examiner allowance groups."""
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.schemas.examiner_payout_override import ExaminerPayoutAdjustmentUpdate
 
 
 class AllowanceGroupEligibilityCell(BaseModel):
     allowance_key: str
     enabled: bool
+
+
+class AllowanceGroupAdjustmentRow(BaseModel):
+    id: UUID | None = None
+    description: str
+    amount_ghs: Decimal
+    is_taxable: bool = False
 
 
 class AllowanceGroupRow(BaseModel):
@@ -17,6 +27,7 @@ class AllowanceGroupRow(BaseModel):
     is_general: bool
     member_count: int = 0
     allowances: dict[str, bool] = Field(default_factory=dict)
+    adjustments: list[AllowanceGroupAdjustmentRow] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -36,6 +47,10 @@ class AllowanceGroupRename(BaseModel):
 
 class AllowanceGroupEligibilityPut(BaseModel):
     cells: list[AllowanceGroupEligibilityCell] = Field(default_factory=list)
+
+
+class AllowanceGroupAdjustmentsPut(BaseModel):
+    adjustments: list[ExaminerPayoutAdjustmentUpdate] = Field(default_factory=list)
 
 
 class AllowanceGroupMembersPut(BaseModel):

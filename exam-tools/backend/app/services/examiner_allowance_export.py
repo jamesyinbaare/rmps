@@ -281,11 +281,13 @@ def _row_values(
             item.chief_examiners_report_ghs,
             item.vetting_net_ghs,
             item.internal_commuting_ghs,
-            item.sitting_net_ghs,
+            item.sitting_allowance_ghs,
             item.marking_net_ghs,
             item.adjustments_net_ghs,
             "; ".join(
-                f"{line.description}: {line.amount_ghs}"
+                f"{line.description}"
+                f"{f' [{line.group_name}]' if getattr(line, 'group_name', None) else ''}"
+                f": {line.amount_ghs}"
                 f"{' (taxed)' if line.is_taxable else ''}"
                 for line in (item.payout_adjustments or [])
             ),

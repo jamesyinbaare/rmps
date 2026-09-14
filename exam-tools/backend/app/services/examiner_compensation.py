@@ -76,6 +76,8 @@ class PayoutAdjustmentLine:
     tax_ghs: Decimal
     net_ghs: Decimal
     id: UUID | None = None
+    source: str = "examiner"
+    group_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,10 @@ def compute_payout_adjustment_lines(
             continue
         is_taxable = bool(getattr(raw, "is_taxable", False))
         adj_id = getattr(raw, "id", None)
+        source = str(getattr(raw, "source", None) or "examiner")
+        group_name = getattr(raw, "group_name", None)
+        if group_name is not None:
+            group_name = str(group_name).strip() or None
         if is_taxable:
             net, tax = withholding_tax(amount)
         else:
@@ -141,6 +147,8 @@ def compute_payout_adjustment_lines(
                 is_taxable=is_taxable,
                 tax_ghs=tax,
                 net_ghs=net,
+                source=source if source in {"examiner", "group"} else "examiner",
+                group_name=group_name,
             )
         )
 
@@ -646,7 +654,8 @@ def compensation_for_examiner(
         subject_breakdowns = []
 
     marking_net, marking_tax = withholding_tax(marking_total)
-    sitting_net, sitting_tax = withholding_tax(sitting_allowance)
+    # Sitting is not subject to withholding tax.
+    sitting_net, sitting_tax = sitting_allowance, Decimal("0")
     vetting_gross = role_totals["vetting_of_scripts_ghs"]
     vetting_net, vetting_tax = withholding_tax(vetting_gross)
 

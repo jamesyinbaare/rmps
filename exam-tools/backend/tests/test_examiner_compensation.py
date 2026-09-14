@@ -72,10 +72,10 @@ def test_sitting_allowance_daily_rate_times_days() -> None:
         default_days={ExaminerType.ASSISTANT: 3},
     )
     assert comp.sitting_allowance_ghs == Decimal("200")
-    assert comp.sitting_withholding_tax_ghs == Decimal("20")
-    assert comp.sitting_net_ghs == Decimal("180")
+    assert comp.sitting_withholding_tax_ghs == Decimal("0")
+    assert comp.sitting_net_ghs == Decimal("200")
     assert comp.sitting_num_days == 5
-    assert comp.total_payable_ghs == Decimal("180")
+    assert comp.total_payable_ghs == Decimal("200")
 
 
 def test_sitting_allowance_uses_default_days_when_num_days_null() -> None:
@@ -94,10 +94,10 @@ def test_sitting_allowance_uses_default_days_when_num_days_null() -> None:
         default_days={ExaminerType.TEAM_LEADER: 4},
     )
     assert comp.sitting_allowance_ghs == Decimal("40")
-    assert comp.sitting_withholding_tax_ghs == Decimal("4")
-    assert comp.sitting_net_ghs == Decimal("36")
+    assert comp.sitting_withholding_tax_ghs == Decimal("0")
+    assert comp.sitting_net_ghs == Decimal("40")
     assert comp.sitting_num_days == 4
-    assert comp.total_payable_ghs == Decimal("36")
+    assert comp.total_payable_ghs == Decimal("40")
 
 
 def _zone_context(
@@ -370,6 +370,29 @@ def test_special_roster_eligibility_applies_role_allowances_not_travel() -> None
     assert comp.travel_and_transport_ghs == Decimal("0")
     assert comp.internal_commuting_ghs == Decimal("0")
     assert comp.marking_allowance_ghs == Decimal("20")
+
+
+def test_compute_payout_adjustment_preserves_group_source() -> None:
+    from app.services.examiner_compensation import PayoutAdjustmentLine, compute_payout_adjustment_lines
+
+    lines, gross, tax, net = compute_payout_adjustment_lines(
+        [
+            PayoutAdjustmentLine(
+                description="Group bonus",
+                amount_ghs=Decimal("100"),
+                is_taxable=True,
+                tax_ghs=Decimal("0"),
+                net_ghs=Decimal("100"),
+                source="group",
+                group_name="Zone A",
+            )
+        ]
+    )
+    assert gross == Decimal("100")
+    assert tax == Decimal("10")
+    assert net == Decimal("90")
+    assert lines[0].source == "group"
+    assert lines[0].group_name == "Zone A"
 
 
 def test_taxable_payout_adjustment_applies_withholding() -> None:

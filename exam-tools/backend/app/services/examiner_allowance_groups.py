@@ -11,11 +11,13 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     ExaminationAllowanceGroup,
+    ExaminationAllowanceGroupAdjustment,
     ExaminationAllowanceGroupEligibility,
     ExaminationAllowanceGroupMember,
     Examiner,
     RosterAllowanceKey,
 )
+from app.schemas.examiner_payout_override import ExaminerPayoutAdjustmentUpdate
 from app.services.examiner_roster_allowance_eligibility import ALLOWANCE_KEY_LABELS
 
 GENERAL_GROUP_NAME = "General"
@@ -140,6 +142,7 @@ async def list_allowance_groups(
         .options(
             selectinload(ExaminationAllowanceGroup.eligibility),
             selectinload(ExaminationAllowanceGroup.members),
+            selectinload(ExaminationAllowanceGroup.adjustments),
         )
         .order_by(
             ExaminationAllowanceGroup.is_general.desc(),
@@ -163,6 +166,7 @@ async def get_allowance_group(
         .options(
             selectinload(ExaminationAllowanceGroup.eligibility),
             selectinload(ExaminationAllowanceGroup.members),
+            selectinload(ExaminationAllowanceGroup.adjustments),
         )
     )
     return (await session.execute(stmt)).scalar_one_or_none()
@@ -294,6 +298,86 @@ async def replace_group_eligibility(
     group.updated_at = now
     await session.flush()
     return await get_allowance_group(session, examination_id, group_id)  # type: ignore[return-value]
+
+
+async def replace_group_adjustments(
+    session: AsyncSession,
+    examination_id: int,
+    group_id: UUID,
+    lines: list[ExaminerPayoutAdjustmentUpdate],
+) -> ExaminationAllowanceGroup:
+    group = await get_allowance_group(session, examination_id, group_id)
+    if group is None:
+        raise LookupError("Allowance group not found")
+    await session.execute(
+        delete(ExaminationAllowanceGroupAdjustment).where(
+            ExaminationAllowanceGroupAdjustment.group_id == group.id,
+        )
+    )
+    now = datetime.utcnow()
+    for idx, line in enumerate(lines):
+        session.add(
+            ExaminationAllowanceGroupAdjustment(
+                id=uuid4(),
+                group_id=group.id,
+                description=line.description.strip(),
+                amount_ghs=line.amount_ghs,
+                is_taxable=bool(line.is_taxable),
+                sort_order=idx,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    group.updated_at = now
+    await session.flush()
+    refreshed = await get_allowance_group(session, examination_id, group_id)
+    assert refreshed is not None
+    return refreshed
+
+
+def group_adjustment_rows(group: ExaminationAllowanceGroup) -> list[ExaminationAllowanceGroupAdjustment]:
+    return list(group.adjustments or [])
+
+
+async def load_group_adjustment_lines_by_examiner(
+    session: AsyncSession,
+    examination_id: int,
+    membership: ExaminerGroupMembershipMap,
+) -> dict[UUID, list]:
+    """Live group special allowances keyed by examiner membership."""
+    from app.services.examiner_compensation import PayoutAdjustmentLine
+
+    groups = await list_allowance_groups(session, examination_id)
+    by_group: dict[UUID, list] = {}
+    for group in groups:
+        lines: list = []
+        for row in sorted(
+            group.adjustments or [],
+            key=lambda r: (int(r.sort_order or 0), str(r.created_at)),
+        ):
+            lines.append(
+                PayoutAdjustmentLine(
+                    id=row.id,
+                    description=str(row.description),
+                    amount_ghs=row.amount_ghs,
+                    is_taxable=bool(row.is_taxable),
+                    tax_ghs=row.amount_ghs * 0,  # filled by compute_payout_adjustment_lines
+                    net_ghs=row.amount_ghs,
+                    source="group",
+                    group_name=str(group.name),
+                )
+            )
+        if lines:
+            by_group[group.id] = lines
+
+    out: dict[UUID, list] = {}
+    for examiner_id, group_ids in membership.items():
+        merged: list = []
+        for gid in sorted(group_ids, key=str):
+            merged.extend(by_group.get(gid, []))
+        if merged:
+            out[examiner_id] = merged
+    return out
 
 
 async def set_group_members(

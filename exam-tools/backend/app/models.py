@@ -1955,6 +1955,15 @@ class ExaminationAllowanceGroup(Base):
         back_populates="group",
         cascade="all, delete-orphan",
     )
+    adjustments = relationship(
+        "ExaminationAllowanceGroupAdjustment",
+        back_populates="group",
+        cascade="all, delete-orphan",
+        order_by=(
+            "ExaminationAllowanceGroupAdjustment.sort_order,"
+            " ExaminationAllowanceGroupAdjustment.created_at"
+        ),
+    )
 
     __table_args__ = (
         UniqueConstraint("examination_id", "name", name="uq_exam_allowance_group_name"),
@@ -2010,6 +2019,33 @@ class ExaminationAllowanceGroupEligibility(Base):
 
     __table_args__ = (
         UniqueConstraint("group_id", "allowance_key", name="uq_exam_allowance_group_eligibility"),
+    )
+
+
+class ExaminationAllowanceGroupAdjustment(Base):
+    """Named special allowance / adjustment lines scoped to an allowance group (live membership)."""
+
+    __tablename__ = "examination_allowance_group_adjustments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_allowance_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    description = Column(String(200), nullable=False)
+    amount_ghs = Column(Numeric(12, 2), nullable=False)
+    is_taxable = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    group = relationship("ExaminationAllowanceGroup", back_populates="adjustments")
+
+    __table_args__ = (
+        CheckConstraint("amount_ghs > 0", name="ck_exam_allowance_group_adjustment_amount_positive"),
+        CheckConstraint("sort_order >= 0", name="ck_exam_allowance_group_adjustment_sort_order"),
     )
 
 

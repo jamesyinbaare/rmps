@@ -28,9 +28,9 @@ export function ExaminerRatesFormulaCallout({ defaultOpen = false }: { defaultOp
       {open ? (
         <div id={contentId} className="border-t border-primary/10 px-3.5 pb-3 pt-2">
           <p>
-            Each examiner&apos;s net payout is the sum of role allowances, sitting allowance (daily rate × days, after
-            10% tax), marking (after 10% tax), vetting (after 10% tax), internal commuting, and T&amp;T — where enabled
-            for their roster source and allowance groups. Marking, vetting, and sitting are taxed at 10%.
+            Each examiner&apos;s net payout is the sum of role allowances, sitting allowance (daily rate × days),
+            marking (after 10% tax), vetting (after 10% tax), internal commuting, and T&amp;T — where enabled for their
+            roster source and allowance groups. Marking and vetting are taxed at 10%; sitting is not taxed.
           </p>
           <p className="mt-2">
             Finance can view three payout batches on the payouts screen:{" "}

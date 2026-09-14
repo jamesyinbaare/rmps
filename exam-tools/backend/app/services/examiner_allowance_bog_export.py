@@ -104,7 +104,7 @@ def allowances_marking_breakdown_values(
         int(item.chief_examiners_report_count or 0),
         item.chief_examiners_report_ghs,
         item.vetting_net_ghs,
-        item.sitting_net_ghs,
+        item.sitting_allowance_ghs,
         item.marking_net_ghs,
         item.adjustments_net_ghs,
     )

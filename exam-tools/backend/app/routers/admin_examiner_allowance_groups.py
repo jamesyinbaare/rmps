@@ -5,10 +5,16 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.dependencies.auth import SuperAdminOrFinanceOfficerDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    SuperAdminDep,
+    SuperAdminOrFinanceOfficerDep,
+    SuperAdminOrTestAdminOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import Examination, ExaminationAllowanceGroupMember, Examiner, RosterAllowanceKey
 from app.schemas.examination_allowance_group import (
+    AllowanceGroupAdjustmentRow,
+    AllowanceGroupAdjustmentsPut,
     AllowanceGroupCreate,
     AllowanceGroupEligibilityPut,
     AllowanceGroupMemberRow,
@@ -27,9 +33,11 @@ from app.services.examiner_allowance_groups import (
     ensure_general_group,
     ensure_general_membership,
     get_allowance_group,
+    group_adjustment_rows,
     list_allowance_groups,
     load_group_member_summaries,
     rename_allowance_group,
+    replace_group_adjustments,
     replace_group_eligibility,
     set_examiner_custom_groups,
     set_group_members,
@@ -57,6 +65,15 @@ def _group_row(group) -> AllowanceGroupRow:
         is_general=bool(group.is_general),
         member_count=len(group.members or []),
         allowances=eligibility_dict_for_group(group),
+        adjustments=[
+            AllowanceGroupAdjustmentRow(
+                id=row.id,
+                description=str(row.description),
+                amount_ghs=row.amount_ghs,
+                is_taxable=bool(row.is_taxable),
+            )
+            for row in group_adjustment_rows(group)
+        ],
         created_at=group.created_at,
         updated_at=group.updated_at,
     )
@@ -230,6 +247,26 @@ async def put_examination_allowance_group_eligibility(
         cells.append((key, cell.enabled))
     try:
         group = await replace_group_eligibility(session, exam_id, group_id, cells)
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    await session.commit()
+    return _group_row(group)
+
+
+@router.put(
+    "/{exam_id}/allowance-groups/{group_id}/adjustments",
+    response_model=AllowanceGroupRow,
+)
+async def put_examination_allowance_group_adjustments(
+    exam_id: int,
+    group_id: UUID,
+    body: AllowanceGroupAdjustmentsPut,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+) -> AllowanceGroupRow:
+    await _load_examination(session, exam_id)
+    try:
+        group = await replace_group_adjustments(session, exam_id, group_id, body.adjustments)
     except LookupError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     await session.commit()
