@@ -37,6 +37,7 @@ from app.services.examiner_allowance_export import (
 from app.services.examiner_allowance_groups import (
     examiner_custom_group_ids,
     list_allowance_groups,
+    load_group_adjustment_lines_by_examiner,
     load_group_eligibility_maps,
 )
 from app.services.examiner_allowance_list import examiners_to_admin_rows
@@ -82,6 +83,14 @@ async def _load_compensation_context(session: DBSessionDep, examination_id: int)
             custom_ids,
             [custom_by_name[gid] for gid in custom_ids if gid in custom_by_name],
         )
+    personal_adj = await load_payout_adjustments_map(session, examination_id)
+    group_adj = await load_group_adjustment_lines_by_examiner(session, examination_id, membership)
+    payout_adjustments_by_examiner: dict = {}
+    for examiner_id in set(personal_adj) | set(group_adj):
+        payout_adjustments_by_examiner[examiner_id] = [
+            *personal_adj.get(examiner_id, []),
+            *group_adj.get(examiner_id, []),
+        ]
     return {
         "role_rates": await load_role_allowance_rates_map(session, examination_id),
         "marking_rates": await load_marking_rates_map(session, examination_id),
@@ -95,7 +104,7 @@ async def _load_compensation_context(session: DBSessionDep, examination_id: int)
         "allocated_booklets": await load_effective_allocated_booklets_map(session, examination_id),
         "source_modes": await load_subject_source_modes(session, examination_id),
         "payout_overrides": await load_payout_overrides_map(session, examination_id),
-        "payout_adjustments_by_examiner": await load_payout_adjustments_map(session, examination_id),
+        "payout_adjustments_by_examiner": payout_adjustments_by_examiner,
         "roster_eligibility": await load_roster_allowance_eligibility_map(session, examination_id),
         "group_eligibility": enabled_by_examiner,
         "examiner_custom_groups": examiner_custom_groups,

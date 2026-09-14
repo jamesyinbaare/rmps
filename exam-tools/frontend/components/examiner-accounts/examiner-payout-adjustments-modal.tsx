@@ -34,12 +34,21 @@ function newDraftLine(): PayoutAdjustmentDraft {
 
 export function draftsFromAdjustmentRows(rows: ExaminerPayoutAdjustmentRow[] | undefined): PayoutAdjustmentDraft[] {
   if (!rows?.length) return [];
-  return rows.map((row) => ({
-    key: row.id ?? crypto.randomUUID(),
-    description: row.description,
-    amount: String(row.amount_ghs ?? ""),
-    is_taxable: Boolean(row.is_taxable),
-  }));
+  return rows
+    .filter((row) => (row.source ?? "examiner") === "examiner")
+    .map((row) => ({
+      key: row.id ?? crypto.randomUUID(),
+      description: row.description,
+      amount: String(row.amount_ghs ?? ""),
+      is_taxable: Boolean(row.is_taxable),
+    }));
+}
+
+export function groupAdjustmentRows(
+  rows: ExaminerPayoutAdjustmentRow[] | undefined,
+): ExaminerPayoutAdjustmentRow[] {
+  if (!rows?.length) return [];
+  return rows.filter((row) => row.source === "group");
 }
 
 export function ExaminerPayoutAdjustmentsModal({
@@ -53,6 +62,8 @@ export function ExaminerPayoutAdjustmentsModal({
   onLinesChange,
 }: Props) {
   if (!open || !row) return null;
+
+  const groupLines = groupAdjustmentRows(row.payout_adjustments);
 
   function updateLine(key: string, patch: Partial<PayoutAdjustmentDraft>) {
     onLinesChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -81,11 +92,26 @@ export function ExaminerPayoutAdjustmentsModal({
       }
     >
       <p className="mb-3 text-xs text-muted-foreground">
-        Optional named amounts for this examiner only. Taxed lines use the same 10% withholding as marking.
+        Optional named amounts for this examiner only. Taxed lines use the same 10% withholding as marking. Group
+        special allowances are managed under Examiner rates → Allowance groups.
       </p>
+      {groupLines.length > 0 ? (
+        <div className="mb-4 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <p className="text-xs font-medium text-muted-foreground">From allowance groups (read-only)</p>
+          <ul className="mt-2 space-y-1 text-sm text-foreground">
+            {groupLines.map((line, idx) => (
+              <li key={line.id ?? `${line.description}-${idx}`}>
+                {line.description}
+                {line.group_name ? ` · ${line.group_name}` : ""}: {line.amount_ghs}
+                {line.is_taxable ? " (taxed)" : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="space-y-3">
         {lines.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No adjustments. Add a line to include an amount in their payout.</p>
+          <p className="text-sm text-muted-foreground">No personal adjustments. Add a line to include an amount in their payout.</p>
         ) : null}
         {lines.map((line, index) => (
           <div key={line.key} className="rounded-lg border border-border/60 bg-muted/10 p-3 space-y-2">

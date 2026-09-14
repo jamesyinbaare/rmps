@@ -2,6 +2,7 @@
 
 import { Pencil, Plus, Trash2 } from "lucide-react";
 
+import { ExaminerRatesGroupAdjustments } from "@/components/examiner-rates/examiner-rates-group-adjustments";
 import { ExaminerRatesGroupMembers } from "@/components/examiner-rates/examiner-rates-group-members";
 import {
   ExaminerRatesPaneHeader,
@@ -21,6 +22,7 @@ type Props = {
   editing: boolean;
   saving: boolean;
   groupActionBusy: boolean;
+  canEditGroupAdjustments: boolean;
   allowanceGroups: AllowanceGroupRow[];
   selectedGroup: AllowanceGroupRow | null;
   newGroupName: string;
@@ -33,6 +35,7 @@ type Props = {
   onDelete: () => void;
   onToggleAllowance: (groupId: string, key: (typeof ROSTER_ALLOWANCE_ELIGIBILITY_KEYS)[number], enabled: boolean) => void;
   onMemberCountChange: (groupId: string, count: number) => void;
+  onGroupAdjustmentsSaved: (group: AllowanceGroupRow) => void;
 };
 
 export function ExaminerRatesGroupsPanel({
@@ -40,6 +43,7 @@ export function ExaminerRatesGroupsPanel({
   editing,
   saving,
   groupActionBusy,
+  canEditGroupAdjustments,
   allowanceGroups,
   selectedGroup,
   newGroupName,
@@ -52,6 +56,7 @@ export function ExaminerRatesGroupsPanel({
   onDelete,
   onToggleAllowance,
   onMemberCountChange,
+  onGroupAdjustmentsSaved,
 }: Props) {
   return (
     <div>
@@ -185,6 +190,14 @@ export function ExaminerRatesGroupsPanel({
               </tbody>
             </table>
           </div>
+
+          <ExaminerRatesGroupAdjustments
+            key={`${selectedGroup.id}-adj`}
+            examinationId={examinationId}
+            group={selectedGroup}
+            canEdit={canEditGroupAdjustments}
+            onSaved={onGroupAdjustmentsSaved}
+          />
 
           <ExaminerRatesGroupMembers
             key={selectedGroup.id}

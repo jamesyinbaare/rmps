@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, Search, X } from "lucide-react";
 
 import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
+import { MultiSelectCheckboxDropdown } from "@/components/multi-select-checkbox-dropdown";
+import {
+  OfficialAccountsFilterChips,
+  type OfficialAccountsFilterChip,
+} from "@/components/official-accounts-filter-chips";
 import { listAdminExaminerAllowances, type ExaminerTypeApi } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { officialAccountsBtnPrimary } from "@/lib/official-accounts-zone";
@@ -11,6 +16,16 @@ import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
 
 const PICKER_LIMIT = 500;
+
+const ROLE_OPTIONS = EXAMINER_TYPE_OPTIONS.map((opt) => ({
+  value: opt.value,
+  label: opt.label,
+}));
+
+const REGION_MULTI_OPTIONS = REGION_OPTIONS.map((opt) => ({
+  value: opt.value,
+  label: opt.label,
+}));
 
 function sourceLabel(source: string): string {
   if (source === "special" || source === "payout_override") return "Special";
@@ -21,6 +36,15 @@ function sourceLabel(source: string): string {
 function roleAbbrev(type: string): string {
   return EXAMINER_TYPE_ABBREVIATIONS[type as ExaminerTypeApi] ?? type;
 }
+
+type Candidate = {
+  id: string;
+  name: string;
+  examiner_type: string;
+  region: string;
+  roster_source: string;
+  reference_code?: string | null;
+};
 
 type Props = {
   examinationId: number;
@@ -42,18 +66,9 @@ export function ExaminerAllowanceGroupMembersModal({
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [source, setSource] = useState<"all" | "regular" | "special">("all");
-  const [role, setRole] = useState("");
-  const [region, setRegion] = useState("");
-  const [candidates, setCandidates] = useState<
-    {
-      id: string;
-      name: string;
-      examiner_type: string;
-      region: string;
-      roster_source: string;
-      reference_code?: string | null;
-    }[]
-  >([]);
+  const [roles, setRoles] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -74,24 +89,22 @@ export function ExaminerAllowanceGroupMembersModal({
           examination_id: examinationId,
           search: debouncedSearch || null,
           source: source === "all" ? null : source,
-          role: role || null,
-          region: region || null,
+          role: null,
+          region: null,
           skip: 0,
           limit: PICKER_LIMIT,
         });
         if (cancelled) return;
-        setCandidates(
-          data.items.map((row) => ({
-            id: row.id,
-            name: row.full_name,
-            examiner_type: row.examiner_type,
-            region: row.region,
-            roster_source: row.roster_source,
-            reference_code: row.reference_code,
-          })),
-        );
+        const nextCandidates = data.items.map((row) => ({
+          id: row.id,
+          name: row.full_name,
+          examiner_type: row.examiner_type,
+          region: row.region,
+          roster_source: row.roster_source,
+          reference_code: row.reference_code,
+        }));
+        setCandidates(nextCandidates);
         setTotal(data.total);
-        setSelected(new Set());
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : "Failed to load examiners.");
@@ -105,14 +118,61 @@ export function ExaminerAllowanceGroupMembersModal({
     return () => {
       cancelled = true;
     };
-  }, [examinationId, debouncedSearch, source, role, region]);
+  }, [examinationId, debouncedSearch, source]);
+
+  useEffect(() => {
+    const visibleIds = new Set(candidates.map((c) => c.id));
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleIds.has(id) && !existingMemberIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      if (!changed && next.size === prev.size) return prev;
+      return next;
+    });
+  }, [candidates, existingMemberIds]);
+
+  const filtered = useMemo(() => {
+    return candidates.filter((c) => {
+      if (roles.length > 0 && !roles.includes(c.examiner_type)) return false;
+      if (regions.length > 0 && !regions.includes(c.region)) return false;
+      return true;
+    });
+  }, [candidates, roles, regions]);
 
   const selectable = useMemo(
-    () => candidates.filter((c) => !existingMemberIds.has(c.id)),
-    [candidates, existingMemberIds],
+    () => filtered.filter((c) => !existingMemberIds.has(c.id)),
+    [filtered, existingMemberIds],
   );
 
+  const alreadyInGroupCount = filtered.length - selectable.length;
   const selectedCount = selected.size;
+
+  const filterChips = useMemo((): OfficialAccountsFilterChip[] => {
+    const chips: OfficialAccountsFilterChip[] = [];
+    for (const role of roles) {
+      chips.push({
+        id: `role-${role}`,
+        label: roleAbbrev(role),
+        onRemove: () => setRoles((prev) => prev.filter((r) => r !== role)),
+      });
+    }
+    for (const region of regions) {
+      chips.push({
+        id: `region-${region}`,
+        label: region,
+        onRemove: () => setRegions((prev) => prev.filter((r) => r !== region)),
+      });
+    }
+    return chips;
+  }, [roles, regions]);
+
+  function clearRoleRegionFilters() {
+    setRoles([]);
+    setRegions([]);
+  }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end justify-center sm:items-center sm:p-4">
@@ -126,7 +186,8 @@ export function ExaminerAllowanceGroupMembersModal({
           <div>
             <h2 className="text-base font-semibold text-foreground">Add examiners to {groupName}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Filter the roster, then bulk-select examiners to add. Already-in-group rows stay marked.
+              Pick one or more roles and regions, then select examiners and add them. Already-in-group rows stay
+              marked.
             </p>
           </div>
           <button
@@ -166,43 +227,28 @@ export function ExaminerAllowanceGroupMembersModal({
                 <option value="special">Special</option>
               </select>
             </div>
-            <div>
-              <label className={formLabelClass} htmlFor="ag-role">
-                Role
-              </label>
-              <select
-                id="ag-role"
-                className={cn(formInputClass, "mt-1")}
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-              >
-                <option value="">All roles</option>
-                {EXAMINER_TYPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={formLabelClass} htmlFor="ag-region">
-                Region
-              </label>
-              <select
-                id="ag-region"
-                className={cn(formInputClass, "mt-1")}
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-              >
-                <option value="">All regions</option>
-                {REGION_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <MultiSelectCheckboxDropdown
+              id="ag-role"
+              label="Role"
+              options={ROLE_OPTIONS}
+              selected={roles}
+              onChange={setRoles}
+              allLabel="All roles"
+            />
+            <MultiSelectCheckboxDropdown
+              id="ag-region"
+              label="Region"
+              options={REGION_MULTI_OPTIONS}
+              selected={regions}
+              onChange={setRegions}
+              allLabel="All regions"
+            />
           </div>
+          <OfficialAccountsFilterChips
+            chips={filterChips}
+            onClearAll={clearRoleRegionFilters}
+            variant="inline"
+          />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -212,20 +258,21 @@ export function ExaminerAllowanceGroupMembersModal({
               <Loader2 className="size-4 animate-spin" />
               Loading examiners…
             </div>
-          ) : candidates.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">No examiners match these filters.</p>
           ) : (
             <>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>
-                  Showing {candidates.length}
-                  {total > candidates.length ? ` of ${total}` : ""} examiner
-                  {candidates.length === 1 ? "" : "s"}
+                  {selectable.length} addable · {alreadyInGroupCount} already in group
+                  {total > candidates.length || total > PICKER_LIMIT
+                    ? ` · showing ${candidates.length}${total > candidates.length ? ` of ${total}` : ""} loaded`
+                    : ""}
                   {total > PICKER_LIMIT ? ` (capped at ${PICKER_LIMIT})` : ""}
                 </span>
                 <button
                   type="button"
-                  className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                  className="font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
                   disabled={selectable.length === 0}
                   onClick={() => setSelected(new Set(selectable.map((c) => c.id)))}
                 >
@@ -233,7 +280,7 @@ export function ExaminerAllowanceGroupMembersModal({
                 </button>
               </div>
               <ul className="divide-y divide-border rounded-xl border border-border">
-                {candidates.map((c) => {
+                {filtered.map((c) => {
                   const inGroup = existingMemberIds.has(c.id);
                   const checked = inGroup || selected.has(c.id);
                   return (
@@ -261,7 +308,9 @@ export function ExaminerAllowanceGroupMembersModal({
                         <span className="min-w-0 flex-1">
                           <span className="font-medium text-foreground">{c.name}</span>
                           {inGroup ? (
-                            <span className="ml-2 text-[11px] font-medium text-muted-foreground">Already in group</span>
+                            <span className="ml-2 text-[11px] font-medium text-muted-foreground">
+                              Already in group
+                            </span>
                           ) : null}
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             {roleAbbrev(c.examiner_type)} · {c.region} · {sourceLabel(c.roster_source)}

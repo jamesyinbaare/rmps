@@ -40,6 +40,7 @@ import {
   type ExaminerTypeApi,
   type RosterAllowanceEligibilityRow,
 } from "@/lib/api";
+import { getMe, type UserMe } from "@/lib/auth";
 import {
   EXAMINER_ALLOWANCE_TYPE_OPTIONS,
   EXAMINER_RATES_SECTION_ALLOWANCE_GROUPS,
@@ -129,6 +130,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
   const [newGroupName, setNewGroupName] = useState("");
   const [renameGroupName, setRenameGroupName] = useState("");
   const [groupActionBusy, setGroupActionBusy] = useState(false);
+  const [me, setMe] = useState<UserMe | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState("");
   const [savedWhoSnapshot, setSavedWhoSnapshot] = useState("");
   const [activeSection, setActiveSection] = useState<ExaminerRatesSectionId>(EXAMINER_RATES_SECTION_ROLE);
@@ -326,6 +328,10 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
       setBusy(false);
     }
   }, [applyRatesFromApi, exam.id]);
+
+  useEffect(() => {
+    void getMe().then(setMe).catch(() => setMe(null));
+  }, []);
 
   useEffect(() => {
     void loadRates();
@@ -739,6 +745,7 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
                     editing={editing}
                     saving={saving}
                     groupActionBusy={groupActionBusy}
+                    canEditGroupAdjustments={me?.role === "SUPER_ADMIN"}
                     allowanceGroups={allowanceGroups}
                     selectedGroup={selectedAllowanceGroup}
                     newGroupName={newGroupName}
@@ -765,6 +772,11 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
                     onMemberCountChange={(groupId, count) => {
                       setAllowanceGroups((prev) =>
                         prev.map((g) => (g.id === groupId ? { ...g, member_count: count } : g)),
+                      );
+                    }}
+                    onGroupAdjustmentsSaved={(group) => {
+                      setAllowanceGroups((prev) =>
+                        prev.map((g) => (g.id === group.id ? { ...g, ...group } : g)),
                       );
                     }}
                   />

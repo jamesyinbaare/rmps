@@ -110,14 +110,10 @@ export function ExaminerAllowanceBreakdownCell({
               <BreakdownRow label="Vetting net" value={formatGhsAmount(row.vetting_net_ghs)} />
               <BreakdownRow label="Internal Commuting" value={formatGhsAmount(row.internal_commuting_ghs)} />
               {Number(row.sitting_allowance_ghs) > 0 || row.sitting_num_days > 0 ? (
-                <>
-                  <BreakdownRow
-                    label={`Sitting (gross, ${row.sitting_num_days} days × ${formatGhsAmount(row.sitting_daily_rate_ghs)})`}
-                    value={formatGhsAmount(row.sitting_allowance_ghs)}
-                  />
-                  <BreakdownRow label="Sitting tax (10%)" value={formatGhsAmount(row.sitting_withholding_tax_ghs)} />
-                  <BreakdownRow label="Sitting net" value={formatGhsAmount(row.sitting_net_ghs)} />
-                </>
+                <BreakdownRow
+                  label={`Sitting (${row.sitting_num_days} days × ${formatGhsAmount(row.sitting_daily_rate_ghs)})`}
+                  value={formatGhsAmount(row.sitting_allowance_ghs)}
+                />
               ) : null}
             </div>
           </div>
@@ -173,12 +169,12 @@ export function ExaminerAllowanceBreakdownCell({
           )}
           {(row.payout_adjustments ?? []).length > 0 ? (
             <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
-              <p className="font-medium text-foreground">Manual adjustments</p>
+              <p className="font-medium text-foreground">Adjustments & special allowances</p>
               <div className="mt-2 space-y-1">
                 {(row.payout_adjustments ?? []).map((line, idx) => (
                   <div key={line.id ?? `${line.description}-${idx}`} className="space-y-1">
                     <BreakdownRow
-                      label={`${line.description}${line.is_taxable ? " (taxed)" : ""}`}
+                      label={`${line.description}${line.group_name ? ` [${line.group_name}]` : ""}${line.is_taxable ? " (taxed)" : ""}`}
                       value={formatGhsAmount(line.amount_ghs)}
                     />
                     {line.is_taxable ? (

@@ -101,8 +101,8 @@ def test_detail_workbook_core_allowance_headers_and_values() -> None:
             "sitting_num_days": 5,
             "sitting_daily_rate_ghs": Decimal("40"),
             "sitting_allowance_ghs": Decimal("200"),
-            "sitting_withholding_tax_ghs": Decimal("20"),
-            "sitting_net_ghs": Decimal("180"),
+            "sitting_withholding_tax_ghs": Decimal("0"),
+            "sitting_net_ghs": Decimal("200"),
             "responsibility_allowance_ghs": Decimal("100"),
             "inconvenience_allowance_ghs": Decimal("50"),
             "vetting_of_scripts_ghs": Decimal("80"),
@@ -158,7 +158,7 @@ def test_detail_workbook_core_allowance_headers_and_values() -> None:
     adj_col = headers.index("Adjustments (GHS)") + 1
     assert ws.cell(row=3, column=report_col).value == 3
     assert ws.cell(row=3, column=vetting_col).value == 72.0
-    assert ws.cell(row=3, column=sitting_col).value == 180.0
+    assert ws.cell(row=3, column=sitting_col).value == 200.0
     assert ws.cell(row=3, column=marking_col).value == 270.0
     assert ws.cell(row=3, column=adj_col).value == 45.0
 

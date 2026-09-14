@@ -19,6 +19,8 @@ class ExaminerPayoutAdjustmentRow(BaseModel):
     is_taxable: bool
     tax_ghs: Decimal
     net_ghs: Decimal
+    source: str = "examiner"
+    group_name: str | None = None
 
 
 class AdminExaminerAllowanceRow(BaseModel):

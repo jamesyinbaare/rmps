@@ -2770,6 +2770,8 @@ export type ExaminerPayoutAdjustmentRow = {
   is_taxable: boolean;
   tax_ghs: string;
   net_ghs: string;
+  source?: "examiner" | "group";
+  group_name?: string | null;
 };
 
 export type AdminExaminerAllowanceRow = {
@@ -3045,12 +3047,20 @@ export async function putExaminationRosterAllowanceEligibility(
   );
 }
 
+export type AllowanceGroupAdjustmentRow = {
+  id?: string | null;
+  description: string;
+  amount_ghs: string;
+  is_taxable: boolean;
+};
+
 export type AllowanceGroupRow = {
   id: string;
   name: string;
   is_general: boolean;
   member_count: number;
   allowances: Record<string, boolean>;
+  adjustments?: AllowanceGroupAdjustmentRow[];
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -3114,6 +3124,21 @@ export async function putExaminationAllowanceGroupEligibility(
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cells }),
+    },
+  );
+}
+
+export async function putExaminationAllowanceGroupAdjustments(
+  examinationId: number,
+  groupId: string,
+  adjustments: { description: string; amount_ghs: string; is_taxable: boolean }[],
+): Promise<AllowanceGroupRow> {
+  return apiJson<AllowanceGroupRow>(
+    `/admin/examinations/${examinationId}/allowance-groups/${groupId}/adjustments`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adjustments }),
     },
   );
 }

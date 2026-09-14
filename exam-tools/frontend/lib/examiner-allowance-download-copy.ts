@@ -66,7 +66,7 @@ export const EXAMINER_ALLOWANCE_DOWNLOAD_COPY: Record<
       "A Bank of Ghana payment file for allowances and marking only — without travel or commuting. Includes a per-allowance breakdown plus the bank payment total.",
     includes: [
       "Responsibility, inconvenience, CER (with report count)",
-      "Vetting, sitting, marking, and adjustments — taxable lines as net",
+      "Vetting, marking, and adjustments — taxable lines as net; sitting untaxed",
       "Allocated scripts (total and per paper)",
       "Amount (GHS) total for bank payment",
     ],

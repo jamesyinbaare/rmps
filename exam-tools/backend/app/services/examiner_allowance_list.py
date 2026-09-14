@@ -200,6 +200,8 @@ def examiner_to_admin_row(
                 is_taxable=line.is_taxable,
                 tax_ghs=line.tax_ghs,
                 net_ghs=line.net_ghs,
+                source=line.source,
+                group_name=line.group_name,
             )
             for line in comp.payout_adjustments
         ],
