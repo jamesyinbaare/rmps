@@ -144,7 +144,7 @@ services:
       - PGPASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - PGDATABASE=${POSTGRES_DB:-exam_tools_db}
       - GCS_BUCKET_NAME=${GCS_BUCKET_NAME?Variable not set}
-      - DB_BACKUP_GCS_PREFIX=${DB_BACKUP_GCS_PREFIX:-exam-tools/db-backups}
+      - DB_BACKUP_GCS_PREFIX=${DB_BACKUP_GCS_PREFIX:-exam-tools/  }
       - DB_BACKUP_RETENTION_DAYS=${DB_BACKUP_RETENTION_DAYS:-14}
       - DB_BACKUP_SCHEDULE=${DB_BACKUP_SCHEDULE:-0 2 * * *}
       - DB_BACKUP_MARKER_FILE=/var/tmp/last-backup-ok
