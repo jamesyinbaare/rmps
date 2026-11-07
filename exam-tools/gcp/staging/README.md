@@ -2,6 +2,12 @@
 
 Dedicated GCE VM running Docker Compose: **Traefik** (TLS), **FastAPI backend**, **Next.js frontend**, **Postgres**, and a **db-backup** sidecar that uploads daily dumps to GCS.
 
+**Current staging VM:** `monitoring-staging-vm` in `us-central1-a` (project `monitoring-portal-staging`), `e2-medium`, 40 GB `pd-ssd`, **ephemeral** external IP (no reserved static address — re-point DNS if the instance is stopped/started and the IP changes).
+
+```bash
+gcloud compute ssh monitoring-staging-vm --zone=us-central1-a --project=monitoring-portal-staging
+```
+
 ## Layout
 
 ```
@@ -36,9 +42,9 @@ Root files:
 
 1. **GCP**: Create or reuse a project; enable Compute Engine, **Cloud Storage**, Secret Manager, and APIs listed in [registration-portal docs](../../../registration-portal/docs/gcp-staging-deployment.md). Cloud SQL is **not** required for exam-tools (Postgres runs in Compose).
 
-2. **VM**: Create an Ubuntu 22.04 VM (e.g. `e2-medium` for exam-tools alone; use **`e2-standard-2`** when co-locating SEMS), attach a service account with **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `exam-tools-staging`) for firewall rules. Size the boot disk for Postgres data plus temporary dumps (bump if the DB is large). Before risky ops (major upgrades, volume experiments), snapshot the GCE disk.
+2. **VM**: Create an Ubuntu 22.04 VM in a cheap region (staging uses **`us-central1-a`**; e.g. `e2-medium` for exam-tools alone; use **`e2-standard-2`** when co-locating SEMS), attach a service account with **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `monitoring-tools-staging`) for firewall rules. Size the boot disk for Postgres data plus temporary dumps (**40 GB** `pd-ssd` on current staging). Prefer an ephemeral external IP unless you need a stable address. Before risky ops (major upgrades, volume experiments), snapshot the GCE disk.
 
-3. **GCS bucket**: Create a bucket (e.g. in `europe-west9`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). Inspector attendance sheets use a separate prefix, `GCS_ATTENDANCE_SHEETS_PREFIX` (default `exam-tools/attendance-sheets`). DB backups use `DB_BACKUP_GCS_PREFIX` (default `exam-tools/db-backups`). To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
+3. **GCS bucket**: Create a bucket (staging uses multi-region **`US`**, e.g. `ctvet-monitoring`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). Inspector attendance sheets use a separate prefix, `GCS_ATTENDANCE_SHEETS_PREFIX` (default `exam-tools/attendance-sheets`). DB backups use `DB_BACKUP_GCS_PREFIX` (default `exam-tools/db-backups`). To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
 
    Apply bucket lifecycle (belt-and-suspenders with container prune):
 
@@ -56,7 +62,7 @@ Root files:
 
 5. **VM bootstrap**: SSH in and run `./gcp/staging/infrastructure/scripts/setup-gce-vm.sh` (or install Docker + Compose manually).
 
-6. **DNS**: Point `A`/`AAAA` records for your frontend and API hostnames at the VM’s external IP. Defaults in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml) use `monitoring.jamesyin.com` and `monitoring-api.jamesyin.com`—update those hosts and Traefik dashboard host in the same file and in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml) Traefik labels if needed.
+6. **DNS**: Point `A`/`AAAA` records for your frontend and API hostnames at the VM’s **current** external IP (`gcloud compute instances describe monitoring-staging-vm --zone=us-central1-a --format='get(networkInterfaces[0].accessConfigs[0].natIP)'`). Defaults in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml) use `monitoring.jamesyin.com` and `monitoring-api.jamesyin.com`—update those hosts and Traefik dashboard host in the same file and in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml) Traefik labels if needed. With an ephemeral IP, update DNS again after any stop/start that changes the address.
 
 7. **Secrets** (optional): `./gcp/staging/scripts/setup-secrets.sh` — or place values only in `.env.staging.gcp`.
 
