@@ -31,3 +31,6 @@ registration-portal/backend/certs/
 registration-portal/backend/test_certs/
 registration-portal/TESTING_CHECKLIST.md
 .env.staging.gcp
+# Local Cloud SQL / Postgres dump artifacts from cutover scripts
+exam-tools/backups/
+*.dump

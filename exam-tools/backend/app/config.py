@@ -45,21 +45,21 @@ class Settings(BaseSettings):
         host = parsed.hostname
         if host is None or host == "":
             raise ValueError(
-                "DATABASE_URL has no hostname. For Docker Compose staging use host `cloud-sql-proxy` "
-                "(see .env.staging.gcp.example). Example: "
-                "postgresql+asyncpg://USER:PASSWORD@cloud-sql-proxy:5432/DBNAME"
+                "DATABASE_URL has no hostname. For Docker Compose staging use the Postgres "
+                "service hostname `tools_postgres` (see .env.staging.gcp.example). Example: "
+                "postgresql+asyncpg://USER:PASSWORD@tools_postgres:5432/DBNAME"
             )
         if host.startswith(".") or host.endswith(".") or ".." in host:
             raise ValueError(
                 f"DATABASE_URL hostname {host!r} is invalid (leading/trailing dot or empty label). "
-                "This triggers IDNA errors at connection time. Use a plain hostname such as "
-                "`cloud-sql-proxy` with no dots at the ends or doubled dots."
+                "This triggers IDNA errors at connection time. Use a plain Compose service "
+                "hostname such as `tools_postgres` with no dots at the ends or doubled dots."
             )
         labels = host.split(".")
         if any(label == "" for label in labels):
             raise ValueError(
                 f"DATABASE_URL hostname {host!r} contains an empty DNS label. "
-                "Fix the host in DATABASE_URL (staging: `cloud-sql-proxy`)."
+                "Fix the host in DATABASE_URL (staging: `tools_postgres`)."
             )
         return v
 
