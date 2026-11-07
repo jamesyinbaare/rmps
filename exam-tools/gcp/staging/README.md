@@ -42,7 +42,7 @@ Root files:
 
 1. **GCP**: Create or reuse a project; enable Compute Engine, **Cloud Storage**, Secret Manager, and APIs listed in [registration-portal docs](../../../registration-portal/docs/gcp-staging-deployment.md). Cloud SQL is **not** required for exam-tools (Postgres runs in Compose).
 
-2. **VM**: Create an Ubuntu 22.04 VM in a cheap region (staging uses **`us-central1-a`**; e.g. `e2-medium` for exam-tools alone; use **`e2-standard-2`** when co-locating SEMS), attach a service account with **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `monitoring-tools-staging`) for firewall rules. Size the boot disk for Postgres data plus temporary dumps (**40 GB** `pd-ssd` on current staging). Prefer an ephemeral external IP unless you need a stable address. Before risky ops (major upgrades, volume experiments), snapshot the GCE disk.
+2. **VM**: Create an Ubuntu 22.04 VM in a cheap region (staging uses **`us-central1-a`**; e.g. `e2-medium`), attach a service account with **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `monitoring-tools-staging`) for firewall rules. Size the boot disk for Postgres data plus temporary dumps (**40 GB** `pd-ssd` on current staging). Prefer an ephemeral external IP unless you need a stable address. Before risky ops (major upgrades, volume experiments), snapshot the GCE disk.
 
 3. **GCS bucket**: Create a bucket (staging uses multi-region **`US`**, e.g. `ctvet-monitoring`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). Inspector attendance sheets use a separate prefix, `GCS_ATTENDANCE_SHEETS_PREFIX` (default `exam-tools/attendance-sheets`). DB backups use `DB_BACKUP_GCS_PREFIX` (default `exam-tools/db-backups`). To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
 
@@ -200,18 +200,6 @@ sudo mkdir -p /var/lib/exam-tools/postgres
 Then smoke-test `/health` and login. Confirm `db-backup` becomes healthy again (new dump uploaded).
 
 **Note:** Monthly [`verify-db-backup.sh`](scripts/verify-db-backup.sh) only validates a dump (optional throwaway restore). It does **not** write into the live database—use `restore-from-gcs-backup.sh` for that.
-
-## Co-located SEMS
-
-SEMS may share this VM’s Traefik and Docker network (`monitoring-tools-network-staging`), but SEMS uses its **own** Cloud SQL Auth Proxy and Cloud SQL database—exam-tools Postgres does not serve SEMS.
-
-**Deploy order:**
-
-1. Deploy (or redeploy) exam-tools so Traefik is up and [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml) includes SEMS host routes (if co-located).
-2. Ensure SEMS Cloud SQL DB/user and DNS for `sems*` / `sems-api*` hosts (see [sems GCP staging README](../../../sems/gcp/staging/README.md)).
-3. Deploy SEMS from the `sems/` tree with its own compose project.
-
-Exam-tools `deploy.sh` only stops containers in the exam-tools compose project; SEMS containers are unaffected (brief Traefik restart on exam-tools redeploy is expected when Traefik is shared).
 
 ## Frontend build note
 

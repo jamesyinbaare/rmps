@@ -10,8 +10,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-compose.staging.gcp.yaml}"
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-monitoring-tools-traefik-staging}"
 FRONTEND_HOST="${FRONTEND_HOST:-monitoring.jamesyin.com}"
 API_HOST="${API_HOST:-monitoring-api.jamesyin.com}"
-FRONTEND_HOST_ALT="${FRONTEND_HOST_ALT:-monitoring.ctvet.gov.gh}"
-API_HOST_ALT="${API_HOST_ALT:-monitoring-api.ctvet.gov.gh}"
+FRONTEND_HOST_ALT="${FRONTEND_HOST_ALT:-monitoring.ctvetlabs.com}"
+API_HOST_ALT="${API_HOST_ALT:-monitoring-api.ctvetlabs.com}"
 
 cd "$PROJECT_ROOT"
 

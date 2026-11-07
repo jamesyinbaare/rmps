@@ -1,10 +1,9 @@
-# File-provider routes for exam-tools + co-located SEMS (avoids duplicate routers vs compose labels).
-# Dual hostnames: jamesyin.com + ctvet.gov.gh (same services; ACME SAN on each router).
-# SEMS containers join Docker network `monitoring-tools-network-staging` (see sems/compose.staging.gcp.yaml).
+# File-provider routes for exam-tools (avoids duplicate routers vs compose labels).
+# Dual hostnames: jamesyin.com + ctvetlabs.com for monitoring (same services; ACME SAN on each router).
 http:
   routers:
     monitoring-frontend-staging:
-      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvet.gov.gh`)"
+      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvetlabs.com`)"
       entryPoints:
         - websecure
       service: monitoring-frontend-staging
@@ -14,7 +13,7 @@ http:
         - monitoring-security-headers
 
     monitoring-frontend-staging-http:
-      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvet.gov.gh`)"
+      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvetlabs.com`)"
       entryPoints:
         - web
       service: monitoring-frontend-staging
@@ -22,7 +21,7 @@ http:
         - monitoring-security-headers
 
     monitoring-backend-staging:
-      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvet.gov.gh`)"
+      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvetlabs.com`)"
       entryPoints:
         - websecure
       service: monitoring-backend-staging
@@ -32,46 +31,10 @@ http:
         - monitoring-security-headers
 
     monitoring-backend-staging-http:
-      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvet.gov.gh`)"
+      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvetlabs.com`)"
       entryPoints:
         - web
       service: monitoring-backend-staging
-      middlewares:
-        - monitoring-security-headers
-
-    sems-frontend-staging:
-      rule: "Host(`sems.jamesyin.com`) || Host(`sems.ctvet.gov.gh`)"
-      entryPoints:
-        - websecure
-      service: sems-frontend-staging
-      tls:
-        certResolver: letsencrypt
-      middlewares:
-        - monitoring-security-headers
-
-    sems-frontend-staging-http:
-      rule: "Host(`sems.jamesyin.com`) || Host(`sems.ctvet.gov.gh`)"
-      entryPoints:
-        - web
-      service: sems-frontend-staging
-      middlewares:
-        - monitoring-security-headers
-
-    sems-backend-staging:
-      rule: "Host(`sems-api.jamesyin.com`) || Host(`sems-api.ctvet.gov.gh`)"
-      entryPoints:
-        - websecure
-      service: sems-backend-staging
-      tls:
-        certResolver: letsencrypt
-      middlewares:
-        - monitoring-security-headers
-
-    sems-backend-staging-http:
-      rule: "Host(`sems-api.jamesyin.com`) || Host(`sems-api.ctvet.gov.gh`)"
-      entryPoints:
-        - web
-      service: sems-backend-staging
       middlewares:
         - monitoring-security-headers
 
@@ -85,16 +48,6 @@ http:
       loadBalancer:
         servers:
           - url: "http://monitoring-tools-backend-staging:80"
-
-    sems-frontend-staging:
-      loadBalancer:
-        servers:
-          - url: "http://sems-frontend-staging:3001"
-
-    sems-backend-staging:
-      loadBalancer:
-        servers:
-          - url: "http://sems-backend-staging:80"
 
   middlewares:
     monitoring-security-headers:
