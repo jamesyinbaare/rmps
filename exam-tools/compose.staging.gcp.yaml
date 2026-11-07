@@ -55,8 +55,8 @@ services:
       "
     restart: unless-stopped
     depends_on:
-      cloud-sql-proxy:
-        condition: service_started
+      tools_postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
@@ -88,18 +88,83 @@ services:
     networks:
       - monitoring-tools-network
 
-  cloud-sql-proxy:
-    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
-    container_name: monitoring-tools-cloud-sql-proxy-staging
+  tools_postgres:
+    image: postgres:18.6
+    container_name: monitoring-tools-postgres-staging
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=100
+      - -c
+      - fsync=on
+      - -c
+      - full_page_writes=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      # Host bind mount survives compose down / down -v / container rebuilds.
+      - ${POSTGRES_DATA_DIR:-/var/lib/exam-tools/postgres}:/var/lib/postgresql/data/pgdata
     env_file:
       - .env.staging.gcp
-    command:
-      - --address=0.0.0.0
-      - --port=5432
-      - ${CLOUD_SQL_CONNECTION_NAME}
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB:-exam_tools_db}
     networks:
       - monitoring-tools-network
+    # No host port published — DB is only reachable on the Docker network.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  db-backup:
+    build:
+      context: gcp/staging/backup
+      dockerfile: Dockerfile
+    container_name: monitoring-tools-db-backup-staging
+    env_file:
+      - .env.staging.gcp
+    environment:
+      - PGHOST=tools_postgres
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER?Variable not set}
+      - PGPASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - PGDATABASE=${POSTGRES_DB:-exam_tools_db}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME?Variable not set}
+      - DB_BACKUP_GCS_PREFIX=${DB_BACKUP_GCS_PREFIX:-exam-tools/db-backups}
+      - DB_BACKUP_RETENTION_DAYS=${DB_BACKUP_RETENTION_DAYS:-14}
+      - DB_BACKUP_SCHEDULE=${DB_BACKUP_SCHEDULE:-0 2 * * *}
+      - DB_BACKUP_MARKER_FILE=/var/tmp/last-backup-ok
     restart: unless-stopped
+    depends_on:
+      tools_postgres:
+        condition: service_healthy
+    healthcheck:
+      # Fail if no successful backup marker within the last 36 hours.
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /var/tmp/last-backup-ok && find /var/tmp/last-backup-ok -mmin -2160 | grep -q .",
+        ]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 15m
+    networks:
+      - monitoring-tools-network
 
 volumes:
   traefik_certs:

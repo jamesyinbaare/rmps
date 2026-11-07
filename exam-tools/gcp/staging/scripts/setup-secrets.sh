@@ -38,7 +38,7 @@ create_secret() {
 }
 
 echo ""
-echo "Database..."
+echo "Database (Compose Postgres)..."
 create_secret "exam-tools-db-password" "PostgreSQL password for exam-tools"
 create_secret "exam-tools-db-user" "PostgreSQL user for exam-tools"
 
@@ -51,12 +51,9 @@ echo "Super admin bootstrap (optional; can use plain env instead)..."
 create_secret "exam-tools-super-admin-password" "Initial SUPER_ADMIN password"
 
 echo ""
-echo "Cloud SQL..."
-create_secret "exam-tools-cloud-sql-connection-name" "Instance connection name project:region:instance"
-
-echo ""
 echo "Storage (optional if bucket name is only in .env)..."
-create_secret "exam-tools-gcs-bucket-name" "GCS bucket for exam documents"
+create_secret "exam-tools-gcs-bucket-name" "GCS bucket for exam documents and DB backups"
 
 echo ""
 echo "Done. Grant your VM service account roles/secretmanager.secretAccessor on these secrets, then fill .env.staging.gcp."
+echo "Note: Cloud SQL connection-name secret is no longer used; Postgres runs in Compose."

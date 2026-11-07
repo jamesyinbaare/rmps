@@ -12,11 +12,11 @@ from app.config import Settings
 def test_database_url_postgres_valid_host() -> None:
     with patch.dict(
         os.environ,
-        {"DATABASE_URL": "postgresql+asyncpg://user:pass@cloud-sql-proxy:5432/exam_tools_db"},
+        {"DATABASE_URL": "postgresql+asyncpg://user:pass@tools_postgres:5432/exam_tools_db"},
         clear=False,
     ):
         s = Settings()
-        assert "cloud-sql-proxy" in s.database_url
+        assert "tools_postgres" in s.database_url
 
 
 def test_database_url_empty_skips_validation() -> None:
@@ -28,8 +28,8 @@ def test_database_url_empty_skips_validation() -> None:
 @pytest.mark.parametrize(
     "bad_url",
     [
-        "postgresql+asyncpg://u:p@.cloud-sql-proxy:5432/db",
-        "postgresql+asyncpg://u:p@cloud-sql-proxy.:5432/db",
+        "postgresql+asyncpg://u:p@.tools_postgres:5432/db",
+        "postgresql+asyncpg://u:p@tools_postgres.:5432/db",
         "postgresql+asyncpg://u:p@foo..bar:5432/db",
         "postgresql+asyncpg://u:p@:5432/db",
     ],
