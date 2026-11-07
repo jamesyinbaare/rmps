@@ -4,8 +4,8 @@
 set -euo pipefail
 
 # Space-separated lists; override to test a subset.
-FRONTEND_HOSTS="${FRONTEND_HOSTS:-monitoring.jamesyin.com monitoring.ctvet.gov.gh}"
-API_HOSTS="${API_HOSTS:-monitoring-api.jamesyin.com monitoring-api.ctvet.gov.gh}"
+FRONTEND_HOSTS="${FRONTEND_HOSTS:-monitoring.jamesyin.com monitoring.ctvetlabs.com}"
+API_HOSTS="${API_HOSTS:-monitoring-api.jamesyin.com monitoring-api.ctvetlabs.com}"
 DASHBOARD_HOST="${DASHBOARD_HOST:-traefik-monitoring-staging.jamesyin.com}"
 
 check_host() {
