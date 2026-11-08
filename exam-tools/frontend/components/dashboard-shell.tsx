@@ -34,11 +34,15 @@ import { SO_MOBILE_MAIN_CLASS } from "@/components/examiners/constants";
 import {
   AllowancesSubNavLink,
   CentreLocationNavLink,
+  IrregularCandidatesNavLink,
   OfficialAccountsNavLink,
   OfficialAccountsNavSection,
 } from "@/components/official-accounts-nav-link";
 import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
-import { OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF } from "@/lib/official-accounts-zone";
+import {
+  INSPECTOR_IRREGULAR_CANDIDATES_HREF,
+  OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
+} from "@/lib/official-accounts-zone";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
@@ -265,6 +269,7 @@ function DashboardShellInner({ title, children, staffRole, mainClassName }: Prop
   const showInspectorBottomNav = staffRole === "inspector";
   const examOfficialsActive = pathname.startsWith(examOfficialsHref);
   const attendanceSheetsActive = pathname.startsWith(OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF);
+  const irregularCandidatesActive = pathname.startsWith(INSPECTOR_IRREGULAR_CANDIDATES_HREF);
   const centreLocationActive = pathname.startsWith(centreLocationHref);
   return (
     <div
@@ -331,6 +336,13 @@ function DashboardShellInner({ title, children, staffRole, mainClassName }: Prop
                   <AllowancesSubNavLink
                     href={OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF}
                     active={attendanceSheetsActive}
+                    onNavigate={() => setSidebarOpen(false)}
+                  />
+                </OfficialAccountsNavSection>
+                <OfficialAccountsNavSection title="Candidates">
+                  <IrregularCandidatesNavLink
+                    href={INSPECTOR_IRREGULAR_CANDIDATES_HREF}
+                    active={irregularCandidatesActive}
                     onNavigate={() => setSidebarOpen(false)}
                   />
                 </OfficialAccountsNavSection>

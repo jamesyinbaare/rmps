@@ -8,6 +8,7 @@ export const ACCOUNT_DETAILS_BY_CENTRE_LABEL = "Bank accounts by Centre";
 export const OFFICIAL_ACCOUNTS_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
+export const INSPECTOR_IRREGULAR_CANDIDATES_HREF = "/dashboard/inspector/irregular-candidates";
 export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
 export const EXAMINER_SPECIAL_HREF = "/dashboard/admin/examiner-special";
 export const EXAMINER_ATTENDANCE_HREF = "/dashboard/admin/examiner-attendance";
@@ -66,6 +67,7 @@ export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_STATISTICS_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
+  INSPECTOR_IRREGULAR_CANDIDATES_HREF,
   EXAMINER_PAYOUTS_HREF,
   EXAMINER_SPECIAL_HREF,
   EXAMINER_ATTENDANCE_HREF,

@@ -25,8 +25,13 @@ import {
   type ExaminationSchedule,
   type ExaminationScheduleBulkUploadResponse,
   type ExaminationScriptSeriesConfigRow,
+  downloadAdminIrregularCandidatePhotograph,
+  downloadAdminIrregularCandidateVoucher,
+  downloadAdminIrregularCandidatesExcel,
   getAdminInspectorSubmissionSettings,
+  listAdminIrregularCandidates,
   putAdminInspectorSubmissionSettings,
+  type IrregularCandidate,
 } from "@/lib/api";
 import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
 import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
@@ -145,9 +150,18 @@ export default function ExaminationDetailPage() {
   const [electiveSubmissionPeriodEnd, setElectiveSubmissionPeriodEnd] = useState("");
   const [officialsCoreEnabled, setOfficialsCoreEnabled] = useState(true);
   const [officialsElectiveEnabled, setOfficialsElectiveEnabled] = useState(true);
+  const [irregularCandidatesEnabled, setIrregularCandidatesEnabled] = useState(false);
   const [submissionSettingsLoading, setSubmissionSettingsLoading] = useState(false);
   const [submissionSettingsSaving, setSubmissionSettingsSaving] = useState(false);
   const [submissionSettingsError, setSubmissionSettingsError] = useState("");
+
+  const [irregularCandidates, setIrregularCandidates] = useState<IrregularCandidate[]>([]);
+  const [irregularCandidatesTotal, setIrregularCandidatesTotal] = useState(0);
+  const [irregularCandidatesLoading, setIrregularCandidatesLoading] = useState(false);
+  const [irregularCandidatesError, setIrregularCandidatesError] = useState("");
+  const [hasLoadedIrregularCandidates, setHasLoadedIrregularCandidates] = useState(false);
+  const [irregularCandidateQuery, setIrregularCandidateQuery] = useState("");
+  const [irregularCandidatesExporting, setIrregularCandidatesExporting] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(examId)) return;
@@ -183,12 +197,58 @@ export default function ExaminationDetailPage() {
       setElectiveSubmissionPeriodEnd(settings.elective_submission_period_end ?? "");
       setOfficialsCoreEnabled(settings.officials_core_enabled);
       setOfficialsElectiveEnabled(settings.officials_elective_enabled);
+      setIrregularCandidatesEnabled(settings.irregular_candidates_enabled);
     } catch (err) {
       setSubmissionSettingsError(err instanceof Error ? err.message : "Could not load submission settings");
     } finally {
       setSubmissionSettingsLoading(false);
     }
   }, [examId]);
+
+  const fetchIrregularCandidates = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setIrregularCandidatesLoading(true);
+    setIrregularCandidatesError("");
+    try {
+      const response = await listAdminIrregularCandidates(examId, {
+        skip: 0,
+        limit: 100,
+        q: irregularCandidateQuery.trim() || null,
+      });
+      setIrregularCandidates(response.items);
+      setIrregularCandidatesTotal(response.total);
+      setHasLoadedIrregularCandidates(true);
+    } catch (err) {
+      setIrregularCandidates([]);
+      setIrregularCandidatesTotal(0);
+      setIrregularCandidatesError(
+        err instanceof Error ? err.message : "Failed to load irregular candidates",
+      );
+    } finally {
+      setIrregularCandidatesLoading(false);
+    }
+  }, [examId, irregularCandidateQuery]);
+
+  const exportIrregularCandidatesExcel = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setIrregularCandidatesExporting(true);
+    setIrregularCandidatesError("");
+    try {
+      const series = exam?.exam_series ? `_${exam.exam_series}` : "";
+      const filename = `irregular_candidates_${exam?.exam_type ?? "exam"}_${exam?.year ?? examId}${series}.xlsx`;
+      await downloadAdminIrregularCandidatesExcel(
+        examId,
+        { q: irregularCandidateQuery.trim() || null },
+        filename.replace(/[^\w.\-]+/g, "_"),
+      );
+    } catch (err) {
+      setIrregularCandidatesError(
+        err instanceof Error ? err.message : "Failed to download irregular candidates Excel",
+      );
+    } finally {
+      setIrregularCandidatesExporting(false);
+    }
+  }, [examId, exam?.exam_series, exam?.exam_type, exam?.year, irregularCandidateQuery]);
 
   useEffect(() => {
     void loadSubmissionSettings();
@@ -207,6 +267,7 @@ export default function ExaminationDetailPage() {
         elective_submission_period_end: electiveSubmissionPeriodEnd.trim() || null,
         officials_core_enabled: officialsCoreEnabled,
         officials_elective_enabled: officialsElectiveEnabled,
+        irregular_candidates_enabled: irregularCandidatesEnabled,
       });
       await loadSubmissionSettings();
     } catch (err) {
@@ -663,9 +724,18 @@ export default function ExaminationDetailPage() {
               />
               <span className="text-sm text-foreground">Allow elective bank account uploads</span>
             </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={irregularCandidatesEnabled}
+                onChange={(e) => setIrregularCandidatesEnabled(e.target.checked)}
+                className="size-4 rounded border-input-border"
+              />
+              <span className="text-sm text-foreground">Allow irregular candidate registration</span>
+            </label>
             <p className="text-xs text-muted-foreground">
               Attendance uploads use the matching scope period and are inferred from the centre timetable on each
-              date.
+              date. Irregular candidate registration is available to inspectors only when enabled above.
             </p>
             <div>
               <button type="submit" disabled={submissionSettingsSaving} className={primaryButtonClass}>
@@ -1041,6 +1111,134 @@ export default function ExaminationDetailPage() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-card-foreground">Irregular candidates</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Inspector-recorded candidates (separate from portal imports). Included in centre ops counts and
+              subject lists.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={outlineBtn}
+              disabled={irregularCandidatesLoading || irregularCandidatesExporting}
+              onClick={() => void exportIrregularCandidatesExcel()}
+            >
+              {irregularCandidatesExporting ? "Preparing Excel…" : "Download Excel"}
+            </button>
+            <button
+              type="button"
+              className={outlineBtn}
+              disabled={irregularCandidatesLoading || irregularCandidatesExporting}
+              onClick={() => void fetchIrregularCandidates()}
+            >
+              {hasLoadedIrregularCandidates
+                ? irregularCandidatesLoading
+                  ? "Refreshing…"
+                  : "Refresh"
+                : irregularCandidatesLoading
+                  ? "Loading…"
+                  : "Load irregular candidates"}
+            </button>
+          </div>
+        </div>
+        {irregularCandidatesError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {irregularCandidatesError}
+          </p>
+        ) : null}
+        {hasLoadedIrregularCandidates ? (
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[12rem] flex-1">
+                <label className={formLabelClass} htmlFor="irregular-candidate-q">
+                  Search
+                </label>
+                <input
+                  id="irregular-candidate-q"
+                  className={formInputClass}
+                  value={irregularCandidateQuery}
+                  onChange={(e) => setIrregularCandidateQuery(e.target.value)}
+                  placeholder="Name or phone"
+                />
+              </div>
+              <button
+                type="button"
+                className={outlineBtn}
+                disabled={irregularCandidatesLoading}
+                onClick={() => void fetchIrregularCandidates()}
+              >
+                Apply
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Showing {irregularCandidates.length} of {irregularCandidatesTotal}
+            </p>
+            {irregularCandidates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No irregular candidates recorded yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">Name</th>
+                      <th className="py-2 pr-3 font-medium">Centre</th>
+                      <th className="py-2 pr-3 font-medium">Phone</th>
+                      <th className="py-2 pr-3 font-medium">Programme</th>
+                      <th className="py-2 pr-3 font-medium">Subjects</th>
+                      <th className="py-2 font-medium">Files</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {irregularCandidates.map((c) => (
+                      <tr key={c.id} className="border-b border-border/70">
+                        <td className="py-2 pr-3">
+                          {[c.first_name, c.other_name, c.last_name].filter(Boolean).join(" ")}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span className="font-mono text-xs">{c.examination_centre_code}</span>{" "}
+                          {c.examination_centre_name}
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-xs">{c.phone_number}</td>
+                        <td className="py-2 pr-3">
+                          <span className="font-mono text-xs">{c.programme_code}</span> {c.programme_name}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">
+                          {c.subjects.map((s) => s.subject_code).join(", ") || "—"}
+                        </td>
+                        <td className="py-2">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                              onClick={() =>
+                                void downloadAdminIrregularCandidatePhotograph(examId, c.id)
+                              }
+                            >
+                              Photo
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                              onClick={() => void downloadAdminIrregularCandidateVoucher(examId, c.id)}
+                            >
+                              Voucher
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <AdminTimetableDownloadsPanel examId={examId} schoolFirst />

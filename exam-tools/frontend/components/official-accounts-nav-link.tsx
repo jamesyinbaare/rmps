@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardList, Landmark, MapPin } from "lucide-react";
+import { ClipboardList, Landmark, MapPin, UserPlus } from "lucide-react";
 
 import { BANK_ACCOUNTS_LABEL } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
@@ -84,6 +84,41 @@ export function AllowancesSubNavLink({ href, active, onNavigate }: SubNavProps) 
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium leading-snug text-foreground">Attendance sheets</span>
         <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">Upload centre attendance</span>
+      </span>
+    </Link>
+  );
+}
+
+/** Inspector irregular candidate registration. */
+export function IrregularCandidatesNavLink({ href, active, onNavigate }: SubNavProps) {
+  return (
+    <Link
+      href={href}
+      onClick={onNavigate}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        cardLinkClass,
+        "focus-visible:ring-ring/40",
+        active
+          ? "border-primary/45 bg-card shadow-sm ring-1 ring-primary/15"
+          : "border-border/80 bg-muted/15 hover:border-primary/30 hover:bg-card",
+      )}
+    >
+      <span
+        className={cn(
+          cardIconClass,
+          active
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted/80 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary",
+        )}
+      >
+        <UserPlus className="size-3.5" aria-hidden />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium leading-snug text-foreground">Irregular candidates</span>
+        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+          Record walk-in candidates
+        </span>
       </span>
     </Link>
   );

@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     gcs_documents_prefix: str = "exam-tools/documents"
     # Object prefix for inspector attendance sheet blobs (separate from exam documents)
     gcs_attendance_sheets_prefix: str = "exam-tools/attendance-sheets"
+    # Object prefix for irregular candidate photograph / voucher images
+    gcs_irregular_candidates_prefix: str = "exam-tools/irregular-candidates"
 
 
     # System-wide examination used for inspector sign-in (centre + phone + password + subject_scope → posting).

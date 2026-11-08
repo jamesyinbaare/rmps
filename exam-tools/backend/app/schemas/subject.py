@@ -23,12 +23,18 @@ class SubjectUpdate(BaseModel):
     subject_type: SubjectType | None = None
 
 
+class SubjectProgrammeRef(BaseModel):
+    code: str
+    name: str
+
+
 class SubjectResponse(SubjectBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     created_at: datetime
     updated_at: datetime
+    programmes: list[SubjectProgrammeRef] = Field(default_factory=list)
 
 
 class SubjectListResponse(BaseModel):

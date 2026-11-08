@@ -1,7 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type ColumnDef,
+  type SortingState,
+} from "@tanstack/react-table";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { DataTable } from "@/components/data-table";
 import {
   apiFetch,
   apiJson,
@@ -13,7 +22,8 @@ import {
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
-const PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250, 500, 1000] as const;
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
@@ -67,18 +77,32 @@ function Modal({
   );
 }
 
+function programmeCodesLabel(subject: Subject): string {
+  const programmes = subject.programmes ?? [];
+  if (programmes.length === 0) return "";
+  return programmes.map((p) => p.code).join(", ");
+}
+
+function programmeTitle(subject: Subject): string {
+  const programmes = subject.programmes ?? [];
+  if (programmes.length === 0) return "";
+  return programmes.map((p) => `${p.code} — ${p.name}`).join("\n");
+}
+
 export default function AdminSubjectsPage() {
   const [data, setData] = useState<SubjectListResponse>({
     items: [],
     total: 0,
     page: 1,
-    page_size: PAGE_SIZE,
+    page_size: DEFAULT_PAGE_SIZE,
     total_pages: 0,
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [search, setSearch] = useState("");
+  const [sorting, setSorting] = useState<SortingState>([{ id: "code", desc: false }]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editSubject, setEditSubject] = useState<Subject | null>(null);
@@ -101,7 +125,7 @@ export default function AdminSubjectsPage() {
     setLoadError(null);
     try {
       const result = await apiJson<SubjectListResponse>(
-        `/subjects?page=${page}&page_size=${PAGE_SIZE}`,
+        `/subjects?page=${page}&page_size=${pageSize}`,
       );
       setData(result);
     } catch (e) {
@@ -110,27 +134,17 @@ export default function AdminSubjectsPage() {
         items: [],
         total: 0,
         page: 1,
-        page_size: PAGE_SIZE,
+        page_size: pageSize,
         total_pages: 0,
       });
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, pageSize]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  const searchLower = search.trim().toLowerCase();
-  const filteredItems = searchLower
-    ? data.items.filter(
-        (s) =>
-          s.code.toLowerCase().includes(searchLower) ||
-          s.name.toLowerCase().includes(searchLower) ||
-          (s.original_code?.toLowerCase().includes(searchLower) ?? false),
-      )
-    : data.items;
 
   function openCreate() {
     setCode("");
@@ -244,7 +258,124 @@ export default function AdminSubjectsPage() {
     }
   }
 
-  const totalPages = data.total_pages || 1;
+  const columns = useMemo<ColumnDef<Subject>[]>(
+    () => [
+      {
+        accessorKey: "code",
+        header: "Code",
+        cell: ({ row }) => (
+          <span className="font-mono text-card-foreground">{row.original.code}</span>
+        ),
+      },
+      {
+        accessorKey: "original_code",
+        header: "Original",
+        cell: ({ row }) => (
+          <span className="font-mono text-muted-foreground">
+            {row.original.original_code ?? "—"}
+          </span>
+        ),
+        sortingFn: (a, b) =>
+          (a.original.original_code ?? "").localeCompare(b.original.original_code ?? "", undefined, {
+            sensitivity: "base",
+          }),
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => (
+          <span className="block max-w-[28ch] truncate text-card-foreground" title={row.original.name}>
+            {row.original.name}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "subject_type",
+        header: "Type",
+        cell: ({ row }) => (
+          <span className="text-card-foreground">{row.original.subject_type}</span>
+        ),
+      },
+      {
+        id: "programme",
+        accessorFn: (row) => programmeCodesLabel(row),
+        header: "Programme",
+        cell: ({ row }) => {
+          const codes = programmeCodesLabel(row.original);
+          if (!codes) return <span className="text-muted-foreground">—</span>;
+          return (
+            <span
+              className="block max-w-[24ch] truncate font-mono text-xs text-card-foreground"
+              title={programmeTitle(row.original)}
+            >
+              {codes}
+            </span>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => openEdit(row.original)}
+              className={`text-sm font-medium text-primary underline-offset-4 hover:underline ${inputFocusRing} rounded`}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteSubject(row.original)}
+              className={`text-sm font-medium text-destructive underline-offset-4 hover:underline ${inputFocusRing} rounded`}
+            >
+              Delete
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    data: data.items,
+    columns,
+    state: {
+      sorting,
+      globalFilter: search,
+    },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setSearch,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    globalFilterFn: (row, _columnId, filterValue) => {
+      const q = String(filterValue ?? "")
+        .trim()
+        .toLowerCase();
+      if (!q) return true;
+      const s = row.original;
+      const programmeHaystack = (s.programmes ?? [])
+        .map((p) => `${p.code} ${p.name}`)
+        .join(" ")
+        .toLowerCase();
+      return (
+        s.code.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q) ||
+        (s.original_code?.toLowerCase().includes(q) ?? false) ||
+        s.subject_type.toLowerCase().includes(q) ||
+        programmeHaystack.includes(q)
+      );
+    },
+  });
+
+  const totalPages = Math.max(1, data.total_pages || 1);
+  const filteredCount = table.getFilteredRowModel().rows.length;
+  const rangeStart = data.total === 0 ? 0 : (data.page - 1) * data.page_size + 1;
+  const rangeEnd = Math.min(data.page * data.page_size, data.total);
 
   return (
     <div className="space-y-6">
@@ -286,84 +417,69 @@ export default function AdminSubjectsPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <label htmlFor="sub-search" className={formLabelClass}>
-          Search (current page)
-        </label>
-        <input
-          id="sub-search"
-          className={formInputClass}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Code, original code, or name"
-        />
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0 flex-1 sm:max-w-md">
+          <label htmlFor="sub-search" className={formLabelClass}>
+            Search (current page)
+          </label>
+          <input
+            id="sub-search"
+            className={formInputClass}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Code, name, type, or programme…"
+          />
+        </div>
+        <div className="w-full sm:w-auto">
+          <label htmlFor="sub-page-size" className={formLabelClass}>
+            Rows per page
+          </label>
+          <select
+            id="sub-page-size"
+            className={formInputClass}
+            value={pageSize}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setPageSize(next);
+              setPage(1);
+            }}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loadError ? (
         <p className="text-sm text-destructive">{loadError}</p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="border-b border-border bg-muted/40">
-            <tr>
-              <th className="px-4 py-3 font-medium text-card-foreground">Code</th>
-              <th className="px-4 py-3 font-medium text-card-foreground">Original</th>
-              <th className="px-4 py-3 font-medium text-card-foreground">Name</th>
-              <th className="px-4 py-3 font-medium text-card-foreground">Type</th>
-              <th className="px-4 py-3 font-medium text-card-foreground">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                  Loading…
-                </td>
-              </tr>
-            ) : filteredItems.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                  No subjects found.
-                </td>
-              </tr>
-            ) : (
-              filteredItems.map((s) => (
-                <tr key={s.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3 font-mono text-card-foreground">{s.code}</td>
-                  <td className="px-4 py-3 font-mono text-muted-foreground">
-                    {s.original_code ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-card-foreground">{s.name}</td>
-                  <td className="px-4 py-3 text-card-foreground">{s.subject_type}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(s)}
-                        className={`text-sm font-medium text-primary underline-offset-4 hover:underline ${inputFocusRing} rounded`}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteSubject(s)}
-                        className={`text-sm font-medium text-destructive underline-offset-4 hover:underline ${inputFocusRing} rounded`}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="rounded-xl border border-border bg-card">
+        {loading ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <DataTable
+            table={table}
+            emptyMessage="No subjects found."
+            showFooter={false}
+            striped
+            stickyHeader
+            wide
+            className="min-w-[52rem]"
+          />
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Total {data.total} · Page {data.page} of {totalPages}
+          {data.total === 0
+            ? "No subjects"
+            : `Showing ${rangeStart}–${rangeEnd} of ${data.total}`}
+          {search.trim() ? ` · ${filteredCount} match${filteredCount === 1 ? "" : "es"} on this page` : ""}
+          {` · Page ${data.page} of ${totalPages}`}
         </p>
         <div className="flex gap-2">
           <button

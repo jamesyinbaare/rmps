@@ -237,34 +237,20 @@ async def get_candidate_schedule_codes_for_exam(
     filter_school_id: UUID | None = None,
 ) -> set[str]:
     """
-    Distinct subject codes from registered candidates in scope, optionally narrowed to one school
-    or one programme. Candidates with null school_id are excluded.
+    Distinct subject codes from imported and irregular candidates in scope, optionally narrowed
+    to one school or one programme. Candidates with null school_id are excluded.
     """
-    school_ids: set[UUID] = set(scope_school_ids)
-    if filter_school_id is not None:
-        school_ids = {filter_school_id}
-
-    stmt = (
-        select(ExaminationCandidateSubject.subject_code)
-        .join(
-            ExaminationCandidate,
-            ExaminationCandidateSubject.examination_candidate_id == ExaminationCandidate.id,
-        )
-        .where(
-            ExaminationCandidate.examination_id == exam_id,
-            ExaminationCandidate.school_id.isnot(None),
-            ExaminationCandidate.school_id.in_(school_ids),
-        )
+    from app.services.candidate_ops_queries import (
+        get_candidate_schedule_codes_for_exam as _union_schedule_codes,
     )
-    if programme_id is not None:
-        stmt = stmt.where(ExaminationCandidate.programme_id == programme_id)
 
-    result = await session.execute(stmt.distinct())
-    out: set[str] = set()
-    for (code,) in result.all():
-        if code:
-            out.add(str(code).strip())
-    return out
+    return await _union_schedule_codes(
+        session,
+        exam_id,
+        scope_school_ids,
+        programme_id=programme_id,
+        filter_school_id=filter_school_id,
+    )
 
 
 async def get_candidate_schedule_codes_for_centre_scope(

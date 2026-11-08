@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, insert, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import (
     SuperAdminDep,
@@ -16,6 +17,7 @@ from app.schemas.subject import (
     SubjectBulkUploadResponse,
     SubjectCreate,
     SubjectListResponse,
+    SubjectProgrammeRef,
     SubjectResponse,
     SubjectUpdate,
 )
@@ -34,7 +36,34 @@ from app.services.template_generator import generate_subject_template
 
 router = APIRouter(prefix="/subjects", tags=["subjects"])
 
-_MAX_PAGE_SIZE = 100
+_MAX_PAGE_SIZE = 1000
+
+
+def _subject_to_response(subject: Subject) -> SubjectResponse:
+    programmes = sorted(
+        (SubjectProgrammeRef(code=p.code, name=p.name) for p in (subject.programmes or [])),
+        key=lambda p: p.code,
+    )
+    return SubjectResponse(
+        id=subject.id,
+        code=subject.code,
+        original_code=subject.original_code,
+        name=subject.name,
+        subject_type=subject.subject_type,
+        created_at=subject.created_at,
+        updated_at=subject.updated_at,
+        programmes=programmes,
+    )
+
+
+async def _load_subject_with_programmes(session: DBSessionDep, subject_id: int) -> Subject | None:
+    stmt = (
+        select(Subject)
+        .options(selectinload(Subject.programmes))
+        .where(Subject.id == subject_id)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 @router.post("", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
@@ -68,8 +97,9 @@ async def create_subject(
     )
     session.add(db_subject)
     await session.commit()
-    await session.refresh(db_subject)
-    return SubjectResponse.model_validate(db_subject)
+    loaded = await _load_subject_with_programmes(session, db_subject.id)
+    assert loaded is not None
+    return _subject_to_response(loaded)
 
 
 @router.get("", response_model=SubjectListResponse)
@@ -85,14 +115,20 @@ async def list_subjects(
     count_result = await session.execute(count_stmt)
     total = int(count_result.scalar() or 0)
 
-    stmt = select(Subject).offset(offset).limit(page_size).order_by(Subject.code)
+    stmt = (
+        select(Subject)
+        .options(selectinload(Subject.programmes))
+        .offset(offset)
+        .limit(page_size)
+        .order_by(Subject.code)
+    )
     result = await session.execute(stmt)
-    subjects = result.scalars().all()
+    subjects = result.scalars().unique().all()
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return SubjectListResponse(
-        items=[SubjectResponse.model_validate(s) for s in subjects],
+        items=[_subject_to_response(s) for s in subjects],
         total=total,
         page=page,
         page_size=page_size,
@@ -358,12 +394,10 @@ async def get_subject(
     session: DBSessionDep,
     _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 ) -> SubjectResponse:
-    stmt = select(Subject).where(Subject.id == subject_id)
-    result = await session.execute(stmt)
-    subject = result.scalar_one_or_none()
+    subject = await _load_subject_with_programmes(session, subject_id)
     if subject is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
-    return SubjectResponse.model_validate(subject)
+    return _subject_to_response(subject)
 
 
 @router.put("/{subject_id}", response_model=SubjectResponse)
@@ -409,8 +443,9 @@ async def update_subject(
         subject.subject_type = subject_update.subject_type  # type: ignore[assignment]
 
     await session.commit()
-    await session.refresh(subject)
-    return SubjectResponse.model_validate(subject)
+    loaded = await _load_subject_with_programmes(session, subject_id)
+    assert loaded is not None
+    return _subject_to_response(loaded)
 
 
 @router.delete("/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)

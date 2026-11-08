@@ -82,21 +82,13 @@ async def build_centre_overview(
     candidate_count = 0
     cand_by_school: dict[UUID, int] = {}
     if scope_ids:
-        cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
-            ExaminationCandidate.examination_id == exam_id,
-            ExaminationCandidate.school_id.in_(scope_ids),
+        from app.services.candidate_ops_queries import (
+            candidate_counts_by_school,
+            count_candidates_in_scope,
         )
-        candidate_count = int((await session.execute(cand_stmt)).scalar_one())
-        cand_by_school_stmt = (
-            select(ExaminationCandidate.school_id, func.count().label("candidate_count"))
-            .where(
-                ExaminationCandidate.examination_id == exam_id,
-                ExaminationCandidate.school_id.in_(scope_ids),
-            )
-            .group_by(ExaminationCandidate.school_id)
-        )
-        cand_by_school_rows = await session.execute(cand_by_school_stmt)
-        cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
+
+        candidate_count = await count_candidates_in_scope(session, exam_id, scope_ids)
+        cand_by_school = await candidate_counts_by_school(session, exam_id, scope_ids)
 
     schools_with_candidates = _filter_schools_with_registered_candidates(
         ordered_scope_schools,

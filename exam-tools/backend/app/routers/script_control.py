@@ -1603,45 +1603,15 @@ async def _registered_candidates_by_exam_school_subject(
     session: DBSessionDep,
     packings: list[ScriptPackingSeries],
 ) -> dict[str, int]:
-    """Distinct examination candidate counts per (examination, school, subject) for packing rows."""
+    """Distinct imported + irregular candidate counts per (examination, school, subject)."""
     if not packings:
         return {}
     triples = list({(ps.examination_id, ps.school_id, ps.subject_id) for ps in packings})
     if not triples:
         return {}
-    reg_stmt = (
-        select(
-            ExaminationCandidate.examination_id,
-            ExaminationCandidate.school_id,
-            ExaminationCandidateSubject.subject_id,
-            func.count(distinct(ExaminationCandidate.id)),
-        )
-        .select_from(ExaminationCandidate)
-        .join(
-            ExaminationCandidateSubject,
-            ExaminationCandidateSubject.examination_candidate_id == ExaminationCandidate.id,
-        )
-        .where(
-            ExaminationCandidate.school_id.isnot(None),
-            ExaminationCandidateSubject.subject_id.isnot(None),
-            tuple_(
-                ExaminationCandidate.examination_id,
-                ExaminationCandidate.school_id,
-                ExaminationCandidateSubject.subject_id,
-            ).in_(triples),
-        )
-        .group_by(
-            ExaminationCandidate.examination_id,
-            ExaminationCandidate.school_id,
-            ExaminationCandidateSubject.subject_id,
-        )
-    )
-    reg_result = await session.execute(reg_stmt)
-    out: dict[str, int] = {}
-    for exam_id, sch_id, sub_id, cnt in reg_result.all():
-        key = f"{exam_id}:{sch_id}:{sub_id}"
-        out[key] = int(cnt)
-    return out
+    from app.services.candidate_ops_queries import registered_candidates_by_exam_school_subject
+
+    return await registered_candidates_by_exam_school_subject(session, triples)
 
 
 @router.get("/script-control/export")

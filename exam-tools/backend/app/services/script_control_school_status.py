@@ -127,36 +127,17 @@ async def _schools_with_subject_registrations(
     zone: Zone | None,
     school_q: str | None,
 ) -> list[tuple[School, int]]:
-    """Schools with at least one registered candidate for subject; returns (school, candidate_count)."""
-    stmt = (
-        select(
-            School,
-            func.count(distinct(ExaminationCandidate.id)).label("candidate_count"),
-        )
-        .select_from(School)
-        .join(ExaminationCandidate, ExaminationCandidate.school_id == School.id)
-        .join(
-            ExaminationCandidateSubject,
-            ExaminationCandidateSubject.examination_candidate_id == ExaminationCandidate.id,
-        )
-        .where(
-            ExaminationCandidate.examination_id == examination_id,
-            ExaminationCandidate.school_id.isnot(None),
-            ExaminationCandidateSubject.subject_id == subject_id,
-        )
-        .group_by(School.id)
-        .order_by(School.code)
-    )
-    if region is not None:
-        stmt = stmt.where(School.region == region)
-    if zone is not None:
-        stmt = stmt.where(School.zone == zone)
-    if school_q and school_q.strip():
-        pattern = f"%{school_q.strip()}%"
-        stmt = stmt.where(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
+    """Schools with at least one imported or irregular candidate for subject."""
+    from app.services.candidate_ops_queries import schools_with_subject_registrations
 
-    result = await session.execute(stmt)
-    return [(row[0], int(row[1])) for row in result.all()]
+    return await schools_with_subject_registrations(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        region=region,
+        zone=zone,
+        school_q=school_q,
+    )
 
 
 async def build_script_control_school_status_rows(
