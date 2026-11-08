@@ -35,6 +35,7 @@ import {
 const GENDER_OPTIONS: IrregularCandidateGender[] = ["Male", "Female"];
 import { getMe, inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { useLargeViewport } from "@/hooks/use-media-query";
 
 type ImagePreviewKind = "photograph" | "voucher";
 
@@ -43,6 +44,15 @@ type ImagePreviewState = {
   candidateName: string;
   kind: ImagePreviewKind;
 };
+
+type FormStep = 1 | 2 | 3 | 4;
+
+const FORM_STEP_LABELS = [
+  "Candidate details",
+  "Photos",
+  "Programme & subjects",
+  "Optional details",
+] as const;
 
 const btnPrimary =
   "inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-primary px-4 text-base font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:text-sm";
@@ -54,6 +64,9 @@ const btnFilePicker =
   "inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-input-border bg-muted/40 px-4 text-base font-medium text-foreground transition-colors hover:bg-muted focus-within:outline-none focus-within:ring-2 focus-within:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:text-sm";
 const panelClass = "rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5";
 const mobileInputClass = `${formInputClass} min-h-11 text-base sm:text-sm`;
+const stickyActionBarClass =
+  "fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] backdrop-blur supports-[backdrop-filter]:bg-card/85 lg:static lg:z-auto lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none";
+const stickyContentPadClass = "pb-[calc(7rem+env(safe-area-inset-bottom,0px))] lg:pb-4";
 
 type ListSort = "newest" | "name";
 
@@ -145,6 +158,42 @@ function emptyForm(): FormState {
   };
 }
 
+function identityStepComplete(form: FormState): boolean {
+  return (
+    form.first_name.trim() !== "" &&
+    form.last_name.trim() !== "" &&
+    (form.gender === "Male" || form.gender === "Female") &&
+    form.date_of_birth !== "" &&
+    form.phone_number.trim() !== ""
+  );
+}
+
+function photosStepComplete(form: FormState, editingId: number | null): boolean {
+  if (editingId != null) return true;
+  return form.photograph != null && form.voucher != null;
+}
+
+function subjectsStepComplete(form: FormState): boolean {
+  return form.programme_id !== "" && form.subject_ids.length > 0;
+}
+
+function stepIncompleteMessage(
+  step: FormStep,
+  form: FormState,
+  editingId: number | null,
+): string | null {
+  if (step === 1 && !identityStepComplete(form)) {
+    return "Fill in first name, last name, gender, date of birth, and phone.";
+  }
+  if (step === 2 && !photosStepComplete(form, editingId)) {
+    return "Take or choose both the candidate photograph and voucher photo.";
+  }
+  if (step === 3 && !subjectsStepComplete(form)) {
+    return "Select a programme and at least one subject.";
+  }
+  return null;
+}
+
 export default function InspectorIrregularCandidatesPage() {
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
@@ -155,6 +204,7 @@ export default function InspectorIrregularCandidatesPage() {
 
 function IrregularCandidatesClient() {
   const router = useRouter();
+  const isLargeViewport = useLargeViewport();
   const [exam, setExam] = useState<Examination | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
   const [centreLabel, setCentreLabel] = useState("");
@@ -170,6 +220,8 @@ function IrregularCandidatesClient() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formStep, setFormStep] = useState<FormStep>(1);
+  const [stepError, setStepError] = useState<string | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
   const [existingPhotoUrl, setExistingPhotoUrl] = useState<string | null>(null);
   const [existingVoucherUrl, setExistingVoucherUrl] = useState<string | null>(null);
@@ -387,6 +439,8 @@ function IrregularCandidatesClient() {
     setEditingId(null);
     setForm(emptyForm());
     setRequirements(null);
+    setFormStep(1);
+    setStepError(null);
     setShowForm(true);
     setActionError(null);
     setActionSuccess(null);
@@ -422,6 +476,8 @@ function IrregularCandidatesClient() {
     setEditingId(null);
     setForm(emptyForm());
     setRequirements(null);
+    setFormStep(1);
+    setStepError(null);
     setActionError(null);
     setViewingId(candidate.id);
     void loadCandidateImagePreviews(candidate.id);
@@ -447,6 +503,8 @@ function IrregularCandidatesClient() {
       photograph: null,
       voucher: null,
     });
+    setFormStep(1);
+    setStepError(null);
     setShowForm(true);
     setActionError(null);
     setActionSuccess(null);
@@ -458,6 +516,8 @@ function IrregularCandidatesClient() {
     setEditingId(null);
     setForm(emptyForm());
     setRequirements(null);
+    setFormStep(1);
+    setStepError(null);
     setActionError(null);
     if (viewingId != null) {
       void loadCandidateImagePreviews(viewingId);
@@ -472,8 +532,33 @@ function IrregularCandidatesClient() {
     setEditingId(null);
     setForm(emptyForm());
     setRequirements(null);
+    setFormStep(1);
+    setStepError(null);
     setActionError(null);
     revokeExistingPreviews();
+  }
+
+  function goToNextStep() {
+    const message = stepIncompleteMessage(formStep, form, editingId);
+    if (message) {
+      setStepError(message);
+      return;
+    }
+    setStepError(null);
+    setActionError(null);
+    setFormStep((prev) => (prev < 4 ? ((prev + 1) as FormStep) : prev));
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  function goToPrevStep() {
+    setStepError(null);
+    setActionError(null);
+    setFormStep((prev) => (prev > 1 ? ((prev - 1) as FormStep) : prev));
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
 
   async function confirmDeleteCandidate() {
@@ -552,14 +637,9 @@ function IrregularCandidatesClient() {
 
   const canSave =
     !saving &&
-    form.first_name.trim() !== "" &&
-    form.last_name.trim() !== "" &&
-    (form.gender === "Male" || form.gender === "Female") &&
-    form.date_of_birth !== "" &&
-    form.phone_number.trim() !== "" &&
-    form.programme_id !== "" &&
-    form.subject_ids.length > 0 &&
-    (editingId != null || (form.photograph != null && form.voucher != null));
+    identityStepComplete(form) &&
+    photosStepComplete(form, editingId) &&
+    subjectsStepComplete(form);
 
   const programmeOptions = useMemo(
     () =>
@@ -585,22 +665,33 @@ function IrregularCandidatesClient() {
   const showDetail = !showForm && viewingCandidate != null;
 
   return (
-    <DashboardShell title="Irregular candidates" staffRole="inspector">
+    <DashboardShell
+      title="Irregular candidates"
+      staffRole="inspector"
+      mainClassName={showList ? "px-0 py-3 sm:px-6 sm:py-6" : undefined}
+    >
       <div
         className={cn(
-          "mx-auto flex w-full flex-col gap-4 px-4 py-4 sm:px-6",
-          showForm || showDetail ? "max-w-lg pb-28 sm:max-w-2xl" : "max-w-3xl lg:max-w-6xl",
+          "mx-auto flex w-full flex-col gap-4",
+          showForm || showDetail
+            ? cn("max-w-lg px-4 sm:max-w-2xl sm:px-0", stickyContentPadClass)
+            : "max-w-3xl lg:max-w-6xl",
         )}
       >
-        {loading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+        {loading ? (
+          <p className="px-4 text-sm text-muted-foreground sm:px-0">Loading…</p>
+        ) : null}
         {loadError ? (
-          <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive" role="alert">
+          <p
+            className="mx-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive sm:mx-0"
+            role="alert"
+          >
             {loadError}
           </p>
         ) : null}
 
         {!loading && !loadError && !enabled ? (
-          <div className={panelClass}>
+          <div className={cn(panelClass, "mx-4 sm:mx-0")}>
             <h2 className="text-lg font-semibold text-card-foreground">Not available</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Irregular candidate registration is turned off for this examination. Ask an administrator to
@@ -613,7 +704,7 @@ function IrregularCandidatesClient() {
           <div className="flex flex-col gap-3">
             {actionSuccess ? (
               <p
-                className="rounded-lg border border-success/40 bg-success/10 px-3 py-2.5 text-sm text-success"
+                className="mx-4 rounded-lg border border-success/40 bg-success/10 px-3 py-2.5 text-sm text-success sm:mx-0"
                 role="status"
               >
                 {actionSuccess}
@@ -621,15 +712,21 @@ function IrregularCandidatesClient() {
             ) : null}
             {actionError ? (
               <p
-                className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+                className="mx-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive sm:mx-0"
                 role="alert"
               >
                 {actionError}
               </p>
             ) : null}
 
-            <div className={cn(panelClass, "overflow-hidden p-0 sm:p-0")}>
-              <div className="flex items-start justify-between gap-2 border-b border-border px-3 py-2.5 sm:items-center sm:gap-3 sm:px-5 sm:py-4">
+            <div
+              className={cn(
+                panelClass,
+                "overflow-hidden p-0 sm:p-0",
+                "rounded-none border-x-0 shadow-none sm:rounded-2xl sm:border-x sm:shadow-sm",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3 sm:items-center sm:gap-3 sm:px-5 sm:py-4">
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
                     Examination centre
@@ -676,7 +773,7 @@ function IrregularCandidatesClient() {
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-col gap-2.5 border-b border-border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
+                  <div className="flex flex-col gap-2 border-b border-border bg-muted/20 px-4 py-2.5 sm:flex-row sm:items-center sm:gap-2.5 sm:px-5 sm:py-3">
                     <div className="relative min-w-0 flex-1 sm:max-w-xs">
                       <Search
                         className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -768,83 +865,63 @@ function IrregularCandidatesClient() {
                         {displayedItems.map((c, index) => {
                           const name = candidateDisplayName(c);
                           const subjectCodes = c.subjects.map((s) => s.subject_code);
-                          const subjectLabel = subjectCodes.join(", ") || "None";
+                          const subjectLabel = subjectCodes.join(", ") || "—";
                           const recorded = formatRecordedAt(c.created_at);
                           return (
-                            <article key={c.id} className="bg-card px-3 py-3">
-                              <header className="flex items-start gap-2.5">
+                            <article key={c.id} className="bg-card px-4 py-2.5">
+                              <div className="flex items-center gap-2.5">
                                 <span
-                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/80 bg-muted/40 text-xs font-semibold tabular-nums text-muted-foreground"
+                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted/50 text-xs font-semibold tabular-nums text-muted-foreground"
                                   aria-hidden
                                 >
                                   {index + 1}
                                 </span>
                                 <button
                                   type="button"
-                                  className="min-w-0 flex-1 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                                  className="min-w-0 flex-1 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                                   onClick={() => startView(c)}
                                   aria-label={`View ${name}`}
                                 >
-                                  <p className="truncate text-sm font-semibold leading-snug text-foreground">
+                                  <p className="truncate text-[15px] font-semibold leading-tight text-foreground">
                                     {name}
                                   </p>
-                                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                                  <p className="mt-0.5 truncate text-xs leading-snug text-muted-foreground">
                                     <span className="font-mono text-foreground/80">{c.programme_code}</span>
                                     <span className="text-border"> · </span>
-                                    <span title={c.programme_name}>{c.programme_name}</span>
+                                    <span className="tabular-nums">{c.phone_number}</span>
+                                    <span className="text-border"> · </span>
+                                    <span className="font-mono" title={subjectLabel}>
+                                      {subjectLabel}
+                                    </span>
+                                    {recorded ? (
+                                      <>
+                                        <span className="text-border"> · </span>
+                                        <time dateTime={c.created_at}>{recorded}</time>
+                                      </>
+                                    ) : null}
                                   </p>
                                 </button>
-                              </header>
-
-                              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 pl-[2.375rem] text-xs">
-                                <span className="flex min-w-0 items-baseline gap-1">
-                                  <span className="shrink-0 font-medium text-muted-foreground">Tel</span>
-                                  <span className="tabular-nums text-foreground">{c.phone_number}</span>
-                                </span>
-                                <span className="flex min-w-0 items-baseline gap-1" title={subjectLabel}>
-                                  <span className="shrink-0 font-medium text-muted-foreground">Subj</span>
-                                  <span className="font-medium tabular-nums text-foreground">
-                                    {subjectCodes.length}
-                                  </span>
-                                </span>
-                                {recorded ? (
-                                  <span className="flex min-w-0 items-baseline gap-1">
-                                    <span className="shrink-0 font-medium text-muted-foreground">On</span>
-                                    <time dateTime={c.created_at} className="text-foreground">
-                                      {recorded}
-                                    </time>
-                                  </span>
-                                ) : null}
-                              </p>
-
-                              <div className="mt-2.5 flex items-center gap-2 pl-[2.375rem]">
-                                <button
-                                  type="button"
-                                  className={cn(btnSecondary, "min-h-9 flex-1 text-sm")}
-                                  onClick={() => startView(c)}
-                                >
-                                  <Eye className="mr-1.5 size-3.5" aria-hidden />
-                                  View
-                                </button>
-                                <button
-                                  type="button"
-                                  className={cn(btnSecondary, "min-h-9 flex-1 text-sm")}
-                                  onClick={() => void startEdit(c)}
-                                >
-                                  <Pencil className="mr-1.5 size-3.5" aria-hidden />
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-destructive/40 bg-background text-destructive hover:bg-destructive/10"
-                                  aria-label={`Delete ${name}`}
-                                  onClick={() => {
-                                    setActionError(null);
-                                    setPendingDelete(c);
-                                  }}
-                                >
-                                  <Trash2 className="size-4" aria-hidden />
-                                </button>
+                                <div className="flex shrink-0 items-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    aria-label={`Edit ${name}`}
+                                    onClick={() => void startEdit(c)}
+                                  >
+                                    <Pencil className="size-4" aria-hidden />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="inline-flex size-9 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"
+                                    aria-label={`Delete ${name}`}
+                                    onClick={() => {
+                                      setActionError(null);
+                                      setPendingDelete(c);
+                                    }}
+                                  >
+                                    <Trash2 className="size-4" aria-hidden />
+                                  </button>
+                                </div>
                               </div>
                             </article>
                           );
@@ -929,7 +1006,7 @@ function IrregularCandidatesClient() {
                                       <div
                                         role="toolbar"
                                         aria-label={`Actions for ${name}`}
-                                        className="flex justify-center gap-1.5 opacity-70 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100"
+                                        className="flex justify-center gap-1.5"
                                       >
                                         <Tooltip>
                                           <TooltipTrigger asChild>
@@ -1021,7 +1098,7 @@ function IrregularCandidatesClient() {
           <form id="irregular-candidate-form" className="flex flex-col gap-4" onSubmit={(e) => void onSubmit(e)}>
             <div className={panelClass}>
               <div className="flex items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <h2 className="text-lg font-semibold text-card-foreground">
                     {editingId == null ? "Add candidate" : "Edit candidate"}
                   </h2>
@@ -1032,271 +1109,442 @@ function IrregularCandidatesClient() {
                   <span className="sr-only">Cancel</span>
                 </button>
               </div>
+              {!isLargeViewport ? (
+                <div className="mt-4">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Step {formStep} of 4 · {FORM_STEP_LABELS[formStep - 1]}
+                  </p>
+                  <div className="mt-2 flex gap-1.5" aria-hidden>
+                    {([1, 2, 3, 4] as const).map((step) => (
+                      <div
+                        key={step}
+                        className={cn(
+                          "h-1.5 flex-1 rounded-full transition-colors",
+                          step <= formStep ? "bg-primary" : "bg-muted",
+                        )}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {actionError ? (
                 <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive" role="alert">
                   {actionError}
                 </p>
               ) : null}
+              {stepError && !isLargeViewport ? (
+                <p className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-100" role="alert">
+                  {stepError}
+                </p>
+              ) : null}
+              {isLargeViewport && !canSave && !saving ? (
+                <p className="mt-3 text-xs text-muted-foreground" role="status">
+                  {stepIncompleteMessage(1, form, editingId) ??
+                    stepIncompleteMessage(2, form, editingId) ??
+                    stepIncompleteMessage(3, form, editingId) ??
+                    "Complete required fields to save."}
+                </p>
+              ) : null}
             </div>
 
-            <section className={panelClass} aria-labelledby="irr-identity-heading">
-              <h3 id="irr-identity-heading" className="text-sm font-semibold text-card-foreground">
-                1. Candidate details
-              </h3>
-              <div className="mt-4 grid gap-3">
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-first-name">
-                    First name *
-                  </label>
-                  <input
-                    id="irr-first-name"
-                    required
-                    autoComplete="given-name"
-                    className={mobileInputClass}
-                    value={form.first_name}
-                    onChange={(e) => setForm((p) => ({ ...p, first_name: e.target.value }))}
+            {isLargeViewport || formStep === 1 ? (
+              <section className={panelClass} aria-labelledby="irr-identity-heading">
+                <h3 id="irr-identity-heading" className="text-sm font-semibold text-card-foreground">
+                  1. Candidate details
+                </h3>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-first-name">
+                      First name *
+                    </label>
+                    <input
+                      id="irr-first-name"
+                      required={isLargeViewport || formStep === 1}
+                      autoComplete="given-name"
+                      className={mobileInputClass}
+                      value={form.first_name}
+                      onChange={(e) => {
+                        setStepError(null);
+                        setForm((p) => ({ ...p, first_name: e.target.value }));
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-last-name">
+                      Last name *
+                    </label>
+                    <input
+                      id="irr-last-name"
+                      required={isLargeViewport || formStep === 1}
+                      autoComplete="family-name"
+                      className={mobileInputClass}
+                      value={form.last_name}
+                      onChange={(e) => {
+                        setStepError(null);
+                        setForm((p) => ({ ...p, last_name: e.target.value }));
+                      }}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={formLabelClass} htmlFor="irr-other-name">
+                      Other name
+                    </label>
+                    <input
+                      id="irr-other-name"
+                      autoComplete="additional-name"
+                      className={mobileInputClass}
+                      value={form.other_name}
+                      onChange={(e) => setForm((p) => ({ ...p, other_name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-gender">
+                      Gender *
+                    </label>
+                    <select
+                      id="irr-gender"
+                      required={isLargeViewport || formStep === 1}
+                      className={mobileInputClass}
+                      value={form.gender}
+                      onChange={(e) => {
+                        setStepError(null);
+                        setForm((p) => ({
+                          ...p,
+                          gender: e.target.value as IrregularCandidateGender | "",
+                        }));
+                      }}
+                    >
+                      <option value="">Select gender…</option>
+                      {GENDER_OPTIONS.map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-dob">
+                      Date of birth *
+                    </label>
+                    <input
+                      id="irr-dob"
+                      type="date"
+                      required={isLargeViewport || formStep === 1}
+                      className={mobileInputClass}
+                      value={form.date_of_birth}
+                      onChange={(e) => {
+                        setStepError(null);
+                        setForm((p) => ({ ...p, date_of_birth: e.target.value }));
+                      }}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={formLabelClass} htmlFor="irr-phone">
+                      Phone *
+                    </label>
+                    <input
+                      id="irr-phone"
+                      required={isLargeViewport || formStep === 1}
+                      inputMode="tel"
+                      autoComplete="tel"
+                      className={mobileInputClass}
+                      value={form.phone_number}
+                      onChange={(e) => {
+                        setStepError(null);
+                        setForm((p) => ({ ...p, phone_number: e.target.value }));
+                      }}
+                      placeholder="0XXXXXXXXX"
+                    />
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {isLargeViewport || formStep === 2 ? (
+              <section className={panelClass} aria-labelledby="irr-photos-heading">
+                <h3 id="irr-photos-heading" className="text-sm font-semibold text-card-foreground">
+                  2. Photos
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Use the camera on this phone. You can retake until the image is clear.
+                </p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <PhotoCaptureCard
+                    title="Candidate photograph *"
+                    hint="Face the candidate. Fill most of the frame with their face."
+                    captureMode="user"
+                    file={form.photograph}
+                    existingPreviewUrl={editingId != null && !form.photograph ? existingPhotoUrl : null}
+                    required={editingId == null && (isLargeViewport || formStep === 2)}
+                    onFileChange={(file) => {
+                      setStepError(null);
+                      setForm((p) => ({ ...p, photograph: file }));
+                    }}
+                  />
+                  <PhotoCaptureCard
+                    title="Voucher photo *"
+                    hint="Fill the frame with the voucher. Avoid glare and blur."
+                    captureMode="environment"
+                    file={form.voucher}
+                    existingPreviewUrl={editingId != null && !form.voucher ? existingVoucherUrl : null}
+                    required={editingId == null && (isLargeViewport || formStep === 2)}
+                    onFileChange={(file) => {
+                      setStepError(null);
+                      setForm((p) => ({ ...p, voucher: file }));
+                    }}
                   />
                 </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-last-name">
-                    Last name *
+              </section>
+            ) : null}
+
+            {isLargeViewport || formStep === 3 ? (
+              <section className={panelClass} aria-labelledby="irr-subjects-heading">
+                <h3 id="irr-subjects-heading" className="text-sm font-semibold text-card-foreground">
+                  3. Programme & subjects
+                </h3>
+                <div className="mt-4">
+                  <label className={formLabelClass} htmlFor="irr-programme">
+                    Programme *
                   </label>
-                  <input
-                    id="irr-last-name"
-                    required
-                    autoComplete="family-name"
-                    className={mobileInputClass}
-                    value={form.last_name}
-                    onChange={(e) => setForm((p) => ({ ...p, last_name: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-other-name">
-                    Other name
-                  </label>
-                  <input
-                    id="irr-other-name"
-                    autoComplete="additional-name"
-                    className={mobileInputClass}
-                    value={form.other_name}
-                    onChange={(e) => setForm((p) => ({ ...p, other_name: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-gender">
-                    Gender *
-                  </label>
-                  <select
-                    id="irr-gender"
-                    required
-                    className={mobileInputClass}
-                    value={form.gender}
-                    onChange={(e) =>
+                  <p className="mb-1.5 text-xs text-muted-foreground">Search by code or name.</p>
+                  <SearchableCombobox
+                    id="irr-programme"
+                    options={programmeOptions}
+                    value={form.programme_id}
+                    onChange={(value) => {
+                      setStepError(null);
                       setForm((p) => ({
                         ...p,
-                        gender: e.target.value as IrregularCandidateGender | "",
-                      }))
-                    }
-                  >
-                    <option value="">Select gender…</option>
-                    {GENDER_OPTIONS.map((g) => (
-                      <option key={g} value={g}>
-                        {g}
-                      </option>
+                        programme_id: value,
+                        subject_ids: [],
+                      }));
+                    }}
+                    placeholder="Select programme…"
+                    searchPlaceholder="Search programmes…"
+                    emptyText="No programmes match."
+                    widthClass="w-full"
+                    showAllOption={false}
+                  />
+                </div>
+
+                {requirements ? (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Subjects *</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Select the subjects the candidate will write. Optional core allows one choice or none.
+                        {form.subject_ids.length === 0 ? (
+                          <span className="mt-1 block font-medium text-amber-800 dark:text-amber-200">
+                            Choose at least one subject to continue.
+                          </span>
+                        ) : (
+                          <span className="mt-1 block text-muted-foreground">
+                            {form.subject_ids.length} selected
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    {requirements.compulsory_core.length > 0 ? (
+                      <SubjectToggleList
+                        title="Core"
+                        subjects={requirements.compulsory_core}
+                        selected={form.subject_ids}
+                        onToggle={(subject) => {
+                          setStepError(null);
+                          toggleSubject(subject);
+                        }}
+                      />
+                    ) : null}
+                    {requirements.optional_core_groups.map((group) => (
+                      <SubjectToggleList
+                        key={group.choice_group_id}
+                        title="Optional core"
+                        hint="Select one or none"
+                        subjects={group.subjects}
+                        selected={form.subject_ids}
+                        exclusive
+                        onToggle={(subject) => {
+                          setStepError(null);
+                          toggleExclusiveSubject(subject, group.subjects);
+                        }}
+                      />
                     ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-dob">
-                    Date of birth *
-                  </label>
-                  <input
-                    id="irr-dob"
-                    type="date"
-                    required
-                    className={mobileInputClass}
-                    value={form.date_of_birth}
-                    onChange={(e) => setForm((p) => ({ ...p, date_of_birth: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-phone">
-                    Phone *
-                  </label>
-                  <input
-                    id="irr-phone"
-                    required
-                    inputMode="tel"
-                    autoComplete="tel"
-                    className={mobileInputClass}
-                    value={form.phone_number}
-                    onChange={(e) => setForm((p) => ({ ...p, phone_number: e.target.value }))}
-                    placeholder="0XXXXXXXXX"
-                  />
-                </div>
-              </div>
-            </section>
-
-            <section className={panelClass} aria-labelledby="irr-photos-heading">
-              <h3 id="irr-photos-heading" className="text-sm font-semibold text-card-foreground">
-                2. Photos
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Use the camera on this phone. You can retake until the image is clear.
-              </p>
-              <div className="mt-4 space-y-4">
-                <PhotoCaptureCard
-                  title="Candidate photograph *"
-                  hint="Face the candidate. Fill most of the frame with their face."
-                  captureMode="user"
-                  file={form.photograph}
-                  existingPreviewUrl={editingId != null && !form.photograph ? existingPhotoUrl : null}
-                  required={editingId == null}
-                  onFileChange={(file) => setForm((p) => ({ ...p, photograph: file }))}
-                />
-                <PhotoCaptureCard
-                  title="Voucher photo *"
-                  hint="Fill the frame with the voucher. Avoid glare and blur."
-                  captureMode="environment"
-                  file={form.voucher}
-                  existingPreviewUrl={editingId != null && !form.voucher ? existingVoucherUrl : null}
-                  required={editingId == null}
-                  onFileChange={(file) => setForm((p) => ({ ...p, voucher: file }))}
-                />
-              </div>
-            </section>
-
-            <section className={panelClass} aria-labelledby="irr-subjects-heading">
-              <h3 id="irr-subjects-heading" className="text-sm font-semibold text-card-foreground">
-                3. Programme & subjects
-              </h3>
-              <div className="mt-4">
-                <label className={formLabelClass} htmlFor="irr-programme">
-                  Programme *
-                </label>
-                <p className="mb-1.5 text-xs text-muted-foreground">Search by code or name.</p>
-                <SearchableCombobox
-                  id="irr-programme"
-                  options={programmeOptions}
-                  value={form.programme_id}
-                  onChange={(value) =>
-                    setForm((p) => ({
-                      ...p,
-                      programme_id: value,
-                      subject_ids: [],
-                    }))
-                  }
-                  placeholder="Select programme…"
-                  searchPlaceholder="Search programmes…"
-                  emptyText="No programmes match."
-                  widthClass="w-full"
-                  showAllOption={false}
-                />
-              </div>
-
-              {requirements ? (
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Subjects *</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Select the subjects the candidate will write. Optional core allows one choice or none.
-                      {form.subject_ids.length === 0 ? (
-                        <span className="mt-1 block font-medium text-amber-800 dark:text-amber-200">
-                          Choose at least one subject to continue.
-                        </span>
-                      ) : (
-                        <span className="mt-1 block text-muted-foreground">
-                          {form.subject_ids.length} selected
-                        </span>
-                      )}
-                    </p>
+                    {requirements.electives.length > 0 ? (
+                      <SubjectToggleList
+                        title="Electives"
+                        subjects={requirements.electives}
+                        selected={form.subject_ids}
+                        onToggle={(subject) => {
+                          setStepError(null);
+                          toggleSubject(subject);
+                        }}
+                      />
+                    ) : null}
                   </div>
-                  {requirements.compulsory_core.length > 0 ? (
-                    <SubjectToggleList
-                      title="Core"
-                      subjects={requirements.compulsory_core}
-                      selected={form.subject_ids}
-                      onToggle={toggleSubject}
-                    />
-                  ) : null}
-                  {requirements.optional_core_groups.map((group) => (
-                    <SubjectToggleList
-                      key={group.choice_group_id}
-                      title="Optional core"
-                      hint="Select one or none"
-                      subjects={group.subjects}
-                      selected={form.subject_ids}
-                      exclusive
-                      onToggle={(subject) => toggleExclusiveSubject(subject, group.subjects)}
-                    />
-                  ))}
-                  {requirements.electives.length > 0 ? (
-                    <SubjectToggleList
-                      title="Electives"
-                      subjects={requirements.electives}
-                      selected={form.subject_ids}
-                      onToggle={toggleSubject}
-                    />
-                  ) : null}
-                </div>
-              ) : form.programme_id ? (
-                <p className="mt-3 text-sm text-muted-foreground">Loading subjects…</p>
-              ) : null}
-            </section>
+                ) : form.programme_id ? (
+                  <p className="mt-3 text-sm text-muted-foreground">Loading subjects…</p>
+                ) : null}
+              </section>
+            ) : null}
 
-            <details className={panelClass}>
-              <summary className="cursor-pointer text-sm font-semibold text-card-foreground">
-                4. Optional details
-              </summary>
-              <p className="mt-1 text-xs text-muted-foreground">Guardian and GhanaPost GPS if available.</p>
-              <div className="mt-4 grid gap-3">
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-guardian-name">
-                    Guardian name
-                  </label>
-                  <input
-                    id="irr-guardian-name"
-                    className={mobileInputClass}
-                    value={form.guardian_name}
-                    onChange={(e) => setForm((p) => ({ ...p, guardian_name: e.target.value }))}
-                  />
+            {isLargeViewport ? (
+              <details className={panelClass}>
+                <summary className="cursor-pointer text-sm font-semibold text-card-foreground">
+                  4. Optional details
+                </summary>
+                <p className="mt-1 text-xs text-muted-foreground">Guardian and GhanaPost GPS if available.</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-guardian-name">
+                      Guardian name
+                    </label>
+                    <input
+                      id="irr-guardian-name"
+                      className={mobileInputClass}
+                      value={form.guardian_name}
+                      onChange={(e) => setForm((p) => ({ ...p, guardian_name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-guardian-phone">
+                      Guardian phone
+                    </label>
+                    <input
+                      id="irr-guardian-phone"
+                      inputMode="tel"
+                      className={mobileInputClass}
+                      value={form.guardian_phone_number}
+                      onChange={(e) => setForm((p) => ({ ...p, guardian_phone_number: e.target.value }))}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={formLabelClass} htmlFor="irr-gps">
+                      GhanaPost GPS address
+                    </label>
+                    <input
+                      id="irr-gps"
+                      className={mobileInputClass}
+                      value={form.ghanapost_gps_address}
+                      onChange={(e) => setForm((p) => ({ ...p, ghanapost_gps_address: e.target.value }))}
+                      maxLength={50}
+                      placeholder="e.g. GA-123-4567"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-guardian-phone">
-                    Guardian phone
-                  </label>
-                  <input
-                    id="irr-guardian-phone"
-                    inputMode="tel"
-                    className={mobileInputClass}
-                    value={form.guardian_phone_number}
-                    onChange={(e) => setForm((p) => ({ ...p, guardian_phone_number: e.target.value }))}
-                  />
+              </details>
+            ) : formStep === 4 ? (
+              <section className={panelClass} aria-labelledby="irr-optional-heading">
+                <h3 id="irr-optional-heading" className="text-sm font-semibold text-card-foreground">
+                  4. Optional details
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">Guardian and GhanaPost GPS if available. You can skip this step.</p>
+                <div className="mt-4 grid gap-3">
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-guardian-name-mobile">
+                      Guardian name
+                    </label>
+                    <input
+                      id="irr-guardian-name-mobile"
+                      className={mobileInputClass}
+                      value={form.guardian_name}
+                      onChange={(e) => setForm((p) => ({ ...p, guardian_name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-guardian-phone-mobile">
+                      Guardian phone
+                    </label>
+                    <input
+                      id="irr-guardian-phone-mobile"
+                      inputMode="tel"
+                      className={mobileInputClass}
+                      value={form.guardian_phone_number}
+                      onChange={(e) => setForm((p) => ({ ...p, guardian_phone_number: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={formLabelClass} htmlFor="irr-gps-mobile">
+                      GhanaPost GPS address
+                    </label>
+                    <input
+                      id="irr-gps-mobile"
+                      className={mobileInputClass}
+                      value={form.ghanapost_gps_address}
+                      onChange={(e) => setForm((p) => ({ ...p, ghanapost_gps_address: e.target.value }))}
+                      maxLength={50}
+                      placeholder="e.g. GA-123-4567"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="irr-gps">
-                    GhanaPost GPS address
-                  </label>
-                  <input
-                    id="irr-gps"
-                    className={mobileInputClass}
-                    value={form.ghanapost_gps_address}
-                    onChange={(e) => setForm((p) => ({ ...p, ghanapost_gps_address: e.target.value }))}
-                    maxLength={50}
-                    placeholder="e.g. GA-123-4567"
-                  />
-                </div>
-              </div>
-            </details>
+              </section>
+            ) : null}
 
-            <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/85 lg:static lg:z-auto lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
-              <div className="mx-auto flex max-w-lg gap-2 sm:max-w-2xl">
-                <button type="button" className={btnSecondary} onClick={closeForm} disabled={saving}>
-                  Cancel
-                </button>
-                <button type="submit" form="irregular-candidate-form" className={btnPrimary} disabled={!canSave}>
-                  {saving ? "Saving…" : editingId == null ? "Save candidate" : "Update candidate"}
-                </button>
+            <div className={stickyActionBarClass}>
+              <div className="mx-auto flex max-w-lg flex-col gap-2 sm:max-w-2xl">
+                {!isLargeViewport && (stepError || (!canSave && (formStep === 3 || formStep === 4))) ? (
+                  <p className="text-center text-xs text-muted-foreground" role="status">
+                    {stepError ??
+                      stepIncompleteMessage(1, form, editingId) ??
+                      stepIncompleteMessage(2, form, editingId) ??
+                      stepIncompleteMessage(3, form, editingId)}
+                  </p>
+                ) : null}
+                {isLargeViewport ? (
+                  <div className="flex gap-2">
+                    <button type="button" className={btnSecondary} onClick={closeForm} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button type="submit" form="irregular-candidate-form" className={btnPrimary} disabled={!canSave}>
+                      {saving ? "Saving…" : editingId == null ? "Save candidate" : "Update candidate"}
+                    </button>
+                  </div>
+                ) : formStep === 1 ? (
+                  <div className="flex gap-2">
+                    <button type="button" className={btnSecondary} onClick={closeForm} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button type="button" className={btnPrimary} disabled={saving} onClick={goToNextStep}>
+                      Next
+                    </button>
+                  </div>
+                ) : formStep === 2 ? (
+                  <div className="flex gap-2">
+                    <button type="button" className={btnSecondary} onClick={goToPrevStep} disabled={saving}>
+                      Back
+                    </button>
+                    <button type="button" className={btnPrimary} disabled={saving} onClick={goToNextStep}>
+                      Next
+                    </button>
+                  </div>
+                ) : formStep === 3 ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <button type="button" className={btnSecondary} onClick={goToPrevStep} disabled={saving}>
+                        Back
+                      </button>
+                      <button type="submit" form="irregular-candidate-form" className={btnPrimary} disabled={!canSave}>
+                        {saving ? "Saving…" : editingId == null ? "Save candidate" : "Update candidate"}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-center text-sm font-medium text-primary underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                      onClick={goToNextStep}
+                      disabled={saving}
+                    >
+                      Add optional details
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button type="button" className={btnSecondary} onClick={goToPrevStep} disabled={saving}>
+                      Back
+                    </button>
+                    <button type="submit" form="irregular-candidate-form" className={btnPrimary} disabled={!canSave}>
+                      {saving ? "Saving…" : editingId == null ? "Save candidate" : "Update candidate"}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </form>
@@ -1345,8 +1593,8 @@ function DetailField({ label, value }: { label: string; value: string | null | u
   const display = value?.trim() ? value : "—";
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 break-words text-sm text-foreground">{display}</dd>
+      <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 break-words text-sm leading-snug text-foreground">{display}</dd>
     </div>
   );
 }
@@ -1373,130 +1621,141 @@ function CandidateDetailView({
   onOpenVoucher: () => void;
 }) {
   const name = candidateDisplayName(candidate);
-  const subjects =
+  const subjectCodes = candidate.subjects.map((s) => s.subject_code).join(", ") || "—";
+  const subjectNames =
     candidate.subjects.map((s) => `${s.subject_code} — ${s.subject_name}`).join(", ") || "—";
   const recorded = formatRecordedAt(candidate.created_at);
+  const hasOptional =
+    Boolean(candidate.guardian_name?.trim()) ||
+    Boolean(candidate.guardian_phone_number?.trim()) ||
+    Boolean(candidate.ghanapost_gps_address?.trim());
 
   return (
-    <div className="flex flex-col gap-3 pb-20 sm:pb-4">
-      <div className={panelClass}>
-        <div className="flex items-start justify-between gap-3">
+    <div className="flex flex-col gap-3">
+      <section className={cn(panelClass, "p-3 sm:p-5")}>
+        <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Candidate details
+            <h2 className="truncate text-base font-semibold leading-tight text-card-foreground sm:text-lg">
+              {name}
+            </h2>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {centreLabel}
+              {recorded ? (
+                <>
+                  <span className="text-border"> · </span>
+                  <time dateTime={candidate.created_at}>Recorded {recorded}</time>
+                </>
+              ) : null}
             </p>
-            <h2 className="mt-0.5 truncate text-lg font-semibold text-card-foreground">{name}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{centreLabel}</p>
           </div>
           <button
             type="button"
-            className={cn(btnSecondary, "w-auto shrink-0 px-3")}
+            className={cn(btnSecondary, "min-h-9 w-auto shrink-0 px-2.5")}
             onClick={onBack}
             aria-label="Back to list"
           >
             <X className="size-4" aria-hidden />
           </button>
         </div>
-      </div>
 
-      <section className={panelClass} aria-labelledby="irr-detail-identity">
-        <h3 id="irr-detail-identity" className="text-sm font-semibold text-card-foreground">
-          Identity
-        </h3>
-        <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-          <DetailField label="First name" value={candidate.first_name} />
-          <DetailField label="Last name" value={candidate.last_name} />
-          <DetailField label="Other name" value={candidate.other_name} />
-          <DetailField label="Gender" value={candidate.gender} />
-          <DetailField label="Date of birth" value={formatDateOfBirth(candidate.date_of_birth)} />
-          <DetailField label="Phone" value={candidate.phone_number} />
-          <DetailField label="Recorded" value={recorded || null} />
-        </dl>
-      </section>
-
-      <section className={panelClass} aria-labelledby="irr-detail-photos">
-        <h3 id="irr-detail-photos" className="text-sm font-semibold text-card-foreground">
-          Photos
-        </h3>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
-            className="overflow-hidden rounded-xl border border-border bg-muted/10 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="overflow-hidden rounded-lg border border-border bg-muted/10 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             onClick={onOpenPhoto}
           >
-            <p className="border-b border-border/70 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <p className="border-b border-border/70 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Photograph
             </p>
             {photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoUrl} alt={`Photograph of ${name}`} className="aspect-[4/3] w-full object-contain bg-black/5" />
+              <img
+                src={photoUrl}
+                alt={`Photograph of ${name}`}
+                className="h-24 w-full object-cover bg-black/5 sm:h-36 sm:object-contain"
+              />
             ) : (
-              <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1.5 text-xs text-muted-foreground">
-                <Camera className="size-5" aria-hidden />
+              <div className="flex h-24 flex-col items-center justify-center gap-1 text-[11px] text-muted-foreground sm:h-36">
+                <Camera className="size-4" aria-hidden />
                 Tap to view
               </div>
             )}
           </button>
           <button
             type="button"
-            className="overflow-hidden rounded-xl border border-border bg-muted/10 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="overflow-hidden rounded-lg border border-border bg-muted/10 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             onClick={onOpenVoucher}
           >
-            <p className="border-b border-border/70 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <p className="border-b border-border/70 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Voucher
             </p>
             {voucherUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={voucherUrl} alt={`Voucher for ${name}`} className="aspect-[4/3] w-full object-contain bg-black/5" />
+              <img
+                src={voucherUrl}
+                alt={`Voucher for ${name}`}
+                className="h-24 w-full object-cover bg-black/5 sm:h-36 sm:object-contain"
+              />
             ) : (
-              <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1.5 text-xs text-muted-foreground">
-                <Ticket className="size-5" aria-hidden />
+              <div className="flex h-24 flex-col items-center justify-center gap-1 text-[11px] text-muted-foreground sm:h-36">
+                <Ticket className="size-4" aria-hidden />
                 Tap to view
               </div>
             )}
           </button>
         </div>
-      </section>
 
-      <section className={panelClass} aria-labelledby="irr-detail-programme">
-        <h3 id="irr-detail-programme" className="text-sm font-semibold text-card-foreground">
-          Programme & subjects
-        </h3>
-        <dl className="mt-3 grid gap-3">
-          <DetailField
-            label="Programme"
-            value={`${candidate.programme_code} — ${candidate.programme_name}`}
-          />
-          <DetailField label="Subjects" value={subjects} />
+        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border/70 pt-3">
+          <DetailField label="First name" value={candidate.first_name} />
+          <DetailField label="Last name" value={candidate.last_name} />
+          {candidate.other_name?.trim() ? (
+            <DetailField label="Other name" value={candidate.other_name} />
+          ) : null}
+          <DetailField label="Gender" value={candidate.gender} />
+          <DetailField label="Date of birth" value={formatDateOfBirth(candidate.date_of_birth)} />
+          <DetailField label="Phone" value={candidate.phone_number} />
+          <div className="col-span-2 min-w-0">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Programme
+            </dt>
+            <dd className="mt-0.5 break-words text-sm leading-snug text-foreground">
+              <span className="font-mono">{candidate.programme_code}</span>
+              <span className="text-muted-foreground"> — {candidate.programme_name}</span>
+            </dd>
+          </div>
+          <div className="col-span-2 min-w-0">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Subjects
+            </dt>
+            <dd className="mt-0.5 break-words text-sm leading-snug text-foreground" title={subjectNames}>
+              <span className="font-mono">{subjectCodes}</span>
+            </dd>
+          </div>
+          {hasOptional ? (
+            <>
+              <DetailField label="Guardian name" value={candidate.guardian_name} />
+              <DetailField label="Guardian phone" value={candidate.guardian_phone_number} />
+              {candidate.ghanapost_gps_address?.trim() ? (
+                <div className="col-span-2">
+                  <DetailField label="GhanaPost GPS" value={candidate.ghanapost_gps_address} />
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </dl>
       </section>
 
-      {(candidate.guardian_name ||
-        candidate.guardian_phone_number ||
-        candidate.ghanapost_gps_address) && (
-        <section className={panelClass} aria-labelledby="irr-detail-optional">
-          <h3 id="irr-detail-optional" className="text-sm font-semibold text-card-foreground">
-            Optional details
-          </h3>
-          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-            <DetailField label="Guardian name" value={candidate.guardian_name} />
-            <DetailField label="Guardian phone" value={candidate.guardian_phone_number} />
-            <DetailField label="GhanaPost GPS" value={candidate.ghanapost_gps_address} />
-          </dl>
-        </section>
-      )}
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/85 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
-        <div className="mx-auto flex max-w-lg flex-col gap-2 sm:max-w-2xl sm:flex-row">
-          <button type="button" className={btnSecondary} onClick={onBack}>
+      <div className={stickyActionBarClass}>
+        <div className="mx-auto flex max-w-lg gap-2 sm:max-w-2xl">
+          <button type="button" className={cn(btnSecondary, "flex-1")} onClick={onBack}>
             Back
           </button>
-          <button type="button" className={btnDanger} onClick={onDelete}>
-            <Trash2 className="mr-2 size-4" aria-hidden />
+          <button type="button" className={cn(btnDanger, "flex-1")} onClick={onDelete}>
+            <Trash2 className="mr-1.5 size-4" aria-hidden />
             Delete
           </button>
-          <button type="button" className={btnPrimary} onClick={onEdit}>
-            <Pencil className="mr-2 size-4" aria-hidden />
+          <button type="button" className={cn(btnPrimary, "flex-1")} onClick={onEdit}>
+            <Pencil className="mr-1.5 size-4" aria-hidden />
             Edit
           </button>
         </div>
@@ -1739,7 +1998,7 @@ function SubjectToggleList({
     <fieldset>
       <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</legend>
       {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
-      <div className="mt-2 space-y-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {subjects.map((s) => {
           const checked = selectedSet.has(s.subject_id);
           return (
