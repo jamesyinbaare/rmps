@@ -21,6 +21,7 @@ async def get_or_create_submission_settings(
             examination_id=examination_id,
             officials_core_enabled=True,
             officials_elective_enabled=True,
+            irregular_candidates_enabled=False,
         )
         session.add(row)
         await session.flush()
@@ -64,6 +65,7 @@ def submission_status_dict(
         "elective_submission_period_end": settings.elective_submission_period_end,
         "officials_core_enabled": bool(settings.officials_core_enabled),
         "officials_elective_enabled": bool(settings.officials_elective_enabled),
+        "irregular_candidates_enabled": bool(settings.irregular_candidates_enabled),
     }
 
 
@@ -127,6 +129,7 @@ async def upsert_submission_settings(
     elective_submission_period_end: date | None,
     officials_core_enabled: bool,
     officials_elective_enabled: bool,
+    irregular_candidates_enabled: bool = False,
 ) -> ExaminationInspectorSubmissionSettings:
     validate_submission_period_dates(
         core_submission_period_start,
@@ -145,7 +148,21 @@ async def upsert_submission_settings(
     row.elective_submission_period_end = elective_submission_period_end
     row.officials_core_enabled = officials_core_enabled
     row.officials_elective_enabled = officials_elective_enabled
+    row.irregular_candidates_enabled = irregular_candidates_enabled
     row.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(row)
     return row
+
+
+async def assert_irregular_candidates_enabled(
+    session: AsyncSession,
+    examination_id: int,
+) -> ExaminationInspectorSubmissionSettings:
+    settings = await get_or_create_submission_settings(session, examination_id)
+    if not settings.irregular_candidates_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Irregular candidate registration is disabled for this examination",
+        )
+    return settings

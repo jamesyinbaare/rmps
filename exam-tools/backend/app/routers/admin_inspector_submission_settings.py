@@ -29,6 +29,7 @@ def _to_response(row) -> InspectorSubmissionSettingsResponse:
         elective_submission_period_end=row.elective_submission_period_end,
         officials_core_enabled=bool(row.officials_core_enabled),
         officials_elective_enabled=bool(row.officials_elective_enabled),
+        irregular_candidates_enabled=bool(row.irregular_candidates_enabled),
         updated_at=row.updated_at,
     )
 
@@ -65,5 +66,6 @@ async def put_inspector_submission_settings(
         elective_submission_period_end=body.elective_submission_period_end,
         officials_core_enabled=body.officials_core_enabled,
         officials_elective_enabled=body.officials_elective_enabled,
+        irregular_candidates_enabled=body.irregular_candidates_enabled,
     )
     return _to_response(row)

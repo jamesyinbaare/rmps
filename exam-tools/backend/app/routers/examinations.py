@@ -2237,21 +2237,13 @@ async def get_my_center_overview(
         elif scope_val is not None:
             centre_subject_scope_str = str(scope_val)
 
-    cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
-        ExaminationCandidate.examination_id == exam_id,
-        ExaminationCandidate.school_id.in_(stats_scope_ids),
+    from app.services.candidate_ops_queries import (
+        candidate_counts_by_school,
+        count_candidates_in_scope,
     )
-    candidate_count = int((await session.execute(cand_stmt)).scalar_one())
-    cand_by_school_stmt = (
-        select(ExaminationCandidate.school_id, func.count().label("candidate_count"))
-        .where(
-            ExaminationCandidate.examination_id == exam_id,
-            ExaminationCandidate.school_id.in_(stats_scope_ids),
-        )
-        .group_by(ExaminationCandidate.school_id)
-    )
-    cand_by_school_rows = await session.execute(cand_by_school_stmt)
-    cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
+
+    candidate_count = await count_candidates_in_scope(session, exam_id, stats_scope_ids)
+    cand_by_school = await candidate_counts_by_school(session, exam_id, stats_scope_ids)
     schools_with_candidates = _filter_schools_with_registered_candidates(
         ordered_scope_schools,
         cand_by_school,
@@ -2573,11 +2565,9 @@ async def get_national_overview(
         )
         return NationalExecutiveOverviewResponse(**empty.model_dump(), centres=[], centre_count=0)
 
-    cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
-        ExaminationCandidate.examination_id == exam_id,
-        ExaminationCandidate.school_id.in_(scope_ids),
-    )
-    candidate_count = int((await session.execute(cand_stmt)).scalar_one())
+    from app.services.candidate_ops_queries import count_candidates_in_scope
+
+    candidate_count = await count_candidates_in_scope(session, exam_id, scope_ids)
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
@@ -3391,11 +3381,9 @@ async def get_my_depot_overview(
         candidate_count = 0
         entries: list[TimetableEntry] = []
     else:
-        cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
-            ExaminationCandidate.examination_id == exam_id,
-            ExaminationCandidate.school_id.in_(scope_ids),
-        )
-        candidate_count = int((await session.execute(cand_stmt)).scalar_one())
+        from app.services.candidate_ops_queries import count_candidates_in_scope
+
+        candidate_count = await count_candidates_in_scope(session, exam_id, scope_ids)
         entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
     timetable_distinct_subject_count = len({e.subject_code for e in entries})

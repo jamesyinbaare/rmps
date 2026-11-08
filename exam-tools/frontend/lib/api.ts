@@ -649,12 +649,18 @@ export type ProgrammeListResponse = {
   total_pages: number;
 };
 
+export type SubjectProgrammeRef = {
+  code: string;
+  name: string;
+};
+
 export type Subject = {
   id: number;
   code: string;
   original_code: string | null;
   name: string;
   subject_type: SubjectTypeEnum;
+  programmes: SubjectProgrammeRef[];
   created_at: string;
   updated_at: string;
 };
@@ -667,7 +673,7 @@ export type SubjectListResponse = {
   total_pages: number;
 };
 
-/** Fetches every subject page until the list is exhausted. Page size must not exceed the API max (100). */
+/** Fetches every subject page until the list is exhausted. Page size must not exceed the API max (1000). */
 export async function listAllSubjects(pageSize = 100): Promise<Subject[]> {
   const all: Subject[] = [];
   let page = 1;
@@ -2357,6 +2363,7 @@ export type InspectorSubmissionStatus = {
   elective_submission_period_end: string | null;
   officials_core_enabled: boolean;
   officials_elective_enabled: boolean;
+  irregular_candidates_enabled?: boolean;
 };
 
 export function isInspectorScopePeriodOpen(
@@ -2463,6 +2470,7 @@ export type InspectorSubmissionSettings = {
   elective_submission_period_end: string | null;
   officials_core_enabled: boolean;
   officials_elective_enabled: boolean;
+  irregular_candidates_enabled: boolean;
   updated_at: string | null;
 };
 
@@ -2473,6 +2481,7 @@ export type InspectorSubmissionSettingsPut = {
   elective_submission_period_end: string | null;
   officials_core_enabled: boolean;
   officials_elective_enabled: boolean;
+  irregular_candidates_enabled: boolean;
 };
 
 export async function getAdminInspectorSubmissionSettings(
@@ -2494,6 +2503,331 @@ export async function putAdminInspectorSubmissionSettings(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export type IrregularCandidateSubject = {
+  subject_id: number | null;
+  subject_code: string;
+  subject_name: string;
+};
+
+export type IrregularCandidateGender = "Male" | "Female";
+
+export type IrregularCandidate = {
+  id: number;
+  examination_id: number;
+  examination_centre_id: string;
+  examination_centre_code: string;
+  examination_centre_name: string;
+  school_id: string;
+  school_code: string;
+  school_name: string;
+  programme_id: number;
+  programme_code: string;
+  programme_name: string;
+  first_name: string;
+  last_name: string;
+  other_name: string | null;
+  gender: IrregularCandidateGender;
+  date_of_birth: string;
+  phone_number: string;
+  guardian_name: string | null;
+  guardian_phone_number: string | null;
+  ghanapost_gps_address: string | null;
+  subjects: IrregularCandidateSubject[];
+  recorded_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IrregularCandidateListResponse = {
+  items: IrregularCandidate[];
+  total: number;
+};
+
+export type IrregularCandidateAdminListResponse = {
+  items: IrregularCandidate[];
+  total: number;
+  skip: number;
+  limit: number;
+};
+
+export type IrregularCandidateProgramme = {
+  id: number;
+  code: string;
+  name: string;
+};
+
+export type IrregularCandidateStatus = {
+  enabled: boolean;
+};
+
+function irregularCandidatesPostingQuery(postingId?: string | null): string {
+  if (!postingId?.trim()) return "";
+  return `?posting_id=${encodeURIComponent(postingId.trim())}`;
+}
+
+export async function getIrregularCandidatesStatus(
+  examId: number,
+  postingId?: string | null,
+): Promise<IrregularCandidateStatus> {
+  return apiJson<IrregularCandidateStatus>(
+    `/examinations/${examId}/irregular-candidates/status${irregularCandidatesPostingQuery(postingId)}`,
+  );
+}
+
+export async function listIrregularCandidateProgrammes(
+  examId: number,
+  postingId?: string | null,
+): Promise<IrregularCandidateProgramme[]> {
+  return apiJson<IrregularCandidateProgramme[]>(
+    `/examinations/${examId}/irregular-candidates/programmes${irregularCandidatesPostingQuery(postingId)}`,
+  );
+}
+
+export async function getIrregularCandidateProgrammeSubjectRequirements(
+  examId: number,
+  programmeId: number,
+  postingId?: string | null,
+): Promise<ProgrammeSubjectRequirements> {
+  return apiJson<ProgrammeSubjectRequirements>(
+    `/examinations/${examId}/irregular-candidates/programmes/${programmeId}/subject-requirements${irregularCandidatesPostingQuery(postingId)}`,
+  );
+}
+
+export async function listInspectorIrregularCandidates(
+  examId: number,
+  postingId?: string | null,
+): Promise<IrregularCandidateListResponse> {
+  return apiJson<IrregularCandidateListResponse>(
+    `/examinations/${examId}/irregular-candidates${irregularCandidatesPostingQuery(postingId)}`,
+  );
+}
+
+export async function getInspectorIrregularCandidate(
+  examId: number,
+  candidateId: number,
+  postingId?: string | null,
+): Promise<IrregularCandidate> {
+  return apiJson<IrregularCandidate>(
+    `/examinations/${examId}/irregular-candidates/${candidateId}${irregularCandidatesPostingQuery(postingId)}`,
+  );
+}
+
+export type IrregularCandidateWritePayload = {
+  first_name: string;
+  last_name: string;
+  other_name?: string | null;
+  gender: IrregularCandidateGender;
+  date_of_birth: string;
+  phone_number: string;
+  programme_id: number;
+  subject_ids: number[];
+  guardian_name?: string | null;
+  guardian_phone_number?: string | null;
+  ghanapost_gps_address?: string | null;
+  photograph?: File | null;
+  voucher?: File | null;
+  clear_other_name?: boolean;
+  clear_guardian_name?: boolean;
+  clear_guardian_phone_number?: boolean;
+  clear_ghanapost_gps_address?: boolean;
+};
+
+function appendIrregularCandidateForm(
+  form: FormData,
+  payload: IrregularCandidateWritePayload,
+  options: { isCreate: boolean },
+) {
+  const isCreate = options.isCreate;
+  form.append("first_name", payload.first_name);
+  form.append("last_name", payload.last_name);
+  form.append("gender", payload.gender);
+  form.append("date_of_birth", payload.date_of_birth);
+  form.append("phone_number", payload.phone_number);
+  form.append("programme_id", String(payload.programme_id));
+  form.append("subject_ids", JSON.stringify(payload.subject_ids));
+  if (payload.other_name != null && payload.other_name.trim() !== "") {
+    form.append("other_name", payload.other_name.trim());
+  } else if (!isCreate && payload.clear_other_name) {
+    form.append("clear_other_name", "true");
+  }
+  if (payload.guardian_name != null && payload.guardian_name.trim() !== "") {
+    form.append("guardian_name", payload.guardian_name.trim());
+  } else if (!isCreate && payload.clear_guardian_name) {
+    form.append("clear_guardian_name", "true");
+  }
+  if (payload.guardian_phone_number != null && payload.guardian_phone_number.trim() !== "") {
+    form.append("guardian_phone_number", payload.guardian_phone_number.trim());
+  } else if (!isCreate && payload.clear_guardian_phone_number) {
+    form.append("clear_guardian_phone_number", "true");
+  }
+  if (payload.ghanapost_gps_address != null && payload.ghanapost_gps_address.trim() !== "") {
+    form.append("ghanapost_gps_address", payload.ghanapost_gps_address.trim());
+  } else if (!isCreate && payload.clear_ghanapost_gps_address) {
+    form.append("clear_ghanapost_gps_address", "true");
+  }
+  if (payload.photograph) form.append("photograph", payload.photograph);
+  if (payload.voucher) form.append("voucher", payload.voucher);
+}
+
+export async function createInspectorIrregularCandidate(
+  examId: number,
+  payload: IrregularCandidateWritePayload,
+  postingId?: string | null,
+): Promise<IrregularCandidate> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+  if (!payload.photograph || !payload.voucher) {
+    throw new Error("Photograph and voucher image are required");
+  }
+  const form = new FormData();
+  appendIrregularCandidateForm(form, payload, { isCreate: true });
+  const res = await fetch(
+    `${getApiBaseUrl()}/examinations/${examId}/irregular-candidates${irregularCandidatesPostingQuery(postingId)}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    },
+  );
+  await assertAuthedResponse(res);
+  return (await res.json()) as IrregularCandidate;
+}
+
+export async function updateInspectorIrregularCandidate(
+  examId: number,
+  candidateId: number,
+  payload: IrregularCandidateWritePayload,
+  postingId?: string | null,
+): Promise<IrregularCandidate> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+  const form = new FormData();
+  appendIrregularCandidateForm(form, payload, { isCreate: false });
+  const res = await fetch(
+    `${getApiBaseUrl()}/examinations/${examId}/irregular-candidates/${candidateId}${irregularCandidatesPostingQuery(postingId)}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    },
+  );
+  await assertAuthedResponse(res);
+  return (await res.json()) as IrregularCandidate;
+}
+
+export async function deleteInspectorIrregularCandidate(
+  examId: number,
+  candidateId: number,
+  postingId?: string | null,
+): Promise<void> {
+  await apiJson(
+    `/examinations/${examId}/irregular-candidates/${candidateId}${irregularCandidatesPostingQuery(postingId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function downloadInspectorIrregularCandidatePhotograph(
+  examId: number,
+  candidateId: number,
+  postingId?: string | null,
+): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examId}/irregular-candidates/${candidateId}/photograph${irregularCandidatesPostingQuery(postingId)}`,
+    `photograph-${candidateId}.jpg`,
+  );
+}
+
+export async function downloadInspectorIrregularCandidateVoucher(
+  examId: number,
+  candidateId: number,
+  postingId?: string | null,
+): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examId}/irregular-candidates/${candidateId}/voucher${irregularCandidatesPostingQuery(postingId)}`,
+    `voucher-${candidateId}.jpg`,
+  );
+}
+
+/** Object URL for inline preview; caller must revoke with URL.revokeObjectURL. */
+export async function fetchInspectorIrregularCandidateImageObjectUrl(
+  examId: number,
+  candidateId: number,
+  kind: "photograph" | "voucher",
+  postingId?: string | null,
+): Promise<string> {
+  const res = await apiFetch(
+    `/examinations/${examId}/irregular-candidates/${candidateId}/${kind}${irregularCandidatesPostingQuery(postingId)}`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function listAdminIrregularCandidates(
+  examId: number,
+  options?: {
+    skip?: number;
+    limit?: number;
+    centreId?: string | null;
+    region?: string | null;
+    zone?: string | null;
+    q?: string | null;
+  },
+): Promise<IrregularCandidateAdminListResponse> {
+  const q = new URLSearchParams();
+  if (options?.skip != null) q.set("skip", String(options.skip));
+  if (options?.limit != null) q.set("limit", String(options.limit));
+  if (options?.centreId?.trim()) q.set("centre_id", options.centreId.trim());
+  if (options?.region?.trim()) q.set("region", options.region.trim());
+  if (options?.zone?.trim()) q.set("zone", options.zone.trim());
+  if (options?.q?.trim()) q.set("q", options.q.trim());
+  const s = q.toString();
+  return apiJson<IrregularCandidateAdminListResponse>(
+    `/admin/examinations/${examId}/irregular-candidates${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function downloadAdminIrregularCandidatesExcel(
+  examId: number,
+  options?: {
+    centreId?: string | null;
+    region?: string | null;
+    zone?: string | null;
+    q?: string | null;
+  },
+  filename = "irregular_candidates.xlsx",
+): Promise<void> {
+  const q = new URLSearchParams();
+  if (options?.centreId?.trim()) q.set("centre_id", options.centreId.trim());
+  if (options?.region?.trim()) q.set("region", options.region.trim());
+  if (options?.zone?.trim()) q.set("zone", options.zone.trim());
+  if (options?.q?.trim()) q.set("q", options.q.trim());
+  const s = q.toString();
+  await downloadApiFile(
+    `/admin/examinations/${examId}/irregular-candidates/export.xlsx${s ? `?${s}` : ""}`,
+    filename,
+  );
+}
+
+export async function downloadAdminIrregularCandidatePhotograph(
+  examId: number,
+  candidateId: number,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examId}/irregular-candidates/${candidateId}/photograph`,
+    `photograph-${candidateId}.jpg`,
+  );
+}
+
+export async function downloadAdminIrregularCandidateVoucher(
+  examId: number,
+  candidateId: number,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examId}/irregular-candidates/${candidateId}/voucher`,
+    `voucher-${candidateId}.jpg`,
   );
 }
 

@@ -13,6 +13,7 @@ class InspectorSubmissionSettingsResponse(BaseModel):
     elective_submission_period_end: date | None = None
     officials_core_enabled: bool = True
     officials_elective_enabled: bool = True
+    irregular_candidates_enabled: bool = False
     updated_at: datetime | None = None
 
 
@@ -35,6 +36,7 @@ class InspectorSubmissionSettingsPut(BaseModel):
     )
     officials_core_enabled: bool = True
     officials_elective_enabled: bool = True
+    irregular_candidates_enabled: bool = False
 
 
 class InspectorSubmissionStatusResponse(BaseModel):
@@ -46,3 +48,4 @@ class InspectorSubmissionStatusResponse(BaseModel):
     elective_submission_period_end: date | None = None
     officials_core_enabled: bool = True
     officials_elective_enabled: bool = True
+    irregular_candidates_enabled: bool = False

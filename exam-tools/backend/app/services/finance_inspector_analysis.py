@@ -112,13 +112,9 @@ async def count_registered_candidates_in_scope(
     exam_id: int,
     scope_ids: set[UUID],
 ) -> int:
-    if not scope_ids:
-        return 0
-    stmt = select(func.count()).select_from(ExaminationCandidate).where(
-        ExaminationCandidate.examination_id == exam_id,
-        ExaminationCandidate.school_id.in_(scope_ids),
-    )
-    return int((await session.execute(stmt)).scalar_one())
+    from app.services.candidate_ops_queries import count_candidates_in_scope
+
+    return await count_candidates_in_scope(session, exam_id, scope_ids)
 
 
 async def resolve_centre_candidate_total(

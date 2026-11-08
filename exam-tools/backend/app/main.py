@@ -62,6 +62,7 @@ from app.routers import (
     examiners,
     finance_officers,
     inspectors,
+    irregular_candidates,
     marked_script_returns,
     programmes,
     public_data_entry_clerks,
@@ -299,6 +300,8 @@ app.include_router(admin_system.router)
 app.include_router(documents.router)
 app.include_router(attendance_sheets.inspector_router)
 app.include_router(attendance_sheets.admin_router)
+app.include_router(irregular_candidates.inspector_router)
+app.include_router(irregular_candidates.admin_router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

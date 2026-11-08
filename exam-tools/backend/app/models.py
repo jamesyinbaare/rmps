@@ -686,6 +686,94 @@ class ExaminationCandidateSubject(Base):
     subject = relationship("Subject")
 
 
+class IrregularExaminationCandidate(Base):
+    """Inspector-recorded irregular candidate at an examination centre (not portal-imported)."""
+
+    __tablename__ = "irregular_examination_candidates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    examination_centre_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="RESTRICT"), nullable=False, index=True)
+    programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    first_name = Column(String(255), nullable=False)
+    last_name = Column(String(255), nullable=False)
+    other_name = Column(String(255), nullable=True)
+    gender = Column(String(20), nullable=False)
+    date_of_birth = Column(Date, nullable=False)
+    phone_number = Column(String(10), nullable=False)
+    guardian_name = Column(String(512), nullable=True)
+    guardian_phone_number = Column(String(10), nullable=True)
+    ghanapost_gps_address = Column(String(50), nullable=True)
+    photograph_stored_path = Column(String(512), nullable=False)
+    voucher_stored_path = Column(String(512), nullable=False)
+    recorded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="irregular_candidates")
+    examination_centre = relationship("ExaminationCentre")
+    school = relationship("School")
+    programme = relationship("Programme")
+    recorded_by = relationship("User", foreign_keys=[recorded_by_user_id])
+    subject_selections = relationship(
+        "IrregularExaminationCandidateSubject",
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        order_by="IrregularExaminationCandidateSubject.id",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "phone_number ~ '^[0-9]{10}$'",
+            name="ck_irregular_candidate_phone_number",
+        ),
+        CheckConstraint(
+            "guardian_phone_number IS NULL OR guardian_phone_number ~ '^[0-9]{10}$'",
+            name="ck_irregular_candidate_guardian_phone",
+        ),
+        CheckConstraint(
+            "gender IN ('Male', 'Female')",
+            name="ck_irregular_candidate_gender",
+        ),
+    )
+
+
+class IrregularExaminationCandidateSubject(Base):
+    """Subject selection for an irregular examination candidate."""
+
+    __tablename__ = "irregular_examination_candidate_subjects"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    irregular_examination_candidate_id = Column(
+        Integer,
+        ForeignKey("irregular_examination_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_code = Column(String(50), nullable=False)
+    subject_name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidate = relationship("IrregularExaminationCandidate", back_populates="subject_selections")
+    subject = relationship("Subject")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "irregular_examination_candidate_id",
+            "subject_code",
+            name="uq_irregular_candidate_subject_code",
+        ),
+    )
+
+
 class ExaminationSchedule(Base):
     """Per-subject schedule (papers with dates/times) for an examination."""
 
@@ -3363,6 +3451,7 @@ class ExaminationInspectorSubmissionSettings(Base):
     elective_submission_period_end = Column(Date, nullable=True)
     officials_core_enabled = Column(Boolean, nullable=False, default=True)
     officials_elective_enabled = Column(Boolean, nullable=False, default=True)
+    irregular_candidates_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="inspector_submission_settings")
