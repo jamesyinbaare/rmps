@@ -173,6 +173,7 @@ export function ExaminersPageShell({
             original_code: row.subject_original_code ?? null,
             name: row.subject_name,
             subject_type: row.subject_type,
+            programmes: [],
             created_at: "",
             updated_at: "",
           })),
