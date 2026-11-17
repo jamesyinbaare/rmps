@@ -22,7 +22,7 @@ function formatExamLabel(ex: Examination): string {
 }
 
 type Props = {
-  children: (examId: number) => ReactNode;
+  children: (examId: number, exam: Examination | undefined) => ReactNode;
   /** When true, show an examination dropdown (Test Admin subpages). Executive centres stay read-only. */
   showExamPicker?: boolean;
 };
@@ -145,7 +145,7 @@ function MonitoringExamScopedPageContent({ children, showExamPicker = false }: P
         </p>
       ) : null}
 
-      {examId != null ? children(examId) : null}
+      {examId != null ? children(examId, selectedExam) : null}
     </div>
   );
 }

@@ -2765,48 +2765,110 @@ export async function fetchInspectorIrregularCandidateImageObjectUrl(
   return URL.createObjectURL(blob);
 }
 
+export type AdminIrregularCandidatesExportOptions = {
+  centreId?: string | null;
+  region?: string | null;
+  zone?: string | null;
+  q?: string | null;
+  ids?: number[] | null;
+};
+
+function appendAdminIrregularCandidatesQuery(
+  params: URLSearchParams,
+  options?: AdminIrregularCandidatesExportOptions & { skip?: number; limit?: number },
+) {
+  if (options?.skip != null) params.set("skip", String(options.skip));
+  if (options?.limit != null) params.set("limit", String(options.limit));
+  if (options?.centreId?.trim()) params.set("centre_id", options.centreId.trim());
+  if (options?.region?.trim()) params.set("region", options.region.trim());
+  if (options?.zone?.trim()) params.set("zone", options.zone.trim());
+  if (options?.q?.trim()) params.set("q", options.q.trim());
+  for (const id of options?.ids ?? []) {
+    if (Number.isFinite(id)) params.append("ids", String(id));
+  }
+}
+
 export async function listAdminIrregularCandidates(
   examId: number,
-  options?: {
+  options?: AdminIrregularCandidatesExportOptions & {
     skip?: number;
     limit?: number;
-    centreId?: string | null;
-    region?: string | null;
-    zone?: string | null;
-    q?: string | null;
   },
 ): Promise<IrregularCandidateAdminListResponse> {
   const q = new URLSearchParams();
-  if (options?.skip != null) q.set("skip", String(options.skip));
-  if (options?.limit != null) q.set("limit", String(options.limit));
-  if (options?.centreId?.trim()) q.set("centre_id", options.centreId.trim());
-  if (options?.region?.trim()) q.set("region", options.region.trim());
-  if (options?.zone?.trim()) q.set("zone", options.zone.trim());
-  if (options?.q?.trim()) q.set("q", options.q.trim());
+  appendAdminIrregularCandidatesQuery(q, options);
   const s = q.toString();
   return apiJson<IrregularCandidateAdminListResponse>(
     `/admin/examinations/${examId}/irregular-candidates${s ? `?${s}` : ""}`,
   );
 }
 
+export async function getAdminIrregularCandidate(
+  examId: number,
+  candidateId: number,
+): Promise<IrregularCandidate> {
+  return apiJson<IrregularCandidate>(
+    `/admin/examinations/${examId}/irregular-candidates/${candidateId}`,
+  );
+}
+
 export async function downloadAdminIrregularCandidatesExcel(
   examId: number,
-  options?: {
-    centreId?: string | null;
-    region?: string | null;
-    zone?: string | null;
-    q?: string | null;
-  },
+  options?: AdminIrregularCandidatesExportOptions,
   filename = "irregular_candidates.xlsx",
 ): Promise<void> {
   const q = new URLSearchParams();
-  if (options?.centreId?.trim()) q.set("centre_id", options.centreId.trim());
-  if (options?.region?.trim()) q.set("region", options.region.trim());
-  if (options?.zone?.trim()) q.set("zone", options.zone.trim());
-  if (options?.q?.trim()) q.set("q", options.q.trim());
+  appendAdminIrregularCandidatesQuery(q, options);
   const s = q.toString();
   await downloadApiFile(
     `/admin/examinations/${examId}/irregular-candidates/export.xlsx${s ? `?${s}` : ""}`,
+    filename,
+  );
+}
+
+export async function downloadAdminIrregularCandidatesPdf(
+  examId: number,
+  options?: AdminIrregularCandidatesExportOptions,
+  filename = "irregular_candidates.pdf",
+): Promise<void> {
+  const q = new URLSearchParams();
+  appendAdminIrregularCandidatesQuery(q, options);
+  const s = q.toString();
+  // Prefer server Content-Disposition (pdf vs zip-by-centre); fall back to caller filename.
+  const res = await apiFetch(
+    `/admin/examinations/${examId}/irregular-candidates/export.pdf${s ? `?${s}` : ""}`,
+  );
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const utfMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const plainMatch = /filename="?([^";]+)"?/i.exec(disposition);
+  let downloadName = filename;
+  if (utfMatch?.[1]) {
+    try {
+      downloadName = decodeURIComponent(utfMatch[1]);
+    } catch {
+      downloadName = utfMatch[1];
+    }
+  } else if (plainMatch?.[1]) {
+    downloadName = plainMatch[1];
+  } else if (!options?.centreId && !(options?.ids && options.ids.length > 0)) {
+    downloadName = filename.replace(/\.pdf$/i, ".zip");
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = downloadName;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadAdminIrregularCandidatePdf(
+  examId: number,
+  candidateId: number,
+  filename = `irregular_candidate_${candidateId}.pdf`,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examId}/irregular-candidates/${candidateId}/export.pdf`,
     filename,
   );
 }
@@ -2829,6 +2891,19 @@ export async function downloadAdminIrregularCandidateVoucher(
     `/admin/examinations/${examId}/irregular-candidates/${candidateId}/voucher`,
     `voucher-${candidateId}.jpg`,
   );
+}
+
+/** Object URL for inline admin preview; caller must revoke with URL.revokeObjectURL. */
+export async function fetchAdminIrregularCandidateImageObjectUrl(
+  examId: number,
+  candidateId: number,
+  kind: "photograph" | "voucher",
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examId}/irregular-candidates/${candidateId}/${kind}`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 export async function getExamOfficialsForMyCentre(

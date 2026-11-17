@@ -206,16 +206,30 @@ def candidate_to_response(
     )
 
 
+def original_subject_code(selection: IrregularExaminationCandidateSubject) -> str:
+    """Prefer Subject.original_code; fall back to linked code, then stored snapshot."""
+    subject = getattr(selection, "subject", None)
+    if subject is not None:
+        original = getattr(subject, "original_code", None)
+        if original and str(original).strip():
+            return str(original).strip()
+        code = getattr(subject, "code", None)
+        if code and str(code).strip():
+            return str(code).strip()
+    return str(selection.subject_code or "").strip()
+
+
 def replace_subject_selections(
     row: IrregularExaminationCandidate,
     subjects: list[Subject],
 ) -> None:
     row.subject_selections.clear()
     for s in subjects:
+        code = (s.original_code or s.code or "").strip() or s.code
         row.subject_selections.append(
             IrregularExaminationCandidateSubject(
                 subject_id=s.id,
-                subject_code=s.code,
+                subject_code=code,
                 subject_name=s.name,
             )
         )
@@ -231,7 +245,9 @@ async def load_irregular_candidate(
     stmt = (
         select(IrregularExaminationCandidate)
         .options(
-            selectinload(IrregularExaminationCandidate.subject_selections),
+            selectinload(IrregularExaminationCandidate.subject_selections).selectinload(
+                IrregularExaminationCandidateSubject.subject
+            ),
             selectinload(IrregularExaminationCandidate.examination_centre),
             selectinload(IrregularExaminationCandidate.school),
             selectinload(IrregularExaminationCandidate.programme),
