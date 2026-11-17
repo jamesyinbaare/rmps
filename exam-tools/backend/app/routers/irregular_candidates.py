@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, false, func, select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import (
     InspectorDep,
     InspectorJwtPostingIdDep,
-    SuperAdminOrFinanceOfficerDep,
+    SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 )
 from app.dependencies.database import DBSessionDep
 from app.models import (
     ExaminationCentre,
     IrregularExaminationCandidate,
+    IrregularExaminationCandidateSubject,
     Programme,
     Region,
     Subject,
@@ -29,6 +31,15 @@ from app.models import (
 from app.services.irregular_candidate_export import (
     generate_irregular_candidates_export,
     irregular_candidates_export_filename,
+)
+from app.services.irregular_candidate_pdf import (
+    build_irregular_candidate_pdf_context,
+    build_irregular_candidates_pdf_zip,
+    group_candidate_contexts_by_centre,
+    irregular_candidate_pdf_filename,
+    irregular_candidates_pdf_filename,
+    irregular_candidates_pdf_zip_filename,
+    render_irregular_candidates_pdf,
 )
 from app.utils.content_disposition import content_disposition_attachment
 from app.schemas.irregular_candidates import (
@@ -637,10 +648,16 @@ def _admin_irregular_candidates_base_query(
     region: Region | None = None,
     zone: Zone | None = None,
     q: str | None = None,
+    ids: list[int] | None = None,
 ) -> Select[tuple[IrregularExaminationCandidate]]:
     base = select(IrregularExaminationCandidate).where(
         IrregularExaminationCandidate.examination_id == examination_id
     )
+    if ids is not None:
+        if not ids:
+            base = base.where(false())
+        else:
+            base = base.where(IrregularExaminationCandidate.id.in_(ids))
     if centre_id is not None:
         base = base.where(IrregularExaminationCandidate.examination_centre_id == centre_id)
     if region is not None or zone is not None:
@@ -663,17 +680,57 @@ def _admin_irregular_candidates_base_query(
     return base
 
 
+def _admin_list_options():
+    return (
+        selectinload(IrregularExaminationCandidate.subject_selections).selectinload(
+            IrregularExaminationCandidateSubject.subject
+        ),
+        selectinload(IrregularExaminationCandidate.examination_centre),
+        selectinload(IrregularExaminationCandidate.school),
+        selectinload(IrregularExaminationCandidate.programme),
+    )
+
+
+async def _load_admin_irregular_candidate_rows(
+    session: DBSessionDep,
+    examination_id: int,
+    *,
+    centre_id: UUID | None = None,
+    region: Region | None = None,
+    zone: Zone | None = None,
+    q: str | None = None,
+    ids: list[int] | None = None,
+) -> list[IrregularExaminationCandidate]:
+    stmt = (
+        _admin_irregular_candidates_base_query(
+            examination_id,
+            centre_id=centre_id,
+            region=region,
+            zone=zone,
+            q=q,
+            ids=ids,
+        )
+        .options(*_admin_list_options())
+        .order_by(
+            IrregularExaminationCandidate.created_at.desc(),
+            IrregularExaminationCandidate.id.desc(),
+        )
+    )
+    return list((await session.execute(stmt)).scalars().unique().all())
+
+
 @admin_router.get("", response_model=IrregularCandidateAdminListResponse)
 async def list_admin_irregular_candidates(
     examination_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrFinanceOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(200, ge=1, le=500),
     centre_id: UUID | None = Query(default=None),
     region: Region | None = Query(default=None),
     zone: Zone | None = Query(default=None),
     q: str | None = Query(default=None, description="Search name or phone"),
+    ids: list[int] | None = Query(default=None, description="Optional candidate ids"),
 ) -> IrregularCandidateAdminListResponse:
     try:
         await load_examination_or_raise(session, examination_id)
@@ -686,17 +743,13 @@ async def list_admin_irregular_candidates(
         region=region,
         zone=zone,
         q=q,
+        ids=ids,
     )
 
     count_stmt = select(func.count()).select_from(base.order_by(None).subquery())
     total = int((await session.execute(count_stmt)).scalar_one())
     stmt = (
-        base.options(
-            selectinload(IrregularExaminationCandidate.subject_selections),
-            selectinload(IrregularExaminationCandidate.examination_centre),
-            selectinload(IrregularExaminationCandidate.school),
-            selectinload(IrregularExaminationCandidate.programme),
-        )
+        base.options(*_admin_list_options())
         .order_by(
             IrregularExaminationCandidate.created_at.desc(),
             IrregularExaminationCandidate.id.desc(),
@@ -717,11 +770,12 @@ async def list_admin_irregular_candidates(
 async def export_admin_irregular_candidates(
     examination_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrFinanceOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     centre_id: UUID | None = Query(default=None),
     region: Region | None = Query(default=None),
     zone: Zone | None = Query(default=None),
     q: str | None = Query(default=None, description="Search name or phone"),
+    ids: list[int] | None = Query(default=None, description="Optional candidate ids"),
 ) -> Response:
     """Download irregular candidates for this examination as Excel (respects list filters)."""
     try:
@@ -729,26 +783,15 @@ async def export_admin_irregular_candidates(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
-    stmt = (
-        _admin_irregular_candidates_base_query(
-            examination_id,
-            centre_id=centre_id,
-            region=region,
-            zone=zone,
-            q=q,
-        )
-        .options(
-            selectinload(IrregularExaminationCandidate.subject_selections),
-            selectinload(IrregularExaminationCandidate.examination_centre),
-            selectinload(IrregularExaminationCandidate.school),
-            selectinload(IrregularExaminationCandidate.programme),
-        )
-        .order_by(
-            IrregularExaminationCandidate.created_at.desc(),
-            IrregularExaminationCandidate.id.desc(),
-        )
+    rows = await _load_admin_irregular_candidate_rows(
+        session,
+        examination_id,
+        centre_id=centre_id,
+        region=region,
+        zone=zone,
+        q=q,
+        ids=ids,
     )
-    rows = list((await session.execute(stmt)).scalars().unique().all())
     payload = generate_irregular_candidates_export(rows)
     filename = irregular_candidates_export_filename(exam)
     return Response(
@@ -758,12 +801,87 @@ async def export_admin_irregular_candidates(
     )
 
 
+@admin_router.get("/export.pdf")
+async def export_admin_irregular_candidates_pdf(
+    examination_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
+    centre_id: UUID | None = Query(default=None),
+    region: Region | None = Query(default=None),
+    zone: Zone | None = Query(default=None),
+    q: str | None = Query(default=None, description="Search name or phone"),
+    ids: list[int] | None = Query(default=None, description="Optional candidate ids"),
+) -> Response:
+    """Download irregular candidate details PDF (photo + voucher; respects filters/ids)."""
+    try:
+        exam = await load_examination_or_raise(session, examination_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+    rows = await _load_admin_irregular_candidate_rows(
+        session,
+        examination_id,
+        centre_id=centre_id,
+        region=region,
+        zone=zone,
+        q=q,
+        ids=ids,
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No irregular candidates match the export filters",
+        )
+    # Build image/context snapshots on the request thread (async ORM + local/GCS reads).
+    candidates = [build_irregular_candidate_pdf_context(row) for row in rows]
+    exam_label = (
+        f"{exam.exam_type} — {exam.exam_series} {exam.year}"
+        if exam.exam_series
+        else f"{exam.exam_type} {exam.year}"
+    )
+    # Full/all download (no centre or id selection): one PDF per centre, zipped.
+    # Single-centre or selected/filtered-to-one-centre stays a single PDF.
+    zip_by_centre = (
+        centre_id is None
+        and not ids
+        and len(group_candidate_contexts_by_centre(candidates)) > 1
+    )
+    if zip_by_centre:
+        payload = await asyncio.to_thread(
+            build_irregular_candidates_pdf_zip,
+            exam=exam,
+            exam_label=exam_label,
+            candidates=candidates,
+        )
+        filename = irregular_candidates_pdf_zip_filename(exam)
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": content_disposition_attachment(filename)},
+        )
+
+    payload = await asyncio.to_thread(
+        render_irregular_candidates_pdf,
+        exam_label=exam_label,
+        exam_type=str(exam.exam_type),
+        exam_series=str(exam.exam_series or ""),
+        year=int(exam.year),
+        candidates=candidates,
+    )
+    filename = irregular_candidates_pdf_filename(exam)
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
+    )
+
+
 @admin_router.get("/{candidate_id}", response_model=IrregularCandidateResponse)
 async def get_admin_irregular_candidate(
     examination_id: int,
     candidate_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrFinanceOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 ) -> IrregularCandidateResponse:
     await load_examination_or_raise(session, examination_id)
     row = await load_irregular_candidate(
@@ -772,12 +890,50 @@ async def get_admin_irregular_candidate(
     return _row_response(row)
 
 
+@admin_router.get("/{candidate_id}/export.pdf")
+async def export_admin_irregular_candidate_pdf(
+    examination_id: int,
+    candidate_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
+) -> Response:
+    """Download a single irregular candidate details PDF (photo + voucher)."""
+    try:
+        exam = await load_examination_or_raise(session, examination_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+    row = await load_irregular_candidate(
+        session, examination_id=examination_id, candidate_id=candidate_id
+    )
+    candidates = [build_irregular_candidate_pdf_context(row)]
+    exam_label = (
+        f"{exam.exam_type} — {exam.exam_series} {exam.year}"
+        if exam.exam_series
+        else f"{exam.exam_type} {exam.year}"
+    )
+    payload = await asyncio.to_thread(
+        render_irregular_candidates_pdf,
+        exam_label=exam_label,
+        exam_type=str(exam.exam_type),
+        exam_series=str(exam.exam_series or ""),
+        year=int(exam.year),
+        candidates=candidates,
+    )
+    filename = irregular_candidate_pdf_filename(exam, row)
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
+    )
+
+
 @admin_router.get("/{candidate_id}/photograph")
 async def download_admin_irregular_photograph(
     examination_id: int,
     candidate_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrFinanceOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 ) -> Response:
     await load_examination_or_raise(session, examination_id)
     return await _serve_candidate_image(
@@ -794,7 +950,7 @@ async def download_admin_irregular_voucher(
     examination_id: int,
     candidate_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrFinanceOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 ) -> Response:
     await load_examination_or_raise(session, examination_id)
     return await _serve_candidate_image(

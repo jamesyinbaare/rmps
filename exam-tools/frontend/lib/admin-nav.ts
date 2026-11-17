@@ -24,6 +24,7 @@ export const MONITORING_HREF = "/dashboard/admin/monitoring";
 export const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
 export const SCRIPTS_ALLOCATION_HREF = "/dashboard/admin/scripts-allocation";
 export const EXAMINERS_HREF = "/dashboard/admin/examiners";
+export const IRREGULAR_CANDIDATES_HREF = "/dashboard/admin/irregular-candidates";
 
 export const ADMIN_OVERVIEW_ITEM: FinanceNavItem = {
   href: ADMIN_HOME_HREF,
@@ -38,6 +39,12 @@ const ADMINISTRATION_ITEMS: FinanceNavItem[] = [
     label: "Examinations",
     description: "Exam cycles & settings",
     icon: "examinations",
+  },
+  {
+    href: IRREGULAR_CANDIDATES_HREF,
+    label: "Irregular candidates",
+    description: "Preview & export irregular candidates",
+    icon: "documents",
   },
   {
     href: "/dashboard/admin/schools",
@@ -187,6 +194,12 @@ const TEST_ADMIN_EXAMINATION_ITEMS: FinanceNavItem[] = [
     label: "Inspectors",
     description: "Inspector monitoring",
     icon: "inspectors",
+  },
+  {
+    href: IRREGULAR_CANDIDATES_HREF,
+    label: "Irregular candidates",
+    description: "Preview & export irregular candidates",
+    icon: "documents",
   },
   {
     href: SCRIPT_CONTROL_HREF,

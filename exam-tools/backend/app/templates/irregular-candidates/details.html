@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Irregular Candidates — {{ exam_label }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.4cm 1.4cm 1.8cm 1.4cm !important;
+            @bottom-left {
+                content: "{{ exam_label }}";
+                font-size: 8pt;
+                color: #666;
+            }
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 8pt;
+                color: #666;
+            }
+        }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 10pt;
+            color: #111;
+            line-height: 1.35;
+            margin: 0;
+            padding: 0;
+        }
+
+        .candidate-page {
+            page-break-after: always;
+        }
+
+        .candidate-page:last-child {
+            page-break-after: auto;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            border-bottom: 2px solid #111;
+            padding-bottom: 8px;
+            margin-bottom: 14px;
+        }
+
+        .header-logo {
+            height: 52px;
+            width: auto;
+            margin-right: 16px;
+        }
+
+        .header-title {
+            flex: 1;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 14pt;
+            font-weight: bold;
+        }
+
+        .header h2 {
+            margin: 4px 0 0 0;
+            font-size: 11pt;
+            font-weight: normal;
+        }
+
+        .media-row {
+            display: table;
+            width: 100%;
+            margin-bottom: 14px;
+            border-collapse: separate;
+            border-spacing: 10px 0;
+        }
+
+        .media-cell {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+            border: 1px solid #333;
+            padding: 6px;
+        }
+
+        .media-label {
+            font-size: 8pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+            color: #444;
+        }
+
+        .media-cell img {
+            display: block;
+            width: 220px;
+            height: 275px;
+            object-fit: contain;
+            background: #f7f7f7;
+            border: 1px solid #ddd;
+        }
+
+        .media-missing {
+            width: 220px;
+            height: 275px;
+            background: #f3f3f3;
+            color: #666;
+            font-size: 9pt;
+            text-align: center;
+            line-height: 275px;
+        }
+
+        .section-title {
+            font-size: 11pt;
+            font-weight: bold;
+            margin: 0 0 8px 0;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 4px;
+        }
+
+        .info-grid {
+            display: table;
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .info-row {
+            display: table-row;
+        }
+
+        .info-label,
+        .info-value {
+            display: table-cell;
+            padding: 4px 6px;
+            vertical-align: top;
+            border-bottom: 1px solid #eee;
+        }
+
+        .info-label {
+            width: 28%;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .info-value {
+            width: 72%;
+        }
+
+    </style>
+</head>
+<body>
+{% for candidate in candidates %}
+    <div class="candidate-page">
+        <div class="header">
+            <img src="img/logo-crest-only.png" alt="CTVET Logo" class="header-logo" />
+            <div class="header-title">
+                <h1>IRREGULAR CANDIDATE DETAILS</h1>
+                <h2>{{ exam_label }}</h2>
+            </div>
+        </div>
+
+        <div class="media-row">
+            <div class="media-cell">
+                <div class="media-label">Photograph</div>
+                {% if candidate.photograph_base64 %}
+                <img src="data:image/jpeg;base64,{{ candidate.photograph_base64 }}" alt="Photograph of {{ candidate.full_name }}">
+                {% else %}
+                <div class="media-missing">No photograph</div>
+                {% endif %}
+            </div>
+            <div class="media-cell">
+                <div class="media-label">Voucher</div>
+                {% if candidate.voucher_base64 %}
+                <img src="data:image/jpeg;base64,{{ candidate.voucher_base64 }}" alt="Voucher for {{ candidate.full_name }}">
+                {% else %}
+                <div class="media-missing">No voucher</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <h3 class="section-title">Registration details</h3>
+        <div class="info-grid">
+            <div class="info-row">
+                <div class="info-label">Full name</div>
+                <div class="info-value"><strong>{{ candidate.full_name }}</strong></div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Gender</div>
+                <div class="info-value">{{ candidate.gender or "—" }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Date of birth</div>
+                <div class="info-value">{{ candidate.date_of_birth or "—" }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Phone</div>
+                <div class="info-value">{{ candidate.phone_number or "—" }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Centre</div>
+                <div class="info-value">
+                    {% if candidate.centre_code %}{{ candidate.centre_code }} — {% endif %}{{ candidate.centre_name or "—" }}
+                </div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">School</div>
+                <div class="info-value">
+                    {% if candidate.school_code %}{{ candidate.school_code }} — {% endif %}{{ candidate.school_name or "—" }}
+                </div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Programme</div>
+                <div class="info-value">
+                    {% if candidate.programme_code %}{{ candidate.programme_code }} — {% endif %}{{ candidate.programme_name or "—" }}
+                </div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">Subjects</div>
+                <div class="info-value">{{ candidate.subject_codes or "—" }}</div>
+            </div>
+            {% if candidate.guardian_name %}
+            <div class="info-row">
+                <div class="info-label">Guardian</div>
+                <div class="info-value">{{ candidate.guardian_name }}</div>
+            </div>
+            {% endif %}
+            {% if candidate.guardian_phone_number %}
+            <div class="info-row">
+                <div class="info-label">Guardian phone</div>
+                <div class="info-value">{{ candidate.guardian_phone_number }}</div>
+            </div>
+            {% endif %}
+            {% if candidate.ghanapost_gps_address %}
+            <div class="info-row">
+                <div class="info-label">GhanaPost GPS</div>
+                <div class="info-value">{{ candidate.ghanapost_gps_address }}</div>
+            </div>
+            {% endif %}
+            <div class="info-row">
+                <div class="info-label">Recorded</div>
+                <div class="info-value">{{ candidate.recorded_at or "—" }}</div>
+            </div>
+        </div>
+
+    </div>
+{% endfor %}
+</body>
+</html>

@@ -16,6 +16,7 @@ from app.services.irregular_candidates import (
     normalize_optional_ghanapost_gps,
     normalize_required_gender,
     normalize_required_phone,
+    original_subject_code,
     parse_subject_ids_json,
 )
 from app.services.inspector_submission_settings import assert_irregular_candidates_enabled
@@ -31,6 +32,33 @@ def test_irregular_candidate_image_extensions() -> None:
     assert irregular_candidate_normalized_extension("voucher.webp") == ".webp"
     with pytest.raises(IrregularCandidateUploadError):
         irregular_candidate_normalized_extension("scan.pdf")
+
+
+def test_irregular_candidate_files_persist_under_storage_base_dir(tmp_path, monkeypatch) -> None:
+    from app.services import exam_documents, irregular_candidate_files as files
+
+    documents = tmp_path / "documents"
+    documents.mkdir()
+    monkeypatch.setattr(exam_documents, "storage_base_dir", lambda: documents)
+    monkeypatch.setattr(files, "storage_base_dir", lambda: documents)
+    monkeypatch.setattr(files, "_uses_gcs", lambda: False)
+
+    rel = files.write_irregular_candidate_upload(
+        b"fake-image-bytes",
+        42,
+        kind="photograph",
+        filename="photo.jpg",
+    )
+    assert rel.startswith("irregular-candidates/42/")
+    assert (documents / rel).is_file()
+    assert files.read_irregular_candidate_file_bytes(rel) == b"fake-image-bytes"
+
+    # Legacy parent location still readable for older records.
+    legacy_rel = "irregular-candidates/42/photograph-legacy.jpg"
+    legacy_path = tmp_path / legacy_rel
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_bytes(b"legacy-bytes")
+    assert files.read_irregular_candidate_file_bytes(legacy_rel) == b"legacy-bytes"
 
 
 def test_parse_subject_ids_json() -> None:
@@ -69,6 +97,150 @@ def test_generate_irregular_candidates_export_empty() -> None:
 
     payload = generate_irregular_candidates_export([])
     assert payload[:2] == b"PK"
+
+
+def test_generate_irregular_candidates_pdf_smoke() -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    from app.services.irregular_candidate_pdf import (
+        generate_irregular_candidates_pdf,
+        irregular_candidates_pdf_filename,
+    )
+
+    exam = MagicMock()
+    exam.exam_type = "TVET"
+    exam.exam_series = "May"
+    exam.year = 2026
+
+    jpeg_buf = BytesIO()
+    Image.new("RGB", (40, 50), (200, 40, 40)).save(jpeg_buf, format="JPEG")
+    jpeg_bytes = jpeg_buf.getvalue()
+
+    row = MagicMock()
+    row.id = 1
+    row.first_name = "Ama"
+    row.other_name = None
+    row.last_name = "Mensah"
+    row.gender = "Female"
+    row.date_of_birth = None
+    row.phone_number = "0551234567"
+    row.guardian_name = None
+    row.guardian_phone_number = None
+    row.ghanapost_gps_address = None
+    row.created_at = None
+    row.updated_at = None
+    row.photograph_stored_path = "irregular-candidates/1/photograph-test.jpg"
+    row.voucher_stored_path = "irregular-candidates/1/voucher-test.jpg"
+    row.examination_centre = MagicMock(code="C001", name="Centre One")
+    row.school = MagicMock(code="S001", name="School One")
+    row.programme = MagicMock(code="P001", name="Programme One")
+    selection = MagicMock()
+    selection.subject_code = "X701"
+    selection.subject_name = "Subject"
+    selection.subject = MagicMock(code="X701", original_code="C701")
+    row.subject_selections = [selection]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "app.services.irregular_candidate_pdf.read_irregular_candidate_file_bytes",
+            lambda _path: jpeg_bytes,
+        )
+        payload = generate_irregular_candidates_pdf(exam, [row])
+
+    assert payload.startswith(b"%PDF")
+    assert payload.count(b"/Image") >= 2
+    assert irregular_candidates_pdf_filename(exam).endswith(".pdf")
+
+
+def test_build_irregular_candidates_pdf_zip_by_centre() -> None:
+    from app.services.irregular_candidate_pdf import (
+        build_irregular_candidates_pdf_zip,
+        group_candidate_contexts_by_centre,
+    )
+
+    exam = MagicMock()
+    exam.exam_type = "TVET"
+    exam.exam_series = "May"
+    exam.year = 2026
+
+    candidates = [
+        {
+            "id": 1,
+            "full_name": "A",
+            "first_name": "A",
+            "other_name": "",
+            "last_name": "One",
+            "gender": "Male",
+            "date_of_birth": "",
+            "phone_number": "",
+            "guardian_name": "",
+            "guardian_phone_number": "",
+            "ghanapost_gps_address": "",
+            "centre_code": "C002",
+            "centre_name": "Centre Two",
+            "school_code": "",
+            "school_name": "",
+            "programme_code": "",
+            "programme_name": "",
+            "subject_codes": "C701",
+            "recorded_at": "",
+            "updated_at": "",
+            "photograph_base64": None,
+            "voucher_base64": None,
+        },
+        {
+            "id": 2,
+            "full_name": "B",
+            "first_name": "B",
+            "other_name": "",
+            "last_name": "Two",
+            "gender": "Female",
+            "date_of_birth": "",
+            "phone_number": "",
+            "guardian_name": "",
+            "guardian_phone_number": "",
+            "ghanapost_gps_address": "",
+            "centre_code": "C001",
+            "centre_name": "Centre One",
+            "school_code": "",
+            "school_name": "",
+            "programme_code": "",
+            "programme_name": "",
+            "subject_codes": "C702",
+            "recorded_at": "",
+            "updated_at": "",
+            "photograph_base64": None,
+            "voucher_base64": None,
+        },
+    ]
+    groups = group_candidate_contexts_by_centre(candidates)
+    assert [g[0] for g in groups] == ["C001", "C002"]
+
+    payload = build_irregular_candidates_pdf_zip(
+        exam=exam,
+        exam_label="TVET — May 2026",
+        candidates=candidates,
+    )
+    assert payload[:2] == b"PK"
+
+
+def test_original_subject_code_prefers_original() -> None:
+    selection = MagicMock()
+    selection.subject_code = "X701"
+    selection.subject = MagicMock(code="X701", original_code="C701")
+    assert original_subject_code(selection) == "C701"
+
+    selection_no_original = MagicMock()
+    selection_no_original.subject_code = "X702"
+    selection_no_original.subject = MagicMock(code="X702", original_code=None)
+    assert original_subject_code(selection_no_original) == "X702"
+
+    selection_snapshot = MagicMock()
+    selection_snapshot.subject_code = "C703"
+    selection_snapshot.subject = None
+    assert original_subject_code(selection_snapshot) == "C703"
 
 
 def test_normalize_required_gender() -> None:

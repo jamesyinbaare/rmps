@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from app.models import Examination, IrregularExaminationCandidate
+from app.services.irregular_candidates import original_subject_code
 
 
 def _display_name(row: IrregularExaminationCandidate) -> str:
@@ -66,7 +67,9 @@ def generate_irregular_candidates_export(rows: list[IrregularExaminationCandidat
                 "ghanapost_gps_address": row.ghanapost_gps_address or "",
                 "programme_code": programme.code if programme else "",
                 "programme_name": programme.name if programme else "",
-                "subject_codes": ", ".join(s.subject_code for s in subjects),
+                "subject_codes": ", ".join(
+                    original_subject_code(s) for s in subjects if original_subject_code(s)
+                ),
                 "subject_names": ", ".join(s.subject_name for s in subjects),
                 "recorded_at": _format_date(row.created_at),
                 "updated_at": _format_date(row.updated_at),

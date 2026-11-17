@@ -25,6 +25,7 @@ from app.services.exam_documents import (
 )
 
 IRREGULAR_CANDIDATE_ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+_IRREGULAR_DIR_NAME = "irregular-candidates"
 
 _UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]+')
 _MAX_STORED_PATH_LEN = 512
@@ -46,7 +47,12 @@ def _uses_gcs() -> bool:
     return settings.storage_backend.lower() == "gcs"
 
 
-def _local_storage_parent() -> Path:
+def _legacy_local_storage_parent() -> Path:
+    """Pre-fix root: parent of storage_base_dir (e.g. /app/storage).
+
+    Docker Compose only persists storage_base_dir (/app/storage/documents), so files
+    written under the parent were lost on container recreate. Kept for read fallback.
+    """
     return storage_base_dir().resolve().parent
 
 
@@ -57,17 +63,36 @@ def _gcs_object_key(examination_id: int, basename: str) -> str:
     return f"{examination_id}/{basename}"
 
 
-def _resolve_local_path(stored_path: str) -> Path:
+def _validate_relative_stored_path(stored_path: str) -> Path:
     if not stored_path or stored_path.startswith("/") or "\\" in stored_path:
         raise IrregularCandidateUploadError("Invalid stored path")
-    if ".." in Path(stored_path).parts:
+    parts = Path(stored_path).parts
+    if ".." in parts:
         raise IrregularCandidateUploadError("Invalid stored path")
-    root = _local_storage_parent()
-    candidate = (root / stored_path).resolve()
-    irregular_root = (root / "irregular-candidates").resolve()
+    if not parts or parts[0] != _IRREGULAR_DIR_NAME:
+        raise IrregularCandidateUploadError("Invalid stored path")
+    return Path(*parts)
+
+
+def _candidate_under_root(root: Path, stored_path: str) -> Path:
+    rel = _validate_relative_stored_path(stored_path)
+    irregular_root = (root / _IRREGULAR_DIR_NAME).resolve()
+    candidate = (root / rel).resolve()
     if not str(candidate).startswith(str(irregular_root)) or candidate == irregular_root:
         raise IrregularCandidateUploadError("Invalid stored path")
     return candidate
+
+
+def _resolve_local_path(stored_path: str) -> Path:
+    """Resolve a stored relative path, preferring the persistent documents root."""
+    primary = _candidate_under_root(storage_base_dir().resolve(), stored_path)
+    if primary.is_file():
+        return primary
+    legacy = _candidate_under_root(_legacy_local_storage_parent(), stored_path)
+    if legacy.is_file():
+        return legacy
+    # Prefer primary path for error reporting / future writes.
+    return primary
 
 
 def write_irregular_candidate_upload(
@@ -89,11 +114,12 @@ def write_irregular_candidate_upload(
         blob = bucket.blob(key)
         blob.upload_from_string(content, content_type=_guess_content_type(basename))
         return key
-    dir_path = _local_storage_parent() / "irregular-candidates" / str(examination_id)
+    # Persist under storage_base_dir so Docker volume exam_tools_storage_data keeps files.
+    dir_path = storage_base_dir() / _IRREGULAR_DIR_NAME / str(examination_id)
     dir_path.mkdir(parents=True, exist_ok=True)
     path = dir_path / basename
     path.write_bytes(content)
-    rel = f"irregular-candidates/{examination_id}/{basename}"
+    rel = f"{_IRREGULAR_DIR_NAME}/{examination_id}/{basename}"
     if len(rel) > _MAX_STORED_PATH_LEN:
         raise IrregularCandidateUploadError("Stored path too long")
     return rel
@@ -127,6 +153,11 @@ def remove_irregular_candidate_file(stored_path: str) -> None:
         except NotFound:
             pass
         return
-    path = _resolve_local_path(stored_path)
-    if path.is_file():
-        path.unlink()
+    # Delete from both roots if present (legacy + current).
+    for root in (storage_base_dir().resolve(), _legacy_local_storage_parent()):
+        try:
+            path = _candidate_under_root(root, stored_path)
+        except IrregularCandidateUploadError:
+            continue
+        if path.is_file():
+            path.unlink()
