@@ -1,0 +1,125 @@
+# Dynamic Traefik Configuration
+
+# HTTP Configuration
+http:
+  routers:
+    # Frontend router - HTTPS
+    frontend:
+      rule: "Host(`frontend.localhost`) || Host(`localhost`)"
+      entryPoints:
+        - websecure
+      service: frontend
+      tls: {}
+      middlewares:
+        - security-headers
+
+    # Frontend router - HTTP (redirect to HTTPS handled by entrypoint)
+    frontend-http:
+      rule: "Host(`frontend.localhost`) || Host(`localhost`)"
+      entryPoints:
+        - web
+      service: frontend
+      middlewares:
+        - security-headers
+
+    # Backend router - HTTPS
+    backend:
+      rule: "Host(`api.backend.localhost`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls: {}
+      middlewares:
+        - cors-headers
+        - security-headers
+
+    # Backend router - HTTP (redirect to HTTPS handled by entrypoint)
+    backend-http:
+      rule: "Host(`api.backend.localhost`)"
+      entryPoints:
+        - web
+      service: backend
+      middlewares:
+        - cors-headers
+
+  services:
+    # Frontend service
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://registration-frontend:3001"
+
+    # Backend service
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://registration-backend:80"
+
+  middlewares:
+    # CORS Middleware for API
+    cors-headers:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Requested-With
+        accessControlAllowOriginList:
+          - "https://frontend.localhost"
+          - "https://localhost"
+          - "http://frontend.localhost"
+          - "http://localhost"
+        accessControlAllowCredentials: true
+        accessControlExposeHeaders:
+          - Content-Disposition
+        accessControlMaxAge: 100
+        addVaryHeader: true
+
+    # Security Headers
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+
+    # Strip API prefix if using path-based routing
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+
+# TLS Configuration - Use mkcert certificates for local development
+tls:
+  certificates:
+    - certFile: /certs/localhost.pem
+      keyFile: /certs/localhost-key.pem
+      stores:
+        - default
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/localhost.pem
+        keyFile: /certs/localhost-key.pem
+  options:
+    default:
+      minVersion: "VersionTLS12"
+      sslProtocols:
+        - "TLSv1.2"
+        - "TLSv1.3"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_128_GCM_SHA256"

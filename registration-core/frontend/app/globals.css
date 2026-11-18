@@ -1,0 +1,442 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================
+   CTVET × LlamaCloud-style dashboard theme
+   Crest palette: red / gold / green / black
+   ============================================ */
+
+@theme inline {
+  /* Primary Ghana / CTVET Crest Colors */
+  --ghana-red: #CE1126;
+  --ghana-gold: #FCD116;
+  --ghana-green: #006B3F;
+  --ghana-black: #000000;
+
+  /* Extended Palette */
+  --ghana-deep-red: #A50E1E;
+  --ghana-rich-gold: #E6B80A;
+  --ghana-forest-green: #005530;
+  --ghana-volta-blue: #0047AB;
+
+  /* Neutrals */
+  --ghana-charcoal: #2C3E50;
+  --ghana-slate: #5D6D7E;
+  --ghana-light-gray: #E5E7EB;
+  --ghana-off-white: #FAFAFA;
+  --ghana-white: #FFFFFF;
+
+  /* Semantic Colors - Mapped to Tailwind */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-border: var(--input-border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ring: var(--ring);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  /* Sidebar tokens */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Border Radius — LlamaCloud-like ~0.5rem */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+
+  /* Typography — LlamaCloud: Inter + JetBrains Mono */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* Light Mode — clean SaaS surfaces, crest green primary */
+:root {
+  --background: #FAFAFA;
+  --foreground: #0A0A0A;
+  --primary: var(--ghana-green);
+  --primary-hover: var(--ghana-forest-green);
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: #ECFDF5;
+  --accent-foreground: #166534;
+  --card: var(--ghana-white);
+  --card-foreground: #0A0A0A;
+  --border: #E5E7EB;
+  --input: var(--ghana-white);
+  --input-border: #D1D5DB;
+  --muted: #F3F4F6;
+  --muted-foreground: #6B7280;
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: var(--ghana-green);
+  --radius: 0.5rem;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: #0A0A0A;
+
+  /* Sidebar — light */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0A0A0A;
+  --sidebar-accent: #ECFDF5;
+  --sidebar-accent-foreground: #166534;
+  --sidebar-border: #E5E7EB;
+  --sidebar-primary: var(--ghana-green);
+  --sidebar-primary-foreground: var(--ghana-white);
+  --sidebar-ring: var(--ghana-green);
+}
+
+/* Dark Mode — LlamaCloud depth, brighter green primary for contrast */
+.dark {
+  --background: #101013;
+  --foreground: #F4F4F5;
+  --primary: #22C55E;
+  --primary-hover: #16A34A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FCD116;
+  --secondary-hover: #E6B80A;
+  --secondary-foreground: #000000;
+  --success: #2ECC71;
+  --success-hover: #006B3F;
+  --success-foreground: #FFFFFF;
+  --accent: #0F2A1C;
+  --accent-foreground: #6EE7B7;
+  --card: #17171B;
+  --card-foreground: #F4F4F5;
+  --border: #26262C;
+  --input: #17171B;
+  --input-border: #3A3A42;
+  --muted: #1C1C21;
+  --muted-foreground: #8A8A93;
+  --destructive: #F87171;
+  --destructive-foreground: #FFFFFF;
+  --warning: #FCD116;
+  --warning-foreground: #000000;
+  --ring: #22C55E;
+
+  --popover: #1D1D22;
+  --popover-foreground: #F4F4F5;
+
+  /* Sidebar — dark */
+  --sidebar: #101013;
+  --sidebar-foreground: #F4F4F5;
+  --sidebar-accent: #0F2A1C;
+  --sidebar-accent-foreground: #6EE7B7;
+  --sidebar-border: #26262C;
+  --sidebar-primary: #22C55E;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-ring: #22C55E;
+}
+
+/* CTVET Appearance variant — brighter green (aligned with dark default) */
+.ctvet {
+  --background: #FAFAFA;
+  --foreground: #0A0A0A;
+  --primary: #22C55E;
+  --primary-hover: #16A34A;
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: #ECFDF5;
+  --accent-foreground: #166534;
+  --card: var(--ghana-white);
+  --card-foreground: #0A0A0A;
+  --border: #E5E7EB;
+  --input: var(--ghana-white);
+  --input-border: #D1D5DB;
+  --muted: #F3F4F6;
+  --muted-foreground: #6B7280;
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: #22C55E;
+  --radius: 0.5rem;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: #0A0A0A;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0A0A0A;
+  --sidebar-accent: #ECFDF5;
+  --sidebar-accent-foreground: #166534;
+  --sidebar-border: #E5E7EB;
+  --sidebar-primary: #22C55E;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-ring: #22C55E;
+}
+
+/* CTVET Theme — Dark Mode with Green Primary */
+.ctvet.dark {
+  --background: #101013;
+  --foreground: #F4F4F5;
+  --primary: #10B981;
+  --primary-hover: #059669;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FCD116;
+  --secondary-hover: #E6B80A;
+  --secondary-foreground: #000000;
+  --success: #2ECC71;
+  --success-hover: #006B3F;
+  --success-foreground: #FFFFFF;
+  --accent: #0F2A1C;
+  --accent-foreground: #6EE7B7;
+  --card: #17171B;
+  --card-foreground: #F4F4F5;
+  --border: #26262C;
+  --input: #17171B;
+  --input-border: #3A3A42;
+  --muted: #1C1C21;
+  --muted-foreground: #8A8A93;
+  --destructive: #F87171;
+  --destructive-foreground: #FFFFFF;
+  --warning: #FCD116;
+  --warning-foreground: #000000;
+  --ring: #10B981;
+
+  --popover: #1D1D22;
+  --popover-foreground: #F4F4F5;
+
+  --sidebar: #101013;
+  --sidebar-foreground: #F4F4F5;
+  --sidebar-accent: #0F2A1C;
+  --sidebar-accent-foreground: #6EE7B7;
+  --sidebar-border: #26262C;
+  --sidebar-primary: #10B981;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-ring: #10B981;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-foreground font-semibold;
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/30 rounded-lg;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
+
+/* CommandItem hover styles */
+[cmdk-item]:not([data-selected="true"]):not([data-disabled="true"]):hover {
+  @apply bg-accent/50 text-accent-foreground;
+}
+
+/* Optional subtle dotted canvas (off by default on dashboard main) */
+.dashboard-canvas {
+  background-color: var(--background);
+  background-image: radial-gradient(
+    circle at center,
+    color-mix(in oklab, var(--foreground) 6%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+}
+
+.dark .dashboard-canvas {
+  background-image: radial-gradient(
+    circle at center,
+    color-mix(in oklab, var(--foreground) 10%, transparent) 1px,
+    transparent 1px
+  );
+}
+
+/* Public landing — calm presence (scoped) */
+@keyframes landing-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-photo-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-ken-burns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.05);
+  }
+}
+
+.landing-hero-photo {
+  animation:
+    landing-photo-fade 700ms ease-out both,
+    landing-ken-burns 22s ease-out both alternate infinite;
+  will-change: transform, opacity;
+}
+
+.landing-enter {
+  animation: landing-enter 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.landing-enter-delay-1 {
+  animation-delay: 120ms;
+}
+
+.landing-enter-delay-2 {
+  animation-delay: 200ms;
+}
+
+.landing-enter-delay-3 {
+  animation-delay: 280ms;
+}
+
+.landing-enter-delay-4 {
+  animation-delay: 360ms;
+}
+
+.landing-enter-delay-5 {
+  animation-delay: 440ms;
+}
+
+.landing-enter-delay-6 {
+  animation-delay: 520ms;
+}
+
+/* Quiet ambient wash for public interior pages */
+.public-ambient {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      900px 480px at 0% 0%,
+      color-mix(in oklab, var(--primary) 10%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      700px 420px at 100% 100%,
+      color-mix(in oklab, var(--primary) 6%, transparent),
+      transparent 55%
+    );
+}
+
+.public-action-row {
+  position: relative;
+  transition:
+    background-color 200ms ease,
+    padding-left 200ms ease;
+}
+
+.public-action-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.85rem;
+  bottom: 0.85rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+  opacity: 0;
+  transform: scaleY(0.6);
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+}
+
+.public-action-row:hover::before,
+.public-action-row:focus-visible::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.public-action-row:hover,
+.public-action-row:focus-visible {
+  background-color: color-mix(in oklab, var(--muted) 55%, transparent);
+  padding-left: 0.85rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-photo,
+  .landing-enter,
+  .landing-enter-delay-1,
+  .landing-enter-delay-2,
+  .landing-enter-delay-3,
+  .landing-enter-delay-4,
+  .landing-enter-delay-5,
+  .landing-enter-delay-6 {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .public-action-row,
+  .public-action-row::before {
+    transition: none !important;
+  }
+}

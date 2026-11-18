@@ -1,0 +1,187 @@
+services:
+  registration-core-backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    container_name: registration-core-backend
+    ports:
+      - "8002:80"
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DEBUG=true
+      - RELOAD=true
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=80
+    volumes:
+      - registration_core_storage_data:/app/storage/documents
+      - registration_core_photos_data:/app/storage/photos
+      - registration_core_exports_data:/app/storage/exports
+      - backend_python_cache:/root/.cache
+      # Mount uv cache for faster dependency resolution
+      - uv_cache:/root/.cache/uv
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend
+          target: /app
+          ignore:
+            - .venv/
+            - __pycache__/
+            - "*.pyc"
+            - .pytest_cache/
+            - .mypy_cache/
+            - .coverage
+            - htmlcov/
+            - storage/
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+    command: >
+      sh -c "
+        if [ -f app/scripts/prestart.sh ]; then
+          bash app/scripts/prestart.sh
+        fi &&
+        uv run fastapi dev app/main.py --host 0.0.0.0 --port 80
+      "
+    restart: unless-stopped
+    depends_on:
+      registration_core_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - registration-core-network
+    # For better dev experience, increase file watching limits
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  registration-core-frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: registration-core-frontend
+    ports:
+      - "3002:3002"
+      - "9230:9229"  # For Node.js debugging (offset from portal)
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8002
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - /app/node_modules  # Anonymous volume to prevent host node_modules interference
+      - /app/.next  # Anonymous volume for build cache
+      - node_cache:/root/.npm  # Cache npm packages
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./frontend
+          target: /app
+          ignore:
+            - .next/
+            - node_modules/
+            - .git/
+            - coverage/
+            - "*.log"
+        - action: rebuild
+          path: ./frontend/package.json
+    command: sh -c "npm run dev -- -p 3002"  # Explicit port for consistency
+    restart: unless-stopped
+    depends_on:
+      registration-core-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - registration-core-network
+
+  registration_core_postgres:
+    image: postgres:18
+    container_name: registration-core-postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - registration_core_db_data:/var/lib/postgresql/data/pgdata
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${REGISTRATION_POSTGRES_DB:-registration_core_db}
+      - POSTGRES_HOST_AUTH_METHOD=trust  # For easier dev access
+    ports:
+      - "5434:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "log_statement=all"  # Log all queries for debugging
+    networks:
+      - registration-core-network
+
+  # Database administration (optional)
+  registration-core-pgadmin:
+    image: dpage/pgadmin4
+    container_name: registration-core-pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@localhost.dev
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5051:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - registration_core_postgres
+    networks:
+      - registration-core-network
+
+volumes:
+  registration_core_db_data:
+    driver: local
+  registration_core_storage_data:
+    driver: local
+  registration_core_photos_data:
+    driver: local
+  registration_core_exports_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  backend_python_cache:
+    driver: local
+  uv_cache:
+    driver: local
+  node_cache:
+    driver: local
+
+networks:
+  registration-core-network:
+    driver: bridge
+    name: registration-core-network

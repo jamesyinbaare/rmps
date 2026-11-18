@@ -1,0 +1,132 @@
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
+
+
+def _parse_comma_separated_list(v: str | list[str]) -> list[str]:
+    """Parse comma-separated string to list of stripped non-empty strings."""
+    if isinstance(v, list):
+        return v
+    return [x.strip() for x in str(v).split(",") if x.strip()]
+
+
+class Settings(BaseSettings):
+    database_url: str = ""
+    environment: str = "dev"
+    # Storage settings
+    storage_backend: str = "local"  # local, gcs, s3, azure
+    storage_path: str = "storage/documents"
+    storage_max_size: int = 50 * 1024 * 1024  # 50MB default
+    photo_storage_path: str = "storage/photos"
+    export_storage_path: str = "storage/exports"
+    # Google Cloud Storage settings (for storage_backend="gcs")
+    gcs_bucket_name: str = ""  # GCS bucket name
+    gcs_project_id: str = ""  # GCP project ID (optional, uses default if not provided)
+    gcs_credentials_path: str = ""  # Path to service account JSON file (optional, uses ADC if not provided)
+    # Authentication settings
+    secret_key: str = "registration-core-secret-key-change-in-production"  # Should be set via environment variable
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+    inactivity_timeout_minutes: int = 30  # For frontend reference
+    password_min_length: int = 8
+    # Photo validation settings
+    # Candidate passport photo: exact dimensions only
+    candidate_photo_width: int = 155
+    candidate_photo_height: int = 191
+    # Certificate request photograph: exact dimensions only (e.g. 600x600)
+    certificate_request_photo_width: int = 600
+    certificate_request_photo_height: int = 600
+    # Max file size for candidate/certificate request photos
+    photo_max_file_size: int = 2 * 1024 * 1024  # 2MB
+    # National ID (and document scans): any dimensions; max file size only
+    national_id_max_file_size: int = 5 * 1024 * 1024  # 5MB
+    # File upload settings
+    upload_max_size: int = 10 * 1024 * 1024  # 10MB for CSV/Excel uploads
+    # System admin initialization settings
+    system_admin_email: str = ""  # Required: Email for the initial SYSTEM_ADMIN user
+    system_admin_password: str = ""  # Required: Password for the initial SYSTEM_ADMIN user
+    system_admin_full_name: str = ""  # Required: Full name for the initial SYSTEM_ADMIN user
+    # Email settings
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Registration Core"
+    # Paystack settings
+    paystack_secret_key: str = ""  # Paystack secret key
+    paystack_public_key: str = ""  # Paystack public key (for frontend)
+    paystack_webhook_secret: str = ""  # Paystack webhook verification secret
+    paystack_callback_base_url: str = ""  # Base URL for payment callbacks (e.g., http://localhost:3002 or https://yourdomain.com)
+    frontend_base_url: str = ""  # Base URL for frontend (e.g., http://localhost:3000 or https://yourdomain.com) - used for QR codes and public links
+    # Certificate request pricing
+    certificate_request_price: float = 100  # Price for certificate requests
+    attestation_request_price: float = 80  # Price for attestation requests
+    courier_fee: float = 50  # Additional fee for courier delivery
+    express_service_multiplier: float = 1.5  # Multiplier for express service (e.g., 1.5x base price)
+    # Certificate request file storage
+    certificate_request_storage_path: str = "storage/certificate_requests"
+    # PDF signing settings
+    pdf_signing_enabled: bool = True  # Feature flag for PDF signing (set to True and configure certificate to enable)
+    pdf_signing_certificate_path: str = ""  # Path to certificate file (.pem, .p12, .pfx)
+    pdf_signing_key_path: str = ""  # Path to private key file (if separate from certificate)
+    pdf_signing_certificate_password: str = ""  # Password for certificate (if password-protected)
+    pdf_signing_certificate_chain_path: str = ""  # Optional: Path to certificate chain file (intermediate/root CAs) for better verification
+    pdf_signing_reason: str = "Certificate Confirmation Response"  # Signing reason (visible in signature properties)
+    pdf_signing_location: str = "Ghana"  # Signing location (visible in signature properties)
+    pdf_signing_contact_info: str = ""  # Contact information (visible in signature properties)
+    pdf_signing_organization: str = ""  # Organization name (for certificate metadata)
+    # Permission management settings
+    permission_management_min_role: str = "Director"  # Minimum role required to manage permissions (role name as string)
+    # API key settings
+    api_key_default_rate_limit_per_minute: int = 60
+    api_key_max_rate_limit_per_minute: int = 1000
+    api_key_bulk_request_max_items: int = 100
+    api_key_usage_retention_days: int = 90
+    # Credit system settings
+    credit_cost_per_verification: int = 8
+    credit_minimum_purchase: int = 10
+    credit_purchase_price_per_unit: float = 8.00
+    # Result access PIN settings
+    result_access_pin_default_max_uses: int = 5
+    result_access_pin_length: int = 6
+    result_access_serial_length: int = 8
+    # CORS settings (CORS_ORIGINS: comma-separated list of allowed origins)
+    cors_origins: str | list[str] = "http://localhost:3002,http://127.0.0.1:3002,https://frontend.localhost,https://localhost,http://frontend.localhost,http://localhost"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: str | list[str] = "*"
+    cors_allow_headers: str | list[str] = "*"
+    cors_expose_headers: str | list[str] = "Content-Disposition,content-disposition"
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: str | list[str] | None) -> list[str]:
+        return _parse_comma_separated_list(v) if v else []
+
+    @field_validator("cors_allow_methods", "cors_allow_headers", mode="before")
+    @classmethod
+    def parse_cors_wildcard_or_list(cls, v: str | list[str] | None) -> list[str] | str:
+        if not v:
+            return "*"
+        if v == "*" or (isinstance(v, str) and v.strip() == "*"):
+            return "*"
+        return _parse_comma_separated_list(v)
+
+    @field_validator("cors_expose_headers", mode="before")
+    @classmethod
+    def parse_cors_expose_headers(cls, v: str | list[str] | None) -> list[str]:
+        return _parse_comma_separated_list(v) if v else []
+
+
+class LoggingSettings(BaseSettings):
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "text"  # "text" or "json"
+    ENV: str = "dev"  # dev | staging | prod
+
+    class Config:
+        env_prefix = "APP_"
+
+
+logging_settings = LoggingSettings()
+
+settings = Settings()  # type: ignore
