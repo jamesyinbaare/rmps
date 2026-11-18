@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0;
+        padding: 0;
+      }
+
+      .header-left {
+        display: flex;
+        align-items: center;
+      }
+
+      .logo {
+        height: 90px;
+        width: auto;
+        margin-right: 5px;
+      }
+
+      .divider-vertical {
+        width: 4px;
+        height: 40px;
+        background-color: #CE1126;
+        margin-right: 5px;
+      }
+
+      .commission-name {
+        font-size: 11px;
+        font-weight: bold;
+        color: #000;
+        line-height: 1.3;
+        text-transform: uppercase;
+      }
+
+      .commission-name-line {
+        display: block;
+      }
+
+      .coat-of-arms {
+        height: 90px;
+        width: auto;
+      }
+
+      .header-right {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .republic-text {
+        font-size: 11px;
+        font-weight: bold;
+        color: #000;
+        text-transform: uppercase;
+        margin-top: 5px;
+        text-align: center;
+      }
+
+      .reference-section {
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #ddd;
+      }
+
+      .reference-note {
+        font-size: 10px;
+        color: #333;
+        margin-bottom: 8px;
+        font-style: italic;
+      }
+
+      .reference-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        width: 100%;
+      }
+
+      .reference-number {
+        font-weight: bold;
+        align-items: right;
+      }
+
+      .reference-date {
+        font-weight: bold;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-left">
+        <img src="img/logo-crest-only.png" alt="CTVET Logo" class="logo" />
+        <div class="divider-vertical"></div>
+        <div class="commission-name">
+          <span class="commission-name-line">COMMISSION FOR TECHNICAL</span>
+          <span class="commission-name-line">AND VOCATIONAL EDUCATION</span>
+          <span class="commission-name-line">AND TRAINING</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <img src="img/ghana-coat-of-arms.png" alt="Ghana Coat of Arms" class="coat-of-arms" />
+        <div class="republic-text">REPUBLIC OF GHANA</div>
+      </div>
+    </header>
+    <div class="reference-section">
+      <div class="reference-note">
+        In case of reply the number and the date<br>of reference of this letter should be quoted
+      </div>
+      <div class="reference-row">
+        <div class="reference-number">My Ref. No: {{ reference_number }}</div>
+        <div class="reference-date">{{ reference_date }}</div>
+      </div>
+    </div>
+  </body>
+</html>

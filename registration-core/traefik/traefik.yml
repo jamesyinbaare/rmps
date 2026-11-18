@@ -1,0 +1,55 @@
+# Traefik Global Configuration
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
+
+# API and Dashboard Configuration
+api:
+  dashboard: true
+  insecure: true  # Set to false and configure auth in production
+
+# Entrypoints Configuration
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entrypoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+
+# Providers Configuration
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    watch: true
+
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# Let's Encrypt Configuration (Staging for local testing)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: jamesyinbaare@gmail.com  # Update with your email for Let's Encrypt
+      storage: /certificates/acme.json
+      caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"  # Staging endpoint
+      httpChallenge:
+        entryPoint: web
+
+# Logging Configuration
+log:
+  level: DEBUG
+  format: json
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  bufferingSize: 100
