@@ -18,6 +18,7 @@ from app.routers import (
     school,
     private,
     permissions,
+    programme_taxonomy,
 )
 from app.config import logging_settings, settings
 from starlette.types import ASGIApp
@@ -176,6 +177,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(public.router)
 app.include_router(admin_registration.router)
+app.include_router(programme_taxonomy.router)
 app.include_router(admin_results.router)
 app.include_router(school.router)
 app.include_router(private.router)

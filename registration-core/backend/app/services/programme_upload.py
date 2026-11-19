@@ -91,6 +91,7 @@ def parse_programme_row(row: pd.Series) -> dict[str, Any]:
         Dictionary with parsed programme data:
         - code: str
         - name: str
+        - programme_type_code: str | None
     """
     # Normalize column names (case-insensitive, strip whitespace)
     row_dict = {col.lower().strip(): val for col, val in row.items()}
@@ -98,8 +99,11 @@ def parse_programme_row(row: pd.Series) -> dict[str, Any]:
     # Extract required fields
     code = str(row_dict.get("code", "")).strip()
     name = str(row_dict.get("name", "")).strip()
+    type_code_raw = row_dict.get("programme_type_code", row_dict.get("type_code", ""))
+    programme_type_code = str(type_code_raw).strip() if type_code_raw is not None and str(type_code_raw).strip() not in ("", "nan") else None
 
     return {
         "code": code,
         "name": name,
+        "programme_type_code": programme_type_code,
     }

@@ -1830,7 +1830,12 @@ export default function PrivateRegistrationPage() {
               selectedSubjectIds={selectedSubjectIds}
               onProgrammeChange={setProgrammeId}
               onSubjectIdsChange={setSelectedSubjectIds}
-              examSeries={exams.find((e) => e.id === selectedExamId)?.exam_series ?? undefined}
+              examSeries={
+                exams.find((e) => e.id === selectedExamId)?.exam_series_short_name ||
+                exams.find((e) => e.id === selectedExamId)?.exam_series ||
+                undefined
+              }
+              examId={selectedExamId}
             />
           )}
 

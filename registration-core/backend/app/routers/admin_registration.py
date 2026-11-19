@@ -30,6 +30,8 @@ from app.models import (
     School,
     ExaminationSchedule,
     Programme,
+    ProgrammeType,
+    ExamSeriesDefinition,
     Subject,
     SubjectType,
     programme_subjects,
@@ -44,11 +46,31 @@ from app.models import (
     Disability,
     ExamPricingModel,
     RegistrationCandidatePhoto,
+    ExamLateRegistrationWindow,
+)
+from app.services.exam_response import exam_load_options, serialize_exam
+from app.services.exam_eligibility_service import (
+    get_eligible_school_ids,
+    replace_exam_eligible_schools,
+)
+from app.services.late_registration_service import (
+    create_late_window,
+    list_late_windows,
+    revoke_late_window,
+)
+from app.services.programme_type_service import (
+    assert_root_programme_type,
+    replace_exam_enabled_types,
+    validate_enabled_programme_type_ids,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
     RegistrationExamUpdate,
     RegistrationExamResponse,
+    ExamEligibleSchoolsUpdate,
+    LateRegistrationWindowCreate,
+    LateRegistrationWindowResponse,
+    LateRegistrationWindowSchoolItem,
     ExamRegistrationPeriodUpdate,
     ExamRegistrationPeriodResponse,
     IndexNumberGenerationJobResponse,
@@ -1407,50 +1429,57 @@ async def update_school(
 async def create_exam(
     exam_data: RegistrationExamCreate, session: DBSessionDep, current_user: SystemAdminDep
 ) -> RegistrationExamResponse:
-    """Create a new exam with registration period."""
+    """Create a new exam with registration period, root programme type, series, and enablement."""
     try:
-        # Ensure dates are timezone-naive for database storage
         start_date = exam_data.registration_period.registration_start_date
         end_date = exam_data.registration_period.registration_end_date
 
-        # Convert to UTC and remove timezone info if timezone-aware
         if start_date.tzinfo is not None:
             start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
         if end_date.tzinfo is not None:
             end_date = end_date.astimezone(timezone.utc).replace(tzinfo=None)
 
-        # Validate registration dates
         if end_date <= start_date:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Registration end date must be after start date",
             )
 
-        # Check for duplicate exams (same exam_type, series, year)
-        # Handle nullable exam_series properly
-        if exam_data.exam_series:
-            stmt = select(RegistrationExam).where(
-                RegistrationExam.exam_type == exam_data.exam_type,
-                RegistrationExam.exam_series == exam_data.exam_series,
-                RegistrationExam.year == exam_data.year,
-            )
-        else:
-            stmt = select(RegistrationExam).where(
-                RegistrationExam.exam_type == exam_data.exam_type,
-                RegistrationExam.exam_series.is_(None),
-                RegistrationExam.year == exam_data.year,
-            )
-        result = await session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        try:
+            root_type = await assert_root_programme_type(session, exam_data.programme_type_id)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-        if existing:
-            series_display = exam_data.exam_series if exam_data.exam_series else "N/A"
+        series = await session.get(ExamSeriesDefinition, exam_data.exam_series_id)
+        if not series or not series.is_active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Exam with type '{exam_data.exam_type}', series '{series_display}', and year {exam_data.year} already exists",
+                detail="Exam series not found or inactive",
             )
 
-        # Create registration period
+        enabled_ids = exam_data.enabled_programme_type_ids or [root_type.id]
+        try:
+            enabled_ids = await validate_enabled_programme_type_ids(
+                session, root_type.id, enabled_ids
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+        dup_stmt = select(RegistrationExam).where(
+            RegistrationExam.programme_type_id == exam_data.programme_type_id,
+            RegistrationExam.exam_series_id == exam_data.exam_series_id,
+            RegistrationExam.year == exam_data.year,
+        )
+        existing = (await session.execute(dup_stmt)).scalar_one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Exam with programme type '{root_type.name}', series '{series.short_name}', "
+                    f"and year {exam_data.year} already exists"
+                ),
+            )
+
         registration_period = ExamRegistrationPeriod(
             registration_start_date=start_date,
             registration_end_date=end_date,
@@ -1461,21 +1490,29 @@ async def create_exam(
         session.add(registration_period)
         await session.flush()
 
-        # Create exam
         new_exam = RegistrationExam(
             exam_id_main_system=exam_data.exam_id_main_system,
-            exam_type=exam_data.exam_type,
-            exam_series=exam_data.exam_series,  # Can be None for non-Certificate II exams
+            programme_type_id=root_type.id,
+            exam_series_id=series.id,
+            exam_type=root_type.name,
+            exam_series=series.short_name,
             year=exam_data.year,
             description=exam_data.description,
             registration_period_id=registration_period.id,
             pricing_model_preference=exam_data.pricing_model_preference,
         )
         session.add(new_exam)
+        await session.flush()
+        await replace_exam_enabled_types(session, new_exam, enabled_ids)
         await session.commit()
-        await session.refresh(new_exam, ["registration_period"])
 
-        return RegistrationExamResponse.model_validate(new_exam)
+        stmt = (
+            select(RegistrationExam)
+            .where(RegistrationExam.id == new_exam.id)
+            .options(*exam_load_options())
+        )
+        new_exam = (await session.execute(stmt)).scalar_one()
+        return serialize_exam(new_exam)
     except HTTPException:
         raise
     except Exception as e:
@@ -1489,16 +1526,40 @@ async def create_exam(
 
 @router.get("/exams", response_model=list[RegistrationExamResponse])
 async def list_exams(session: DBSessionDep, current_user: SystemAdminDep) -> list[RegistrationExamResponse]:
-    """List all exams (for admin dashboard)."""
+    """List all exams (for admin dashboard) with candidate counts."""
     stmt = (
         select(RegistrationExam)
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
     )
     result = await session.execute(stmt)
-    exams = result.scalars().all()
+    exams = result.scalars().unique().all()
 
-    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+    exam_responses = []
+    for exam in exams:
+        total_candidates = (
+            await session.execute(
+                select(func.count(RegistrationCandidate.id)).where(
+                    RegistrationCandidate.registration_exam_id == exam.id
+                )
+            )
+        ).scalar() or 0
+        approved_candidates = (
+            await session.execute(
+                select(func.count(RegistrationCandidate.id)).where(
+                    RegistrationCandidate.registration_exam_id == exam.id,
+                    RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+                )
+            )
+        ).scalar() or 0
+        exam_responses.append(
+            serialize_exam(
+                exam,
+                candidate_count=total_candidates,
+                approved_candidates=approved_candidates,
+            )
+        )
+    return exam_responses
 
 
 @router.get("/exams/active", response_model=list[RegistrationExamResponse])
@@ -1517,37 +1578,32 @@ async def list_active_exams(session: DBSessionDep, current_user: SystemAdminDep)
             ExamRegistrationPeriod.registration_start_date <= now,
             ExamRegistrationPeriod.registration_end_date >= now,
         )
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
     )
     result = await session.execute(stmt)
-    exams = result.scalars().all()
+    exams = result.scalars().unique().all()
 
-    # Calculate statistics for each exam
     exam_responses = []
     for exam in exams:
-        # Count total candidates
         total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam.id
         )
-        total_result = await session.execute(total_candidates_stmt)
-        total_candidates = total_result.scalar() or 0
+        total_candidates = (await session.execute(total_candidates_stmt)).scalar() or 0
 
-        # Count approved candidates
         approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam.id,
             RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
         )
-        approved_result = await session.execute(approved_candidates_stmt)
-        approved_candidates = approved_result.scalar() or 0
+        approved_candidates = (await session.execute(approved_candidates_stmt)).scalar() or 0
 
-        exam_response = RegistrationExamResponse.model_validate(exam)
-        # Update fields using model_dump and reconstruct to ensure proper serialization
-        exam_data = exam_response.model_dump()
-        exam_data["candidate_count"] = total_candidates
-        exam_data["approved_candidates"] = approved_candidates
-        exam_response = RegistrationExamResponse(**exam_data)
-        exam_responses.append(exam_response)
+        exam_responses.append(
+            serialize_exam(
+                exam,
+                candidate_count=total_candidates,
+                approved_candidates=approved_candidates,
+            )
+        )
 
     return exam_responses
 
@@ -1558,7 +1614,7 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     stmt = (
         select(RegistrationExam)
         .where(RegistrationExam.id == exam_id)
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
     )
     result = await session.execute(stmt)
     exam = result.scalar_one_or_none()
@@ -1566,27 +1622,23 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Check if any candidates have index numbers generated
     index_numbers_count_stmt = select(func.count(RegistrationCandidate.id)).where(
         RegistrationCandidate.registration_exam_id == exam_id,
         RegistrationCandidate.index_number.isnot(None),
         RegistrationCandidate.index_number != "",
     )
-    index_numbers_result = await session.execute(index_numbers_count_stmt)
-    index_numbers_count = index_numbers_result.scalar() or 0
+    index_numbers_count = (await session.execute(index_numbers_count_stmt)).scalar() or 0
 
-    # Count total candidates registered for this exam
     candidate_count_stmt = select(func.count(RegistrationCandidate.id)).where(
         RegistrationCandidate.registration_exam_id == exam_id
     )
-    candidate_count_result = await session.execute(candidate_count_stmt)
-    candidate_count = candidate_count_result.scalar() or 0
+    candidate_count = (await session.execute(candidate_count_stmt)).scalar() or 0
 
-    exam_response = RegistrationExamResponse.model_validate(exam)
-    exam_response.has_index_numbers = index_numbers_count > 0
-    exam_response.candidate_count = candidate_count
-
-    return exam_response
+    return serialize_exam(
+        exam,
+        candidate_count=candidate_count,
+        has_index_numbers=index_numbers_count > 0,
+    )
 
 
 @router.get("/exams/{exam_id}/statistics", response_model=ExamStatisticsResponse)
@@ -1708,6 +1760,157 @@ async def get_exam_schools(
     ]
 
 
+@router.get("/exams/{exam_id}/eligible-schools", response_model=list[SchoolResponse])
+async def list_exam_eligible_schools(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[SchoolResponse]:
+    """List schools currently eligible to register for this examination."""
+    exam = (
+        await session.execute(select(RegistrationExam).where(RegistrationExam.id == exam_id))
+    ).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    school_ids = await get_eligible_school_ids(session, exam_id)
+    if not school_ids:
+        return []
+
+    schools = (
+        await session.execute(
+            select(School).where(School.id.in_(school_ids)).order_by(School.code)
+        )
+    ).scalars().all()
+    return [SchoolResponse.model_validate(s) for s in schools]
+
+
+@router.put("/exams/{exam_id}/eligible-schools", response_model=list[SchoolResponse])
+async def update_exam_eligible_schools(
+    exam_id: int,
+    body: ExamEligibleSchoolsUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[SchoolResponse]:
+    """Replace the set of schools eligible to register for this examination (strict opt-in)."""
+    exam = (
+        await session.execute(select(RegistrationExam).where(RegistrationExam.id == exam_id))
+    ).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        await replace_exam_eligible_schools(session, exam, body.school_ids)
+        await session.commit()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    school_ids = await get_eligible_school_ids(session, exam_id)
+    if not school_ids:
+        return []
+    schools = (
+        await session.execute(
+            select(School).where(School.id.in_(school_ids)).order_by(School.code)
+        )
+    ).scalars().all()
+    return [SchoolResponse.model_validate(s) for s in schools]
+
+
+def _serialize_late_window(window: ExamLateRegistrationWindow) -> LateRegistrationWindowResponse:
+    schools = [
+        LateRegistrationWindowSchoolItem(
+            school_id=row.school_id,
+            school_code=row.school.code if row.school else "",
+            school_name=row.school.name if row.school else "",
+        )
+        for row in (window.schools or [])
+    ]
+    applies_to_all = len(schools) == 0
+    return LateRegistrationWindowResponse(
+        id=window.id,
+        exam_id=window.exam_id,
+        starts_at=window.starts_at,
+        ends_at=window.ends_at,
+        is_active=window.is_active,
+        note=window.note,
+        applies_to_all_eligible=applies_to_all,
+        schools=schools,
+        school_count=0 if applies_to_all else len(schools),
+        created_by_user_id=str(window.created_by_user_id) if window.created_by_user_id else None,
+        created_at=window.created_at,
+        updated_at=window.updated_at,
+    )
+
+
+@router.get("/exams/{exam_id}/late-windows", response_model=list[LateRegistrationWindowResponse])
+async def get_exam_late_windows(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[LateRegistrationWindowResponse]:
+    """List late registration windows for an examination."""
+    exam = (
+        await session.execute(select(RegistrationExam).where(RegistrationExam.id == exam_id))
+    ).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+    windows = await list_late_windows(session, exam_id)
+    return [_serialize_late_window(w) for w in windows]
+
+
+@router.post(
+    "/exams/{exam_id}/late-windows",
+    response_model=LateRegistrationWindowResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_exam_late_window(
+    exam_id: int,
+    body: LateRegistrationWindowCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> LateRegistrationWindowResponse:
+    """Open a late registration window for all eligible schools or a selected subset."""
+    exam = (
+        await session.execute(select(RegistrationExam).where(RegistrationExam.id == exam_id))
+    ).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        window = await create_late_window(
+            session,
+            exam,
+            starts_at=body.starts_at,
+            ends_at=body.ends_at,
+            school_ids=body.school_ids,
+            note=body.note,
+            created_by_user_id=current_user.id,
+        )
+        await session.commit()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    return _serialize_late_window(window)
+
+
+@router.post(
+    "/exams/{exam_id}/late-windows/{window_id}/revoke",
+    response_model=LateRegistrationWindowResponse,
+)
+async def revoke_exam_late_window(
+    exam_id: int,
+    window_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> LateRegistrationWindowResponse:
+    """Revoke a late registration window (sets is_active=False)."""
+    try:
+        window = await revoke_late_window(session, exam_id, window_id)
+        await session.commit()
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+    return _serialize_late_window(window)
+
+
 @router.get("/exams/{exam_id}/programmes", response_model=list[dict])
 async def get_exam_programmes(
     exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
@@ -1782,11 +1985,11 @@ async def update_exam(
     session: DBSessionDep,
     current_user: SystemAdminDep,
 ) -> RegistrationExamResponse:
-    """Update exam details."""
+    """Update exam details, series, and enabled programme types."""
     stmt = (
         select(RegistrationExam)
         .where(RegistrationExam.id == exam_id)
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
     )
     result = await session.execute(stmt)
     exam = result.scalar_one_or_none()
@@ -1794,78 +1997,128 @@ async def update_exam(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Check if any of exam_type, year, or exam_series are being updated
-    is_updating_critical_fields = (
-        exam_update.exam_type is not None
+    is_updating_identity = (
+        exam_update.programme_type_id is not None
+        or exam_update.exam_series_id is not None
         or exam_update.year is not None
-        or exam_update.exam_series is not None
     )
 
-    # If updating critical fields, check if candidates are registered
-    if is_updating_critical_fields:
+    if is_updating_identity:
         candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam_id
         )
-        candidates_result = await session.execute(candidates_stmt)
-        candidate_count = candidates_result.scalar_one()
-
+        candidate_count = (await session.execute(candidates_stmt)).scalar_one()
         if candidate_count > 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot update exam type, year, or series. There are {candidate_count} registered candidate(s) for this examination.",
+                detail=(
+                    f"Cannot update programme type, year, or series. There are "
+                    f"{candidate_count} registered candidate(s) for this examination."
+                ),
             )
 
-    # Determine the exam_type after update (use new value if provided, otherwise current)
-    updated_exam_type = exam_update.exam_type if exam_update.exam_type is not None else exam.exam_type
+    if exam_update.programme_type_id is not None:
+        try:
+            root_type = await assert_root_programme_type(session, exam_update.programme_type_id)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        exam.programme_type_id = root_type.id
+        exam.exam_type = root_type.name
 
-    # Validate exam_series based on exam_type
-    if exam_update.exam_series is not None:
-        if updated_exam_type == "Certificate II Examinations":
-            # Normalize and validate exam_series for Certificate II Examinations
-            exam_series_normalized = exam_update.exam_series.upper().replace("-", "/").strip()
-            if exam_series_normalized not in ("MAY/JUNE", "NOV/DEC"):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="exam_series must be either 'MAY/JUNE' or 'NOV/DEC' for Certificate II Examinations",
-                )
-            exam.exam_series = exam_series_normalized
-        else:
-            # For non-Certificate II exams, exam_series should be None
-            if exam_update.exam_series.strip() != "":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"exam_series is not allowed for {updated_exam_type} examinations. Only Certificate II Examinations have exam series.",
-                )
-            exam.exam_series = None
-    elif exam_update.exam_type is not None:
-        # If exam_type is being changed (but exam_series is not being updated), validate exam_series based on new type
-        if updated_exam_type == "Certificate II Examinations":
-            # If changing to Certificate II Examinations and exam_series is not provided, keep existing or require it
-            if exam.exam_series is None or exam.exam_series.strip() == "":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="exam_series is required when changing exam_type to Certificate II Examinations",
-                )
-        else:
-            # If changing away from Certificate II Examinations, clear exam_series
-            exam.exam_series = None
+    if exam_update.exam_series_id is not None:
+        series = await session.get(ExamSeriesDefinition, exam_update.exam_series_id)
+        if not series or not series.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exam series not found or inactive",
+            )
+        exam.exam_series_id = series.id
+        exam.exam_series = series.short_name
 
-    # Update fields if provided
-    if exam_update.exam_id_main_system is not None:
-        exam.exam_id_main_system = exam_update.exam_id_main_system
-    if exam_update.exam_type is not None:
-        exam.exam_type = exam_update.exam_type
     if exam_update.year is not None:
         exam.year = exam_update.year
+
+    # Uniqueness check after identity changes
+    if is_updating_identity and exam.programme_type_id and exam.exam_series_id:
+        dup_stmt = select(RegistrationExam).where(
+            RegistrationExam.programme_type_id == exam.programme_type_id,
+            RegistrationExam.exam_series_id == exam.exam_series_id,
+            RegistrationExam.year == exam.year,
+            RegistrationExam.id != exam.id,
+        )
+        if (await session.execute(dup_stmt)).scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An exam with this programme type, series, and year already exists",
+            )
+
+    if exam_update.enabled_programme_type_ids is not None:
+        root_id = exam.programme_type_id
+        if root_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exam has no programme type; cannot update enablement",
+            )
+        try:
+            enabled_ids = await validate_enabled_programme_type_ids(
+                session, root_id, exam_update.enabled_programme_type_ids
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+        # Block disabling a type that already has candidates for this exam
+        current_enabled = {e.programme_type_id for e in exam.enabled_programme_types}
+        removing = current_enabled - set(enabled_ids)
+        if removing:
+            in_use_stmt = (
+                select(Programme.programme_type_id, func.count(RegistrationCandidate.id))
+                .join(RegistrationCandidate, RegistrationCandidate.programme_id == Programme.id)
+                .where(
+                    RegistrationCandidate.registration_exam_id == exam_id,
+                    Programme.programme_type_id.in_(removing),
+                )
+                .group_by(Programme.programme_type_id)
+            )
+            in_use = (await session.execute(in_use_stmt)).all()
+            if in_use:
+                ids = [row[0] for row in in_use]
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot disable programme type(s) {ids}: candidates are already "
+                        "registered under programmes of those types"
+                    ),
+                )
+        await replace_exam_enabled_types(session, exam, enabled_ids)
+
+    if exam_update.exam_id_main_system is not None:
+        exam.exam_id_main_system = exam_update.exam_id_main_system
     if exam_update.description is not None:
         exam.description = exam_update.description
     if exam_update.pricing_model_preference is not None:
         exam.pricing_model_preference = exam_update.pricing_model_preference
 
-    await session.commit()
-    await session.refresh(exam, ["registration_period"])
+    # Keep denormalized fields in sync if relationships already loaded with new IDs
+    if exam.programme_type_id and (exam.programme_type is None or exam.programme_type.id != exam.programme_type_id):
+        pt = await session.get(ProgrammeType, exam.programme_type_id)
+        if pt:
+            exam.exam_type = pt.name
+    if exam.exam_series_id and (
+        exam.series_definition is None or exam.series_definition.id != exam.exam_series_id
+    ):
+        series = await session.get(ExamSeriesDefinition, exam.exam_series_id)
+        if series:
+            exam.exam_series = series.short_name
 
-    return RegistrationExamResponse.model_validate(exam)
+    await session.commit()
+
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(*exam_load_options())
+    )
+    exam = (await session.execute(stmt)).scalar_one()
+    return serialize_exam(exam)
 
 
 @router.delete("/exams/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -5235,12 +5488,24 @@ async def preview_school_timetable_admin(
 
 # Programme Management Endpoints
 
+def _programme_response(programme: Programme, type_path: str | None = None) -> ProgrammeResponse:
+    return ProgrammeResponse(
+        id=programme.id,
+        code=programme.code,
+        name=programme.name,
+        programme_type_id=programme.programme_type_id,
+        programme_type_name=programme.programme_type.name if programme.programme_type else None,
+        programme_type_path=type_path,
+        created_at=programme.created_at,
+        updated_at=programme.updated_at,
+    )
+
+
 @router.post("/programmes", response_model=ProgrammeResponse, status_code=status.HTTP_201_CREATED)
 async def create_programme(
     programme: ProgrammeCreate, session: DBSessionDep, current_user: SystemAdminDep
 ) -> ProgrammeResponse:
     """Create a new programme."""
-    # Check if code already exists
     stmt = select(Programme).where(Programme.code == programme.code)
     result = await session.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -5249,11 +5514,27 @@ async def create_programme(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Programme with code {programme.code} already exists"
         )
 
-    db_programme = Programme(code=programme.code, name=programme.name)
+    pt = await session.get(ProgrammeType, programme.programme_type_id)
+    if not pt or not pt.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme type not found or inactive",
+        )
+
+    db_programme = Programme(
+        code=programme.code,
+        name=programme.name,
+        programme_type_id=programme.programme_type_id,
+    )
     session.add(db_programme)
     await session.commit()
-    await session.refresh(db_programme)
-    return ProgrammeResponse.model_validate(db_programme)
+    stmt = (
+        select(Programme)
+        .where(Programme.id == db_programme.id)
+        .options(selectinload(Programme.programme_type))
+    )
+    db_programme = (await session.execute(stmt)).scalar_one()
+    return _programme_response(db_programme)
 
 
 @router.get("/programmes", response_model=ProgrammeListResponse)
@@ -5262,24 +5543,23 @@ async def list_programmes(
     current_user: SystemAdminDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    programme_type_id: int | None = Query(None),
 ) -> ProgrammeListResponse:
     """List programmes with pagination."""
     offset = (page - 1) * page_size
 
-    # Get total count
     count_stmt = select(func.count(Programme.id))
-    count_result = await session.execute(count_stmt)
-    total = count_result.scalar() or 0
+    stmt = select(Programme).options(selectinload(Programme.programme_type)).order_by(Programme.code)
+    if programme_type_id is not None:
+        count_stmt = count_stmt.where(Programme.programme_type_id == programme_type_id)
+        stmt = stmt.where(Programme.programme_type_id == programme_type_id)
 
-    # Get programmes
-    stmt = select(Programme).offset(offset).limit(page_size).order_by(Programme.code)
-    result = await session.execute(stmt)
-    programmes = result.scalars().all()
-
+    total = (await session.execute(count_stmt)).scalar() or 0
+    programmes = (await session.execute(stmt.offset(offset).limit(page_size))).scalars().all()
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return ProgrammeListResponse(
-        items=[ProgrammeResponse.model_validate(programme) for programme in programmes],
+        items=[_programme_response(programme) for programme in programmes],
         total=total,
         page=page,
         page_size=page_size,
@@ -5337,12 +5617,16 @@ async def get_programme(
     programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
 ) -> ProgrammeResponse:
     """Get programme details."""
-    stmt = select(Programme).where(Programme.id == programme_id)
+    stmt = (
+        select(Programme)
+        .where(Programme.id == programme_id)
+        .options(selectinload(Programme.programme_type))
+    )
     result = await session.execute(stmt)
     programme = result.scalar_one_or_none()
     if not programme:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
-    return ProgrammeResponse.model_validate(programme)
+    return _programme_response(programme)
 
 
 @router.put("/programmes/{programme_id}", response_model=ProgrammeResponse)
@@ -5356,28 +5640,38 @@ async def update_programme(
     if not programme:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
 
-    # Check if code already exists (if updating code)
     if programme_update.code is not None and programme_update.code != programme.code:
         code_stmt = select(Programme).where(Programme.code == programme_update.code)
-        code_result = await session.execute(code_stmt)
-        existing = code_result.scalar_one_or_none()
+        existing = (await session.execute(code_stmt)).scalar_one_or_none()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Programme with code {programme_update.code} already exists",
             )
 
-    # Get fields that were actually provided in the update
     update_data = programme_update.model_dump(exclude_unset=True)
 
     if "name" in update_data:
         programme.name = programme_update.name
     if "code" in update_data:
         programme.code = programme_update.code
+    if "programme_type_id" in update_data and programme_update.programme_type_id is not None:
+        pt = await session.get(ProgrammeType, programme_update.programme_type_id)
+        if not pt or not pt.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Programme type not found or inactive",
+            )
+        programme.programme_type_id = programme_update.programme_type_id
 
     await session.commit()
-    await session.refresh(programme)
-    return ProgrammeResponse.model_validate(programme)
+    stmt = (
+        select(Programme)
+        .where(Programme.id == programme_id)
+        .options(selectinload(Programme.programme_type))
+    )
+    programme = (await session.execute(stmt)).scalar_one()
+    return _programme_response(programme)
 
 
 @router.delete("/programmes/{programme_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -5456,10 +5750,24 @@ async def bulk_upload_programmes(
                 failed += 1
                 continue
 
-            # Create programme
+            type_code = programme_data.get("programme_type_code") or "CERT_II"
+            pt_stmt = select(ProgrammeType).where(ProgrammeType.code == type_code)
+            pt = (await session.execute(pt_stmt)).scalar_one_or_none()
+            if not pt:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Unknown programme_type_code '{type_code}'",
+                        field="programme_type_code",
+                    )
+                )
+                failed += 1
+                continue
+
             db_programme = Programme(
                 code=programme_data["code"],
                 name=programme_data["name"],
+                programme_type_id=pt.id,
             )
             session.add(db_programme)
             await session.flush()  # Flush to get ID but don't commit yet

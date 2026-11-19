@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,9 +20,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DatePicker } from "@/components/ui/date-picker";
-import { createExam } from "@/lib/api";
+import {
+  createExam,
+  getProgrammeTypeTree,
+  listExamSeriesDefinitions,
+  listRootProgrammeTypes,
+} from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationExamCreate } from "@/types";
+import type { ExamSeriesDefinition, ProgrammeType, ProgrammeTypeTreeNode, RegistrationExamCreate } from "@/types";
+import {
+  ProgrammeTypeEnablementTree,
+  collectTreeIds,
+  findRootSubtree,
+} from "@/components/admin/ProgrammeTypeEnablementTree";
 
 interface CreateExamDialogProps {
   open: boolean;
@@ -31,36 +41,85 @@ interface CreateExamDialogProps {
 }
 
 export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDialogProps) {
-  const [examType, setExamType] = useState("");
-  const [examSeries, setExamSeries] = useState("");
+  const [roots, setRoots] = useState<ProgrammeType[]>([]);
+  const [tree, setTree] = useState<ProgrammeTypeTreeNode[]>([]);
+  const [seriesList, setSeriesList] = useState<ExamSeriesDefinition[]>([]);
+  const [programmeTypeId, setProgrammeTypeId] = useState<string>("");
+  const [examSeriesId, setExamSeriesId] = useState<string>("");
   const [year, setYear] = useState("");
   const [description, setDescription] = useState("");
   const [registrationStartDate, setRegistrationStartDate] = useState<Date | null>(null);
   const [registrationEndDate, setRegistrationEndDate] = useState<Date | null>(null);
   const [allowsBulkRegistration, setAllowsBulkRegistration] = useState(true);
   const [allowsPrivateRegistration, setAllowsPrivateRegistration] = useState(true);
+  const [enabledIds, setEnabledIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [loadingMeta, setLoadingMeta] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoadingMeta(true);
+    Promise.all([
+      listRootProgrammeTypes(),
+      getProgrammeTypeTree(true),
+      listExamSeriesDefinitions(true),
+    ])
+      .then(([r, t, s]) => {
+        setRoots(r);
+        setTree(t);
+        setSeriesList(s);
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to load exam options"))
+      .finally(() => setLoadingMeta(false));
+  }, [open]);
+
+  const selectedRoot = useMemo(() => {
+    const id = parseInt(programmeTypeId, 10);
+    if (!id) return null;
+    return findRootSubtree(tree, id);
+  }, [tree, programmeTypeId]);
+
+  const enablementNodes = useMemo(() => {
+    if (!selectedRoot) return [];
+    // Show root + descendants as independent toggles
+    return [selectedRoot];
+  }, [selectedRoot]);
+
+  useEffect(() => {
+    if (!selectedRoot) {
+      setEnabledIds(new Set());
+      return;
+    }
+    // Default: enable entire subtree
+    setEnabledIds(new Set(collectTreeIds([selectedRoot])));
+  }, [selectedRoot?.id]);
+
+  const handleToggle = (id: number, enabled: boolean) => {
+    setEnabledIds((prev) => {
+      const next = new Set(prev);
+      if (enabled) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate required fields
-    if (!examType || !year || !registrationStartDate || !registrationEndDate) {
+    if (!programmeTypeId || !examSeriesId || !year || !registrationStartDate || !registrationEndDate) {
       toast.error("Please fill in all required fields");
       return;
     }
 
-    // Validate exam_series is required for Certificate II Examinations
-    if (examType === "Certificate II Examinations" && !examSeries) {
-      toast.error("Exam Series is required for Certificate II Examinations");
+    if (enabledIds.size === 0) {
+      toast.error("Enable at least one programme type for registration");
       return;
     }
 
-    // Set dates to start of day for comparison
     const startDate = new Date(registrationStartDate);
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(registrationEndDate);
-    endDate.setHours(23, 59, 59, 999); // End of day
+    endDate.setHours(23, 59, 59, 999);
 
     if (endDate <= startDate) {
       toast.error("Registration end date must be after start date");
@@ -68,18 +127,17 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
     }
 
     setLoading(true);
-
     try {
-      // Set start date to beginning of day and end date to end of day
       const startDateTime = new Date(registrationStartDate);
       startDateTime.setHours(0, 0, 0, 0);
       const endDateTime = new Date(registrationEndDate);
       endDateTime.setHours(23, 59, 59, 999);
 
       const examData: RegistrationExamCreate = {
-        exam_type: examType,
-        exam_series: examType === "Certificate II Examinations" ? examSeries : undefined,
-        year: parseInt(year),
+        programme_type_id: parseInt(programmeTypeId, 10),
+        exam_series_id: parseInt(examSeriesId, 10),
+        enabled_programme_type_ids: Array.from(enabledIds),
+        year: parseInt(year, 10),
         description: description || null,
         registration_period: {
           registration_start_date: startDateTime.toISOString(),
@@ -93,15 +151,15 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       toast.success("Exam created successfully");
       onSuccess();
       onOpenChange(false);
-      // Reset form
-      setExamType("");
-      setExamSeries("");
+      setProgrammeTypeId("");
+      setExamSeriesId("");
       setYear("");
       setDescription("");
       setRegistrationStartDate(null);
       setRegistrationEndDate(null);
       setAllowsBulkRegistration(true);
       setAllowsPrivateRegistration(true);
+      setEnabledIds(new Set());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create exam");
     } finally {
@@ -109,71 +167,83 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
     }
   };
 
-  const isCertificateII = examType === "Certificate II Examinations";
+  const hasHierarchy = (selectedRoot?.children?.length || 0) > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Examination</DialogTitle>
-          <DialogDescription>Set up a new examination with registration period.</DialogDescription>
+          <DialogDescription>
+            Bind an exam to a programme type and series, then enable which sub-types are open for registration.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
-            <div className={`grid gap-4 ${isCertificateII ? "grid-cols-2" : "grid-cols-1"}`}>
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="examType">Exam Type *</Label>
+                <Label htmlFor="programmeType">Programme type *</Label>
                 <Select
-                  value={examType}
-                  onValueChange={(value) => {
-                    setExamType(value);
-                    // Clear exam_series when changing away from Certificate II Examinations
-                    if (value !== "Certificate II Examinations") {
-                      setExamSeries("");
-                    }
-                  }}
-                  disabled={loading}
+                  value={programmeTypeId}
+                  onValueChange={setProgrammeTypeId}
+                  disabled={loading || loadingMeta}
                   required
                 >
-                  <SelectTrigger id="examType">
-                    <SelectValue placeholder="Select exam type" />
+                  <SelectTrigger id="programmeType">
+                    <SelectValue placeholder="Select programme type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Certificate II Examinations">Certificate II Examinations</SelectItem>
-                    <SelectItem value="Advance">Advance</SelectItem>
-                    <SelectItem value="Technician Part I">Technician Part I</SelectItem>
-                    <SelectItem value="Technician Part II">Technician Part II</SelectItem>
-                    <SelectItem value="Technician Part III">Technician Part III</SelectItem>
-                    <SelectItem value="Diploma">Diploma</SelectItem>
+                    {roots.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              {isCertificateII && (
-                <div className="space-y-2">
-                  <Label htmlFor="examSeries">Exam Series *</Label>
-                  <Select
-                    value={examSeries}
-                    onValueChange={setExamSeries}
-                    disabled={loading}
-                    required
-                  >
-                    <SelectTrigger id="examSeries">
-                      <SelectValue placeholder="Select exam series" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MAY/JUNE">May/June</SelectItem>
-                      <SelectItem value="NOV/DEC">Nov/Dec</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="examSeries">Series / sitting *</Label>
+                <Select
+                  value={examSeriesId}
+                  onValueChange={setExamSeriesId}
+                  disabled={loading || loadingMeta}
+                  required
+                >
+                  <SelectTrigger id="examSeries">
+                    <SelectValue placeholder="Select series" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {seriesList.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.short_name} — {s.long_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
+            {hasHierarchy && (
+              <div className="space-y-2 rounded-md border p-3">
+                <Label>Enable programme types for registration *</Label>
+                <p className="text-xs text-muted-foreground">
+                  Turn off any sub programme type to hide its programmes and subjects for this sitting.
+                </p>
+                <ProgrammeTypeEnablementTree
+                  nodes={enablementNodes}
+                  enabledIds={enabledIds}
+                  onToggle={handleToggle}
+                  disabled={loading}
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="year">Year *</Label>
               <Input
                 id="year"
                 type="number"
-                placeholder="2024"
+                placeholder="2026"
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
                 required
@@ -235,7 +305,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || loadingMeta}>
               {loading ? "Creating..." : "Create Exam"}
             </Button>
           </DialogFooter>

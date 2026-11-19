@@ -228,41 +228,40 @@ class RegistrationExamCreate(BaseModel):
     """Schema for creating a registration exam."""
 
     exam_id_main_system: int | None = None
-    exam_type: str
-    exam_series: str | None = None
+    programme_type_id: int = Field(..., description="Root programme type for this examination")
+    exam_series_id: int = Field(..., description="Series/sitting from the exam series catalog")
     year: int
     description: str | None = None
-    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')")
+    pricing_model_preference: str | None = Field(
+        None,
+        description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')",
+    )
+    enabled_programme_type_ids: list[int] = Field(
+        default_factory=list,
+        description="Programme type nodes enabled for registration (exact match). Defaults to root if empty at API layer.",
+    )
+    # Legacy optional fields for backward-compatible clients (ignored when FKs provided)
+    exam_type: str | None = None
+    exam_series: str | None = None
     registration_period: ExamRegistrationPeriodCreate
-
-    @model_validator(mode="after")
-    def validate_exam_series(self) -> RegistrationExamCreate:
-        """Validate exam_series is required for Certificate II Examinations and valid when provided."""
-        if self.exam_type == "Certificate II Examinations":
-            if not self.exam_series or self.exam_series.strip() == "":
-                raise ValueError("exam_series is required for Certificate II Examinations")
-            # Normalize the value
-            v_normalized = self.exam_series.upper().replace("-", "/").strip()
-            if v_normalized not in ("MAY/JUNE", "NOV/DEC"):
-                raise ValueError("exam_series must be either 'MAY/JUNE' or 'NOV/DEC' for Certificate II Examinations")
-            self.exam_series = v_normalized
-        else:
-            # For non-Certificate II Examinations exams, exam_series should be None or empty
-            if self.exam_series and self.exam_series.strip() != "":
-                raise ValueError(f"exam_series is not allowed for {self.exam_type} examinations. Only Certificate II Examinations have exam series.")
-            self.exam_series = None
-        return self
 
 
 class RegistrationExamUpdate(BaseModel):
     """Schema for updating a registration exam."""
 
     exam_id_main_system: int | None = None
-    exam_type: str | None = None
-    exam_series: str | None = None
+    programme_type_id: int | None = None
+    exam_series_id: int | None = None
     year: int | None = None
     description: str | None = None
-    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')")
+    pricing_model_preference: str | None = Field(
+        None,
+        description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')",
+    )
+    enabled_programme_type_ids: list[int] | None = None
+    # Legacy optional fields
+    exam_type: str | None = None
+    exam_series: str | None = None
 
 
 class RegistrationExamResponse(BaseModel):
@@ -272,6 +271,12 @@ class RegistrationExamResponse(BaseModel):
     exam_id_main_system: int | None = None
     exam_type: str
     exam_series: str | None = None
+    programme_type_id: int | None = None
+    exam_series_id: int | None = None
+    programme_type_name: str | None = None
+    exam_series_short_name: str | None = None
+    exam_series_long_name: str | None = None
+    enabled_programme_type_ids: list[int] = Field(default_factory=list)
     year: int
     description: str | None = None
     registration_period: ExamRegistrationPeriodResponse
@@ -282,12 +287,13 @@ class RegistrationExamResponse(BaseModel):
     has_index_numbers: bool = False
     candidate_count: int | None = None
     approved_candidates: int | None = None
+    eligible_school_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
-    @field_validator('results_published_by_user_id', mode='before')
+    @field_validator("results_published_by_user_id", mode="before")
     @classmethod
     def convert_uuid_to_string(cls, v):
         """Convert UUID to string if it's a UUID object."""
@@ -296,6 +302,46 @@ class RegistrationExamResponse(BaseModel):
         if isinstance(v, UUID):
             return str(v)
         return v
+
+
+class ExamEligibleSchoolsUpdate(BaseModel):
+    """Replace the set of schools eligible to register for an exam."""
+
+    school_ids: list[int] = Field(default_factory=list)
+
+
+class LateRegistrationWindowCreate(BaseModel):
+    """Create a late registration window. Empty/null school_ids = all eligible schools."""
+
+    starts_at: datetime
+    ends_at: datetime
+    school_ids: list[int] | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+class LateRegistrationWindowSchoolItem(BaseModel):
+    school_id: int
+    school_code: str
+    school_name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LateRegistrationWindowResponse(BaseModel):
+    id: int
+    exam_id: int
+    starts_at: datetime
+    ends_at: datetime
+    is_active: bool
+    note: str | None = None
+    applies_to_all_eligible: bool
+    schools: list[LateRegistrationWindowSchoolItem] = Field(default_factory=list)
+    school_count: int = 0
+    created_by_user_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SchoolProgressItem(BaseModel):

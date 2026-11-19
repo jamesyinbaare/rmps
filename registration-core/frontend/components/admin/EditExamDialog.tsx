@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,9 +19,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { updateExam } from "@/lib/api";
+import {
+  getProgrammeTypeTree,
+  listExamSeriesDefinitions,
+  listRootProgrammeTypes,
+  updateExam,
+} from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationExam } from "@/types";
+import type { ExamSeriesDefinition, ProgrammeType, ProgrammeTypeTreeNode, RegistrationExam } from "@/types";
+import {
+  ProgrammeTypeEnablementTree,
+  findRootSubtree,
+} from "@/components/admin/ProgrammeTypeEnablementTree";
 
 interface EditExamDialogProps {
   open: boolean;
@@ -36,48 +45,82 @@ export function EditExamDialog({
   exam,
   onSuccess,
 }: EditExamDialogProps) {
-  const [examType, setExamType] = useState("");
-  const [examSeries, setExamSeries] = useState("");
+  const [roots, setRoots] = useState<ProgrammeType[]>([]);
+  const [tree, setTree] = useState<ProgrammeTypeTreeNode[]>([]);
+  const [seriesList, setSeriesList] = useState<ExamSeriesDefinition[]>([]);
+  const [programmeTypeId, setProgrammeTypeId] = useState("");
+  const [examSeriesId, setExamSeriesId] = useState("");
   const [year, setYear] = useState("");
+  const [enabledIds, setEnabledIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (!open) return;
+    Promise.all([
+      listRootProgrammeTypes(),
+      getProgrammeTypeTree(true),
+      listExamSeriesDefinitions(true),
+    ])
+      .then(([r, t, s]) => {
+        setRoots(r);
+        setTree(t);
+        setSeriesList(s);
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to load exam options"));
+  }, [open]);
+
+  useEffect(() => {
     if (open && exam) {
-      setExamType(exam.exam_type);
-      setExamSeries(exam.exam_series || "");
+      setProgrammeTypeId(exam.programme_type_id ? String(exam.programme_type_id) : "");
+      setExamSeriesId(exam.exam_series_id ? String(exam.exam_series_id) : "");
       setYear(exam.year.toString());
+      setEnabledIds(new Set(exam.enabled_programme_type_ids || []));
     }
   }, [open, exam]);
+
+  const selectedRoot = useMemo(() => {
+    const id = parseInt(programmeTypeId, 10);
+    if (!id) return null;
+    return findRootSubtree(tree, id);
+  }, [tree, programmeTypeId]);
+
+  const hasHierarchy = (selectedRoot?.children?.length || 0) > 0;
+  const hasCandidates = (exam.candidate_count || 0) > 0;
+
+  const handleToggle = (id: number, enabled: boolean) => {
+    setEnabledIds((prev) => {
+      const next = new Set(prev);
+      if (enabled) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate required fields
-    if (!examType || !year) {
+    if (!programmeTypeId || !examSeriesId || !year) {
       toast.error("Please fill in all required fields");
       return;
     }
-
-    // Validate exam_series is required for Certificate II Examinations
-    if (examType === "Certificate II Examinations" && !examSeries) {
-      toast.error("Exam Series is required for Certificate II Examinations");
+    if (enabledIds.size === 0) {
+      toast.error("Enable at least one programme type for registration");
       return;
     }
 
-    // Validate year
-    const yearNum = parseInt(year);
+    const yearNum = parseInt(year, 10);
     if (isNaN(yearNum) || yearNum < 1900 || yearNum > 2100) {
       toast.error("Year must be a valid number between 1900 and 2100");
       return;
     }
 
     setLoading(true);
-
     try {
       await updateExam(exam.id, {
-        exam_type: examType,
-        exam_series: examType === "Certificate II Examinations" ? examSeries : undefined,
+        programme_type_id: parseInt(programmeTypeId, 10),
+        exam_series_id: parseInt(examSeriesId, 10),
         year: yearNum,
+        enabled_programme_type_ids: Array.from(enabledIds),
       });
 
       toast.success("Examination updated successfully");
@@ -90,87 +133,96 @@ export function EditExamDialog({
     }
   };
 
-  const isCertificateII = examType === "Certificate II Examinations";
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Examination Details</DialogTitle>
           <DialogDescription>
-            Update the examination type, year, and series. This can only be done if no candidates have registered for this examination.
+            Update programme type, series, year, and which sub-types are enabled for registration.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
-            <div className={`grid gap-4 ${isCertificateII ? "grid-cols-2" : "grid-cols-1"}`}>
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="examType">Exam Type *</Label>
+                <Label>Programme type *</Label>
                 <Select
-                  value={examType}
-                  onValueChange={(value) => {
-                    setExamType(value);
-                    // Clear exam_series when changing away from Certificate II Examinations
-                    if (value !== "Certificate II Examinations") {
-                      setExamSeries("");
-                    }
-                  }}
-                  disabled={loading}
-                  required
+                  value={programmeTypeId}
+                  onValueChange={setProgrammeTypeId}
+                  disabled={loading || hasCandidates}
                 >
-                  <SelectTrigger id="examType">
-                    <SelectValue placeholder="Select exam type" />
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select programme type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Certificate II Examinations">Certificate II Examinations</SelectItem>
-                    <SelectItem value="Advance">Advance</SelectItem>
-                    <SelectItem value="Technician Part I">Technician Part I</SelectItem>
-                    <SelectItem value="Technician Part II">Technician Part II</SelectItem>
-                    <SelectItem value="Technician Part III">Technician Part III</SelectItem>
-                    <SelectItem value="Diploma">Diploma</SelectItem>
+                    {roots.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              {isCertificateII && (
-                <div className="space-y-2">
-                  <Label htmlFor="examSeries">Exam Series *</Label>
-                  <Select
-                    value={examSeries}
-                    onValueChange={setExamSeries}
-                    disabled={loading}
-                    required
-                  >
-                    <SelectTrigger id="examSeries">
-                      <SelectValue placeholder="Select series" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MAY/JUNE">MAY/JUNE</SelectItem>
-                      <SelectItem value="NOV/DEC">NOV/DEC</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label>Series / sitting *</Label>
+                <Select
+                  value={examSeriesId}
+                  onValueChange={setExamSeriesId}
+                  disabled={loading || hasCandidates}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select series" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {seriesList.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.short_name} — {s.long_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
+            {hasHierarchy && selectedRoot && (
+              <div className="space-y-2 rounded-md border p-3">
+                <Label>Enabled programme types *</Label>
+                <ProgrammeTypeEnablementTree
+                  nodes={[selectedRoot]}
+                  enabledIds={enabledIds}
+                  onToggle={handleToggle}
+                  disabled={loading}
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="year">Year *</Label>
               <Input
                 id="year"
                 type="number"
-                min="1900"
-                max="2100"
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
-                disabled={loading}
                 required
+                disabled={loading || hasCandidates}
+                min="1900"
+                max="2100"
               />
             </div>
+            {hasCandidates && (
+              <p className="text-xs text-muted-foreground">
+                Programme type, series, and year are locked because candidates are already registered.
+                Enablement can still be adjusted (types with candidates cannot be turned off).
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Update Examination"}
+              {loading ? "Saving..." : "Save changes"}
             </Button>
           </DialogFooter>
         </form>

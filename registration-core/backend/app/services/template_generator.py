@@ -24,6 +24,7 @@ def generate_programme_template() -> bytes:
     data = {
         "code": ["PROG01", "PROG02"],
         "name": ["Example Programme 1", "Example Programme 2"],
+        "programme_type_code": ["CERT_II", "ADVANCE"],
     }
     df = pd.DataFrame(data)
 

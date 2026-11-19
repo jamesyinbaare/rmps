@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
@@ -21,7 +20,7 @@ import type { ExaminationSchedule, ExamStatistics } from "@/types";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  Calendar,
+  Building2,
   Download,
   Key,
   XCircle,
@@ -40,8 +39,11 @@ import { CreateScheduleDialog } from "@/components/admin/CreateScheduleDialog";
 import { EditScheduleDialog } from "@/components/admin/EditScheduleDialog";
 import { BulkUploadSchedulesDialog } from "@/components/admin/BulkUploadSchedulesDialog";
 import { EditExamDialog } from "@/components/admin/EditExamDialog";
+import { ManageEligibleSchoolsDialog } from "@/components/admin/ManageEligibleSchoolsDialog";
+import { LateRegistrationWindowsSection } from "@/components/admin/LateRegistrationWindowsSection";
 import { ImportCandidatesDialog } from "@/components/admin/ImportCandidatesDialog";
 import { PageHeader } from "@/components/dashboard/PageHeader";
+import { SectionLabel } from "@/components/dashboard/SectionLabel";
 import { StatStrip } from "@/components/dashboard/StatStrip";
 
 export default function ExamDetailPage() {
@@ -69,6 +71,7 @@ export default function ExamDetailPage() {
   const [uploadSchedulesDialogOpen, setUploadSchedulesDialogOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ExaminationSchedule | null>(null);
   const [editExamDialogOpen, setEditExamDialogOpen] = useState(false);
+  const [eligibleSchoolsDialogOpen, setEligibleSchoolsDialogOpen] = useState(false);
   const [statistics, setStatistics] = useState<ExamStatistics | null>(null);
   const [loadingStatistics, setLoadingStatistics] = useState(true);
 
@@ -277,22 +280,13 @@ export default function ExamDetailPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6">
         <Skeleton className="h-10 w-32" />
-        <div className="space-y-4">
-          <Skeleton className="h-12 w-full" />
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {[1, 2, 3, 4].map((i) => (
-              <Card key={i}>
-                <CardHeader>
-                  <Skeleton className="h-4 w-32" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-10 w-20" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-24 w-full rounded-lg" />
+          ))}
         </div>
       </div>
     );
@@ -300,7 +294,7 @@ export default function ExamDetailPage() {
 
   if (!exam) {
     return (
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6">
         <div className="text-center py-12 text-muted-foreground">Exam not found</div>
       </div>
     );
@@ -315,7 +309,7 @@ export default function ExamDetailPage() {
   const registrationProgress = getRegistrationProgress(exam);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader
         back={
           <Button variant="ghost" onClick={() => router.push("/dashboard/exams")}>
@@ -370,27 +364,13 @@ export default function ExamDetailPage() {
         }
       />
 
-      {/* Section Divider */}
-      <div className="border-t border-border" />
-
-      {/* Statistics Cards */}
       {loadingStatistics ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-0 overflow-hidden rounded-lg border border-border bg-card sm:grid-cols-2 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardHeader className="pb-3">
-                <Skeleton className="h-4 w-32" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-10 w-10 rounded" />
-                  <div className="space-y-2 flex-1">
-                    <Skeleton className="h-8 w-16" />
-                    <Skeleton className="h-3 w-24" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <div key={i} className="space-y-2 border-border p-5 sm:border-l first:border-l-0 md:p-6">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-8 w-16" />
+            </div>
           ))}
         </div>
       ) : statistics ? (
@@ -428,223 +408,208 @@ export default function ExamDetailPage() {
         />
       ) : null}
 
-      {/* Section Divider */}
-      <div className="border-t border-border" />
+      {/* Eligible schools summary (Llama strip) */}
+      <div className="rounded-lg border border-border bg-card p-5 md:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm font-medium">Eligible schools</p>
+            </div>
+            {(exam.eligible_school_count ?? 0) === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Not configured · Schools cannot register until you select eligible schools.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                <span className="font-mono font-medium text-foreground">
+                  {(exam.eligible_school_count ?? 0).toLocaleString()}
+                </span>{" "}
+                school{(exam.eligible_school_count ?? 0) === 1 ? "" : "s"} can register for this
+                examination.
+              </p>
+            )}
+          </div>
+          <Button
+            variant={(exam.eligible_school_count ?? 0) === 0 ? "default" : "outline"}
+            size="sm"
+            onClick={() => setEligibleSchoolsDialogOpen(true)}
+            className="shrink-0"
+          >
+            {(exam.eligible_school_count ?? 0) === 0 ? "Select schools" : "Manage schools"}
+          </Button>
+        </div>
+      </div>
 
-      {/* Exam Information */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Exam Information</CardTitle>
+      {/* Exam information */}
+      <div className="rounded-lg border border-border bg-card p-5 md:p-6">
+        <SectionLabel
+          action={
             <Button
               variant="outline"
               size="sm"
               onClick={() => setEditExamDialogOpen(true)}
               disabled={(exam.candidate_count ?? 0) > 0}
-              title={(exam.candidate_count ?? 0) > 0 ? `Cannot edit: ${exam.candidate_count} candidate(s) registered` : "Edit examination details"}
+              title={
+                (exam.candidate_count ?? 0) > 0
+                  ? `Cannot edit: ${exam.candidate_count} candidate(s) registered`
+                  : "Edit examination details"
+              }
               className="gap-2"
             >
               <Edit className="h-4 w-4" />
               Edit
             </Button>
+          }
+        >
+          Exam information
+        </SectionLabel>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Exam type</p>
+            <p className="text-sm font-medium">{exam.exam_type}</p>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {exam.exam_series ? (
             <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Exam Type</p>
-              <p className="text-sm font-medium">{exam.exam_type}</p>
+              <p className="text-sm text-muted-foreground">Series</p>
+              <p className="text-sm font-medium">{exam.exam_series}</p>
             </div>
-            {exam.exam_series && (
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Series</p>
-                <p className="text-sm font-medium">{exam.exam_series}</p>
-              </div>
-            )}
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Year</p>
-              <p className="text-sm font-medium">{exam.year}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Created</p>
-              <p className="text-sm font-medium">
-                {new Date(exam.created_at).toLocaleDateString()}
-              </p>
-            </div>
+          ) : null}
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Year</p>
+            <p className="font-mono text-sm font-medium">{exam.year}</p>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Section Divider */}
-      <div className="border-t border-border" />
-
-      {/* Registration Period */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
-            Registration Period
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Timeline Progress */}
-          {isActive && now >= new Date(exam.registration_period.registration_start_date) && now <= endDate && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Registration Progress</span>
-                <span className="font-medium">{Math.round(registrationProgress)}%</span>
-              </div>
-              <Progress value={registrationProgress} className="h-2" />
-              {statistics?.days_to_end !== null && statistics?.days_to_end !== undefined && statistics.days_to_end <= 7 && (
-                <div className="flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 p-2 rounded-md">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>Registration ends {formatRelativeTime(exam.registration_period.registration_end_date).toLowerCase()}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Start Date</p>
-              <p className="text-sm font-medium">
-                {formatDateTime(exam.registration_period.registration_start_date)}
-              </p>
-              <p className="text-xs text-muted-foreground">{formatRelativeTime(exam.registration_period.registration_start_date)}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">End Date</p>
-              <p className="text-sm font-medium">
-                {formatDateTime(exam.registration_period.registration_end_date)}
-              </p>
-              <p className="text-xs text-muted-foreground">{formatRelativeTime(exam.registration_period.registration_end_date)}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={status.variant} className={status.color}>
-                {status.label}
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Active</p>
-              <Badge variant={exam.registration_period.is_active ? "default" : "secondary"}>
-                {exam.registration_period.is_active ? "Yes" : "No"}
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Bulk Registration</p>
-              <Badge variant={exam.registration_period.allows_bulk_registration ? "default" : "secondary"}>
-                {exam.registration_period.allows_bulk_registration ? "Allowed" : "Not Allowed"}
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Private Registration</p>
-              <Badge variant={exam.registration_period.allows_private_registration ? "default" : "secondary"}>
-                {exam.registration_period.allows_private_registration ? "Allowed" : "Not Allowed"}
-              </Badge>
-            </div>
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Created</p>
+            <p className="text-sm font-medium">{new Date(exam.created_at).toLocaleDateString()}</p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* Section Divider */}
-      <div className="border-t border-border" />
+      {/* Registration period */}
+      <div className="rounded-lg border border-border bg-card p-5 md:p-6">
+        <SectionLabel>Registration period</SectionLabel>
+        {isActive &&
+        now >= new Date(exam.registration_period.registration_start_date) &&
+        now <= endDate ? (
+          <div className="mb-5 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Registration progress</span>
+              <span className="font-mono font-medium">{Math.round(registrationProgress)}%</span>
+            </div>
+            <Progress value={registrationProgress} className="h-1.5" />
+            {statistics?.days_to_end !== null &&
+            statistics?.days_to_end !== undefined &&
+            statistics.days_to_end <= 7 ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <AlertCircle className="h-4 w-4 text-warning" />
+                Registration ends{" "}
+                {formatRelativeTime(exam.registration_period.registration_end_date).toLowerCase()}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Start date</p>
+            <p className="text-sm font-medium">
+              {formatDateTime(exam.registration_period.registration_start_date)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {formatRelativeTime(exam.registration_period.registration_start_date)}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">End date</p>
+            <p className="text-sm font-medium">
+              {formatDateTime(exam.registration_period.registration_end_date)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {formatRelativeTime(exam.registration_period.registration_end_date)}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Status</p>
+            <Badge variant="outline" className={status.color}>
+              {status.label}
+            </Badge>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Active</p>
+            <Badge variant="outline">
+              {exam.registration_period.is_active ? "Yes" : "No"}
+            </Badge>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Bulk registration</p>
+            <Badge variant="outline">
+              {exam.registration_period.allows_bulk_registration ? "Allowed" : "Not allowed"}
+            </Badge>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Private registration</p>
+            <Badge variant="outline">
+              {exam.registration_period.allows_private_registration ? "Allowed" : "Not allowed"}
+            </Badge>
+          </div>
+        </div>
 
-      {/* Index Number Generation Progress */}
-      {currentJobId && exam?.id && (
+        <LateRegistrationWindowsSection examId={exam.id} />
+      </div>
+
+      {currentJobId && exam?.id ? (
         <IndexNumberGenerationProgress
           examId={exam.id}
           jobId={currentJobId}
           onComplete={handleProgressComplete}
         />
-      )}
+      ) : null}
 
       {/* Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Actions</CardTitle>
-          <CardDescription>Manage registration and export data</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-3">
+      <div className="rounded-lg border border-border bg-card p-5 md:p-6">
+        <SectionLabel>Actions</SectionLabel>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Manage registration and export data
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={handleExportCandidates}
+            disabled={exporting}
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            {exporting ? "Exporting..." : "Export Candidates"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setImportDialogOpen(true)}
+            className="gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            Import Candidates
+          </Button>
+          {isClosed ? (
             <Button
               variant="outline"
-              onClick={handleExportCandidates}
-              disabled={exporting}
+              onClick={() => setGenerateIndexDialogOpen(true)}
+              disabled={generatingIndexNumbers}
               className="gap-2"
-              title="Export candidate data to a file"
             >
-              <Download className="h-4 w-4" />
-              {exporting ? "Exporting..." : "Export Candidates"}
+              <Key className="h-4 w-4" />
+              Generate Index Numbers
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setImportDialogOpen(true)}
-              className="gap-2"
-              title="Import candidates from CSV or Excel"
-            >
-              <Upload className="h-4 w-4" />
-              Import Candidates
-            </Button>
-            {isClosed && (
-              <Button
-                variant="outline"
-                onClick={() => setGenerateIndexDialogOpen(true)}
-                disabled={generatingIndexNumbers}
-                className="gap-2"
-                title="Generate index numbers for registered candidates"
-              >
-                <Key className="h-4 w-4" />
-                Generate Index Numbers
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          ) : null}
+        </div>
+      </div>
 
-      {/* Section Divider */}
-      <div className="border-t border-border" />
-
-      {/* Update Registration Period Dialog */}
-      {exam && (
-        <UpdateRegistrationPeriodDialog
-          open={updateDialogOpen}
-          onOpenChange={setUpdateDialogOpen}
-          exam={exam}
-          onSuccess={handleUpdateSuccess}
-        />
-      )}
-
-      {/* Close Registration Dialog */}
-      <CloseRegistrationDialog
-        open={closeDialogOpen}
-        onOpenChange={setCloseDialogOpen}
-        exam={exam}
-        onConfirm={handleCloseRegistration}
-        loading={closing}
-      />
-
-      {/* Import Candidates Dialog */}
-      {exam && (
-        <ImportCandidatesDialog
-          examId={exam.id}
-          examLabel={exam.year && exam.exam_series ? `${exam.year} ${exam.exam_series}` : undefined}
-          open={importDialogOpen}
-          onOpenChange={setImportDialogOpen}
-          onSuccess={reloadData}
-        />
-      )}
-
-      {/* Timetable Management */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Examination Timetable</CardTitle>
-              <CardDescription>Manage examination schedules with dates, times, and papers</CardDescription>
-            </div>
+      {/* Timetable */}
+      <div className="rounded-lg border border-border bg-card p-5 md:p-6">
+        <SectionLabel
+          action={
             <div className="flex gap-2">
               <Button
+                size="sm"
                 onClick={() => setCreateScheduleDialogOpen(true)}
                 disabled={loadingSchedules}
               >
@@ -653,6 +618,7 @@ export default function ExamDetailPage() {
               </Button>
               <Button
                 variant="outline"
+                size="sm"
                 onClick={() => setUploadSchedulesDialogOpen(true)}
                 disabled={loadingSchedules}
               >
@@ -660,30 +626,66 @@ export default function ExamDetailPage() {
                 Bulk Upload
               </Button>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <ExaminationScheduleTable
-            schedules={schedules}
-            loading={loadingSchedules}
-            onEdit={(schedule) => {
-              setEditingSchedule(schedule);
-              setEditScheduleDialogOpen(true);
-            }}
-            onDelete={async (scheduleId) => {
-              if (!exam?.id) return;
-              try {
-                await deleteExaminationSchedule(exam.id, scheduleId);
-                toast.success("Schedule deleted successfully");
-                await reloadData();
-              } catch (error) {
-                toast.error(error instanceof Error ? error.message : "Failed to delete schedule");
-                throw error;
-              }
-            }}
-          />
-        </CardContent>
-      </Card>
+          }
+        >
+          Examination timetable
+        </SectionLabel>
+        <ExaminationScheduleTable
+          schedules={schedules}
+          loading={loadingSchedules}
+          onEdit={(schedule) => {
+            setEditingSchedule(schedule);
+            setEditScheduleDialogOpen(true);
+          }}
+          onDelete={async (scheduleId) => {
+            if (!exam?.id) return;
+            try {
+              await deleteExaminationSchedule(exam.id, scheduleId);
+              toast.success("Schedule deleted successfully");
+              await reloadData();
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : "Failed to delete schedule");
+              throw error;
+            }
+          }}
+        />
+      </div>
+
+      {exam ? (
+        <UpdateRegistrationPeriodDialog
+          open={updateDialogOpen}
+          onOpenChange={setUpdateDialogOpen}
+          exam={exam}
+          onSuccess={handleUpdateSuccess}
+        />
+      ) : null}
+
+      <CloseRegistrationDialog
+        open={closeDialogOpen}
+        onOpenChange={setCloseDialogOpen}
+        exam={exam}
+        onConfirm={handleCloseRegistration}
+        loading={closing}
+      />
+
+      {exam ? (
+        <ImportCandidatesDialog
+          examId={exam.id}
+          examLabel={exam.year && exam.exam_series ? `${exam.year} ${exam.exam_series}` : undefined}
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          onSuccess={reloadData}
+        />
+      ) : null}
+
+      <ManageEligibleSchoolsDialog
+        open={eligibleSchoolsDialogOpen}
+        onOpenChange={setEligibleSchoolsDialogOpen}
+        examId={exam.id}
+        onSaved={(count) => {
+          setExam((prev) => (prev ? { ...prev, eligible_school_count: count } : prev));
+        }}
+      />
 
       {/* Generate Index Numbers Dialog */}
       <GenerateIndexNumbersDialog

@@ -94,19 +94,20 @@ export function ProgrammesTable({
               <TableHead>
                 <SortButton field="name">Name</SortButton>
               </TableHead>
+              <TableHead>Programme type</TableHead>
               <TableHead>Created At</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={3} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : data.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                   No programmes found
                 </TableCell>
               </TableRow>
@@ -119,6 +120,11 @@ export function ProgrammesTable({
                 >
                   <TableCell className="font-medium font-mono">{programme.code}</TableCell>
                   <TableCell>{programme.name}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {programme.programme_type_path ||
+                      programme.programme_type_name ||
+                      "—"}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(programme.created_at).toLocaleDateString()}
                   </TableCell>
