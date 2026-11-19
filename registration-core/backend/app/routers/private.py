@@ -81,17 +81,26 @@ async def list_examination_centers(
 
 
 @router.get("/programmes", response_model=list[dict])
-async def list_programmes(session: DBSessionDep) -> list[dict]:
-    """List all available programmes for private candidate registration."""
-    stmt = select(Programme).order_by(Programme.code)
-    result = await session.execute(stmt)
-    programmes = result.scalars().all()
+async def list_programmes(
+    session: DBSessionDep,
+    exam_id: int | None = Query(None, description="When set, only programmes enabled for this exam"),
+) -> list[dict]:
+    """List programmes for private candidate registration (scoped to exam when provided)."""
+    if exam_id is not None:
+        from app.services.programme_type_service import list_programmes_for_exam
+
+        programmes = await list_programmes_for_exam(session, exam_id=exam_id)
+    else:
+        stmt = select(Programme).order_by(Programme.code)
+        result = await session.execute(stmt)
+        programmes = result.scalars().all()
 
     return [
         {
             "id": programme.id,
             "code": programme.code,
             "name": programme.name,
+            "programme_type_id": programme.programme_type_id,
         }
         for programme in programmes
     ]
@@ -315,6 +324,15 @@ async def register_self(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Programme selection is required for NOV/DEC exams",
         )
+
+    if programme_id:
+        from app.services.programme_type_service import is_programme_enabled_for_exam
+
+        if not await is_programme_enabled_for_exam(session, exam_id, programme_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Programme is not enabled for this examination",
+            )
 
     # Required fields validation for private registration
     if not candidate_data.date_of_birth:

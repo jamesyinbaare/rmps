@@ -22,8 +22,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 export default function PublicResultsPage() {
   const router = useRouter();
   const currentYear = new Date().getFullYear();
-  const examTypes = ["Certificate II Examination", "CBT"];
-  const examSeriesOptions = ["MAY/JUNE", "NOV/DEC"];
+  const examTypes = ["Certificate II", "Traditional", "CBT"];
+  const examSeriesOptions = ["MAY/JUNE", "NOV/DEC", "MAIN"];
 
   const [indexNumber, setIndexNumber] = useState("");
   const [examType, setExamType] = useState(examTypes[0]);

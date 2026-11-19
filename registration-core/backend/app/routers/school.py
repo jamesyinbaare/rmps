@@ -25,6 +25,7 @@ from app.models import (
     Role,
     RegistrationExam,
     ExamRegistrationPeriod,
+    ExamEligibleSchool,
     RegistrationCandidate,
     RegistrationStatus,
     RegistrationType,
@@ -37,6 +38,11 @@ from app.models import (
     PhotoValidationJobStatus,
     school_programmes,
     programme_subjects,
+)
+from app.services.exam_eligibility_service import is_school_eligible_for_exam
+from app.services.late_registration_service import (
+    exam_ids_with_active_late_window_for_school,
+    is_registration_open_for_school,
 )
 from app.schemas.registration import (
     RegistrationCandidateCreate,
@@ -117,23 +123,51 @@ async def count_active_school_users(session: DBSessionDep, school_id: int) -> in
 async def list_available_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
-    """List available exams with open registration periods."""
+    """List exams open for this school (main period or late window), with eligibility + bulk flag."""
     now = datetime.utcnow()
+    school_id = current_user.school_id
 
-    stmt = (
+    main_open_stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
             ExamRegistrationPeriod.is_active.is_(True),
             ExamRegistrationPeriod.allows_bulk_registration.is_(True),
             ExamRegistrationPeriod.registration_start_date <= now,
             ExamRegistrationPeriod.registration_end_date >= now,
+            ExamEligibleSchool.school_id == school_id,
         )
         .options(selectinload(RegistrationExam.registration_period))
     )
-    result = await session.execute(stmt)
-    exams = result.scalars().all()
+    main_exams = list((await session.execute(main_open_stmt)).scalars().unique().all())
+    by_id = {exam.id: exam for exam in main_exams}
 
+    late_exam_ids = await exam_ids_with_active_late_window_for_school(session, school_id, now)
+    missing_ids = [eid for eid in late_exam_ids if eid not in by_id]
+    if missing_ids:
+        late_stmt = (
+            select(RegistrationExam)
+            .join(
+                ExamRegistrationPeriod,
+                RegistrationExam.registration_period_id == ExamRegistrationPeriod.id,
+            )
+            .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
+            .where(
+                RegistrationExam.id.in_(missing_ids),
+                ExamRegistrationPeriod.allows_bulk_registration.is_(True),
+                ExamEligibleSchool.school_id == school_id,
+            )
+            .options(selectinload(RegistrationExam.registration_period))
+        )
+        for exam in (await session.execute(late_stmt)).scalars().unique().all():
+            by_id[exam.id] = exam
+
+    exams = sorted(
+        by_id.values(),
+        key=lambda e: (e.year, e.exam_type or "", e.exam_series or ""),
+        reverse=True,
+    )
     return [RegistrationExamResponse.model_validate(exam) for exam in exams]
 
 
@@ -141,18 +175,20 @@ async def list_available_exams(
 async def list_all_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
-    """List all exams that allow bulk registration (both open and closed) for viewing candidates."""
+    """List eligible exams that allow bulk registration (open and closed) for this school."""
     stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
             ExamRegistrationPeriod.allows_bulk_registration.is_(True),
+            ExamEligibleSchool.school_id == current_user.school_id,
         )
         .options(selectinload(RegistrationExam.registration_period))
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
     )
     result = await session.execute(stmt)
-    exams = result.scalars().all()
+    exams = result.scalars().unique().all()
 
     return [RegistrationExamResponse.model_validate(exam) for exam in exams]
 
@@ -358,12 +394,13 @@ async def register_candidate(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    now = datetime.utcnow()
-    if (
-        not exam.registration_period.is_active
-        or exam.registration_period.registration_start_date > now
-        or exam.registration_period.registration_end_date < now
-    ):
+    if not await is_school_eligible_for_exam(session, exam_id, current_user.school_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your school is not eligible to register candidates for this examination",
+        )
+
+    if not await is_registration_open_for_school(session, exam, current_user.school_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
     # For NOV/DEC school registrations, registration_type is required and must be "referral"
@@ -412,6 +449,14 @@ async def register_candidate(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Programme is not available for your school. Please contact your administrator.",
                 )
+
+        from app.services.programme_type_service import is_programme_enabled_for_exam
+
+        if not await is_programme_enabled_for_exam(session, exam.id, programme_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Programme is not enabled for this examination",
+            )
 
     # Determine registration_type
     # For NOV/DEC: must be referral (already validated and set above)
@@ -611,12 +656,8 @@ async def update_candidate(
                 detail="Cannot update subject selections: exam or registration period not found",
             )
 
-        now = datetime.utcnow()
-        registration_period = candidate.exam.registration_period
-        if (
-            not registration_period.is_active
-            or registration_period.registration_start_date > now
-            or registration_period.registration_end_date < now
+        if not await is_registration_open_for_school(
+            session, candidate.exam, current_user.school_id
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -930,12 +971,13 @@ async def bulk_upload_candidates(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    now = datetime.utcnow()
-    if (
-        not exam.registration_period.is_active
-        or exam.registration_period.registration_start_date > now
-        or exam.registration_period.registration_end_date < now
-    ):
+    if not await is_school_eligible_for_exam(session, exam_id, current_user.school_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your school is not eligible to register candidates for this examination",
+        )
+
+    if not await is_registration_open_for_school(session, exam, current_user.school_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
     if not exam.registration_period.allows_bulk_registration:
@@ -1827,18 +1869,28 @@ async def list_available_programmes(
 
 @router.get("/programmes", response_model=list[ProgrammeResponse])
 async def list_school_programmes(
-    session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    exam_id: int | None = Query(None, description="When set, only programmes enabled for this exam"),
 ) -> list[ProgrammeResponse]:
-    """List programmes available to the school (filtered by school's programmes)."""
+    """List programmes available to the school (optionally filtered by exam enablement)."""
     if current_user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User must be associated with a school",
         )
 
-    # Get programmes for this school
+    if exam_id is not None:
+        from app.services.programme_type_service import list_programmes_for_exam
+
+        programmes = await list_programmes_for_exam(
+            session, exam_id=exam_id, school_id=current_user.school_id
+        )
+        return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+
     programme_stmt = (
         select(Programme)
+        .options(selectinload(Programme.programme_type))
         .join(school_programmes, Programme.id == school_programmes.c.programme_id)
         .where(school_programmes.c.school_id == current_user.school_id)
         .order_by(Programme.code)

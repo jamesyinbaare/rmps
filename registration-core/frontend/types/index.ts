@@ -190,6 +190,12 @@ export interface RegistrationExam {
   exam_id_main_system: number | null;
   exam_type: string;
   exam_series: string | null;
+  programme_type_id?: number | null;
+  exam_series_id?: number | null;
+  programme_type_name?: string | null;
+  exam_series_short_name?: string | null;
+  exam_series_long_name?: string | null;
+  enabled_programme_type_ids?: number[];
   year: number;
   description: string | null;
   registration_period: ExamRegistrationPeriod;
@@ -200,8 +206,37 @@ export interface RegistrationExam {
   has_index_numbers: boolean;
   candidate_count?: number | null;
   approved_candidates?: number | null;
+  eligible_school_count?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LateRegistrationWindowSchool {
+  school_id: number;
+  school_code: string;
+  school_name: string;
+}
+
+export interface LateRegistrationWindow {
+  id: number;
+  exam_id: number;
+  starts_at: string;
+  ends_at: string;
+  is_active: boolean;
+  note: string | null;
+  applies_to_all_eligible: boolean;
+  schools: LateRegistrationWindowSchool[];
+  school_count: number;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LateRegistrationWindowCreate {
+  starts_at: string;
+  ends_at: string;
+  school_ids?: number[] | null;
+  note?: string | null;
 }
 
 export interface ExamStatistics {
@@ -218,16 +253,59 @@ export interface ActiveExam extends RegistrationExam {
 
 export interface RegistrationExamCreate {
   exam_id_main_system?: number | null;
-  exam_type: string;
-  exam_series?: string | null;
+  programme_type_id: number;
+  exam_series_id: number;
+  enabled_programme_type_ids?: number[];
   year: number;
   description?: string | null;
+  /** @deprecated Prefer programme_type_id */
+  exam_type?: string;
+  /** @deprecated Prefer exam_series_id */
+  exam_series?: string | null;
   registration_period: {
     registration_start_date: string;
     registration_end_date: string;
     allows_bulk_registration?: boolean;
     allows_private_registration?: boolean;
   };
+}
+
+export interface RegistrationExamUpdate {
+  exam_id_main_system?: number | null;
+  programme_type_id?: number;
+  exam_series_id?: number;
+  enabled_programme_type_ids?: number[];
+  year?: number;
+  description?: string | null;
+  exam_type?: string;
+  exam_series?: string | null;
+  pricing_model_preference?: string | null;
+}
+
+export interface ProgrammeType {
+  id: number;
+  code: string;
+  name: string;
+  parent_id: number | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProgrammeTypeTreeNode extends ProgrammeType {
+  children: ProgrammeTypeTreeNode[];
+  path?: string | null;
+}
+
+export interface ExamSeriesDefinition {
+  id: number;
+  short_name: string;
+  long_name: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SchoolAdminCreate {
@@ -297,6 +375,9 @@ export interface Programme {
   id: number;
   code: string;
   name: string;
+  programme_type_id?: number | null;
+  programme_type_name?: string | null;
+  programme_type_path?: string | null;
   created_at: string;
   updated_at: string;
 }

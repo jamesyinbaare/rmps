@@ -29,6 +29,7 @@ interface PrivateSubjectSelectionProps {
   selectedSubjectIds: number[];
   onSubjectIdsChange: (subjectIds: number[]) => void;
   examSeries?: string;
+  examId?: number | null;
 }
 
 function normalizeExamSeries(examSeries: string | undefined): "NOV/DEC" | "MAY/JUNE" | null {
@@ -49,6 +50,7 @@ export function PrivateSubjectSelection({
   selectedSubjectIds,
   onSubjectIdsChange,
   examSeries,
+  examId,
 }: PrivateSubjectSelectionProps) {
   const normalizedSeries = normalizeExamSeries(examSeries);
   const isNovDec = normalizedSeries === "NOV/DEC";
@@ -70,10 +72,10 @@ export function PrivateSubjectSelection({
   // Track previous programme ID to detect changes
   const prevProgrammeIdRef = useRef<number | null>(programmeId);
 
-  // Load programmes on mount
+  // Load programmes for the selected exam
   useEffect(() => {
     loadProgrammes();
-  }, []);
+  }, [examId]);
 
   // Clear subjects when programme changes
   useEffect(() => {
@@ -105,8 +107,11 @@ export function PrivateSubjectSelection({
   const loadProgrammes = async () => {
     setLoadingProgrammes(true);
     try {
-      const programmesData = await listProgrammesForPrivate();
+      const programmesData = await listProgrammesForPrivate(examId ?? undefined);
       setProgrammes(programmesData);
+      if (programmeId && !programmesData.some((p) => p.id === programmeId)) {
+        onProgrammeChange(null);
+      }
     } catch (error) {
       toast.error("Failed to load programmes");
       console.error(error);

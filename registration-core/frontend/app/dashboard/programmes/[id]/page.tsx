@@ -11,8 +11,16 @@ import {
   updateProgrammeSubject,
   removeSubjectFromProgramme,
   listAllSubjects,
+  getProgrammeTypeTree,
 } from "@/lib/api";
-import type { Programme, ProgrammeSubjectRequirements, User, Subject, ProgrammeSubjectResponse } from "@/types";
+import type {
+  Programme,
+  ProgrammeSubjectRequirements,
+  User,
+  Subject,
+  ProgrammeSubjectResponse,
+  ProgrammeTypeTreeNode,
+} from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,7 +66,12 @@ export default function ProgrammeDetailPage() {
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editFormData, setEditFormData] = useState({ code: "", name: "" });
+  const [editFormData, setEditFormData] = useState({
+    code: "",
+    name: "",
+    programme_type_id: "" as string,
+  });
+  const [typeOptions, setTypeOptions] = useState<{ id: number; path: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [manageSubjectsDialogOpen, setManageSubjectsDialogOpen] = useState(false);
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
@@ -93,7 +106,24 @@ export default function ProgrammeDetailPage() {
         setEditFormData({
           code: programmeData.code,
           name: programmeData.name,
+          programme_type_id: programmeData.programme_type_id
+            ? String(programmeData.programme_type_id)
+            : "",
         });
+        try {
+          const tree = await getProgrammeTypeTree(true);
+          const flat: { id: number; path: string }[] = [];
+          const walk = (nodes: ProgrammeTypeTreeNode[]) => {
+            for (const n of nodes) {
+              flat.push({ id: n.id, path: n.path || n.name });
+              if (n.children?.length) walk(n.children);
+            }
+          };
+          walk(tree);
+          setTypeOptions(flat);
+        } catch {
+          /* optional */
+        }
 
         // Load subjects
         setSubjectsLoading(true);
@@ -121,7 +151,13 @@ export default function ProgrammeDetailPage() {
 
     setSaving(true);
     try {
-      const updated = await updateProgramme(programmeId, editFormData);
+      const updated = await updateProgramme(programmeId, {
+        code: editFormData.code,
+        name: editFormData.name,
+        programme_type_id: editFormData.programme_type_id
+          ? parseInt(editFormData.programme_type_id, 10)
+          : undefined,
+      });
       setProgramme(updated);
       setEditDialogOpen(false);
       toast.success("Programme updated successfully");
@@ -317,6 +353,14 @@ export default function ProgrammeDetailPage() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Name:</span>
               <span className="text-sm font-medium">{programme.name}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Programme type:</span>
+              <span className="text-sm font-medium">
+                {programme.programme_type_path ||
+                  programme.programme_type_name ||
+                  "—"}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
@@ -551,6 +595,27 @@ export default function ProgrammeDetailPage() {
                 onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
                 disabled={saving}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Programme type</Label>
+              <Select
+                value={editFormData.programme_type_id}
+                onValueChange={(value) =>
+                  setEditFormData({ ...editFormData, programme_type_id: value })
+                }
+                disabled={saving}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select programme type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {typeOptions.map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {o.path}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>

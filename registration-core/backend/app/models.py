@@ -69,6 +69,8 @@ class SubjectType(enum.Enum):
 
 
 class ExamType(enum.Enum):
+    """Legacy exam type labels. Prefer ProgrammeType taxonomy for new code."""
+
     CERTIFICATE_II = "Certificate II Examinations"
     ADVANCE = "Advance"
     TECHNICIAN_PART_I = "Technician Part I"
@@ -77,6 +79,8 @@ class ExamType(enum.Enum):
 
 
 class ExamSeries(enum.Enum):
+    """Legacy series labels. Prefer ExamSeriesDefinition catalog for new code."""
+
     MAY_JUNE = "MAY/JUNE"
     NOV_DEC = "NOV/DEC"
 
@@ -338,6 +342,128 @@ class School(Base):
     candidates = relationship("RegistrationCandidate", back_populates="school")
     programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
     result_blocks = relationship("ResultBlock", back_populates="school", cascade="all, delete-orphan")
+    exam_eligibilities = relationship("ExamEligibleSchool", back_populates="school", cascade="all, delete-orphan")
+
+
+class ProgrammeType(Base):
+    """Hierarchical programme type taxonomy (e.g. Traditional → Technicians → Part I)."""
+
+    __tablename__ = "programme_types"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(50), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    parent_id = Column(Integer, ForeignKey("programme_types.id", ondelete="CASCADE"), nullable=True, index=True)
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    parent = relationship("ProgrammeType", remote_side=[id], back_populates="children")
+    children = relationship("ProgrammeType", back_populates="parent", cascade="all, delete-orphan")
+    programmes = relationship("Programme", back_populates="programme_type")
+    exams = relationship("RegistrationExam", back_populates="programme_type")
+    exam_enablements = relationship("ExamEnabledProgrammeType", back_populates="programme_type", cascade="all, delete-orphan")
+
+
+class ExamSeriesDefinition(Base):
+    """Configurable examination series / sitting catalog."""
+
+    __tablename__ = "exam_series"
+
+    id = Column(Integer, primary_key=True)
+    short_name = Column(String(50), unique=True, nullable=False, index=True)
+    long_name = Column(String(255), nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exams = relationship("RegistrationExam", back_populates="series_definition")
+
+
+class ExamEnabledProgrammeType(Base):
+    """Per-exam on/off toggle for a programme type node."""
+
+    __tablename__ = "exam_enabled_programme_types"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    programme_type_id = Column(
+        Integer, ForeignKey("programme_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="enabled_programme_types")
+    programme_type = relationship("ProgrammeType", back_populates="exam_enablements")
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "programme_type_id", name="uq_exam_enabled_programme_type"),
+    )
+
+
+class ExamEligibleSchool(Base):
+    """Strict opt-in allow-list of schools eligible to register for an exam."""
+
+    __tablename__ = "exam_eligible_schools"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="eligible_schools")
+    school = relationship("School", back_populates="exam_eligibilities")
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "school_id", name="uq_exam_eligible_school"),
+    )
+
+
+class ExamLateRegistrationWindow(Base):
+    """Late registration window after the main period ends (does not mutate main end date)."""
+
+    __tablename__ = "exam_late_registration_windows"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    starts_at = Column(DateTime, nullable=False)
+    ends_at = Column(DateTime, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    note = Column(Text, nullable=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="late_registration_windows")
+    schools = relationship(
+        "ExamLateRegistrationWindowSchool",
+        back_populates="window",
+        cascade="all, delete-orphan",
+    )
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+
+class ExamLateRegistrationWindowSchool(Base):
+    """School scoped to a late window. Empty set on a window means all eligible schools."""
+
+    __tablename__ = "exam_late_registration_window_schools"
+
+    id = Column(Integer, primary_key=True)
+    window_id = Column(
+        Integer, ForeignKey("exam_late_registration_windows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    window = relationship("ExamLateRegistrationWindow", back_populates="schools")
+    school = relationship("School")
+
+    __table_args__ = (
+        UniqueConstraint("window_id", "school_id", name="uq_late_window_school"),
+    )
 
 
 class RegistrationExam(Base):
@@ -345,9 +471,16 @@ class RegistrationExam(Base):
 
     id = Column(Integer, primary_key=True)
     exam_id_main_system = Column(Integer, nullable=True, index=True)  # Reference to main system exam ID
+    # Denormalized display/compat fields (kept in sync from programme_type + series)
     exam_type = Column(String(50), nullable=False)
-    exam_series = Column(String(20), nullable=True)
+    exam_series = Column(String(50), nullable=True)
     year = Column(Integer, nullable=False)
+    programme_type_id = Column(
+        Integer, ForeignKey("programme_types.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    exam_series_id = Column(
+        Integer, ForeignKey("exam_series.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     description = Column(Text, nullable=True)
     registration_period_id = Column(Integer, ForeignKey("exam_registration_periods.id", ondelete="CASCADE"), nullable=False, index=True)
     results_published = Column(Boolean, default=False, nullable=False, index=True)
@@ -358,6 +491,17 @@ class RegistrationExam(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     registration_period = relationship("ExamRegistrationPeriod", back_populates="exam")
+    programme_type = relationship("ProgrammeType", back_populates="exams")
+    series_definition = relationship("ExamSeriesDefinition", back_populates="exams")
+    enabled_programme_types = relationship(
+        "ExamEnabledProgrammeType", back_populates="exam", cascade="all, delete-orphan"
+    )
+    eligible_schools = relationship(
+        "ExamEligibleSchool", back_populates="exam", cascade="all, delete-orphan"
+    )
+    late_registration_windows = relationship(
+        "ExamLateRegistrationWindow", back_populates="exam", cascade="all, delete-orphan"
+    )
     candidates = relationship("RegistrationCandidate", back_populates="exam")
     schedules = relationship("ExaminationSchedule", back_populates="exam", cascade="all, delete-orphan")
     exports = relationship("RegistrationExport", back_populates="exam")
@@ -365,6 +509,12 @@ class RegistrationExam(Base):
     result_blocks = relationship("ResultBlock", back_populates="exam", cascade="all, delete-orphan")
     index_number_generation_jobs = relationship("IndexNumberGenerationJob", back_populates="exam", cascade="all, delete-orphan")
     results_published_by = relationship("PortalUser", foreign_keys=[results_published_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "programme_type_id", "exam_series_id", "year", name="uq_exam_programme_type_series_year"
+        ),
+    )
 
 
 class ExamRegistrationPeriod(Base):
@@ -518,9 +668,13 @@ class Programme(Base):
     id = Column(Integer, primary_key=True)
     code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    programme_type_id = Column(
+        Integer, ForeignKey("programme_types.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+    programme_type = relationship("ProgrammeType", back_populates="programmes")
     # Many-to-many relationship with Subject
     subjects = relationship("Subject", secondary="programme_subjects", back_populates="programmes")
     # Many-to-many relationship with School

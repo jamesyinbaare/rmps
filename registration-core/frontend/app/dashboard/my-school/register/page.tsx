@@ -192,6 +192,7 @@ export default function RegistrationPage() {
   useEffect(() => {
     if (selectedExamId) {
       const exam = exams.find((e) => e.id.toString() === selectedExamId);
+      loadProgrammes(parseInt(selectedExamId, 10));
       setSelectedExam(exam || null);
       loadCandidatesForExam(parseInt(selectedExamId));
 
@@ -282,10 +283,10 @@ export default function RegistrationPage() {
     }
   };
 
-  const loadProgrammes = async () => {
+  const loadProgrammes = async (examId?: number) => {
     setLoadingProgrammes(true);
     try {
-      const programmesData = await listSchoolProgrammes();
+      const programmesData = await listSchoolProgrammes(examId);
       setProgrammes(programmesData);
     } catch (error) {
       console.error("Failed to load programmes:", error);
@@ -854,7 +855,11 @@ export default function RegistrationPage() {
                   ) : (
                     exams.map((exam) => (
                       <SelectItem key={exam.id} value={exam.id.toString()}>
-                        {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
+                        {exam.programme_type_name || exam.exam_type}
+                        {exam.exam_series_short_name || exam.exam_series
+                          ? ` ${exam.exam_series_short_name || exam.exam_series}`
+                          : ""}{" "}
+                        {exam.year}
                         {exam.registration_period && (
                           <span className="text-xs text-muted-foreground ml-2">
                             ({new Date(exam.registration_period.registration_start_date).toLocaleDateString()} -{" "}

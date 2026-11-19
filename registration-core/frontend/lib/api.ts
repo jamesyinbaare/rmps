@@ -12,6 +12,12 @@ import type {
   RegistrationCandidateCreate,
   RegistrationExam,
   RegistrationExamCreate,
+  RegistrationExamUpdate,
+  LateRegistrationWindow,
+  LateRegistrationWindowCreate,
+  ProgrammeType,
+  ProgrammeTypeTreeNode,
+  ExamSeriesDefinition,
   ExamStatistics,
   SchoolAdminCreate,
   AdminUserCreate,
@@ -546,10 +552,16 @@ export interface ProgrammeListItem {
   id: number;
   code: string;
   name: string;
+  programme_type_id?: number | null;
 }
 
-export async function listProgrammesForPrivate(): Promise<ProgrammeListItem[]> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/private/programmes`);
+export async function listProgrammesForPrivate(examId?: number): Promise<ProgrammeListItem[]> {
+  const params = new URLSearchParams();
+  if (examId != null) params.append("exam_id", examId.toString());
+  const qs = params.toString();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/private/programmes${qs ? `?${qs}` : ""}`
+  );
   return handleResponse<ProgrammeListItem[]>(response);
 }
 
@@ -1024,6 +1036,53 @@ export async function getExamSchools(examId: number): Promise<ExamSchool[]> {
   return handleResponse<ExamSchool[]>(response);
 }
 
+export async function getExamEligibleSchools(examId: number): Promise<School[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/eligible-schools`);
+  return handleResponse<School[]>(response);
+}
+
+export async function setExamEligibleSchools(
+  examId: number,
+  schoolIds: number[]
+): Promise<School[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/eligible-schools`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ school_ids: schoolIds }),
+  });
+  return handleResponse<School[]>(response);
+}
+
+export async function listLateRegistrationWindows(
+  examId: number
+): Promise<LateRegistrationWindow[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/late-windows`);
+  return handleResponse<LateRegistrationWindow[]>(response);
+}
+
+export async function createLateRegistrationWindow(
+  examId: number,
+  data: LateRegistrationWindowCreate
+): Promise<LateRegistrationWindow> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/late-windows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<LateRegistrationWindow>(response);
+}
+
+export async function revokeLateRegistrationWindow(
+  examId: number,
+  windowId: number
+): Promise<LateRegistrationWindow> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/exams/${examId}/late-windows/${windowId}/revoke`,
+    { method: "POST" }
+  );
+  return handleResponse<LateRegistrationWindow>(response);
+}
+
 export async function getExamProgrammes(examId: number): Promise<ProgrammeSummary[]> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/programmes`);
   return handleResponse<ProgrammeSummary[]>(response);
@@ -1031,14 +1090,7 @@ export async function getExamProgrammes(examId: number): Promise<ProgrammeSummar
 
 export async function updateExam(
   id: number,
-  data: {
-    exam_id_main_system?: number | null;
-    exam_type?: string;
-    exam_series?: string;
-    year?: number;
-    description?: string | null;
-    pricing_model_preference?: string | null;
-  }
+  data: RegistrationExamUpdate
 ): Promise<RegistrationExam> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${id}`, {
     method: "PUT",
@@ -1046,6 +1098,98 @@ export async function updateExam(
     body: JSON.stringify(data),
   });
   return handleResponse<RegistrationExam>(response);
+}
+
+export async function listProgrammeTypes(activeOnly = false): Promise<ProgrammeType[]> {
+  const params = new URLSearchParams();
+  if (activeOnly) params.append("active_only", "true");
+  const qs = params.toString();
+  const response = await fetchWithAuth(`/api/v1/admin/programme-types${qs ? `?${qs}` : ""}`);
+  return handleResponse<ProgrammeType[]>(response);
+}
+
+export async function listRootProgrammeTypes(): Promise<ProgrammeType[]> {
+  const response = await fetchWithAuth("/api/v1/admin/programme-types/roots?active_only=true");
+  return handleResponse<ProgrammeType[]>(response);
+}
+
+export async function getProgrammeTypeTree(activeOnly = true): Promise<ProgrammeTypeTreeNode[]> {
+  const params = new URLSearchParams();
+  if (activeOnly) params.append("active_only", "true");
+  const qs = params.toString();
+  const response = await fetchWithAuth(`/api/v1/admin/programme-types/tree${qs ? `?${qs}` : ""}`);
+  return handleResponse<ProgrammeTypeTreeNode[]>(response);
+}
+
+export async function createProgrammeType(data: {
+  code: string;
+  name: string;
+  parent_id?: number | null;
+  sort_order?: number;
+  is_active?: boolean;
+}): Promise<ProgrammeType> {
+  const response = await fetchWithAuth("/api/v1/admin/programme-types", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ProgrammeType>(response);
+}
+
+export async function updateProgrammeType(
+  id: number,
+  data: Partial<{ code: string; name: string; parent_id: number | null; sort_order: number; is_active: boolean }>
+): Promise<ProgrammeType> {
+  const response = await fetchWithAuth(`/api/v1/admin/programme-types/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ProgrammeType>(response);
+}
+
+export async function deleteProgrammeType(id: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/programme-types/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) await handleResponse(response);
+}
+
+export async function listExamSeriesDefinitions(activeOnly = false): Promise<ExamSeriesDefinition[]> {
+  const params = new URLSearchParams();
+  if (activeOnly) params.append("active_only", "true");
+  const qs = params.toString();
+  const response = await fetchWithAuth(`/api/v1/admin/exam-series${qs ? `?${qs}` : ""}`);
+  return handleResponse<ExamSeriesDefinition[]>(response);
+}
+
+export async function createExamSeriesDefinition(data: {
+  short_name: string;
+  long_name: string;
+  sort_order?: number;
+  is_active?: boolean;
+}): Promise<ExamSeriesDefinition> {
+  const response = await fetchWithAuth("/api/v1/admin/exam-series", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExamSeriesDefinition>(response);
+}
+
+export async function updateExamSeriesDefinition(
+  id: number,
+  data: Partial<{ short_name: string; long_name: string; sort_order: number; is_active: boolean }>
+): Promise<ExamSeriesDefinition> {
+  const response = await fetchWithAuth(`/api/v1/admin/exam-series/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExamSeriesDefinition>(response);
+}
+
+export async function deleteExamSeriesDefinition(id: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exam-series/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) await handleResponse(response);
 }
 
 export async function deleteExam(id: number): Promise<void> {
@@ -1943,8 +2087,11 @@ export async function downloadRegistrationDetailed(examId: number, programmeId?:
 }
 
 // School API - Programme Management
-export async function listSchoolProgrammes(): Promise<Programme[]> {
-  const response = await fetchWithAuth("/api/v1/school/programmes");
+export async function listSchoolProgrammes(examId?: number): Promise<Programme[]> {
+  const params = new URLSearchParams();
+  if (examId != null) params.append("exam_id", examId.toString());
+  const qs = params.toString();
+  const response = await fetchWithAuth(`/api/v1/school/programmes${qs ? `?${qs}` : ""}`);
   return handleResponse<Programme[]>(response);
 }
 
@@ -2054,7 +2201,11 @@ export async function listProgrammes(page: number = 1, pageSize: number = 20): P
   return handleResponse<ProgrammeListResponse>(response);
 }
 
-export async function createProgramme(data: { code: string; name: string }): Promise<Programme> {
+export async function createProgramme(data: {
+  code: string;
+  name: string;
+  programme_type_id: number;
+}): Promise<Programme> {
   const response = await fetchWithAuth("/api/v1/admin/programmes", {
     method: "POST",
     body: JSON.stringify(data),
@@ -2062,7 +2213,10 @@ export async function createProgramme(data: { code: string; name: string }): Pro
   return handleResponse<Programme>(response);
 }
 
-export async function updateProgramme(programmeId: number, data: { code?: string; name?: string }): Promise<Programme> {
+export async function updateProgramme(
+  programmeId: number,
+  data: { code?: string; name?: string; programme_type_id?: number }
+): Promise<Programme> {
   const response = await fetchWithAuth(`/api/v1/admin/programmes/${programmeId}`, {
     method: "PUT",
     body: JSON.stringify(data),

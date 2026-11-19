@@ -6,7 +6,6 @@ import {
   BookOpen,
   Images,
   Award,
-  BookMarked,
   Shield,
   Settings,
   HelpCircle,
@@ -41,14 +40,6 @@ export const systemAdminMenuItems: MenuItem[] = [
     label: "Examinations",
     icon: GraduationCap,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-    items: [
-      {
-        href: "/dashboard/exams",
-        label: "Exams",
-        icon: GraduationCap,
-        roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-      },
-    ],
   },
   {
     href: "/dashboard/reports",
@@ -82,12 +73,6 @@ export const systemAdminMoreActions: MenuItem[] = [
     href: "/dashboard/admin/programmes",
     label: "Programmes",
     icon: BookOpen,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/subjects",
-    label: "Subjects",
-    icon: BookMarked,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {

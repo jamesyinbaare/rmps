@@ -5,44 +5,48 @@ from typing import Optional
 # Exam type aliases mapping to canonical names
 EXAM_TYPE_ALIASES: dict[str, str] = {
     # Short aliases (primary)
-    "cert2": "Certificate II Examinations",
-    "cert_ii": "Certificate II Examinations",
-    "certificate_ii": "Certificate II Examinations",
-    "advance": "Advance",
-    "tech1": "Technician Part I",
-    "tech_i": "Technician Part I",
-    "technician_i": "Technician Part I",
-    "tech2": "Technician Part II",
-    "tech_ii": "Technician Part II",
-    "technician_ii": "Technician Part II",
-    "tech3": "Technician Part III",
-    "tech_iii": "Technician Part III",
-    "technician_iii": "Technician Part III",
-    "diploma": "Diploma",
+    "cert2": "Certificate II",
+    "cert_ii": "Certificate II",
+    "certificate_ii": "Certificate II",
+    "traditional": "Traditional",
+    "advance": "Traditional",
+    "tech1": "Traditional",
+    "tech_i": "Traditional",
+    "technician_i": "Traditional",
+    "tech2": "Traditional",
+    "tech_ii": "Traditional",
+    "technician_ii": "Traditional",
+    "tech3": "Traditional",
+    "tech_iii": "Traditional",
+    "technician_iii": "Traditional",
+    "diploma": "Traditional",
+    "dbs": "Traditional",
 
     # Numeric codes (alternative)
-    "1": "Certificate II Examinations",
-    "2": "Advance",
-    "3": "Technician Part I",
-    "4": "Technician Part II",
-    "5": "Technician Part III",
-    "6": "Diploma",
+    "1": "Certificate II",
+    "2": "Traditional",
+    "3": "Traditional",
+    "4": "Traditional",
+    "5": "Traditional",
+    "6": "Traditional",
 
-    # Canonical names (for backward compatibility - identity mapping)
-    "Certificate II Examinations": "Certificate II Examinations",
-    "Advance": "Advance",
-    "Technician Part I": "Technician Part I",
-    "Technician Part II": "Technician Part II",
-    "Technician Part III": "Technician Part III",
-    "Diploma": "Diploma",
+    # Canonical / display names (identity + legacy)
+    "Certificate II": "Certificate II",
+    "Traditional": "Traditional",
+    "Certificate II Examinations": "Certificate II",
+    "Advance": "Traditional",
+    "Technician Part I": "Traditional",
+    "Technician Part II": "Traditional",
+    "Technician Part III": "Traditional",
+    "Diploma": "Traditional",
 
     # Common variations
-    "Certificate II Examination": "Certificate II Examinations",  # Without 's'
-    "Certificate 2 Examinations": "Certificate II Examinations",
-    "Cert II": "Certificate II Examinations",
-    "Technician Part 1": "Technician Part I",
-    "Technician Part 2": "Technician Part II",
-    "Technician Part 3": "Technician Part III",
+    "Certificate II Examination": "Certificate II",
+    "Certificate 2 Examinations": "Certificate II",
+    "Cert II": "Certificate II",
+    "Technician Part 1": "Traditional",
+    "Technician Part 2": "Traditional",
+    "Technician Part 3": "Traditional",
 }
 
 # Exam series aliases mapping to canonical names
@@ -58,14 +62,17 @@ EXAM_SERIES_ALIASES: dict[str, str] = {
     "novdec": "NOV/DEC",
     "november_december": "NOV/DEC",
     "november-december": "NOV/DEC",
+    "main": "MAIN",
 
     # Numeric codes (alternative)
     "1": "MAY/JUNE",
     "2": "NOV/DEC",
+    "3": "MAIN",
 
     # Canonical names (for backward compatibility - identity mapping)
     "MAY/JUNE": "MAY/JUNE",
     "NOV/DEC": "NOV/DEC",
+    "MAIN": "MAIN",
 
     # Common variations
     "MAY-JUNE": "MAY/JUNE",
@@ -80,6 +87,8 @@ EXAM_SERIES_ALIASES: dict[str, str] = {
     "Nov Dec": "NOV/DEC",
     "November/December": "NOV/DEC",
     "November-December": "NOV/DEC",
+    "Main Sitting": "MAIN",
+    "Main": "MAIN",
 }
 
 

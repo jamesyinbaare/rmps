@@ -15,7 +15,7 @@ class ProgrammeBase(BaseModel):
 class ProgrammeCreate(ProgrammeBase):
     """Schema for creating a programme."""
 
-    pass
+    programme_type_id: int = Field(..., description="Programme type taxonomy node this programme belongs to")
 
 
 class ProgrammeUpdate(BaseModel):
@@ -23,12 +23,16 @@ class ProgrammeUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     code: str | None = Field(None, min_length=1, max_length=50)
+    programme_type_id: int | None = None
 
 
 class ProgrammeResponse(ProgrammeBase):
     """Schema for programme response."""
 
     id: int
+    programme_type_id: int | None = None
+    programme_type_name: str | None = None
+    programme_type_path: str | None = None
     created_at: datetime
     updated_at: datetime
 
