@@ -52,6 +52,13 @@ from app.services.subject_selection import (
     get_programme_subjects_for_registration,
     normalize_exam_series,
 )
+from app.services.exam_kind_service import (
+    assert_private_portal_allowed,
+    is_private_exam,
+    validate_registration_type_for_exam,
+)
+from app.services.exam_response import serialize_exam, exam_load_options
+from app.models import ExamKind
 
 router = APIRouter(prefix="/api/v1/private", tags=["private"])
 
@@ -208,7 +215,7 @@ async def list_subjects(
 async def list_available_exams(
     session: DBSessionDep,
 ) -> list[RegistrationExamResponse]:
-    """List available exams for private registration. Public endpoint for registration flow."""
+    """List available private examinations for individual registration."""
 
     now = datetime.utcnow()
 
@@ -217,16 +224,17 @@ async def list_available_exams(
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .where(
             ExamRegistrationPeriod.is_active == True,
+            RegistrationExam.exam_kind == ExamKind.PRIVATE,
             ExamRegistrationPeriod.allows_private_registration == True,
             ExamRegistrationPeriod.registration_start_date <= now,
             ExamRegistrationPeriod.registration_end_date >= now,
         )
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
     )
     result = await session.execute(stmt)
-    exams = result.scalars().all()
+    exams = result.scalars().unique().all()
 
-    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+    return [serialize_exam(exam) for exam in exams]
 
 
 @router.post("/register", response_model=RegistrationCandidateResponse, status_code=status.HTTP_201_CREATED)
@@ -245,6 +253,7 @@ async def register_self(
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
     )
     exam_result = await session.execute(exam_stmt)
     exam = exam_result.scalar_one_or_none()
@@ -259,6 +268,8 @@ async def register_self(
         or exam.registration_period.registration_end_date < now
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
+
+    assert_private_portal_allowed(exam)
 
     # Check if user already registered for this exam (excluding drafts)
     existing_stmt = select(RegistrationCandidate).where(
@@ -281,13 +292,11 @@ async def register_self(
             detail="Examination center (school_id) is required for private candidate registration",
         )
 
-    # Validate registration_type and guardian requirements for private registration
-    registration_type = candidate_data.registration_type or RegistrationType.PRIVATE.value
-    if registration_type != RegistrationType.PRIVATE.value:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Private registration endpoint only accepts 'private' registration_type",
-        )
+    registration_type = validate_registration_type_for_exam(
+        exam,
+        candidate_data.registration_type or RegistrationType.PRIVATE.value,
+        is_school_registration=False,
+    )
 
     # Generate unique registration number
     registration_number = await generate_unique_registration_number(session, exam_id, candidate_data.school_id, registration_type)
@@ -576,6 +585,8 @@ async def save_draft_registration(
 
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    assert_private_portal_allowed(exam)
 
     # Check if draft already exists
     existing_draft_stmt = (
@@ -954,10 +965,7 @@ async def submit_draft_registration(
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
-    if not exam.registration_period.allows_private_registration:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="This exam does not allow private registration"
-        )
+    assert_private_portal_allowed(exam)
 
     # Validate required fields
     if not draft.school_id:
@@ -1123,11 +1131,7 @@ async def enable_edit_registration(
             detail="Cannot edit registration: registration period is closed",
         )
 
-    if not exam.registration_period.allows_private_registration:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This exam does not allow private registration editing",
-        )
+    assert_private_portal_allowed(exam)
 
     # Convert to DRAFT to allow editing
     registration.registration_status = RegistrationStatus.DRAFT

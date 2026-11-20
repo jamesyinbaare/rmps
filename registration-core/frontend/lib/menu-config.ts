@@ -122,8 +122,8 @@ export const schoolUserMenuItems: MenuItem[] = [
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
-    href: "/dashboard/my-school/candidates",
-    label: "Candidates",
+    href: "/dashboard/my-school/examinations",
+    label: "Examinations",
     icon: GraduationCap,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },

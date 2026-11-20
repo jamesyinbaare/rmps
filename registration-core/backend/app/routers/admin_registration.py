@@ -47,11 +47,25 @@ from app.models import (
     ExamPricingModel,
     RegistrationCandidatePhoto,
     ExamLateRegistrationWindow,
+    ExamKind,
 )
 from app.services.exam_response import exam_load_options, serialize_exam
+from app.services.exam_kind_service import (
+    normalize_exam_kind_flags,
+    parse_exam_kind,
+    sync_period_private_flag,
+    validate_registration_type_for_exam,
+)
+from app.services.registration_cohorts import (
+    candidate_type_filter_for_exam,
+    school_mediated_type_filter,
+    private_type_filter,
+)
 from app.services.exam_eligibility_service import (
     get_eligible_school_ids,
+    get_exam_eligible_rows,
     replace_exam_eligible_schools,
+    school_allows_free_tvet_for_exam,
 )
 from app.services.late_registration_service import (
     create_late_window,
@@ -876,13 +890,16 @@ async def list_schools(
         .subquery()
     )
 
-    # Candidate counts subquery
+    # Candidate counts: school-mediated only (exclude private sitters at examination centers)
     candidate_counts_subq = (
         select(
             RegistrationCandidate.school_id,
             func.count(RegistrationCandidate.id).label("candidate_count")
         )
-        .where(RegistrationCandidate.school_id.in_(school_ids))
+        .where(
+            RegistrationCandidate.school_id.in_(school_ids),
+            school_mediated_type_filter(),
+        )
         .group_by(RegistrationCandidate.school_id)
         .subquery()
     )
@@ -1183,9 +1200,13 @@ async def get_school_statistics(
     if not school:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
+    # School statistics count school-mediated registrations only (not private sitters)
+    school_type_filter = school_mediated_type_filter()
+
     # Count total candidates
     total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
-        RegistrationCandidate.school_id == school_id
+        RegistrationCandidate.school_id == school_id,
+        school_type_filter,
     )
     total_result = await session.execute(total_candidates_stmt)
     total_candidates = total_result.scalar_one() or 0
@@ -1193,7 +1214,10 @@ async def get_school_statistics(
     # Count candidates by exam
     candidates_by_exam_stmt = (
         select(RegistrationCandidate.registration_exam_id, func.count(RegistrationCandidate.id))
-        .where(RegistrationCandidate.school_id == school_id)
+        .where(
+            RegistrationCandidate.school_id == school_id,
+            school_type_filter,
+        )
         .group_by(RegistrationCandidate.registration_exam_id)
     )
     exam_result = await session.execute(candidates_by_exam_stmt)
@@ -1202,7 +1226,10 @@ async def get_school_statistics(
     # Count candidates by status
     candidates_by_status_stmt = (
         select(RegistrationCandidate.registration_status, func.count(RegistrationCandidate.id))
-        .where(RegistrationCandidate.school_id == school_id)
+        .where(
+            RegistrationCandidate.school_id == school_id,
+            school_type_filter,
+        )
         .group_by(RegistrationCandidate.registration_status)
     )
     status_result = await session.execute(candidates_by_status_stmt)
@@ -1219,7 +1246,8 @@ async def get_school_statistics(
 
     # Count distinct exams
     total_exams_stmt = select(func.count(func.distinct(RegistrationCandidate.registration_exam_id))).where(
-        RegistrationCandidate.school_id == school_id
+        RegistrationCandidate.school_id == school_id,
+        school_type_filter,
     )
     exams_result = await session.execute(total_exams_stmt)
     total_exams = exams_result.scalar_one() or 0
@@ -1480,12 +1508,17 @@ async def create_exam(
                 ),
             )
 
+        exam_kind, allows_referral, allows_private = normalize_exam_kind_flags(
+            parse_exam_kind(exam_data.exam_kind),
+            exam_data.allows_referral_registration,
+        )
+
         registration_period = ExamRegistrationPeriod(
             registration_start_date=start_date,
             registration_end_date=end_date,
             is_active=True,
             allows_bulk_registration=exam_data.registration_period.allows_bulk_registration,
-            allows_private_registration=exam_data.registration_period.allows_private_registration,
+            allows_private_registration=allows_private,
         )
         session.add(registration_period)
         await session.flush()
@@ -1498,6 +1531,8 @@ async def create_exam(
             exam_series=series.short_name,
             year=exam_data.year,
             description=exam_data.description,
+            exam_kind=exam_kind,
+            allows_referral_registration=allows_referral,
             registration_period_id=registration_period.id,
             pricing_model_preference=exam_data.pricing_model_preference,
         )
@@ -1537,10 +1572,12 @@ async def list_exams(session: DBSessionDep, current_user: SystemAdminDep) -> lis
 
     exam_responses = []
     for exam in exams:
+        type_filter = candidate_type_filter_for_exam(exam)
         total_candidates = (
             await session.execute(
                 select(func.count(RegistrationCandidate.id)).where(
-                    RegistrationCandidate.registration_exam_id == exam.id
+                    RegistrationCandidate.registration_exam_id == exam.id,
+                    type_filter,
                 )
             )
         ).scalar() or 0
@@ -1549,6 +1586,7 @@ async def list_exams(session: DBSessionDep, current_user: SystemAdminDep) -> lis
                 select(func.count(RegistrationCandidate.id)).where(
                     RegistrationCandidate.registration_exam_id == exam.id,
                     RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+                    type_filter,
                 )
             )
         ).scalar() or 0
@@ -1586,14 +1624,17 @@ async def list_active_exams(session: DBSessionDep, current_user: SystemAdminDep)
 
     exam_responses = []
     for exam in exams:
+        type_filter = candidate_type_filter_for_exam(exam)
         total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
-            RegistrationCandidate.registration_exam_id == exam.id
+            RegistrationCandidate.registration_exam_id == exam.id,
+            type_filter,
         )
         total_candidates = (await session.execute(total_candidates_stmt)).scalar() or 0
 
         approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam.id,
             RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+            type_filter,
         )
         approved_candidates = (await session.execute(approved_candidates_stmt)).scalar() or 0
 
@@ -1622,15 +1663,18 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    type_filter = candidate_type_filter_for_exam(exam)
     index_numbers_count_stmt = select(func.count(RegistrationCandidate.id)).where(
         RegistrationCandidate.registration_exam_id == exam_id,
         RegistrationCandidate.index_number.isnot(None),
         RegistrationCandidate.index_number != "",
+        type_filter,
     )
     index_numbers_count = (await session.execute(index_numbers_count_stmt)).scalar() or 0
 
     candidate_count_stmt = select(func.count(RegistrationCandidate.id)).where(
-        RegistrationCandidate.registration_exam_id == exam_id
+        RegistrationCandidate.registration_exam_id == exam_id,
+        type_filter,
     )
     candidate_count = (await session.execute(candidate_count_stmt)).scalar() or 0
 
@@ -1658,9 +1702,12 @@ async def get_exam_statistics(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Count total candidates
+    type_filter = candidate_type_filter_for_exam(exam)
+
+    # Count total candidates for this exam kind
     total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
-        RegistrationCandidate.registration_exam_id == exam_id
+        RegistrationCandidate.registration_exam_id == exam_id,
+        type_filter,
     )
     total_result = await session.execute(total_candidates_stmt)
     total_candidates = total_result.scalar() or 0
@@ -1669,6 +1716,7 @@ async def get_exam_statistics(
     approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
         RegistrationCandidate.registration_exam_id == exam_id,
         RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+        type_filter,
     )
     approved_result = await session.execute(approved_candidates_stmt)
     approved_candidates = approved_result.scalar() or 0
@@ -1676,12 +1724,13 @@ async def get_exam_statistics(
     # Calculate completion percentage
     completion_percentage = (approved_candidates / total_candidates * 100.0) if total_candidates > 0 else 0.0
 
-    # Count distinct schools (excluding null school_id for private candidates)
+    # Count distinct schools / examination centers for this exam kind
     schools_count_stmt = (
         select(func.count(func.distinct(RegistrationCandidate.school_id)))
         .where(
             RegistrationCandidate.registration_exam_id == exam_id,
             RegistrationCandidate.school_id.isnot(None),
+            type_filter,
         )
     )
     schools_result = await session.execute(schools_count_stmt)
@@ -1726,7 +1775,8 @@ async def get_exam_schools(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Get schools with candidate counts for this exam
+    type_filter = candidate_type_filter_for_exam(exam)
+    # Get schools / centers with candidate counts for this exam kind
     schools_stmt = (
         select(
             School.id,
@@ -1741,6 +1791,7 @@ async def get_exam_schools(
         .where(
             RegistrationCandidate.registration_exam_id == exam_id,
             RegistrationCandidate.school_id.isnot(None),
+            type_filter,
         )
         .group_by(School.id, School.name, School.code)
         .order_by(School.name)
@@ -1771,16 +1822,23 @@ async def list_exam_eligible_schools(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    school_ids = await get_eligible_school_ids(session, exam_id)
-    if not school_ids:
+    rows = await get_exam_eligible_rows(session, exam_id)
+    if not rows:
         return []
 
+    free_tvet_by_school = {row.school_id: bool(row.allows_free_tvet) for row in rows}
+    school_ids = list(free_tvet_by_school.keys())
     schools = (
         await session.execute(
             select(School).where(School.id.in_(school_ids)).order_by(School.code)
         )
     ).scalars().all()
-    return [SchoolResponse.model_validate(s) for s in schools]
+    responses: list[SchoolResponse] = []
+    for school in schools:
+        payload = SchoolResponse.model_validate(school).model_dump()
+        payload["allows_free_tvet"] = free_tvet_by_school.get(school.id, False)
+        responses.append(SchoolResponse.model_validate(payload))
+    return responses
 
 
 @router.put("/exams/{exam_id}/eligible-schools", response_model=list[SchoolResponse])
@@ -1798,21 +1856,18 @@ async def update_exam_eligible_schools(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
     try:
-        await replace_exam_eligible_schools(session, exam, body.school_ids)
+        await replace_exam_eligible_schools(
+            session,
+            exam,
+            body.school_ids,
+            free_tvet_school_ids=body.free_tvet_school_ids,
+        )
         await session.commit()
     except ValueError as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
-    school_ids = await get_eligible_school_ids(session, exam_id)
-    if not school_ids:
-        return []
-    schools = (
-        await session.execute(
-            select(School).where(School.id.in_(school_ids)).order_by(School.code)
-        )
-    ).scalars().all()
-    return [SchoolResponse.model_validate(s) for s in schools]
+    return await list_exam_eligible_schools(exam_id, session, current_user)
 
 
 def _serialize_late_window(window: ExamLateRegistrationWindow) -> LateRegistrationWindowResponse:
@@ -2002,17 +2057,23 @@ async def update_exam(
         or exam_update.exam_series_id is not None
         or exam_update.year is not None
     )
+    is_updating_kind = exam_update.exam_kind is not None
 
-    if is_updating_identity:
+    if is_updating_identity or is_updating_kind:
         candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam_id
         )
         candidate_count = (await session.execute(candidates_stmt)).scalar_one()
         if candidate_count > 0:
+            locked = "programme type, year, or series"
+            if is_updating_kind and not is_updating_identity:
+                locked = "examination kind"
+            elif is_updating_kind:
+                locked = "programme type, year, series, or examination kind"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Cannot update programme type, year, or series. There are "
+                    f"Cannot update {locked}. There are "
                     f"{candidate_count} registered candidate(s) for this examination."
                 ),
             )
@@ -2097,6 +2158,18 @@ async def update_exam(
         exam.description = exam_update.description
     if exam_update.pricing_model_preference is not None:
         exam.pricing_model_preference = exam_update.pricing_model_preference
+
+    if exam_update.exam_kind is not None or exam_update.allows_referral_registration is not None:
+        current_kind = parse_exam_kind(exam_update.exam_kind) if exam_update.exam_kind is not None else exam.exam_kind
+        referral_input = (
+            exam_update.allows_referral_registration
+            if exam_update.allows_referral_registration is not None
+            else exam.allows_referral_registration
+        )
+        exam_kind, allows_referral, _ = normalize_exam_kind_flags(current_kind, referral_input)
+        exam.exam_kind = exam_kind
+        exam.allows_referral_registration = allows_referral
+        sync_period_private_flag(exam)
 
     # Keep denormalized fields in sync if relationships already loaded with new IDs
     if exam.programme_type_id and (exam.programme_type is None or exam.programme_type.id != exam.programme_type_id):
@@ -2300,7 +2373,7 @@ async def create_or_update_application_fee(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {fee_data.registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {fee_data.registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     # Check if application fee exists
@@ -2351,7 +2424,7 @@ async def delete_application_fee(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     stmt = select(RegistrationApplicationFee).where(
@@ -2393,7 +2466,7 @@ async def get_subject_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     conditions = [SubjectPricing.exam_id == exam_id]
@@ -2452,7 +2525,7 @@ async def create_or_update_subject_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
                 )
 
         # Check if pricing exists
@@ -2707,7 +2780,7 @@ async def get_tiered_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     conditions = [RegistrationTieredPricing.exam_id == exam_id]
@@ -2778,7 +2851,7 @@ async def create_or_update_tiered_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {tier_item.registration_type}. Must be one of: free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {tier_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
                 )
 
         new_tier = RegistrationTieredPricing(
@@ -2843,7 +2916,7 @@ async def get_programme_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     conditions = [ProgrammePricing.exam_id == exam_id]
@@ -2902,7 +2975,7 @@ async def create_or_update_programme_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
                 )
 
         existing_stmt = select(ProgrammePricing).where(
@@ -3373,7 +3446,7 @@ async def create_or_update_pricing_model(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     # Handle case where table doesn't exist yet
@@ -3430,7 +3503,7 @@ async def delete_pricing_model(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
             )
 
     try:
@@ -3764,24 +3837,8 @@ async def import_candidates(
         guardian_digital_address = get_col(row, "guardian_digital_address") or None
         guardian_national_id = get_col(row, "guardian_national_id") or None
 
-        if is_nov_dec:
-            if registration_type_str and registration_type_str not in (RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
-                errors.append(BulkUploadError(row_number=row_number, error_message=f"Invalid registration_type for NOV/DEC: {registration_type_str}. Only 'referral' and 'private' allowed.", field="registration_type"))
-                failed += 1
-                continue
-            candidate_registration_type = registration_type_str or RegistrationType.REFERRAL.value
-        elif is_may_june:
-            if registration_type_str and registration_type_str not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
-                errors.append(BulkUploadError(row_number=row_number, error_message=f"Invalid registration_type for MAY/JUNE: {registration_type_str}. Only 'free_tvet' and 'referral' allowed.", field="registration_type"))
-                failed += 1
-                continue
-            candidate_registration_type = registration_type_str or RegistrationType.FREE_TVET.value
-        else:
-            candidate_registration_type = registration_type_str or RegistrationType.FREE_TVET.value
-            if candidate_registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
-                candidate_registration_type = RegistrationType.FREE_TVET.value
-
         school_id = None
+        allows_free_tvet_row: bool | None = None
         if school_code_str:
             school_stmt = select(School).where(School.code == school_code_str)
             school_result = await session.execute(school_stmt)
@@ -3791,6 +3848,35 @@ async def import_candidates(
                 failed += 1
                 continue
             school_id = school.id
+            allows_free_tvet_row = await school_allows_free_tvet_for_exam(
+                session, exam.id, school_id
+            )
+
+        try:
+            if exam.exam_kind == ExamKind.PRIVATE or (
+                hasattr(exam.exam_kind, "value") and exam.exam_kind.value == "private"
+            ):
+                default_type = RegistrationType.PRIVATE.value
+            elif allows_free_tvet_row is True:
+                default_type = RegistrationType.FREE_TVET.value
+            else:
+                default_type = RegistrationType.REGULAR.value
+            candidate_registration_type = validate_registration_type_for_exam(
+                exam,
+                registration_type_str or default_type,
+                is_school_registration=True,
+                allows_free_tvet=allows_free_tvet_row,
+            )
+        except HTTPException as exc:
+            errors.append(
+                BulkUploadError(
+                    row_number=row_number,
+                    error_message=str(exc.detail),
+                    field="registration_type",
+                )
+            )
+            failed += 1
+            continue
 
         programme_id = None
         if programme_code_str:
@@ -4342,8 +4428,8 @@ async def update_registration_period(
         registration_period.is_active = update_data["is_active"]
     if "allows_bulk_registration" in update_data:
         registration_period.allows_bulk_registration = update_data["allows_bulk_registration"]
-    if "allows_private_registration" in update_data:
-        registration_period.allows_private_registration = update_data["allows_private_registration"]
+    # Private portal access is derived from exam_kind; keep flag in sync
+    sync_period_private_flag(exam)
 
     # Validate dates
     if registration_period.registration_end_date <= registration_period.registration_start_date:
@@ -6484,6 +6570,139 @@ async def bulk_upload_subjects(
 
 
 # Invoice Generation Endpoints for System Admin
+
+@router.get("/invoices/regular/by-school", response_model=SchoolInvoiceResponse)
+async def get_regular_invoice_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for regular candidates for a specific school and examination."""
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    invoice_data = await aggregate_candidates_by_examination(
+        session, school_id, exam_id, RegistrationType.REGULAR.value
+    )
+
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.REGULAR.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/regular/summary", response_model=AdminSummaryInvoiceResponse)
+async def get_regular_invoice_summary(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> AdminSummaryInvoiceResponse:
+    """Generate summary invoice for regular candidates across all schools for an examination."""
+    summary_data = await aggregate_candidates_by_school(
+        session, exam_id, RegistrationType.REGULAR.value
+    )
+
+    school_items = [
+        SchoolInvoiceItem(
+            school_id=school["school_id"],
+            school_code=school["school_code"],
+            school_name=school["school_name"],
+            candidate_count=school["candidate_count"],
+            total_amount=school["total_amount"],
+        )
+        for school in summary_data["schools"]
+    ]
+
+    return AdminSummaryInvoiceResponse(
+        registration_type=RegistrationType.REGULAR.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=summary_data["exam_id"],
+            exam_type=summary_data["exam_type"],
+            exam_series=summary_data["exam_series"],
+            year=summary_data["year"],
+            candidate_count=summary_data["total_candidate_count"],
+            total_amount=summary_data["total_amount"],
+        ),
+        schools=school_items,
+        total_candidate_count=summary_data["total_candidate_count"],
+        total_amount=summary_data["total_amount"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/regular/by-school/pdf")
+async def download_regular_invoice_pdf_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> StreamingResponse:
+    """Download PDF invoice for regular candidates for a specific school."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.REGULAR.value,
+            school_id=school_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"regular_invoice_exam_{exam_id}_school_{school_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/invoices/regular/summary/pdf")
+async def download_regular_invoice_summary_pdf(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> StreamingResponse:
+    """Download PDF summary invoice for regular candidates across all schools."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.REGULAR.value,
+            school_id=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"regular_invoice_summary_exam_{exam_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 @router.get("/invoices/free-tvet/by-school", response_model=SchoolInvoiceResponse)
 async def get_free_tvet_invoice_by_school(

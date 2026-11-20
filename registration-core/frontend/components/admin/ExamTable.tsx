@@ -246,6 +246,16 @@ export function ExamTable({ exams, onRefresh, loading = false }: ExamTableProps)
         },
       },
       {
+        id: "kind",
+        accessorFn: (exam) => exam.exam_kind || "school",
+        header: ({ column }) => <SortHeader label="Kind" column={column} />,
+        cell: ({ row }) => (
+          <Badge variant="outline" className="capitalize">
+            {row.original.exam_kind || "school"}
+          </Badge>
+        ),
+      },
+      {
         id: "candidates",
         accessorFn: (exam) => exam.candidate_count ?? 0,
         header: ({ column }) => <SortHeader label="Candidates" column={column} />,

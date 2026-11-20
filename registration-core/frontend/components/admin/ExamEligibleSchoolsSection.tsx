@@ -67,6 +67,8 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
   const [saving, setSaving] = React.useState(false);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [savedSelection, setSavedSelection] = React.useState<RowSelectionState>({});
+  const [freeTvetSelection, setFreeTvetSelection] = React.useState<RowSelectionState>({});
+  const [savedFreeTvetSelection, setSavedFreeTvetSelection] = React.useState<RowSelectionState>({});
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [activeFilter, setActiveFilter] = React.useState<ActiveFilter>("all");
   const [ownershipFilter, setOwnershipFilter] = React.useState<OwnershipFilter>("all");
@@ -83,8 +85,13 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
       ]);
       setSchools(allSchools);
       const selection = idsToSelection(eligible.map((s) => s.id));
+      const freeTvet = idsToSelection(
+        eligible.filter((s) => s.allows_free_tvet).map((s) => s.id)
+      );
       setRowSelection(selection);
       setSavedSelection(selection);
+      setFreeTvetSelection(freeTvet);
+      setSavedFreeTvetSelection(freeTvet);
     } catch (error) {
       console.error(error);
       toast.error("Failed to load eligible schools");
@@ -99,11 +106,42 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
 
   const selectedIds = React.useMemo(() => selectionToIds(rowSelection), [rowSelection]);
   const savedIds = React.useMemo(() => selectionToIds(savedSelection), [savedSelection]);
+  const freeTvetIds = React.useMemo(() => selectionToIds(freeTvetSelection), [freeTvetSelection]);
+  const savedFreeTvetIds = React.useMemo(
+    () => selectionToIds(savedFreeTvetSelection),
+    [savedFreeTvetSelection]
+  );
   const isDirty = React.useMemo(() => {
     if (selectedIds.length !== savedIds.length) return true;
+    if (freeTvetIds.length !== savedFreeTvetIds.length) return true;
     const saved = new Set(savedIds);
-    return selectedIds.some((id) => !saved.has(id));
-  }, [selectedIds, savedIds]);
+    const savedFree = new Set(savedFreeTvetIds);
+    return (
+      selectedIds.some((id) => !saved.has(id)) ||
+      freeTvetIds.some((id) => !savedFree.has(id))
+    );
+  }, [selectedIds, savedIds, freeTvetIds, savedFreeTvetIds]);
+
+  const toggleFreeTvet = (schoolId: number, enabled: boolean) => {
+    setFreeTvetSelection((prev) => {
+      const next = { ...prev };
+      if (enabled) next[String(schoolId)] = true;
+      else delete next[String(schoolId)];
+      return next;
+    });
+  };
+
+  const handleEligibleToggle = (schoolId: number, eligible: boolean) => {
+    setRowSelection((prev) => {
+      const next = { ...prev };
+      if (eligible) next[String(schoolId)] = true;
+      else delete next[String(schoolId)];
+      return next;
+    });
+    if (!eligible) {
+      toggleFreeTvet(schoolId, false);
+    }
+  };
 
   const filteredSchools = React.useMemo(() => {
     return schools.filter((school) => {
@@ -149,10 +187,27 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            onCheckedChange={(value) => handleEligibleToggle(row.original.id, !!value)}
             aria-label={`Select ${row.original.code}`}
           />
         ),
+      },
+      {
+        id: "free_tvet",
+        enableSorting: false,
+        header: () => <span className="text-xs font-medium">Free TVET</span>,
+        cell: ({ row }) => {
+          const selected = row.getIsSelected();
+          const schoolId = row.original.id;
+          return (
+            <Checkbox
+              checked={selected && !!freeTvetSelection[String(schoolId)]}
+              disabled={!selected}
+              onCheckedChange={(value) => toggleFreeTvet(schoolId, !!value)}
+              aria-label={`Free TVET for ${row.original.code}`}
+            />
+          );
+        },
       },
       {
         accessorKey: "code",
@@ -212,7 +267,7 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
         },
       },
     ],
-    []
+    [freeTvetSelection]
   );
 
   const dataTable = useReactTable({
@@ -220,7 +275,19 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
     columns,
     getRowId: (row) => String(row.id),
     enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
+    onRowSelectionChange: (updater) => {
+      setRowSelection((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        setFreeTvetSelection((freePrev) => {
+          const cleaned: RowSelectionState = {};
+          for (const [id, selected] of Object.entries(freePrev)) {
+            if (selected && next[id]) cleaned[id] = true;
+          }
+          return cleaned;
+        });
+        return next;
+      });
+    },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
@@ -278,20 +345,30 @@ export function ExamEligibleSchoolsSection({ examId, onSaved }: ExamEligibleScho
 
   const clearSelection = () => setRowSelection({});
 
-  const handleCancel = () => setRowSelection(savedSelection);
+  const handleCancel = () => {
+    setRowSelection(savedSelection);
+    setFreeTvetSelection(savedFreeTvetSelection);
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const saved = await setExamEligibleSchools(examId, selectedIds);
+      const freeTvetToSave = freeTvetIds.filter((id) => selectedIds.includes(id));
+      const saved = await setExamEligibleSchools(examId, selectedIds, freeTvetToSave);
       const selection = idsToSelection(saved.map((s) => s.id));
+      const freeTvet = idsToSelection(
+        saved.filter((s) => s.allows_free_tvet).map((s) => s.id)
+      );
       setRowSelection(selection);
       setSavedSelection(selection);
+      setFreeTvetSelection(freeTvet);
+      setSavedFreeTvetSelection(freeTvet);
       onSaved?.(saved.length);
+      const freeCount = freeTvetToSave.length;
       toast.success(
         saved.length === 0
           ? "No schools eligible — schools will not see this examination"
-          : `Saved ${saved.length} eligible school${saved.length === 1 ? "" : "s"}`
+          : `Saved ${saved.length} eligible school${saved.length === 1 ? "" : "s"} (${freeCount} Free TVET)`
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save eligible schools");

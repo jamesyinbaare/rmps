@@ -105,7 +105,12 @@ export default function PrivateCandidateDashboard() {
     const now = new Date();
     const endDate = new Date(period.registration_end_date);
 
-    return period.is_active && period.allows_private_registration && endDate >= now;
+    return (
+      registration.exam?.exam_kind === "private" &&
+      period.is_active &&
+      period.allows_private_registration &&
+      endDate >= now
+    );
   };
 
   const handleViewRegistration = (registration: RegistrationCandidate) => {

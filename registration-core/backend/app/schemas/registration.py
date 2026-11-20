@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, computed_field
 from uuid import UUID
 
-from app.models import RegistrationStatus
+from app.models import ExamKind, RegistrationStatus
 
 
 class RegistrationCandidatePhotoResponse(BaseModel):
@@ -79,7 +79,9 @@ class RegistrationCandidateBase(BaseModel):
     address: str | None = Field(None, max_length=50, description="Ghana digital address")
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
-    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")
+    registration_type: str | None = Field(
+        None, description="Registration type: regular, free_tvet, private, or referral"
+    )
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
     guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
@@ -123,7 +125,9 @@ class RegistrationCandidateUpdate(BaseModel):
     address: str | None = Field(None, max_length=50, description="Ghana digital address")
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
-    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")
+    registration_type: str | None = Field(
+        None, description="Registration type: regular, free_tvet, private, or referral"
+    )
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
     guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
@@ -196,7 +200,8 @@ class ExamRegistrationPeriodCreate(BaseModel):
     registration_start_date: datetime
     registration_end_date: datetime
     allows_bulk_registration: bool = True
-    allows_private_registration: bool = True
+    # Derived from exam_kind on create; kept optional for backward-compatible clients
+    allows_private_registration: bool | None = None
 
 
 class ExamRegistrationPeriodUpdate(BaseModel):
@@ -206,6 +211,7 @@ class ExamRegistrationPeriodUpdate(BaseModel):
     registration_end_date: datetime | None = None
     is_active: bool | None = None
     allows_bulk_registration: bool | None = None
+    # Derived from exam_kind; ignored if exam_kind is set on the exam
     allows_private_registration: bool | None = None
 
 
@@ -232,6 +238,14 @@ class RegistrationExamCreate(BaseModel):
     exam_series_id: int = Field(..., description="Series/sitting from the exam series catalog")
     year: int
     description: str | None = None
+    exam_kind: str = Field(
+        default=ExamKind.SCHOOL.value,
+        description="Examination kind: 'school' or 'private'",
+    )
+    allows_referral_registration: bool = Field(
+        default=True,
+        description="Whether referral candidates may register (school exams only)",
+    )
     pricing_model_preference: str | None = Field(
         None,
         description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')",
@@ -254,6 +268,11 @@ class RegistrationExamUpdate(BaseModel):
     exam_series_id: int | None = None
     year: int | None = None
     description: str | None = None
+    exam_kind: str | None = Field(None, description="Examination kind: 'school' or 'private'")
+    allows_referral_registration: bool | None = Field(
+        None,
+        description="Whether referral candidates may register (school exams only)",
+    )
     pricing_model_preference: str | None = Field(
         None,
         description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')",
@@ -279,6 +298,10 @@ class RegistrationExamResponse(BaseModel):
     enabled_programme_type_ids: list[int] = Field(default_factory=list)
     year: int
     description: str | None = None
+    exam_kind: str = ExamKind.SCHOOL.value
+    allows_referral_registration: bool = True
+    # Present on school-facing exam list: whether current school may register free_tvet
+    allows_free_tvet: bool | None = None
     registration_period: ExamRegistrationPeriodResponse
     results_published: bool = False
     results_published_at: datetime | None = None
@@ -308,6 +331,10 @@ class ExamEligibleSchoolsUpdate(BaseModel):
     """Replace the set of schools eligible to register for an exam."""
 
     school_ids: list[int] = Field(default_factory=list)
+    free_tvet_school_ids: list[int] = Field(
+        default_factory=list,
+        description="Subset of school_ids that may register Free TVET candidates for this exam",
+    )
 
 
 class LateRegistrationWindowCreate(BaseModel):

@@ -74,6 +74,8 @@ class SchoolResponse(BaseModel):
     profile_completed: bool = False
     admin_count: int | None = None
     candidate_count: int | None = None
+    # Present on exam-eligible-schools responses
+    allows_free_tvet: bool | None = None
 
     class Config:
         from_attributes = True

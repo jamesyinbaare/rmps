@@ -51,6 +51,8 @@ export interface School {
   updated_at?: string;
   admin_count?: number;
   candidate_count?: number;
+  /** Present on exam eligible-schools responses */
+  allows_free_tvet?: boolean | null;
 }
 
 export interface SchoolDetail extends School {
@@ -185,6 +187,8 @@ export interface ExamRegistrationPeriod {
   updated_at: string;
 }
 
+export type ExamKind = "school" | "private";
+
 export interface RegistrationExam {
   id: number;
   exam_id_main_system: number | null;
@@ -198,6 +202,10 @@ export interface RegistrationExam {
   enabled_programme_type_ids?: number[];
   year: number;
   description: string | null;
+  exam_kind?: ExamKind;
+  allows_referral_registration?: boolean;
+  /** School-facing: whether this school is Free TVET–eligible for this exam */
+  allows_free_tvet?: boolean | null;
   registration_period: ExamRegistrationPeriod;
   results_published: boolean;
   results_published_at: string | null;
@@ -258,6 +266,8 @@ export interface RegistrationExamCreate {
   enabled_programme_type_ids?: number[];
   year: number;
   description?: string | null;
+  exam_kind?: ExamKind;
+  allows_referral_registration?: boolean;
   /** @deprecated Prefer programme_type_id */
   exam_type?: string;
   /** @deprecated Prefer exam_series_id */
@@ -266,6 +276,7 @@ export interface RegistrationExamCreate {
     registration_start_date: string;
     registration_end_date: string;
     allows_bulk_registration?: boolean;
+    /** @deprecated Derived from exam_kind */
     allows_private_registration?: boolean;
   };
 }
@@ -277,6 +288,8 @@ export interface RegistrationExamUpdate {
   enabled_programme_type_ids?: number[];
   year?: number;
   description?: string | null;
+  exam_kind?: ExamKind;
+  allows_referral_registration?: boolean;
   exam_type?: string;
   exam_series?: string | null;
   pricing_model_preference?: string | null;
@@ -362,6 +375,8 @@ export interface RegistrationCandidateCreate {
   national_id?: string | null;
   disability?: string | null;
   registration_type?: string | null;
+  /** Examination center for private exams; defaults to registering school on backend */
+  school_id?: number | null;
   guardian_name?: string | null;
   guardian_phone?: string | null;
   guardian_digital_address?: string | null;

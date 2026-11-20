@@ -196,9 +196,15 @@ class Disability(enum.Enum):
 
 
 class RegistrationType(enum.Enum):
+    REGULAR = "regular"
     FREE_TVET = "free_tvet"
     PRIVATE = "private"
     REFERRAL = "referral"
+
+
+class ExamKind(enum.Enum):
+    SCHOOL = "school"
+    PRIVATE = "private"
 
 
 class TicketRequestMixin:
@@ -410,6 +416,8 @@ class ExamEligibleSchool(Base):
     id = Column(Integer, primary_key=True)
     exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Per-exam Free TVET gate: when true, school may only use free_tvet (+ referral); when false, regular (+ referral)
+    allows_free_tvet = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     exam = relationship("RegistrationExam", back_populates="eligible_schools")
@@ -482,6 +490,14 @@ class RegistrationExam(Base):
         Integer, ForeignKey("exam_series.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     description = Column(Text, nullable=True)
+    exam_kind = Column(
+        Enum(ExamKind, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=ExamKind.SCHOOL,
+        server_default="school",
+        index=True,
+    )
+    allows_referral_registration = Column(Boolean, default=True, nullable=False, server_default="true")
     registration_period_id = Column(Integer, ForeignKey("exam_registration_periods.id", ondelete="CASCADE"), nullable=False, index=True)
     results_published = Column(Boolean, default=False, nullable=False, index=True)
     results_published_at = Column(DateTime, nullable=True)

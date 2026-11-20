@@ -48,7 +48,7 @@ interface PricingTableProps {
   onUpdate: () => void | Promise<void>;
 }
 
-type RegistrationTypeOption = "all" | "free_tvet" | "private" | "referral";
+type RegistrationTypeOption = "all" | "regular" | "free_tvet" | "private" | "referral";
 
 interface PricingRow {
   registrationType: RegistrationTypeOption;
@@ -71,6 +71,7 @@ export function PricingTable({ examId, onUpdate }: PricingTableProps) {
 
   const registrationTypes: { value: RegistrationTypeOption; label: string }[] = [
     { value: "all", label: "All Types" },
+    { value: "regular", label: "Regular" },
     { value: "free_tvet", label: "Free TVET" },
     { value: "private", label: "Private" },
     { value: "referral", label: "Referral" },

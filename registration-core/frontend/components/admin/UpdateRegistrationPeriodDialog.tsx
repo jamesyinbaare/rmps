@@ -33,7 +33,6 @@ export function UpdateRegistrationPeriodDialog({
   const [registrationStartDate, setRegistrationStartDate] = useState<Date | null>(null);
   const [registrationEndDate, setRegistrationEndDate] = useState<Date | null>(null);
   const [allowsBulkRegistration, setAllowsBulkRegistration] = useState(true);
-  const [allowsPrivateRegistration, setAllowsPrivateRegistration] = useState(true);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -41,7 +40,6 @@ export function UpdateRegistrationPeriodDialog({
       setRegistrationStartDate(new Date(exam.registration_period.registration_start_date));
       setRegistrationEndDate(new Date(exam.registration_period.registration_end_date));
       setAllowsBulkRegistration(exam.registration_period.allows_bulk_registration);
-      setAllowsPrivateRegistration(exam.registration_period.allows_private_registration);
     }
   }, [open, exam]);
 
@@ -61,7 +59,6 @@ export function UpdateRegistrationPeriodDialog({
     setLoading(true);
 
     try {
-      // Set start date to beginning of day and end date to end of day
       const startDateTime = new Date(registrationStartDate);
       startDateTime.setHours(0, 0, 0, 0);
       const endDateTime = new Date(registrationEndDate);
@@ -71,7 +68,6 @@ export function UpdateRegistrationPeriodDialog({
         registration_start_date: startDateTime.toISOString(),
         registration_end_date: endDateTime.toISOString(),
         allows_bulk_registration: allowsBulkRegistration,
-        allows_private_registration: allowsPrivateRegistration,
       });
 
       toast.success("Registration period updated successfully");
@@ -83,17 +79,31 @@ export function UpdateRegistrationPeriodDialog({
     }
   };
 
+  const examKindLabel = exam.exam_kind === "private" ? "Private" : "School";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>Update Registration Period</DialogTitle>
           <DialogDescription>
-            Update the registration period dates and settings for this examination
+            Update dates and bulk registration for this {examKindLabel.toLowerCase()} examination.
+            Individual private portal access follows examination kind.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
+            <div className="rounded-md border px-3 py-2 text-sm text-muted-foreground">
+              Examination kind: <span className="font-medium text-foreground">{examKindLabel}</span>
+              {exam.exam_kind === "school" && (
+                <>
+                  {" · "}Referral:{" "}
+                  <span className="font-medium text-foreground">
+                    {exam.allows_referral_registration ? "Allowed" : "Not allowed"}
+                  </span>
+                </>
+              )}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DateTimePicker
                 label="Registration Start Date"
@@ -116,16 +126,6 @@ export function UpdateRegistrationPeriodDialog({
                 />
                 <Label htmlFor="allows-bulk" className="text-sm font-normal cursor-pointer">
                   Allow bulk registration
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="allows-private"
-                  checked={allowsPrivateRegistration}
-                  onCheckedChange={(checked) => setAllowsPrivateRegistration(checked === true)}
-                />
-                <Label htmlFor="allows-private" className="text-sm font-normal cursor-pointer">
-                  Allow private candidate registration
                 </Label>
               </div>
             </div>

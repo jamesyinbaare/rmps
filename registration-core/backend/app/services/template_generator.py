@@ -58,23 +58,29 @@ def generate_subject_template() -> bytes:
     return output.getvalue()
 
 
-def generate_candidate_template(exam_series: str | None = None) -> bytes:
+def generate_candidate_template(
+    exam_series: str | None = None,
+    *,
+    exam_kind: str | None = None,
+    allows_referral_registration: bool = True,
+    allows_free_tvet: bool = False,
+) -> bytes:
     """
     Generate Excel template for candidate bulk upload.
     All columns are formatted as text to preserve leading zeros.
 
     Args:
-        exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC").
-        - For "MAY/JUNE": no subject columns (optional_core_groups and optional_subjects excluded)
-        - For "NOV/DEC": subject_ids column is required (comma-separated subject IDs)
-
-    Returns:
-        Bytes of Excel file
+        exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC") — still used for subject_codes layout.
+        exam_kind: "school" or "private".
+        allows_referral_registration: Whether school exams may include referral type column.
+        allows_free_tvet: When True, school uses free_tvet (not regular); when False, regular.
     """
-    # Normalize exam series
     from app.services.subject_selection import normalize_exam_series
+
     normalized_series = normalize_exam_series(exam_series)
     is_nov_dec = normalized_series == "NOV/DEC"
+    kind = (exam_kind or "school").strip().lower()
+    is_private = kind == "private"
 
     # Required columns first
     data = {
@@ -99,20 +105,22 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
         "guardian_national_id": ["GHA-123456789-1", "GHA-987654321-2"],
     }
 
-    # For NOV/DEC: registration_type is not included (always enforced as "referral" on backend)
-    # For MAY/JUNE: include registration_type as optional
-    if not is_nov_dec:
-        optional_cols["registration_type"] = ["free_tvet", "referral"]
+    if is_private:
+        optional_cols["registration_type"] = ["private", "private"]
+        optional_cols["examination_center"] = ["", ""]  # defaults to registering school
+    else:
+        primary = "free_tvet" if allows_free_tvet else "regular"
+        if allows_referral_registration:
+            optional_cols["registration_type"] = [primary, "referral"]
+        else:
+            optional_cols["registration_type"] = [primary, primary]
 
     data.update(optional_cols)
 
-    # Subject columns only for NOV/DEC (explicitly check for NOV/DEC)
-    # For NOV/DEC: include subject_codes column (comma-separated list of subject original codes)
-    # For MAY/JUNE: no subject columns
-    # For unknown/None exam_series: no subject columns (default to MAY/JUNE behavior)
-    if is_nov_dec:
+    # subject_codes for NOV/DEC series layout or private exams (lenient subject pick)
+    if is_nov_dec or is_private:
         data.update({
-            "subject_codes": ["C701,C702", "C30-1-01"],  # Example: comma-separated subject original codes
+            "subject_codes": ["C701,C702", "C30-1-01"],
         })
 
     # Convert all values to strings to ensure text formatting

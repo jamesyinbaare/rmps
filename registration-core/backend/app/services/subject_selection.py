@@ -157,6 +157,9 @@ async def validate_subject_selections(
     # Determine registration type flags
     is_referral = registration_type == RegistrationType.REFERRAL.value if registration_type else False
     is_free_tvet = registration_type == RegistrationType.FREE_TVET.value if registration_type else False
+    is_regular = registration_type == RegistrationType.REGULAR.value if registration_type else False
+    # Structured school types share programme subject rules
+    is_structured_school = is_free_tvet or is_regular
     is_private = registration_type == RegistrationType.PRIVATE.value if registration_type else False
 
     # For referral and private candidates in MAY/JUNE, use NOV/DEC-style validation (at least one subject, everything optional)
@@ -168,8 +171,8 @@ async def validate_subject_selections(
         if len(selected_subject_ids) == 0:
             errors.append("At least one subject must be selected")
 
-    # Check compulsory core subjects (only for MAY/JUNE free_tvet candidates)
-    if is_may_june and is_free_tvet:
+    # Check compulsory core subjects (only for MAY/JUNE regular/free_tvet candidates)
+    if is_may_june and is_structured_school:
         compulsory_core = set(subjects_info["compulsory_core"])
         missing_compulsory = compulsory_core - selected_set
         if missing_compulsory:
@@ -195,8 +198,8 @@ async def validate_subject_selections(
             errors.append(f"Can only select one from optional core group {group_id}, but selected: {', '.join(registered_names)}")
         # Note: It's OK to not select from a group (everything is optional for NOV/DEC and referral in MAY/JUNE)
 
-    # Check ALL elective subjects are registered (only for MAY/JUNE free_tvet candidates)
-    if is_may_june and is_free_tvet:
+    # Check ALL elective subjects are registered (only for MAY/JUNE regular/free_tvet candidates)
+    if is_may_june and is_structured_school:
         elective_subject_ids = set(subjects_info["electives"])
         missing_electives = elective_subject_ids - selected_set
         if missing_electives:

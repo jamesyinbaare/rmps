@@ -154,6 +154,7 @@ export function ApplicationFeeSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="regular">Regular</SelectItem>
                 <SelectItem value="free_tvet">Free TVET</SelectItem>
                 <SelectItem value="private">Private</SelectItem>
                 <SelectItem value="referral">Referral</SelectItem>
