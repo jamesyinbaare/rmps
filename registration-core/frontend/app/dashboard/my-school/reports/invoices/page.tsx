@@ -17,6 +17,7 @@ import { listAllSchoolExams } from "@/lib/api";
 import type { RegistrationExam } from "@/types";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import {
+  downloadRegularInvoicePdf,
   downloadFreeTvetInvoicePdf,
   downloadReferralInvoicePdf,
 } from "@/lib/api";
@@ -43,7 +44,10 @@ export default function InvoicesPage() {
     loadExams();
   }, []);
 
-  const handleDownload = async (type: "free-tvet" | "referral", groupByProgramme: boolean = false) => {
+  const handleDownload = async (
+    type: "regular" | "free-tvet" | "referral",
+    groupByProgramme: boolean = false
+  ) => {
     if (!selectedExamId) {
       alert("Please select an examination first");
       return;
@@ -54,7 +58,9 @@ export default function InvoicesPage() {
 
     try {
       let blob: Blob;
-      if (type === "free-tvet") {
+      if (type === "regular") {
+        blob = await downloadRegularInvoicePdf(selectedExamId, groupByProgramme);
+      } else if (type === "free-tvet") {
         blob = await downloadFreeTvetInvoicePdf(selectedExamId, groupByProgramme);
       } else {
         blob = await downloadReferralInvoicePdf(selectedExamId);
@@ -118,7 +124,50 @@ export default function InvoicesPage() {
 
       {selectedExamId && (
         <>
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5" />
+                  Regular Invoices
+                </CardTitle>
+                <CardDescription>
+                  Generate invoices for regular candidates
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Button
+                  className="w-full"
+                  onClick={() => handleDownload("regular", false)}
+                  disabled={downloading !== null}
+                >
+                  {downloading === `regular-${selectedExamId}-false` ? (
+                    "Downloading..."
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download by Examination
+                    </>
+                  )}
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => handleDownload("regular", true)}
+                  disabled={downloading !== null}
+                >
+                  {downloading === `regular-${selectedExamId}-true` ? (
+                    "Downloading..."
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download by Programme
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

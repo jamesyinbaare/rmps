@@ -17,6 +17,7 @@ def serialize_exam(
     approved_candidates: int | None = None,
     has_index_numbers: bool = False,
     eligible_school_count: int | None = None,
+    allows_free_tvet: bool | None = None,
 ) -> RegistrationExamResponse:
     enabled_ids = [e.programme_type_id for e in (exam.enabled_programme_types or [])]
     if eligible_school_count is None:
@@ -36,6 +37,9 @@ def serialize_exam(
         enabled_programme_type_ids=enabled_ids,
         year=exam.year,
         description=exam.description,
+        exam_kind=exam.exam_kind.value if hasattr(exam.exam_kind, "value") else str(exam.exam_kind),
+        allows_referral_registration=bool(exam.allows_referral_registration),
+        allows_free_tvet=allows_free_tvet,
         registration_period=ExamRegistrationPeriodResponse.model_validate(exam.registration_period),
         results_published=exam.results_published,
         results_published_at=exam.results_published_at,

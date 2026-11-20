@@ -40,6 +40,7 @@ interface ImportCandidatesDialogProps {
 }
 
 const REGISTRATION_TYPE_OPTIONS = [
+  { value: "regular", label: "Regular" },
   { value: "free_tvet", label: "Free TVET" },
   { value: "referral", label: "Referral" },
   { value: "private", label: "Private" },
@@ -140,7 +141,8 @@ export function ImportCandidatesDialog({
             othername, registration_number, index_number, school_code, programme_code,
             registration_type, subject_codes. When school_code is omitted, registration_number
             must be provided and unique. Subject selection is validated by candidate type
-            (private, referral, free_tvet).
+            (private, referral, free_tvet, regular). School Free TVET eligibility
+            for the exam still gates regular vs free_tvet when school_code is set.
           </DialogDescription>
         </DialogHeader>
 

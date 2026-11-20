@@ -558,17 +558,16 @@ export function CandidateDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl w-[95vw] max-h-[95vh] flex flex-col p-0 overflow-hidden">
-        {/* Enhanced Header */}
-        <DialogHeader className="px-6 pt-6 pb-4 border-b bg-gradient-to-r from-background to-muted/20 sticky top-0 z-10 backdrop-blur-sm">
+      <DialogContent className="flex max-h-[95vh] w-[95vw] max-w-6xl flex-col overflow-hidden border-border p-0 shadow-none">
+        <DialogHeader className="sticky top-0 z-10 border-b border-border bg-card px-6 pb-4 pt-6">
           <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-4 flex-1 min-w-0">
+            <div className="flex min-w-0 flex-1 items-center gap-4">
               {photo && photoUrl ? (
-                <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-primary flex-shrink-0">
+                <div className="relative h-16 w-14 flex-shrink-0 overflow-hidden rounded-md border border-border">
                   <img
                     src={photoUrl}
                     alt={candidate.name}
-                    className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                    className="h-full w-full cursor-pointer object-cover transition-opacity hover:opacity-80"
                     onClick={() => {
                       if (photoUrl) {
                         window.open(photoUrl, '_blank');
@@ -577,12 +576,14 @@ export function CandidateDetailModal({
                   />
                 </div>
               ) : (
-                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                  <User className="h-8 w-8 text-muted-foreground" />
+                <div className="flex h-16 w-14 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+                  <User className="h-7 w-7 text-muted-foreground" />
                 </div>
               )}
-              <div className="flex-1 min-w-0">
-                <DialogTitle className="text-2xl font-bold truncate">{candidate.name}</DialogTitle>
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="truncate text-[22px] font-medium tracking-[-0.02em]">
+                  {candidate.name}
+                </DialogTitle>
                 <DialogDescription className="mt-1 flex items-center gap-3 flex-wrap">
                   <span className="flex items-center gap-2">
                     Registration: <span className="font-mono">{candidate.registration_number}</span>
@@ -617,7 +618,7 @@ export function CandidateDetailModal({
                 <Button
                   onClick={handleApprove}
                   disabled={approving || !hasPhoto}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  className="shadow-none"
                   title={!hasPhoto ? "Photo is required for approval" : "Approve registration (validation will be performed by the system)"}
                 >
                   {approving ? (
@@ -647,11 +648,11 @@ export function CandidateDetailModal({
 
         {/* Keyboard Shortcuts Info */}
         {showKeyboardShortcuts && (
-          <div className="px-6 py-3 bg-muted/50 border-b">
+          <div className="border-b border-border bg-muted/30 px-6 py-3">
             <div className="flex items-start gap-2 text-sm">
-              <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <div className="flex-1">
-                <div className="font-medium mb-1">Keyboard Shortcuts</div>
+                <div className="mb-1 text-sm font-semibold">Keyboard shortcuts</div>
                 <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <div>← → Navigate candidates</div>
                   <div>Esc Close modal</div>
@@ -675,10 +676,10 @@ export function CandidateDetailModal({
             {/* Photo and Candidate Information - Side by Side */}
             <div className="flex gap-6 items-stretch">
               {/* Enhanced Candidate Information Card */}
-              <Card className="flex-1 flex flex-col">
+              <Card className="flex flex-1 flex-col border-border shadow-none">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
                     <User className="h-4 w-4" />
                     Candidate Information
                   </CardTitle>
@@ -910,7 +911,7 @@ export function CandidateDetailModal({
               </Card>
 
               {/* Photo Section - Right Corner */}
-              <Card className="w-fit shrink-0 flex flex-col">
+              <Card className="flex w-fit shrink-0 flex-col border-border shadow-none">
                 <CardHeader className="pb-3">
                 </CardHeader>
                 <CardContent className="pt-0 flex-1 flex flex-col items-center justify-center gap-3">
@@ -979,10 +980,10 @@ export function CandidateDetailModal({
             </div>
 
             {/* Guardian Information Section */}
-            <Card>
+            <Card className="border-border shadow-none">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
                     <User className="h-4 w-4" />
                     Guardian Information
                   </CardTitle>
@@ -1129,10 +1130,10 @@ export function CandidateDetailModal({
               {!editingSubjects ? (
                 // Display mode
                 subjectSelections.length === 0 ? (
-                  <Card>
+                  <Card className="border-border shadow-none">
                     <CardContent className="pt-6">
-                      <div className="text-center text-muted-foreground text-sm py-8">
-                        <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <div className="py-8 text-center text-sm text-muted-foreground">
+                        <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-50" />
                         <p>No subjects registered for this candidate.</p>
                         {candidate?.programme_id && !isExamClosed && (
                           <Button
@@ -1149,11 +1150,11 @@ export function CandidateDetailModal({
                     </CardContent>
                   </Card>
                 ) : (
-                  <Card>
+                  <Card className="border-border shadow-none">
                     <CardHeader>
                       {candidate.exam && (
                         <div>
-                          <CardTitle className="text-base">
+                          <CardTitle className="text-base font-semibold">
                             {candidate.exam.exam_type}{candidate.exam.exam_series ? ` ${candidate.exam.exam_series}` : ""} {candidate.exam.year}
                           </CardTitle>
                           <div className="flex items-center gap-2 mt-2">
@@ -1186,9 +1187,9 @@ export function CandidateDetailModal({
                 )
               ) : (
                 // Edit mode
-                <Card>
+                <Card className="border-border shadow-none">
                   <CardHeader>
-                    <CardTitle className="text-base">Edit Subject Selections</CardTitle>
+                    <CardTitle className="text-base font-semibold">Edit Subject Selections</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       Select subjects for {candidate?.name}. Changes will be validated against programme requirements.
                     </p>
@@ -1362,16 +1363,19 @@ export function CandidateDetailModal({
 
         {/* Photo Upload Dialog */}
         <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
-          <DialogContent>
+          <DialogContent className="border-border shadow-none sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Upload Photo</DialogTitle>
+              <DialogTitle className="text-lg font-medium tracking-[-0.02em]">
+                Upload photo
+              </DialogTitle>
               <DialogDescription>
-                Upload a passport photo for {candidate.name}. The photo will be renamed using the registration number ({candidate.registration_number}).
+                Passport photo for {candidate.name}. File will be renamed to{" "}
+                <span className="font-mono">{candidate.registration_number}</span>.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="photo-upload">Select Photo</Label>
+                <Label htmlFor="photo-upload">Select photo</Label>
                 <Input
                   id="photo-upload"
                   type="file"
@@ -1380,15 +1384,15 @@ export function CandidateDetailModal({
                   disabled={uploadingPhoto}
                 />
                 <p className="text-xs text-muted-foreground">
-                  JPEG images only. Dimensions: 155x191 pixels (passport photo standard). Max size: 2MB.
+                  JPEG only · 155×191 px · max 2MB
                 </p>
               </div>
               {selectedFile && (
-                <div className="rounded-md border p-3 bg-muted">
+                <div className="rounded-lg border border-border bg-card p-3 shadow-none">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">{selectedFile.name}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="font-mono text-xs text-muted-foreground">
                         {(selectedFile.size / 1024).toFixed(2)} KB
                       </p>
                     </div>
@@ -1407,6 +1411,7 @@ export function CandidateDetailModal({
             <DialogFooter>
               <Button
                 variant="outline"
+                className="shadow-none"
                 onClick={() => {
                   setUploadDialogOpen(false);
                   setSelectedFile(null);
@@ -1416,18 +1421,19 @@ export function CandidateDetailModal({
                 Cancel
               </Button>
               <Button
+                className="shadow-none"
                 onClick={handleUploadPhoto}
                 disabled={!selectedFile || uploadingPhoto}
               >
                 {uploadingPhoto ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Uploading...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Uploading…
                   </>
                 ) : (
                   <>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Photo
+                    <Upload className="mr-2 h-4 w-4" />
+                    Upload photo
                   </>
                 )}
               </Button>

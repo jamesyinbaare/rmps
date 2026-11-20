@@ -16,8 +16,13 @@ function titleFromPath(pathname: string, user: User | null): string {
   if (pathname.startsWith("/dashboard/exams")) return "Examinations";
   if (pathname.startsWith("/dashboard/schools")) return "Schools";
   if (pathname.startsWith("/dashboard/reports")) return "Reports";
+  if (pathname.startsWith("/dashboard/my-school/register/new")) return "Register candidate";
+  if (pathname.startsWith("/dashboard/my-school/register/bulk")) return "Bulk upload";
+  if (/^\/dashboard\/my-school\/register\/\d+/.test(pathname)) return "Examination";
   if (pathname.startsWith("/dashboard/my-school/register")) return "Register";
-  if (pathname.startsWith("/dashboard/my-school/candidates")) return "Candidates";
+  if (/^\/dashboard\/my-school\/examinations\/\d+/.test(pathname)) return "Examination";
+  if (pathname.startsWith("/dashboard/my-school/examinations")) return "Examinations";
+  if (pathname.startsWith("/dashboard/my-school/candidates")) return "Examinations";
   if (pathname.startsWith("/dashboard/my-school/programmes")) return "Programmes";
   if (pathname.startsWith("/dashboard/my-school/users")) return "Users";
   if (pathname.startsWith("/dashboard/my-school/profile")) return "School Profile";

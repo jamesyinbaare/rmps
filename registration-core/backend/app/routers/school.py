@@ -39,11 +39,21 @@ from app.models import (
     school_programmes,
     programme_subjects,
 )
-from app.services.exam_eligibility_service import is_school_eligible_for_exam
+from app.services.exam_eligibility_service import (
+    is_school_eligible_for_exam,
+    school_allows_free_tvet_for_exam,
+)
 from app.services.late_registration_service import (
     exam_ids_with_active_late_window_for_school,
     is_registration_open_for_school,
 )
+from app.services.exam_response import serialize_exam, exam_load_options
+from app.services.exam_kind_service import (
+    is_private_exam,
+    validate_registration_type_for_exam,
+    resolve_examination_center,
+)
+from app.services.registration_cohorts import school_mediated_type_filter
 from app.schemas.registration import (
     RegistrationCandidateCreate,
     RegistrationCandidateUpdate,
@@ -123,7 +133,7 @@ async def count_active_school_users(session: DBSessionDep, school_id: int) -> in
 async def list_available_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
-    """List exams open for this school (main period or late window), with eligibility + bulk flag."""
+    """List school and private exams open for this school (main period or late window)."""
     now = datetime.utcnow()
     school_id = current_user.school_id
 
@@ -133,12 +143,11 @@ async def list_available_exams(
         .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
             ExamRegistrationPeriod.is_active.is_(True),
-            ExamRegistrationPeriod.allows_bulk_registration.is_(True),
             ExamRegistrationPeriod.registration_start_date <= now,
             ExamRegistrationPeriod.registration_end_date >= now,
             ExamEligibleSchool.school_id == school_id,
         )
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
     )
     main_exams = list((await session.execute(main_open_stmt)).scalars().unique().all())
     by_id = {exam.id: exam for exam in main_exams}
@@ -155,10 +164,9 @@ async def list_available_exams(
             .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
             .where(
                 RegistrationExam.id.in_(missing_ids),
-                ExamRegistrationPeriod.allows_bulk_registration.is_(True),
                 ExamEligibleSchool.school_id == school_id,
             )
-            .options(selectinload(RegistrationExam.registration_period))
+            .options(*exam_load_options())
         )
         for exam in (await session.execute(late_stmt)).scalars().unique().all():
             by_id[exam.id] = exam
@@ -168,29 +176,38 @@ async def list_available_exams(
         key=lambda e: (e.year, e.exam_type or "", e.exam_series or ""),
         reverse=True,
     )
-    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+    responses = []
+    for exam in exams:
+        allows_free = await school_allows_free_tvet_for_exam(session, exam.id, school_id)
+        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+    return responses
 
 
 @router.get("/exams/all", response_model=list[RegistrationExamResponse])
 async def list_all_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
-    """List eligible exams that allow bulk registration (open and closed) for this school."""
+    """List all eligible school and private exams (open and closed) for this school."""
     stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
-            ExamRegistrationPeriod.allows_bulk_registration.is_(True),
             ExamEligibleSchool.school_id == current_user.school_id,
         )
-        .options(selectinload(RegistrationExam.registration_period))
+        .options(*exam_load_options())
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
     )
     result = await session.execute(stmt)
     exams = result.scalars().unique().all()
 
-    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+    responses = []
+    for exam in exams:
+        allows_free = await school_allows_free_tvet_for_exam(
+            session, exam.id, current_user.school_id
+        )
+        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+    return responses
 
 
 @router.get("/candidates", response_model=list[RegistrationCandidateResponse])
@@ -199,11 +216,21 @@ async def list_candidates(
     current_user: SchoolUserWithSchoolDep,
     exam_id: int | None = None,
 ) -> list[RegistrationCandidateResponse]:
-    """List registered candidates for the school."""
+    """List registered candidates for the school (scoped by exam kind when exam_id given)."""
     query = select(RegistrationCandidate).where(RegistrationCandidate.school_id == current_user.school_id)
 
     if exam_id:
+        exam = (
+            await session.execute(select(RegistrationExam).where(RegistrationExam.id == exam_id))
+        ).scalar_one_or_none()
         query = query.where(RegistrationCandidate.registration_exam_id == exam_id)
+        if exam is not None:
+            from app.services.registration_cohorts import candidate_type_filter_for_exam
+
+            query = query.where(candidate_type_filter_for_exam(exam))
+    else:
+        # Without exam filter, show school-mediated + private candidates at this school/center
+        pass
 
     query = query.options(
         selectinload(RegistrationCandidate.subject_selections),
@@ -225,6 +252,12 @@ async def list_candidates(
                 "exam_series": candidate.exam.exam_series,
                 "year": candidate.exam.year,
                 "description": candidate.exam.description,
+                "exam_kind": (
+                    candidate.exam.exam_kind.value
+                    if hasattr(candidate.exam.exam_kind, "value")
+                    else str(candidate.exam.exam_kind)
+                ),
+                "allows_referral_registration": bool(candidate.exam.allows_referral_registration),
                 "registration_period": {
                     "id": candidate.exam.registration_period.id,
                     "registration_start_date": candidate.exam.registration_period.registration_start_date,
@@ -295,75 +328,32 @@ def get_enum_value(enum_or_string):
     return enum_or_string
 
 
-async def validate_registration_type_and_guardian(
+def validate_registration_type_and_guardian(
+    exam: RegistrationExam,
     registration_type: str | None,
-    exam_series: str | None,
     guardian_name: str | None,
     guardian_phone: str | None,
+    *,
     is_school_registration: bool = False,
-) -> None:
+    allows_free_tvet: bool | None = None,
+) -> str:
     """
-    Validate registration_type against exam series and guardian requirements.
-
-    For school registrations:
-    - NOV/DEC: Only "referral" is allowed
-    - MAY/JUNE: "free_tvet" and "referral" are allowed
-
-    For private registrations (non-school):
-    - NOV/DEC: "private" is allowed
-    - MAY/JUNE: Not applicable (private candidates register through different endpoint)
+    Validate registration_type against exam kind, Free TVET eligibility, and guardian requirements.
     """
-    if registration_type is None:
-        return  # No validation needed if registration_type is not specified
+    resolved = validate_registration_type_for_exam(
+        exam,
+        registration_type,
+        is_school_registration=is_school_registration,
+        allows_free_tvet=allows_free_tvet,
+    )
 
-    normalized_series = normalize_exam_series(exam_series)
-    is_may_june = normalized_series == "MAY/JUNE"
-    is_nov_dec = normalized_series == "NOV/DEC"
-
-    # For school registrations, enforce different rules
-    if is_school_registration:
-        if is_nov_dec:
-            # For NOV/DEC school registrations, only "referral" is allowed
-            if registration_type != RegistrationType.REFERRAL.value:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="For NOV/DEC examinations, school registrations can only use 'referral' registration type",
-                )
-        elif is_may_june:
-            # For MAY/JUNE school registrations, only "free_tvet" and "referral" are allowed
-            if registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type for MAY/JUNE school registration: {registration_type}. Only 'free_tvet' and 'referral' are allowed.",
-                )
-        # Guardian info optional for school registrations
-        return
-
-    # For non-school registrations (private candidates)
-    if registration_type == RegistrationType.PRIVATE.value:
-        if not is_nov_dec:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Private registration type is only allowed for NOV/DEC exams",
-            )
-        # Guardian info required for private
+    if resolved == RegistrationType.PRIVATE.value and not is_school_registration:
         if not guardian_name or not guardian_phone:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Guardian name and phone are required for private registration type",
             )
-    elif registration_type in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
-        if not is_may_june:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{registration_type.replace('_', ' ').title()} registration type is only allowed for MAY/JUNE exams",
-            )
-        # Guardian info optional for FREE_TVET and referral
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid registration_type: {registration_type}",
-        )
+    return resolved
 
 
 @router.post("/candidates", response_model=RegistrationCandidateResponse, status_code=status.HTTP_201_CREATED)
@@ -403,28 +393,36 @@ async def register_candidate(
     if not await is_registration_open_for_school(session, exam, current_user.school_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
-    # For NOV/DEC school registrations, registration_type is required and must be "referral"
-    normalized_series = normalize_exam_series(exam.exam_series)
-    is_nov_dec = normalized_series == "NOV/DEC"
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School ID is required for candidate registration",
+        )
 
-    if is_nov_dec:
-        if not candidate_data.registration_type:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Registration type is required for NOV/DEC examinations. Only 'referral' is allowed.",
-            )
-        # Auto-set to referral if not already set
-        if candidate_data.registration_type != RegistrationType.REFERRAL.value:
-            candidate_data.registration_type = RegistrationType.REFERRAL.value
+    allows_free_tvet = await school_allows_free_tvet_for_exam(
+        session, exam_id, current_user.school_id
+    )
 
-    # Validate registration_type and guardian requirements
-    await validate_registration_type_and_guardian(
+    # Validate registration_type against exam kind + Free TVET eligibility
+    registration_type = validate_registration_type_and_guardian(
+        exam,
         candidate_data.registration_type,
-        exam.exam_series,
         candidate_data.guardian_name,
         candidate_data.guardian_phone,
         is_school_registration=True,
+        allows_free_tvet=allows_free_tvet,
     )
+
+    # Resolve school_id: registering school for school exams; examination center for private exams
+    if is_private_exam(exam):
+        center = await resolve_examination_center(
+            session,
+            school_id=candidate_data.school_id,
+            registering_school_id=current_user.school_id,
+        )
+        candidate_school_id = center.id
+    else:
+        candidate_school_id = current_user.school_id
 
     # Validate programme if provided
     programme_id = candidate_data.programme_id
@@ -458,31 +456,23 @@ async def register_candidate(
                 detail="Programme is not enabled for this examination",
             )
 
-    # Determine registration_type
-    # For NOV/DEC: must be referral (already validated and set above)
-    # For MAY/JUNE: default to FREE_TVET if not specified
-    if is_nov_dec:
-        registration_type = RegistrationType.REFERRAL.value
-    else:
-        registration_type = candidate_data.registration_type or RegistrationType.FREE_TVET.value
-
-    # Generate unique registration number
-    if not current_user.school_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="School ID is required for candidate registration",
-        )
-    registration_number = await generate_unique_registration_number(session, exam_id, current_user.school_id, registration_type)
+    registration_number = await generate_unique_registration_number(
+        session, exam_id, candidate_school_id, registration_type
+    )
     normalized_series = normalize_exam_series(exam.exam_series)
     is_may_june = normalized_series == "MAY/JUNE"
-    is_nov_dec = normalized_series == "NOV/DEC"
     is_referral = registration_type == RegistrationType.REFERRAL.value
+    is_private_type = registration_type == RegistrationType.PRIVATE.value
+    is_structured_type = registration_type in (
+        RegistrationType.FREE_TVET.value,
+        RegistrationType.REGULAR.value,
+    )
 
     # Create candidate
     try:
         new_candidate = RegistrationCandidate(
             registration_exam_id=exam_id,
-            school_id=current_user.school_id,
+            school_id=candidate_school_id,
             portal_user_id=current_user.id,
             firstname=candidate_data.firstname,
             lastname=candidate_data.lastname,
@@ -510,33 +500,24 @@ async def register_candidate(
         # Handle subject selections
         selected_subject_ids: list[int] = []
 
-        # For referral: use NOV/DEC logic (all subjects optional, no auto-selection)
-        if is_referral:
-            # No auto-selection for referral - user must select subjects manually
+        # Referral/private: lenient selection (no auto-select). regular/free_tvet: auto-select cores.
+        if is_referral or is_private_type:
             pass
-        elif programme_id:
-            # Auto-select compulsory core subjects only (not optional core subjects)
+        elif programme_id and is_structured_type:
             auto_selected = await auto_select_subjects_for_programme(session, programme_id, current_user.school_id)
             selected_subject_ids.extend(auto_selected)
 
-            # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
             if is_may_june:
                 subjects_info = await get_programme_subjects_for_registration(session, programme_id)
                 selected_subject_ids.extend(subjects_info["electives"])
 
-        # Add any additional subjects from subject_ids (including optional core subjects selected by user)
         if candidate_data.subject_ids:
             selected_subject_ids.extend(candidate_data.subject_ids)
 
-        # Remove duplicates
         selected_subject_ids = list(set(selected_subject_ids))
 
-        # Validate subject selections if programme is provided
-        # For referral candidates, validate even if selected_subject_ids is empty to ensure at least one subject is selected
         if programme_id:
-            # For referral candidates, we need to validate even with empty list to check "at least one" requirement
-            # For other types, only validate if there are selected subjects (or if it's free_tvet with auto-selected subjects)
-            should_validate = True if (selected_subject_ids or is_referral) else False
+            should_validate = bool(selected_subject_ids or is_referral or is_private_type)
 
             if should_validate:
                 is_valid, validation_errors = await validate_subject_selections(
@@ -870,6 +851,12 @@ async def approve_candidate(
                 "exam_series": candidate.exam.exam_series,
                 "year": candidate.exam.year,
                 "description": candidate.exam.description,
+                "exam_kind": (
+                    candidate.exam.exam_kind.value
+                    if hasattr(candidate.exam.exam_kind, "value")
+                    else str(candidate.exam.exam_kind)
+                ),
+                "allows_referral_registration": bool(candidate.exam.allows_referral_registration),
                 "registration_period": {
                     "id": candidate.exam.registration_period.id,
                     "registration_start_date": candidate.exam.registration_period.registration_start_date,
@@ -1181,35 +1168,60 @@ async def bulk_upload_candidates(
             if file_registration_type:
                 file_registration_type = str(file_registration_type).strip() or None
 
-            # Validate registration_type for school registrations
-            # For NOV/DEC: only "referral" is allowed and required (auto-set if not provided)
-            # For MAY/JUNE: "free_tvet" and "referral" are allowed, default to FREE_TVET
-            normalized_series = normalize_exam_series(exam.exam_series)
-            is_may_june = normalized_series == "MAY/JUNE"
-            is_nov_dec = normalized_series == "NOV/DEC"
-
-            if is_nov_dec:
-                # For NOV/DEC: must be referral, ignore file value and always use referral
-                # Ignore file_registration_type for NOV/DEC - it must always be referral for school registrations
-                candidate_registration_type = RegistrationType.REFERRAL.value
-                # Warn if file has a different registration_type (but still use referral)
-                if file_registration_type and file_registration_type != RegistrationType.REFERRAL.value:
-                    # Log a warning but don't fail - we're overriding it to referral anyway
-                    pass
-            elif is_may_june:
-                # For MAY/JUNE: use file value, form parameter, or default to FREE_TVET
-                candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
-                if candidate_registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
+            center_id_raw = get_col('school_id') or get_col('examination_center') or get_col('examination center') or get_col('center_id')
+            file_center_id = None
+            if center_id_raw is not None:
+                try:
+                    file_center_id = int(str(center_id_raw).strip())
+                except (TypeError, ValueError):
                     errors.append(BulkUploadError(
                         row_number=row_number,
-                        error_message=f"Invalid registration_type for MAY/JUNE school registration: {candidate_registration_type}. Only 'free_tvet' and 'referral' are allowed.",
-                        field="registration_type"
+                        error_message=f"Invalid examination center id: {center_id_raw}",
+                        field="school_id",
                     ))
                     failed += 1
                     continue
-            else:
-                # Default to FREE_TVET for unknown exam series
-                candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
+
+            normalized_series = normalize_exam_series(exam.exam_series)
+            is_may_june = normalized_series == "MAY/JUNE"
+
+            allows_free_tvet_bulk = await school_allows_free_tvet_for_exam(
+                session, exam_id, current_user.school_id
+            )
+            try:
+                if is_private_exam(exam):
+                    candidate_registration_type = validate_registration_type_for_exam(
+                        exam,
+                        file_registration_type or registration_type or RegistrationType.PRIVATE.value,
+                        is_school_registration=True,
+                    )
+                    center = await resolve_examination_center(
+                        session,
+                        school_id=file_center_id,
+                        registering_school_id=current_user.school_id,
+                    )
+                    candidate_school_id = center.id
+                else:
+                    default_type = (
+                        RegistrationType.FREE_TVET.value
+                        if allows_free_tvet_bulk
+                        else RegistrationType.REGULAR.value
+                    )
+                    candidate_registration_type = validate_registration_type_for_exam(
+                        exam,
+                        file_registration_type or registration_type or default_type,
+                        is_school_registration=True,
+                        allows_free_tvet=allows_free_tvet_bulk,
+                    )
+                    candidate_school_id = current_user.school_id
+            except HTTPException as exc:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message=str(exc.detail),
+                    field="registration_type",
+                ))
+                failed += 1
+                continue
 
             # Validate and get programme
             programme_id = None
@@ -1247,14 +1259,18 @@ async def bulk_upload_candidates(
             # Get subject selections
             selected_subject_ids: list[int] = []
 
-            # Reuse the normalized_series that was already computed above
-            # normalized_series was already computed at line 1134 for registration_type validation
             is_may_june = normalized_series == "MAY/JUNE"
             is_nov_dec = normalized_series == "NOV/DEC"
             is_referral_bulk = candidate_registration_type == RegistrationType.REFERRAL.value
+            is_private_bulk = candidate_registration_type == RegistrationType.PRIVATE.value
+            is_structured_bulk = candidate_registration_type in (
+                RegistrationType.FREE_TVET.value,
+                RegistrationType.REGULAR.value,
+            )
+            use_subject_codes_path = is_nov_dec or is_private_bulk or is_private_exam(exam)
 
-            # For NOV/DEC: use subject_codes column (comma-separated subject original codes) - skip choice groups entirely
-            if is_nov_dec:
+            # Lenient path: subject_codes column (NOV/DEC series, private exams, or private type)
+            if use_subject_codes_path:
                 subject_codes_str = get_col('subject_codes') or get_col('subject codes') or get_col('subject_codes')
                 if subject_codes_str:
                     # Parse comma-separated subject original codes
@@ -1283,22 +1299,18 @@ async def bulk_upload_candidates(
                             failed += 1
                             continue
                 else:
-                    # subject_codes is required for NOV/DEC
                     errors.append(BulkUploadError(
                         row_number=row_number,
-                        error_message="subject_codes column is required for NOV/DEC registrations. Please provide comma-separated subject original codes (e.g., C701,C702).",
+                        error_message="subject_codes column is required for this registration. Please provide comma-separated subject original codes (e.g., C701,C702).",
                         field="subject_codes"
                     ))
                     failed += 1
                     continue
             elif programme_id:
-                # For MAY/JUNE: use existing logic with choice groups
-                # Get programme subjects structure
+                # For MAY/JUNE school exams: use existing logic with choice groups
                 subjects_info = await get_programme_subjects_for_registration(session, programme_id)
 
-                # For referral: use NOV/DEC logic (all subjects optional, no auto-selection)
-                if is_referral_bulk:
-                    # No auto-selection for referral - user must select subjects manually
+                if is_referral_bulk or is_private_bulk or not is_structured_bulk:
                     pass
                 else:
                     # Auto-select compulsory core subjects
@@ -1388,7 +1400,7 @@ async def bulk_upload_candidates(
             if programme_id:
                 # For referral candidates, we need to validate even with empty list to check "at least one" requirement
                 # For other types, only validate if there are selected subjects (or if it's free_tvet with auto-selected subjects)
-                should_validate = True if (selected_subject_ids or is_referral_bulk) else False
+                should_validate = bool(selected_subject_ids or is_referral_bulk or is_private_bulk)
 
                 if should_validate:
                     is_valid, validation_errors = await validate_subject_selections(
@@ -1403,13 +1415,14 @@ async def bulk_upload_candidates(
                         failed += 1
                         continue
 
-            # Generate registration number (candidate_registration_type already determined above)
-            registration_number = await generate_unique_registration_number(session, exam_id, current_user.school_id, candidate_registration_type)
+            registration_number = await generate_unique_registration_number(
+                session, exam_id, candidate_school_id, candidate_registration_type
+            )
 
             # Create candidate
             new_candidate = RegistrationCandidate(
                 registration_exam_id=exam_id,
-                school_id=current_user.school_id,
+                school_id=candidate_school_id,
                 portal_user_id=current_user.id,
                 firstname=firstname,
                 lastname=lastname,
@@ -1492,6 +1505,9 @@ async def download_candidate_template(
         year = None
         filename = "candidate_upload_template.xlsx"
 
+        exam_kind = None
+        allows_referral = True
+        allows_free_tvet = False
         if exam_id:
             # Get exam to determine exam series, type, and year
             exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
@@ -1501,6 +1517,11 @@ async def download_candidate_template(
                 exam_series = exam.exam_series
                 exam_type = exam.exam_type
                 year = exam.year
+                exam_kind = exam.exam_kind.value if hasattr(exam.exam_kind, "value") else str(exam.exam_kind)
+                allows_referral = bool(exam.allows_referral_registration)
+                allows_free_tvet = await school_allows_free_tvet_for_exam(
+                    session, exam_id, current_user.school_id
+                )
                 # Generate filename: {year}_{exam_series}_{exam_type}.xlsx
                 # Sanitize exam_type and exam_series for filename (replace spaces/special chars)
                 exam_type_safe = exam_type.replace(" ", "_").replace("/", "_")
@@ -1510,7 +1531,12 @@ async def download_candidate_template(
                 else:
                     filename = f"{year}_{exam_type_safe}.xlsx"
 
-        template_bytes = generate_candidate_template(exam_series=exam_series)
+        template_bytes = generate_candidate_template(
+            exam_series=exam_series,
+            exam_kind=exam_kind,
+            allows_referral_registration=allows_referral,
+            allows_free_tvet=allows_free_tvet,
+        )
         return StreamingResponse(
             iter([template_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1767,9 +1793,13 @@ async def get_school_dashboard(
     # Count active users
     active_user_count = await count_active_school_users(session, current_user.school_id)
 
+    # School dashboard: school-mediated registrations only (exclude private sitters)
+    school_type_filter = school_mediated_type_filter()
+
     # Count total candidates
     total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
-        RegistrationCandidate.school_id == current_user.school_id
+        RegistrationCandidate.school_id == current_user.school_id,
+        school_type_filter,
     )
     total_result = await session.execute(total_candidates_stmt)
     total_candidates = total_result.scalar_one() or 0
@@ -1777,7 +1807,10 @@ async def get_school_dashboard(
     # Count candidates by status
     candidates_by_status_stmt = (
         select(RegistrationCandidate.registration_status, func.count(RegistrationCandidate.id))
-        .where(RegistrationCandidate.school_id == current_user.school_id)
+        .where(
+            RegistrationCandidate.school_id == current_user.school_id,
+            school_type_filter,
+        )
         .group_by(RegistrationCandidate.registration_status)
     )
     status_result = await session.execute(candidates_by_status_stmt)
@@ -1785,7 +1818,8 @@ async def get_school_dashboard(
 
     # Count distinct exams
     total_exams_stmt = select(func.count(func.distinct(RegistrationCandidate.registration_exam_id))).where(
-        RegistrationCandidate.school_id == current_user.school_id
+        RegistrationCandidate.school_id == current_user.school_id,
+        school_type_filter,
     )
     exams_result = await session.execute(total_exams_stmt)
     total_exams = exams_result.scalar_one() or 0
@@ -1801,13 +1835,14 @@ async def get_school_dashboard(
     programme_result = await session.execute(programme_stmt)
     programmes = programme_result.scalars().all()
 
-    # For each programme, count candidates
+    # For each programme, count school-mediated candidates
     programmes_summary = []
     for programme in programmes:
         # Count total candidates for this programme
         total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.school_id == current_user.school_id,
-            RegistrationCandidate.programme_id == programme.id
+            RegistrationCandidate.programme_id == programme.id,
+            school_type_filter,
         )
         total_result = await session.execute(total_candidates_stmt)
         total_prog_candidates = total_result.scalar_one() or 0
@@ -1816,7 +1851,8 @@ async def get_school_dashboard(
         completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.school_id == current_user.school_id,
             RegistrationCandidate.programme_id == programme.id,
-            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED
+            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+            school_type_filter,
         )
         completed_result = await session.execute(completed_candidates_stmt)
         completed_candidates = completed_result.scalar_one() or 0
@@ -3158,6 +3194,104 @@ async def bulk_replace_background(
         )
 
 
+@router.get("/invoices/regular/by-examination", response_model=SchoolInvoiceResponse)
+async def get_regular_invoice_by_examination(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for regular candidates by examination."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    invoice_data = await aggregate_candidates_by_examination(
+        session, current_user.school_id, exam_id, RegistrationType.REGULAR.value
+    )
+
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.REGULAR.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/regular/by-examination-grouped-by-programme", response_model=SchoolInvoiceResponse)
+async def get_regular_invoice_by_examination_grouped_by_programme(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for regular candidates by examination grouped by programme."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    invoice_data = await aggregate_candidates_by_examination_and_programme(
+        session, current_user.school_id, exam_id, RegistrationType.REGULAR.value
+    )
+
+    programme_items = [
+        ProgrammeInvoiceItem(
+            programme_id=prog["programme_id"],
+            programme_code=prog["programme_code"],
+            programme_name=prog["programme_name"],
+            candidate_count=prog["candidate_count"],
+            total_amount=prog["total_amount"],
+        )
+        for prog in invoice_data["programmes"]
+    ]
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.REGULAR.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+            programmes=programme_items,
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
 @router.get("/invoices/free-tvet/by-examination", response_model=SchoolInvoiceResponse)
 async def get_free_tvet_invoice_by_examination(
     session: DBSessionDep,
@@ -3301,6 +3435,43 @@ async def get_referral_invoice_by_examination(
             total_amount=invoice_data["total_amount"],
         ),
         generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/regular/pdf")
+async def download_regular_invoice_pdf(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    group_by_programme: bool = Query(False, description="Group by programme"),
+) -> StreamingResponse:
+    """Download PDF invoice for regular candidates."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    try:
+        pdf_bytes = await generate_school_invoice_pdf(
+            session,
+            current_user.school_id,
+            exam_id,
+            RegistrationType.REGULAR.value,
+            group_by_programme=group_by_programme,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"regular_invoice_exam_{exam_id}"
+    if group_by_programme:
+        filename += "_by_programme"
+    filename += ".pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

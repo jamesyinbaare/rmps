@@ -51,6 +51,7 @@ export function EditExamDialog({
   const [programmeTypeId, setProgrammeTypeId] = useState("");
   const [examSeriesId, setExamSeriesId] = useState("");
   const [year, setYear] = useState("");
+  const [allowsReferralRegistration, setAllowsReferralRegistration] = useState(true);
   const [enabledIds, setEnabledIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
 
@@ -74,6 +75,7 @@ export function EditExamDialog({
       setProgrammeTypeId(exam.programme_type_id ? String(exam.programme_type_id) : "");
       setExamSeriesId(exam.exam_series_id ? String(exam.exam_series_id) : "");
       setYear(exam.year.toString());
+      setAllowsReferralRegistration(exam.allows_referral_registration ?? true);
       setEnabledIds(new Set(exam.enabled_programme_type_ids || []));
     }
   }, [open, exam]);
@@ -121,6 +123,8 @@ export function EditExamDialog({
         exam_series_id: parseInt(examSeriesId, 10),
         year: yearNum,
         enabled_programme_type_ids: Array.from(enabledIds),
+        allows_referral_registration:
+          exam.exam_kind === "school" ? allowsReferralRegistration : false,
       });
 
       toast.success("Examination updated successfully");
@@ -139,11 +143,18 @@ export function EditExamDialog({
         <DialogHeader>
           <DialogTitle>Edit Examination Details</DialogTitle>
           <DialogDescription>
-            Update programme type, series, year, and which sub-types are enabled for registration.
+            Update programme type, series, year, and registration options. Examination kind is locked after candidates register.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
+            <div className="rounded-md border px-3 py-2 text-sm">
+              Examination kind:{" "}
+              <span className="font-medium capitalize">{exam.exam_kind || "school"}</span>
+              {hasCandidates && (
+                <span className="ml-2 text-xs text-muted-foreground">(locked)</span>
+              )}
+            </div>
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Programme type *</Label>
@@ -210,9 +221,22 @@ export function EditExamDialog({
                 max="2100"
               />
             </div>
+            {exam.exam_kind === "school" && (
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2 font-normal">
+                  <input
+                    type="checkbox"
+                    checked={allowsReferralRegistration}
+                    onChange={(e) => setAllowsReferralRegistration(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Allow referral candidate registration
+                </Label>
+              </div>
+            )}
             {hasCandidates && (
               <p className="text-xs text-muted-foreground">
-                Programme type, series, and year are locked because candidates are already registered.
+                Programme type, series, year, and kind are locked because candidates are already registered.
                 Enablement can still be adjusted (types with candidates cannot be turned off).
               </p>
             )}

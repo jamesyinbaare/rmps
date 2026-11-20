@@ -17,6 +17,8 @@ import { listExams, listSchools } from "@/lib/api";
 import type { RegistrationExam, School } from "@/types";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import {
+  downloadAdminRegularInvoicePdfBySchool,
+  downloadAdminRegularInvoiceSummaryPdf,
   downloadAdminFreeTvetInvoicePdfBySchool,
   downloadAdminReferralInvoicePdfBySchool,
   downloadAdminFreeTvetInvoiceSummaryPdf,
@@ -51,14 +53,14 @@ export default function AdminInvoicesPage() {
     loadData();
   }, []);
 
-  const getDownloadKey = (type: "free-tvet" | "referral", summary: boolean): string => {
+  const getDownloadKey = (type: "regular" | "free-tvet" | "referral", summary: boolean): string => {
     const examIdStr = selectedExamId ? String(selectedExamId) : "";
     const schoolIdStr = summary ? "summary" : (selectedSchoolId === "all" ? "summary" : String(selectedSchoolId));
     return `${type}-${examIdStr}-${schoolIdStr}`;
   };
 
   const handleDownload = async (
-    type: "free-tvet" | "referral",
+    type: "regular" | "free-tvet" | "referral",
     summary: boolean = false
   ) => {
     if (!selectedExamId) {
@@ -77,7 +79,9 @@ export default function AdminInvoicesPage() {
     try {
       let blob: Blob;
       if (summary) {
-        if (type === "free-tvet") {
+        if (type === "regular") {
+          blob = await downloadAdminRegularInvoiceSummaryPdf(selectedExamId);
+        } else if (type === "free-tvet") {
           blob = await downloadAdminFreeTvetInvoiceSummaryPdf(selectedExamId);
         } else {
           blob = await downloadAdminReferralInvoiceSummaryPdf(selectedExamId);
@@ -86,7 +90,9 @@ export default function AdminInvoicesPage() {
           if (selectedSchoolId === "all") {
             throw new Error("School ID is required for per-school invoices");
           }
-          if (type === "free-tvet") {
+          if (type === "regular") {
+            blob = await downloadAdminRegularInvoicePdfBySchool(selectedExamId, selectedSchoolId);
+          } else if (type === "free-tvet") {
             blob = await downloadAdminFreeTvetInvoicePdfBySchool(selectedExamId, selectedSchoolId);
           } else {
             blob = await downloadAdminReferralInvoicePdfBySchool(selectedExamId, selectedSchoolId);
@@ -181,7 +187,52 @@ export default function AdminInvoicesPage() {
 
       {selectedExamId && (
         <>
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5" />
+                  Regular Invoices
+                </CardTitle>
+                <CardDescription>
+                  Generate invoices for regular candidates
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {selectedSchoolId !== "all" ? (
+                  <Button
+                    className="w-full"
+                    onClick={() => handleDownload("regular", false)}
+                    disabled={downloading !== null}
+                  >
+                    {downloading === getDownloadKey("regular", false) ? (
+                      "Downloading..."
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download School Invoice
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    className="w-full"
+                    onClick={() => handleDownload("regular", true)}
+                    disabled={downloading !== null}
+                  >
+                    {downloading === getDownloadKey("regular", true) ? (
+                      "Downloading..."
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Summary (All Schools)
+                      </>
+                    )}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -259,7 +310,7 @@ export default function AdminInvoicesPage() {
                     onClick={() => handleDownload("referral", true)}
                     disabled={downloading !== null}
                   >
-                    {downloading === `referral-${selectedExamId}-summary` ? (
+                    {downloading === getDownloadKey("referral", true) ? (
                       "Downloading..."
                     ) : (
                       <>

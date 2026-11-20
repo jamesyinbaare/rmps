@@ -541,17 +541,30 @@ export default function ExamDetailPage() {
             </Badge>
           </div>
           <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Examination kind</p>
+            <Badge variant="outline" className="capitalize">
+              {exam.exam_kind || "school"}
+            </Badge>
+          </div>
+          <div className="space-y-2">
             <p className="text-sm text-muted-foreground">Bulk registration</p>
             <Badge variant="outline">
               {exam.registration_period.allows_bulk_registration ? "Allowed" : "Not allowed"}
             </Badge>
           </div>
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Private registration</p>
-            <Badge variant="outline">
-              {exam.registration_period.allows_private_registration ? "Allowed" : "Not allowed"}
-            </Badge>
-          </div>
+          {exam.exam_kind === "school" ? (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">Referral registration</p>
+              <Badge variant="outline">
+                {exam.allows_referral_registration ? "Allowed" : "Not allowed"}
+              </Badge>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">Individual private portal</p>
+              <Badge variant="outline">Open</Badge>
+            </div>
+          )}
         </div>
 
         <LateRegistrationWindowsSection examId={exam.id} />

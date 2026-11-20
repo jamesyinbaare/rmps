@@ -27,7 +27,7 @@ import {
   listRootProgrammeTypes,
 } from "@/lib/api";
 import { toast } from "sonner";
-import type { ExamSeriesDefinition, ProgrammeType, ProgrammeTypeTreeNode, RegistrationExamCreate } from "@/types";
+import type { ExamKind, ExamSeriesDefinition, ProgrammeType, ProgrammeTypeTreeNode, RegistrationExamCreate } from "@/types";
 import {
   ProgrammeTypeEnablementTree,
   collectTreeIds,
@@ -48,10 +48,11 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
   const [examSeriesId, setExamSeriesId] = useState<string>("");
   const [year, setYear] = useState("");
   const [description, setDescription] = useState("");
+  const [examKind, setExamKind] = useState<ExamKind>("school");
+  const [allowsReferralRegistration, setAllowsReferralRegistration] = useState(true);
   const [registrationStartDate, setRegistrationStartDate] = useState<Date | null>(null);
   const [registrationEndDate, setRegistrationEndDate] = useState<Date | null>(null);
   const [allowsBulkRegistration, setAllowsBulkRegistration] = useState(true);
-  const [allowsPrivateRegistration, setAllowsPrivateRegistration] = useState(true);
   const [enabledIds, setEnabledIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(false);
@@ -81,7 +82,6 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
 
   const enablementNodes = useMemo(() => {
     if (!selectedRoot) return [];
-    // Show root + descendants as independent toggles
     return [selectedRoot];
   }, [selectedRoot]);
 
@@ -90,7 +90,6 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       setEnabledIds(new Set());
       return;
     }
-    // Default: enable entire subtree
     setEnabledIds(new Set(collectTreeIds([selectedRoot])));
   }, [selectedRoot?.id]);
 
@@ -139,11 +138,12 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
         enabled_programme_type_ids: Array.from(enabledIds),
         year: parseInt(year, 10),
         description: description || null,
+        exam_kind: examKind,
+        allows_referral_registration: examKind === "school" ? allowsReferralRegistration : false,
         registration_period: {
           registration_start_date: startDateTime.toISOString(),
           registration_end_date: endDateTime.toISOString(),
           allows_bulk_registration: allowsBulkRegistration,
-          allows_private_registration: allowsPrivateRegistration,
         },
       };
 
@@ -155,10 +155,11 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       setExamSeriesId("");
       setYear("");
       setDescription("");
+      setExamKind("school");
+      setAllowsReferralRegistration(true);
       setRegistrationStartDate(null);
       setRegistrationEndDate(null);
       setAllowsBulkRegistration(true);
-      setAllowsPrivateRegistration(true);
       setEnabledIds(new Set());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create exam");
@@ -175,11 +176,45 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
         <DialogHeader>
           <DialogTitle>Create Examination</DialogTitle>
           <DialogDescription>
-            Bind an exam to a programme type and series, then enable which sub-types are open for registration.
+            Choose school or private examination kind, then bind programme type and series.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Examination kind *</Label>
+              <div className="flex flex-wrap gap-4">
+                <Label className="flex items-center gap-2 font-normal cursor-pointer">
+                  <input
+                    type="radio"
+                    name="examKind"
+                    checked={examKind === "school"}
+                    onChange={() => setExamKind("school")}
+                    disabled={loading}
+                  />
+                  School examination
+                </Label>
+                <Label className="flex items-center gap-2 font-normal cursor-pointer">
+                  <input
+                    type="radio"
+                    name="examKind"
+                    checked={examKind === "private"}
+                    onChange={() => {
+                      setExamKind("private");
+                      setAllowsReferralRegistration(false);
+                    }}
+                    disabled={loading}
+                  />
+                  Private examination
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {examKind === "school"
+                  ? "Schools register regular (free TVET) candidates; referral optional. Private portal closed."
+                  : "Individuals and schools register private candidates only. No referral or free TVET."}
+              </p>
+            </div>
+
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="programmeType">Programme type *</Label>
@@ -286,20 +321,22 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
                   onChange={(e) => setAllowsBulkRegistration(e.target.checked)}
                   disabled={loading}
                 />
-                Allow Bulk Registration (School Portal)
+                Allow bulk registration (school portal)
               </Label>
             </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={allowsPrivateRegistration}
-                  onChange={(e) => setAllowsPrivateRegistration(e.target.checked)}
-                  disabled={loading}
-                />
-                Allow Private Registration
-              </Label>
-            </div>
+            {examKind === "school" && (
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={allowsReferralRegistration}
+                    onChange={(e) => setAllowsReferralRegistration(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Allow referral candidate registration
+                </Label>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>

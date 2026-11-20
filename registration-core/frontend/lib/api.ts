@@ -1043,12 +1043,16 @@ export async function getExamEligibleSchools(examId: number): Promise<School[]> 
 
 export async function setExamEligibleSchools(
   examId: number,
-  schoolIds: number[]
+  schoolIds: number[],
+  freeTvetSchoolIds: number[] = []
 ): Promise<School[]> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/eligible-schools`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ school_ids: schoolIds }),
+    body: JSON.stringify({
+      school_ids: schoolIds,
+      free_tvet_school_ids: freeTvetSchoolIds,
+    }),
   });
   return handleResponse<School[]>(response);
 }
@@ -2998,6 +3002,20 @@ export async function generateResultsPDF(
 }
 
 // Admin invoice helpers (registration)
+export async function downloadRegularInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
+  const params = new URLSearchParams();
+  params.append("exam_id", examId.toString());
+  if (groupByProgramme) {
+    params.append("group_by_programme", "true");
+  }
+  const response = await fetchWithAuth(`/api/v1/school/invoices/regular/pdf?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
 export async function getFreeTvetInvoiceByExamination(examId: number): Promise<any> {
   const response = await fetchWithAuth(`/api/v1/school/invoices/free-tvet/by-examination?exam_id=${examId}`);
   return handleResponse<any>(response);
@@ -3037,6 +3055,24 @@ export async function downloadReferralInvoicePdf(examId: number): Promise<Blob> 
 }
 
 // System Admin Invoice APIs
+export async function downloadAdminRegularInvoicePdfBySchool(examId: number, schoolId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/regular/by-school/pdf?exam_id=${examId}&school_id=${schoolId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+export async function downloadAdminRegularInvoiceSummaryPdf(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/regular/summary/pdf?exam_id=${examId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
 export async function getAdminFreeTvetInvoiceBySchool(examId: number, schoolId: number): Promise<any> {
   const response = await fetchWithAuth(`/api/v1/admin/invoices/free-tvet/by-school?exam_id=${examId}&school_id=${schoolId}`);
   return handleResponse<any>(response);

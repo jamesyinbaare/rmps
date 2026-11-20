@@ -200,11 +200,9 @@ async def register_private_user(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open"
         )
 
-    if not exam.registration_period.allows_private_registration:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This exam does not allow private candidate registration",
-        )
+    from app.services.exam_kind_service import assert_private_portal_allowed
+
+    assert_private_portal_allowed(exam)
 
     # Validate school is a private examination center
     school_stmt = select(School).where(
