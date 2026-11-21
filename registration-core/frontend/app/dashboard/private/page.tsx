@@ -66,25 +66,18 @@ export default function PrivateCandidateDashboard() {
             Draft
           </Badge>
         );
-      case "PENDING":
+      case "INCOMPLETE":
         return (
           <Badge variant="outline" className="border-primary/30 bg-accent text-accent-foreground">
             <Clock className="mr-1 h-3 w-3" />
-            Pending
+            Incomplete
           </Badge>
         );
-      case "APPROVED":
+      case "COMPLETE":
         return (
           <Badge variant="outline" className="border-success/30 bg-success/10 text-success">
             <CheckCircle className="mr-1 h-3 w-3" />
-            Approved
-          </Badge>
-        );
-      case "REJECTED":
-        return (
-          <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive">
-            <XCircle className="mr-1 h-3 w-3" />
-            Rejected
+            Complete
           </Badge>
         );
       default:
@@ -93,7 +86,7 @@ export default function PrivateCandidateDashboard() {
   };
 
   const canEditRegistration = (registration: RegistrationCandidate): boolean => {
-    if (registration.registration_status !== "PENDING" && registration.registration_status !== "APPROVED") {
+    if (registration.registration_status !== "INCOMPLETE" && registration.registration_status !== "COMPLETE") {
       return false;
     }
 

@@ -12,6 +12,7 @@ import type {
   RegistrationCandidate,
   RegistrationExam,
   SchoolDashboardData,
+  SchoolExamExpectations,
 } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,16 +39,22 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowLeft,
+  Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import { SectionLabel } from "@/components/dashboard/SectionLabel";
 import { StatStrip } from "@/components/dashboard/StatStrip";
+import { RegistrationExpectationsPanel } from "@/components/school/RegistrationExpectationsPanel";
 import {
   primaryRegistrationType,
   registrationTypeLabel,
 } from "@/lib/school-registration";
+import {
+  registrationStatusBadgeClass,
+  registrationStatusLabel,
+} from "@/lib/registration-status";
 import { cn } from "@/lib/utils";
 
 type SortKey = "name" | "status" | "type" | "programme";
@@ -55,23 +62,10 @@ type SortDir = "asc" | "desc";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
-  { value: "PENDING", label: "Pending" },
-  { value: "APPROVED", label: "Approved" },
-  { value: "REJECTED", label: "Rejected" },
+  { value: "INCOMPLETE", label: "Incomplete" },
+  { value: "COMPLETE", label: "Complete" },
+  { value: "DRAFT", label: "Draft" },
 ] as const;
-
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "APPROVED":
-      return "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300";
-    case "REJECTED":
-      return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
-    case "PENDING":
-      return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-}
 
 function examTitle(exam: RegistrationExam): string {
   const type = exam.programme_type_name || exam.exam_type;
@@ -102,6 +96,8 @@ export default function ExamRegistrationWorkspacePage() {
   const [selectedCandidate, setSelectedCandidate] =
     useState<RegistrationCandidate | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [expectations, setExpectations] =
+    useState<SchoolExamExpectations | null>(null);
 
   const loadCandidates = useCallback(async (id: number) => {
     setLoadingCandidates(true);
@@ -163,13 +159,13 @@ export default function ExamRegistrationWorkspacePage() {
 
   const stats = useMemo(() => {
     const total = candidates.length;
-    const approved = candidates.filter(
-      (c) => c.registration_status === "APPROVED"
+    const complete = candidates.filter(
+      (c) => c.registration_status === "COMPLETE"
     ).length;
-    const pending = candidates.filter(
-      (c) => c.registration_status === "PENDING"
+    const incomplete = candidates.filter(
+      (c) => c.registration_status === "INCOMPLETE"
     ).length;
-    return { total, approved, pending };
+    return { total, complete, incomplete };
   }, [candidates]);
 
   const filtered = useMemo(() => {
@@ -350,24 +346,54 @@ export default function ExamRegistrationWorkspacePage() {
             ),
           },
           {
-            label: "Approved",
-            value: loadingCandidates ? "—" : stats.approved,
+            label: "Complete",
+            value: loadingCandidates ? "—" : stats.complete,
             hint: (
               <span className="inline-flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Ready
+                <CheckCircle2 className="h-3 w-3" /> Photo + fee OK
               </span>
             ),
           },
           {
-            label: "Pending",
-            value: loadingCandidates ? "—" : stats.pending,
+            label: "Incomplete",
+            value: loadingCandidates ? "—" : stats.incomplete,
             hint: (
               <span className="inline-flex items-center gap-1">
-                <Clock className="h-3 w-3" /> Awaiting review
+                <Clock className="h-3 w-3" /> Missing photo or fee
+              </span>
+            ),
+          },
+          {
+            label: "Expected",
+            value:
+              expectations?.expected_total != null
+                ? expectations.expected_total.toLocaleString()
+                : "—",
+            hint: (
+              <span className="inline-flex items-center gap-1">
+                <Target className="h-3 w-3" />
+                {!expectations?.has_declaration ||
+                expectations.expected_total == null
+                  ? "Not set"
+                  : expectations.total_over
+                    ? "Over expected"
+                    : expectations.total_under
+                      ? "Under expected"
+                      : "On target"}
               </span>
             ),
           },
         ]}
+      />
+
+      <RegistrationExpectationsPanel
+        examId={examId}
+        onUpdated={(next) => {
+          setExpectations(next);
+          setExam((prev) =>
+            prev ? { ...prev, expected_total: next.expected_total } : prev
+          );
+        }}
       />
 
       <div>
@@ -496,10 +522,10 @@ export default function ExamRegistrationWorkspacePage() {
                         <Badge
                           className={cn(
                             "shadow-none",
-                            statusBadgeClass(c.registration_status || "")
+                            registrationStatusBadgeClass(c.registration_status || "")
                           )}
                         >
-                          {c.registration_status}
+                          {registrationStatusLabel(c.registration_status)}
                         </Badge>
                       </TableCell>
                     </TableRow>

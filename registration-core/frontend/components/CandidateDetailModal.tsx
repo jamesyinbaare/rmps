@@ -35,7 +35,19 @@ import {
   XCircle,
   CheckCircle2,
 } from "lucide-react";
-import { uploadCandidatePhoto, getCandidatePhoto, getAdminCandidatePhoto, getAdminPhotoFile, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
+import {
+  uploadCandidatePhoto,
+  getCandidatePhoto,
+  getAdminCandidatePhoto,
+  getAdminPhotoFile,
+  deleteCandidatePhoto,
+  getPhotoFile,
+  updateCandidate,
+  getProgrammeSubjects,
+  markCandidateFeePaid,
+  markCandidateFeeWaived,
+  getCurrentUser,
+} from "@/lib/api";
 import { toast } from "sonner";
 import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
 import { Input } from "@/components/ui/input";
@@ -50,6 +62,11 @@ import {
 import { Edit2, Save, X as XIcon, FileText } from "lucide-react";
 import { SubjectSelectionPanel } from "@/components/school/SubjectSelectionPanel";
 import { isStructuredRegistrationType } from "@/lib/school-registration";
+import {
+  feePaymentStatusLabel,
+  registrationStatusBadgeClass,
+  registrationStatusLabel,
+} from "@/lib/registration-status";
 
 interface CandidateDetailModalProps {
   candidate: RegistrationCandidate | null;
@@ -69,20 +86,6 @@ function calculateAge(dateOfBirth: string): number {
     age--;
   }
   return age;
-}
-
-// Helper function to get registration status badge style
-function getStatusBadgeClass(status: string): string {
-  switch (status) {
-    case "APPROVED":
-      return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
-    case "REJECTED":
-      return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
-    case "PENDING":
-      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
 }
 
 export function CandidateDetailModal({
@@ -134,7 +137,7 @@ export function CandidateDetailModal({
 
   // Approval state
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
-  const [approving, setApproving] = useState(false);
+  const [updatingFee, setUpdatingFee] = useState(false);
 
   // Load current user on mount
   useEffect(() => {
@@ -520,23 +523,33 @@ export function CandidateDetailModal({
     setEditingGuardian(false);
   };
 
-  const handleApprove = async () => {
+  const handleMarkFeePaid = async () => {
     if (!candidate) return;
-
-    setApproving(true);
+    setUpdatingFee(true);
     try {
-      const updatedCandidate = await approveCandidate(candidate.id);
-      toast.success("Registration approved successfully");
-
-      // Update the candidate in parent component
-      if (onCandidateChange) {
-        onCandidateChange(updatedCandidate);
-      }
+      const updatedCandidate = await markCandidateFeePaid(candidate.id);
+      toast.success("Fee marked as paid");
+      onCandidateChange?.(updatedCandidate);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to approve registration");
+      toast.error(error instanceof Error ? error.message : "Failed to mark fee paid");
       console.error(error);
     } finally {
-      setApproving(false);
+      setUpdatingFee(false);
+    }
+  };
+
+  const handleMarkFeeWaived = async () => {
+    if (!candidate) return;
+    setUpdatingFee(true);
+    try {
+      const updatedCandidate = await markCandidateFeeWaived(candidate.id);
+      toast.success("Fee waived");
+      onCandidateChange?.(updatedCandidate);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to waive fee");
+      console.error(error);
+    } finally {
+      setUpdatingFee(false);
     }
   };
 
@@ -544,10 +557,10 @@ export function CandidateDetailModal({
 
   const subjectSelections = candidate.subject_selections || [];
 
-  // Compute validation status for approval
   const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
-  const canApprove = candidate.registration_status === "PENDING" || candidate.registration_status === "DRAFT";
   const hasPhoto = !!photo;
+  const feeStatus = candidate.fee_payment_status || "unpaid";
+  const feeNeedsAction = feeStatus === "unpaid";
 
   // Check if exam is closed
   const isExamClosed = candidate.exam?.registration_period
@@ -607,35 +620,47 @@ export function CandidateDetailModal({
                     </span>
                   )}
                   <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusBadgeClass(
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${registrationStatusBadgeClass(
                       candidate.registration_status
                     )}`}
                   >
-                    {candidate.registration_status}
+                    {registrationStatusLabel(candidate.registration_status)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Fee: {feePaymentStatusLabel(feeStatus)}
                   </span>
                 </DialogDescription>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {isSchoolAdmin && canApprove && (
-                <Button
-                  onClick={handleApprove}
-                  disabled={approving || !hasPhoto}
-                  className="shadow-none"
-                  title={!hasPhoto ? "Photo is required for approval" : "Approve registration (validation will be performed by the system)"}
-                >
-                  {approving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Approving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Approve
-                    </>
-                  )}
-                </Button>
+              {isSchoolAdmin && feeNeedsAction && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleMarkFeeWaived}
+                    disabled={updatingFee}
+                    className="shadow-none"
+                  >
+                    {updatingFee ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Waive fee
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleMarkFeePaid}
+                    disabled={updatingFee}
+                    className="shadow-none"
+                  >
+                    {updatingFee ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    Mark fee paid
+                  </Button>
+                </>
               )}
               <Button
                 variant="ghost"
@@ -646,6 +671,36 @@ export function CandidateDetailModal({
                 <Keyboard className="h-4 w-4" />
               </Button>
             </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+            <span
+              className={
+                hasPhoto
+                  ? "inline-flex items-center gap-1 text-success"
+                  : "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+              }
+            >
+              {hasPhoto ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              {hasPhoto ? "Photo uploaded" : "Photo missing"}
+            </span>
+            <span
+              className={
+                !feeNeedsAction
+                  ? "inline-flex items-center gap-1 text-success"
+                  : "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+              }
+            >
+              {!feeNeedsAction ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              {feePaymentStatusLabel(feeStatus)}
+            </span>
           </div>
         </DialogHeader>
 

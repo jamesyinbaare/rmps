@@ -1,4 +1,9 @@
-"""Service for validating registration approval requirements."""
+"""Helpers for validating registration data completeness (bio / subjects).
+
+Approval workflow was removed; registration completeness is now driven by
+photo + fee via ``registration_completeness.recompute_registration_status``.
+These checks remain useful for form/submit validation.
+"""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,17 +12,14 @@ from app.models import RegistrationCandidate, RegistrationCandidatePhoto
 from app.services.subject_selection import validate_subject_selections
 
 
-async def can_approve_registration(
+async def validate_registration_profile(
     session: AsyncSession, candidate: RegistrationCandidate
 ) -> tuple[bool, list[str]]:
     """
-    Validate that a registration meets all approval requirements.
+    Validate bio, photo, programme, and subjects for a registration profile.
 
-    Requirements:
-    - Required bio data: name, date_of_birth, gender
-    - Photo exists
-    - Programme is set
-    - Subject selections are valid for the candidate's registration type
+    Used by flows that still need stronger profile checks than COMPLETE status
+    (photo + fee only).
     """
     errors: list[str] = []
 
@@ -37,7 +39,7 @@ async def can_approve_registration(
     photo = photo_result.scalar_one_or_none()
 
     if not photo:
-        errors.append("Photo is required for approval")
+        errors.append("Photo is required")
 
     if not candidate.programme_id:
         errors.append("Programme is required")
@@ -60,3 +62,7 @@ async def can_approve_registration(
             errors.extend(subject_errors)
 
     return len(errors) == 0, errors
+
+
+# Backward-compatible alias
+can_approve_registration = validate_registration_profile

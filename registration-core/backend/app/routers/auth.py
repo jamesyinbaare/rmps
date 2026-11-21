@@ -42,6 +42,7 @@ from app.schemas.auth import (
     UserSelfUpdate,
 )
 from app.services.subject_selection import validate_subject_selections
+from app.services.registration_completeness import default_fee_payment_status
 from app.utils.registration import generate_unique_registration_number
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
@@ -276,7 +277,8 @@ async def register_private_user(
         guardian_phone=registration_data.guardian_phone,
         guardian_digital_address=registration_data.guardian_digital_address,
         guardian_national_id=registration_data.guardian_national_id,
-        registration_status=RegistrationStatus.PENDING,
+        registration_status=RegistrationStatus.INCOMPLETE,
+        fee_payment_status=default_fee_payment_status(registration_type),
     )
     session.add(new_candidate)
     await session.flush()

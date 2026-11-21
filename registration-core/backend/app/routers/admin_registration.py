@@ -120,6 +120,7 @@ from app.services.subject_selection import (
     validate_subject_selections,
 )
 from app.models import RegistrationStatus
+from app.services.registration_completeness import default_fee_payment_status
 import csv
 import io
 import pandas as pd
@@ -1318,7 +1319,13 @@ async def get_school_candidates(
 
     if status:
         try:
-            status_enum = RegistrationStatus(status.upper())
+            raw_status = status.upper()
+            legacy_status_map = {
+                "PENDING": RegistrationStatus.INCOMPLETE,
+                "REJECTED": RegistrationStatus.INCOMPLETE,
+                "APPROVED": RegistrationStatus.COMPLETE,
+            }
+            status_enum = legacy_status_map.get(raw_status) or RegistrationStatus(raw_status)
             stmt = stmt.where(RegistrationCandidate.registration_status == status_enum)
             count_stmt = count_stmt.where(RegistrationCandidate.registration_status == status_enum)
         except ValueError:
@@ -1585,7 +1592,7 @@ async def list_exams(session: DBSessionDep, current_user: SystemAdminDep) -> lis
             await session.execute(
                 select(func.count(RegistrationCandidate.id)).where(
                     RegistrationCandidate.registration_exam_id == exam.id,
-                    RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+                    RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE,
                     type_filter,
                 )
             )
@@ -1633,7 +1640,7 @@ async def list_active_exams(session: DBSessionDep, current_user: SystemAdminDep)
 
         approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam.id,
-            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+            RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE,
             type_filter,
         )
         approved_candidates = (await session.execute(approved_candidates_stmt)).scalar() or 0
@@ -1715,7 +1722,7 @@ async def get_exam_statistics(
     # Count approved candidates
     approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
         RegistrationCandidate.registration_exam_id == exam_id,
-        RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+        RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE,
         type_filter,
     )
     approved_result = await session.execute(approved_candidates_stmt)
@@ -1800,12 +1807,19 @@ async def get_exam_schools(
     result = await session.execute(schools_stmt)
     schools = result.all()
 
+    from app.services.registration_expectations import get_expected_totals_for_exam_schools
+
+    school_ids = [row.id for row in schools]
+    expected_map = await get_expected_totals_for_exam_schools(session, exam_id, school_ids)
+
     return [
         {
             "id": row.id,
             "name": row.name,
             "code": row.code,
             "candidate_count": row.candidate_count,
+            "expected_total": expected_map.get(row.id),
+            "actual_total": row.candidate_count,
         }
         for row in schools
     ]
@@ -2017,7 +2031,7 @@ async def get_exam_programmes(
         completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.registration_exam_id == exam_id,
             RegistrationCandidate.programme_id == programme.id,
-            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED
+            RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE
         )
         completed_result = await session.execute(completed_candidates_stmt)
         completed_candidates = completed_result.scalar_one() or 0
@@ -4022,7 +4036,8 @@ async def import_candidates(
             guardian_phone=guardian_phone,
             guardian_digital_address=guardian_digital_address,
             guardian_national_id=guardian_national_id,
-            registration_status=RegistrationStatus.PENDING,
+            registration_status=RegistrationStatus.INCOMPLETE,
+            fee_payment_status=default_fee_payment_status(candidate_registration_type),
         )
         session.add(new_candidate)
         await session.flush()

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, computed_field
 from uuid import UUID
 
-from app.models import ExamKind, RegistrationStatus
+from app.models import ExamKind, FeePaymentStatus, RegistrationStatus
 
 
 class RegistrationCandidatePhotoResponse(BaseModel):
@@ -160,6 +160,9 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     registration_number: str
     index_number: str | None = None
     registration_status: RegistrationStatus
+    fee_payment_status: FeePaymentStatus = FeePaymentStatus.UNPAID
+    fee_paid_at: datetime | None = None
+    fee_paid_by_user_id: str | None = None
     registration_date: datetime
     subject_selections: list[RegistrationSubjectSelectionResponse] = []
     exam: RegistrationExamResponse | None = None
@@ -167,6 +170,20 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("fee_paid_by_user_id", mode="before")
+    @classmethod
+    def convert_fee_paid_by_uuid(cls, v):
+        if v is None:
+            return None
+        return str(v)
+
+
+class CandidateFeeBulkUpdate(BaseModel):
+    """Mark fees paid/waived for multiple candidates."""
+
+    candidate_ids: list[int] = Field(default_factory=list, min_length=1)
+    action: str = Field(..., description="paid or waived")
 
 
 class CandidateListResponse(BaseModel):
@@ -313,6 +330,8 @@ class RegistrationExamResponse(BaseModel):
     candidate_count: int | None = None
     approved_candidates: int | None = None
     eligible_school_count: int | None = None
+    # School-facing: optional self-declared expected registration total for this school×exam
+    expected_total: int | None = None
     created_at: datetime
     updated_at: datetime
 

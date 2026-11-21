@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 
 export interface ExamRegisterKpis {
   total: number;
-  approved: number;
-  pending: number;
+  approved: number; // complete count (legacy field name kept for callers)
+  pending: number; // incomplete count (legacy field name kept for callers)
+  complete?: number;
+  incomplete?: number;
 }
 
 interface SchoolExamRegisterCardProps {
@@ -58,10 +60,12 @@ export function SchoolExamRegisterCard({
     href ?? `/dashboard/my-school/register/${exam.id}`;
   const open = isExamRegistrationOpen(exam);
   const left = daysLeft(exam);
+  const completeCount = kpis.complete ?? kpis.approved;
+  const incompleteCount = kpis.incomplete ?? kpis.pending;
   const completion =
     kpis.total === 0
       ? 0
-      : Math.round((kpis.approved / kpis.total) * 1000) / 10;
+      : Math.round((completeCount / kpis.total) * 1000) / 10;
   const period = exam.registration_period;
   const defaultType =
     exam.exam_kind === "private"
@@ -117,21 +121,30 @@ export function SchoolExamRegisterCard({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-0.5">
-          <div className="text-xs text-muted-foreground">Candidates</div>
+          <div className="text-xs text-muted-foreground">
+            {exam.expected_total != null ? "Registered / expected" : "Candidates"}
+          </div>
           <div className="font-mono text-xl font-medium tracking-tight">
-            {kpis.total.toLocaleString()}
+            {exam.expected_total != null
+              ? `${kpis.total.toLocaleString()} / ${exam.expected_total.toLocaleString()}`
+              : kpis.total.toLocaleString()}
+          </div>
+          {exam.expected_total != null && kpis.total > exam.expected_total && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              Over expected
+            </p>
+          )}
+        </div>
+        <div className="space-y-0.5">
+          <div className="text-xs text-muted-foreground">Complete</div>
+          <div className="font-mono text-xl font-medium tracking-tight">
+            {completeCount.toLocaleString()}
           </div>
         </div>
         <div className="space-y-0.5">
-          <div className="text-xs text-muted-foreground">Approved</div>
+          <div className="text-xs text-muted-foreground">Incomplete</div>
           <div className="font-mono text-xl font-medium tracking-tight">
-            {kpis.approved.toLocaleString()}
-          </div>
-        </div>
-        <div className="space-y-0.5">
-          <div className="text-xs text-muted-foreground">Pending</div>
-          <div className="font-mono text-xl font-medium tracking-tight">
-            {kpis.pending.toLocaleString()}
+            {incompleteCount.toLocaleString()}
           </div>
         </div>
         <div className="space-y-0.5">

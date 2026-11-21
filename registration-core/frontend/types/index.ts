@@ -157,7 +157,10 @@ export interface RegistrationCandidate {
   guardian_phone: string | null;
   guardian_digital_address: string | null;
   guardian_national_id: string | null;
-  registration_status: "PENDING" | "APPROVED" | "REJECTED" | "DRAFT";
+  registration_status: "DRAFT" | "INCOMPLETE" | "COMPLETE";
+  fee_payment_status?: "not_required" | "unpaid" | "paid" | "waived";
+  fee_paid_at?: string | null;
+  fee_paid_by_user_id?: string | null;
   registration_date: string;
   created_at: string;
   updated_at: string;
@@ -215,8 +218,45 @@ export interface RegistrationExam {
   candidate_count?: number | null;
   approved_candidates?: number | null;
   eligible_school_count?: number | null;
+  /** School-facing: optional self-declared expected total for this school×exam */
+  expected_total?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProgrammeExpectationProgress {
+  programme_id: number;
+  code: string;
+  name: string;
+  expected_count: number | null;
+  actual_count: number;
+  over: boolean;
+  under: boolean;
+}
+
+export interface SchoolExamExpectations {
+  exam_id: number;
+  school_id: number;
+  expected_total: number | null;
+  actual_total: number;
+  has_declaration: boolean;
+  total_over: boolean;
+  total_under: boolean;
+  declared_at: string | null;
+  declared_by_user_id: string | null;
+  declared_by_name: string | null;
+  programmes: ProgrammeExpectationProgress[];
+  can_edit: boolean;
+}
+
+export interface ProgrammeExpectationInput {
+  programme_id: number;
+  expected_count: number;
+}
+
+export interface SchoolExamExpectationsUpdate {
+  expected_total: number | null;
+  programmes: ProgrammeExpectationInput[];
 }
 
 export interface LateRegistrationWindowSchool {

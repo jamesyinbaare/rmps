@@ -65,11 +65,9 @@ function candidateDisplayName(c: RegistrationCandidate): string {
 
 function statusBadgeClass(status: string): string {
   switch (status.toUpperCase()) {
-    case "APPROVED":
+    case "COMPLETE":
       return "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300";
-    case "REJECTED":
-      return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
-    case "PENDING":
+    case "INCOMPLETE":
       return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
     case "DRAFT":
       return "bg-muted text-muted-foreground";
@@ -244,11 +242,19 @@ export function SchoolExamCandidatesTable({
           const status = String(
             row.original.registration_status || ""
           ).toUpperCase();
+          const label =
+            status === "COMPLETE"
+              ? "Complete"
+              : status === "INCOMPLETE"
+                ? "Incomplete"
+                : status === "DRAFT"
+                  ? "Draft"
+                  : status || "—";
           return (
             <Badge
               className={cn("shadow-none", statusBadgeClass(status))}
             >
-              {status || "—"}
+              {label}
             </Badge>
           );
         },
@@ -402,9 +408,8 @@ export function SchoolExamCandidatesTable({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="APPROVED">Approved</SelectItem>
-              <SelectItem value="REJECTED">Rejected</SelectItem>
+              <SelectItem value="INCOMPLETE">Incomplete</SelectItem>
+              <SelectItem value="COMPLETE">Complete</SelectItem>
               <SelectItem value="DRAFT">Draft</SelectItem>
             </SelectContent>
           </Select>

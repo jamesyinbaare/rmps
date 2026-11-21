@@ -39,6 +39,14 @@ from app.models import (
     school_programmes,
     programme_subjects,
 )
+from app.schemas.expectations import (
+    SchoolExamExpectationsResponse,
+    SchoolExamExpectationsUpdate,
+)
+from app.services.registration_expectations import (
+    get_school_exam_expectations,
+    upsert_school_exam_expectations,
+)
 from app.services.exam_eligibility_service import (
     is_school_eligible_for_exam,
     school_allows_free_tvet_for_exam,
@@ -66,6 +74,7 @@ from app.schemas.registration import (
     PhotoBulkUploadResponse,
     PhotoBulkUploadError,
     PhotoValidationJobResponse,
+    CandidateFeeBulkUpdate,
 )
 from app.schemas.programme import (
     ProgrammeResponse,
@@ -89,7 +98,12 @@ from app.services.photo_validation import PhotoValidationService
 from app.services.bulk_photo_validation import process_bulk_photo_validation, process_bulk_photo_resize, process_bulk_background_replacement
 from app.services.mediapipe_photo_validation import replace_background
 from fastapi import BackgroundTasks
-from app.services.registration_validation import can_approve_registration
+from app.services.registration_completeness import (
+    apply_fee_paid,
+    apply_fee_waived,
+    default_fee_payment_status,
+    recompute_registration_status,
+)
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
@@ -178,7 +192,21 @@ async def list_available_exams(
     responses = []
     for exam in exams:
         allows_free = await school_allows_free_tvet_for_exam(session, exam.id, school_id)
-        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+        expected_total = next(
+            (
+                row.expected_total
+                for row in (exam.eligible_schools or [])
+                if row.school_id == school_id
+            ),
+            None,
+        )
+        responses.append(
+            serialize_exam(
+                exam,
+                allows_free_tvet=allows_free,
+                expected_total=expected_total,
+            )
+        )
     return responses
 
 
@@ -187,12 +215,13 @@ async def list_all_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
     """List all eligible school and private exams (open and closed) for this school."""
+    school_id = current_user.school_id
     stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
-            ExamEligibleSchool.school_id == current_user.school_id,
+            ExamEligibleSchool.school_id == school_id,
         )
         .options(*exam_load_options())
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
@@ -202,11 +231,58 @@ async def list_all_exams(
 
     responses = []
     for exam in exams:
-        allows_free = await school_allows_free_tvet_for_exam(
-            session, exam.id, current_user.school_id
+        allows_free = await school_allows_free_tvet_for_exam(session, exam.id, school_id)
+        expected_total = next(
+            (
+                row.expected_total
+                for row in (exam.eligible_schools or [])
+                if row.school_id == school_id
+            ),
+            None,
         )
-        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+        responses.append(
+            serialize_exam(
+                exam,
+                allows_free_tvet=allows_free,
+                expected_total=expected_total,
+            )
+        )
     return responses
+
+
+@router.get(
+    "/exams/{exam_id}/expectations",
+    response_model=SchoolExamExpectationsResponse,
+)
+async def get_exam_expectations(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolExamExpectationsResponse:
+    """Get optional expected registration counts and live progress for an exam."""
+    return await get_school_exam_expectations(
+        session, exam_id=exam_id, school_id=current_user.school_id
+    )
+
+
+@router.put(
+    "/exams/{exam_id}/expectations",
+    response_model=SchoolExamExpectationsResponse,
+)
+async def put_exam_expectations(
+    exam_id: int,
+    payload: SchoolExamExpectationsUpdate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolExamExpectationsResponse:
+    """Create, update, or clear optional expected registration counts for an exam."""
+    return await upsert_school_exam_expectations(
+        session,
+        exam_id=exam_id,
+        school_id=current_user.school_id,
+        payload=payload,
+        user_id=current_user.id,
+    )
 
 
 @router.get("/candidates", response_model=list[RegistrationCandidateResponse])
@@ -491,7 +567,8 @@ async def register_candidate(
             guardian_phone=candidate_data.guardian_phone,
             guardian_digital_address=candidate_data.guardian_digital_address,
             guardian_national_id=candidate_data.guardian_national_id,
-            registration_status=RegistrationStatus.PENDING,
+            registration_status=RegistrationStatus.INCOMPLETE,
+            fee_payment_status=default_fee_payment_status(registration_type),
         )
         session.add(new_candidate)
         await session.flush()
@@ -803,146 +880,115 @@ async def update_candidate(
         )
 
 
-@router.post("/candidates/{candidate_id}/approve", response_model=RegistrationCandidateResponse, status_code=status.HTTP_200_OK)
-async def approve_candidate(
-    candidate_id: int,
+async def _get_school_candidate_or_404(
     session: DBSessionDep,
-    current_user: SchoolAdminDep,
-) -> RegistrationCandidateResponse:
-    """Approve a registration candidate."""
-    # Validate candidate exists and belongs to school
+    candidate_id: int,
+    school_id: int | None,
+) -> RegistrationCandidate:
     candidate_stmt = (
         select(RegistrationCandidate)
         .where(RegistrationCandidate.id == candidate_id)
-        .options(
-            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
-            selectinload(RegistrationCandidate.subject_selections),
-        )
+        .options(selectinload(RegistrationCandidate.subject_selections))
     )
-    candidate_result = await session.execute(candidate_stmt)
-    candidate = candidate_result.scalar_one_or_none()
-
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
-
-    if current_user.school_id and candidate.school_id != current_user.school_id:
+    if school_id and candidate.school_id != school_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Candidate does not belong to your school",
         )
+    return candidate
 
-    # Check if candidate is already approved
-    if candidate.registration_status == RegistrationStatus.APPROVED:
+
+@router.post(
+    "/candidates/{candidate_id}/fee/paid",
+    response_model=RegistrationCandidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_candidate_fee_paid(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> RegistrationCandidateResponse:
+    """Mark a candidate's registration fee as paid and recompute completeness."""
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    apply_fee_paid(candidate, user_id=current_user.id)
+    await recompute_registration_status(session, candidate)
+    await session.commit()
+    await session.refresh(candidate, ["subject_selections"])
+    return RegistrationCandidateResponse.model_validate(candidate)
+
+
+@router.post(
+    "/candidates/{candidate_id}/fee/waived",
+    response_model=RegistrationCandidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_candidate_fee_waived(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> RegistrationCandidateResponse:
+    """Waive a candidate's registration fee and recompute completeness."""
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    apply_fee_waived(candidate, user_id=current_user.id)
+    await recompute_registration_status(session, candidate)
+    await session.commit()
+    await session.refresh(candidate, ["subject_selections"])
+    return RegistrationCandidateResponse.model_validate(candidate)
+
+
+@router.post(
+    "/candidates/fee/bulk",
+    response_model=list[RegistrationCandidateResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_update_candidate_fees(
+    payload: CandidateFeeBulkUpdate,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> list[RegistrationCandidateResponse]:
+    """Mark fees paid or waived for multiple candidates belonging to the school."""
+    action = (payload.action or "").strip().lower()
+    if action not in {"paid", "waived"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Candidate is already approved",
+            detail="action must be 'paid' or 'waived'",
         )
 
-    # Check if candidate is in a valid status for approval
-    if candidate.registration_status not in (RegistrationStatus.PENDING, RegistrationStatus.DRAFT):
+    stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id.in_(payload.candidate_ids))
+        .options(selectinload(RegistrationCandidate.subject_selections))
+    )
+    if current_user.school_id is not None:
+        stmt = stmt.where(RegistrationCandidate.school_id == current_user.school_id)
+
+    candidates = list((await session.execute(stmt)).scalars().unique().all())
+    found_ids = {c.id for c in candidates}
+    missing = [cid for cid in payload.candidate_ids if cid not in found_ids]
+    if missing:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot approve candidate with status {candidate.registration_status.value}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidates not found for this school: {missing}",
         )
 
-    # Validate that registration meets approval requirements
-    is_valid, validation_errors = await can_approve_registration(session, candidate)
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Registration does not meet approval requirements: {'; '.join(validation_errors)}",
-        )
+    for candidate in candidates:
+        if action == "paid":
+            apply_fee_paid(candidate, user_id=current_user.id)
+        else:
+            apply_fee_waived(candidate, user_id=current_user.id)
+        await recompute_registration_status(session, candidate)
 
-    # Update registration status to APPROVED
-    candidate.registration_status = RegistrationStatus.APPROVED
-
-    try:
-        await session.commit()
-        await session.refresh(candidate, ["subject_selections", "exam"])
-
-        # Build exam response if available
-        exam_response = None
-        if candidate.exam:
-            exam_response = {
-                "id": candidate.exam.id,
-                "exam_id_main_system": candidate.exam.exam_id_main_system,
-                "exam_type": candidate.exam.exam_type,
-                "exam_series": candidate.exam.exam_series,
-                "year": candidate.exam.year,
-                "description": candidate.exam.description,
-                "exam_kind": (
-                    candidate.exam.exam_kind.value
-                    if hasattr(candidate.exam.exam_kind, "value")
-                    else str(candidate.exam.exam_kind)
-                ),
-                "allows_referral_registration": bool(candidate.exam.allows_referral_registration),
-                "registration_period": {
-                    "id": candidate.exam.registration_period.id,
-                    "registration_start_date": candidate.exam.registration_period.registration_start_date,
-                    "registration_end_date": candidate.exam.registration_period.registration_end_date,
-                    "is_active": candidate.exam.registration_period.is_active,
-                    "allows_bulk_registration": candidate.exam.registration_period.allows_bulk_registration,
-                    "allows_private_registration": candidate.exam.registration_period.allows_private_registration,
-                    "created_at": candidate.exam.registration_period.created_at,
-                    "updated_at": candidate.exam.registration_period.updated_at,
-                },
-                "created_at": candidate.exam.created_at,
-                "updated_at": candidate.exam.updated_at,
-            }
-
-        # Create response dict with subject selections
-        candidate_dict = {
-            "id": candidate.id,
-            "registration_exam_id": candidate.registration_exam_id,
-            "school_id": candidate.school_id,
-            "firstname": candidate.firstname,
-            "lastname": candidate.lastname,
-            "othername": candidate.othername,
-            "name": candidate.name,  # Computed property
-            "fullname": candidate.fullname,  # Computed property
-            "registration_number": candidate.registration_number,
-            "index_number": candidate.index_number,
-            "date_of_birth": candidate.date_of_birth,
-            "gender": candidate.gender,
-            "programme_code": candidate.programme_code,
-            "programme_id": candidate.programme_id,
-            "contact_email": candidate.contact_email,
-            "contact_phone": candidate.contact_phone,
-            "address": candidate.address,
-            "national_id": candidate.national_id,
-            "disability": get_enum_value(candidate.disability),
-            "registration_type": get_enum_value(candidate.registration_type),
-            "guardian_name": candidate.guardian_name,
-            "guardian_phone": candidate.guardian_phone,
-            "guardian_digital_address": candidate.guardian_digital_address,
-            "guardian_national_id": candidate.guardian_national_id,
-            "registration_status": candidate.registration_status,
-            "registration_date": candidate.registration_date,
-            "subject_selections": [
-                {
-                    "id": sel.id,
-                    "subject_id": sel.subject_id,
-                    "subject_code": sel.subject_code,
-                    "subject_name": sel.subject_name,
-                    "series": sel.series,
-                    "created_at": sel.created_at,
-                }
-                for sel in (candidate.subject_selections or [])
-            ],
-            "exam": exam_response,
-            "created_at": candidate.created_at,
-            "updated_at": candidate.updated_at,
-        }
-        return RegistrationCandidateResponse.model_validate(candidate_dict)
-    except HTTPException:
-        await session.rollback()
-        raise
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to approve candidate: {str(e)}",
-        )
+    await session.commit()
+    for candidate in candidates:
+        await session.refresh(candidate, ["subject_selections"])
+    return [RegistrationCandidateResponse.model_validate(c) for c in candidates]
 
 
 @router.post("/candidates/bulk", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
@@ -1461,7 +1507,8 @@ async def bulk_upload_candidates(
                 guardian_phone=guardian_phone,
                 guardian_digital_address=guardian_digital_address,
                 guardian_national_id=guardian_national_id,
-                registration_status=RegistrationStatus.PENDING,
+                registration_status=RegistrationStatus.INCOMPLETE,
+                fee_payment_status=default_fee_payment_status(candidate_registration_type),
             )
             session.add(new_candidate)
             await session.flush()
@@ -1870,7 +1917,7 @@ async def get_school_dashboard(
         completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.school_id == current_user.school_id,
             RegistrationCandidate.programme_id == programme.id,
-            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+            RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE,
             school_type_filter,
         )
         completed_result = await session.execute(completed_candidates_stmt)
@@ -2248,6 +2295,8 @@ async def upload_candidate_photo(
         checksum=checksum,
     )
     session.add(db_photo)
+    await session.flush()
+    await recompute_registration_status(session, candidate, has_photo=True)
     await session.commit()
     await session.refresh(db_photo)
 
@@ -2600,6 +2649,8 @@ async def delete_candidate_photo(
 
     # Delete database record
     await session.delete(photo)
+    await session.flush()
+    await recompute_registration_status(session, candidate, has_photo=False)
     await session.commit()
 
 
@@ -2727,6 +2778,8 @@ async def bulk_upload_photos(
                 checksum=checksum,
             )
             session.add(db_photo)
+            await session.flush()
+            await recompute_registration_status(session, candidate, has_photo=True)
             await session.commit()
 
             successful += 1

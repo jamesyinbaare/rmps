@@ -90,10 +90,10 @@ export default function MySchoolDashboardPage() {
               counts[exam.id] = {
                 total: candidates.length,
                 approved: candidates.filter(
-                  (c) => c.registration_status === "APPROVED"
+                  (c) => c.registration_status === "COMPLETE"
                 ).length,
                 pending: candidates.filter(
-                  (c) => c.registration_status === "PENDING"
+                  (c) => c.registration_status === "INCOMPLETE"
                 ).length,
               };
             } catch {
@@ -286,13 +286,13 @@ export default function MySchoolDashboardPage() {
             label: (
               <span className="inline-flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Approved
+                Complete
               </span>
             ),
             value: loadingExams ? "—" : aggregates.approved.toLocaleString(),
             hint: loadingExams
               ? undefined
-              : `${aggregates.pending.toLocaleString()} pending`,
+              : `${aggregates.pending.toLocaleString()} incomplete`,
           },
           isSchoolAdmin
             ? {
@@ -316,13 +316,13 @@ export default function MySchoolDashboardPage() {
                 label: (
                   <span className="inline-flex items-center gap-1.5">
                     <Users className="h-3.5 w-3.5" />
-                    Pending
+                    Incomplete
                   </span>
                 ),
                 value: loadingExams
                   ? "—"
                   : aggregates.pending.toLocaleString(),
-                hint: "Awaiting approval",
+                hint: "Missing photo or unpaid fee",
               },
         ]}
       />

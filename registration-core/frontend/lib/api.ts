@@ -70,6 +70,8 @@ import type {
   Invoice,
   TimetableDownloadFilter,
   TimetableResponse,
+  SchoolExamExpectations,
+  SchoolExamExpectationsUpdate,
 } from "@/types";
 
 // Re-export types for convenience
@@ -1026,6 +1028,8 @@ export interface ExamSchool {
   name: string;
   code: string;
   candidate_count: number;
+  expected_total?: number | null;
+  actual_total?: number;
 }
 
 export async function getExamSchools(examId: number): Promise<ExamSchool[]> {
@@ -1996,16 +2000,58 @@ export async function updateCandidate(
   return handleResponse<RegistrationCandidate>(response);
 }
 
-export async function approveCandidate(candidateId: number): Promise<RegistrationCandidate> {
-  const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/approve`, {
-    method: "POST",
-  });
+export async function markCandidateFeePaid(
+  candidateId: number
+): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(
+    `/api/v1/school/candidates/${candidateId}/fee/paid`,
+    { method: "POST" }
+  );
   return handleResponse<RegistrationCandidate>(response);
+}
+
+export async function markCandidateFeeWaived(
+  candidateId: number
+): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(
+    `/api/v1/school/candidates/${candidateId}/fee/waived`,
+    { method: "POST" }
+  );
+  return handleResponse<RegistrationCandidate>(response);
+}
+
+export async function bulkUpdateCandidateFees(
+  candidateIds: number[],
+  action: "paid" | "waived"
+): Promise<RegistrationCandidate[]> {
+  const response = await fetchWithAuth(`/api/v1/school/candidates/fee/bulk`, {
+    method: "POST",
+    body: JSON.stringify({ candidate_ids: candidateIds, action }),
+  });
+  return handleResponse<RegistrationCandidate[]>(response);
 }
 
 export async function listAvailableExams(): Promise<RegistrationExam[]> {
   const response = await fetchWithAuth("/api/v1/school/exams");
   return handleResponse<RegistrationExam[]>(response);
+}
+
+export async function getSchoolExamExpectations(
+  examId: number
+): Promise<SchoolExamExpectations> {
+  const response = await fetchWithAuth(`/api/v1/school/exams/${examId}/expectations`);
+  return handleResponse<SchoolExamExpectations>(response);
+}
+
+export async function updateSchoolExamExpectations(
+  examId: number,
+  data: SchoolExamExpectationsUpdate
+): Promise<SchoolExamExpectations> {
+  const response = await fetchWithAuth(`/api/v1/school/exams/${examId}/expectations`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<SchoolExamExpectations>(response);
 }
 
 export async function listAllSchoolExams(): Promise<RegistrationExam[]> {

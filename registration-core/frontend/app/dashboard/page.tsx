@@ -230,7 +230,7 @@ export default function DashboardPage() {
               <span className="inline-flex items-baseline gap-2">
                 <span>{totalCandidates.toLocaleString()}</span>
                 <span className="font-sans text-sm font-normal tracking-normal text-muted-foreground">
-                  / {approvedCandidates.toLocaleString()} approved
+                  / {approvedCandidates.toLocaleString()} complete
                 </span>
               </span>
             ) : (
@@ -451,9 +451,13 @@ export default function DashboardPage() {
                   </div>
                   <div className="shrink-0 text-right">
                     <span className="font-mono text-sm font-semibold">
-                      {school.candidate_count.toLocaleString()}
+                      {school.expected_total != null
+                        ? `${school.candidate_count.toLocaleString()} / ${school.expected_total.toLocaleString()}`
+                        : school.candidate_count.toLocaleString()}
                     </span>
-                    <span className="ml-1 text-xs text-muted-foreground">candidates</span>
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      {school.expected_total != null ? "reg / expected" : "candidates"}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -624,9 +628,13 @@ export default function DashboardPage() {
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="font-mono text-lg font-semibold">
-                      {school.candidate_count.toLocaleString()}
+                      {school.expected_total != null
+                        ? `${school.candidate_count.toLocaleString()} / ${school.expected_total.toLocaleString()}`
+                        : school.candidate_count.toLocaleString()}
                     </div>
-                    <div className="text-xs text-muted-foreground">Candidates</div>
+                    <div className="text-xs text-muted-foreground">
+                      {school.expected_total != null ? "Registered / expected" : "Candidates"}
+                    </div>
                   </div>
                 </div>
               ))}
