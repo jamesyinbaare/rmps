@@ -39,6 +39,10 @@ def generate_subject_template() -> bytes:
     """
     Generate Excel template for subject upload.
 
+    Upload creates catalog rows only. Attach subjects to programmes via the
+    programme UI (compulsory/optional core and choice groups are set there).
+    Optional column programme_code (not in sample) links ELECTIVE rows only.
+
     Returns:
         Bytes of Excel file
     """

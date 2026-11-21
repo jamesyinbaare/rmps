@@ -163,6 +163,7 @@ async def list_programmes_for_exam(
     if school_id is not None:
         query = (
             select(Programme)
+            .options(selectinload(Programme.programme_type))
             .join(school_programmes, school_programmes.c.programme_id == Programme.id)
             .where(school_programmes.c.school_id == school_id)
             .where(Programme.programme_type_id.in_(enabled))
@@ -171,6 +172,7 @@ async def list_programmes_for_exam(
     else:
         query = (
             select(Programme)
+            .options(selectinload(Programme.programme_type))
             .where(Programme.programme_type_id.in_(enabled))
             .order_by(Programme.name)
         )

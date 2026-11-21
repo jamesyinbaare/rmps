@@ -884,10 +884,8 @@ export default function PrivateRegistrationPage() {
       }
     }
     if (currentStep === 4) {
-      const exam = exams.find((e) => e.id === selectedExamId);
-      const isNovDec = exam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
-      if (isNovDec && !programmeId) {
-        toast.error("Programme selection is required for NOV/DEC exams");
+      if (!programmeId) {
+        toast.error("Programme selection is required");
         return;
       }
       if (selectedSubjectIds.length === 0) {

@@ -47,10 +47,7 @@ from app.utils.registration import generate_unique_registration_number
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_storage import PhotoStorageService
 from app.services.subject_selection import (
-    auto_select_subjects_for_programme,
     validate_subject_selections,
-    get_programme_subjects_for_registration,
-    normalize_exam_series,
 )
 from app.services.exam_kind_service import (
     assert_private_portal_allowed,
@@ -325,23 +322,19 @@ async def register_self(
         if programme:
             programme_id = programme.id
 
-    # For NOV/DEC: require programme_id
-    normalized_series = normalize_exam_series(exam.exam_series)
-    is_nov_dec = normalized_series == "NOV/DEC"
-    if is_nov_dec and not programme_id:
+    if not programme_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Programme selection is required for NOV/DEC exams",
+            detail="Programme selection is required",
         )
 
-    if programme_id:
-        from app.services.programme_type_service import is_programme_enabled_for_exam
+    from app.services.programme_type_service import is_programme_enabled_for_exam
 
-        if not await is_programme_enabled_for_exam(session, exam_id, programme_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Programme is not enabled for this examination",
-            )
+    if not await is_programme_enabled_for_exam(session, exam_id, programme_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme is not enabled for this examination",
+        )
 
     # Required fields validation for private registration
     if not candidate_data.date_of_birth:
@@ -410,42 +403,27 @@ async def register_self(
     session.add(new_candidate)
     await session.flush()
 
-    # Add subject selections
+    # Private registration: lenient — user-selected subjects only (no auto-select)
     selected_subject_ids: list[int] = []
-
-    # For NOV/DEC: skip auto-selection (all subjects are optional)
-    # For MAY/JUNE: auto-select compulsory core and all electives
-    if programme_id and not is_nov_dec:
-        # Auto-select compulsory core subjects only (not optional core subjects)
-        auto_selected = await auto_select_subjects_for_programme(session, programme_id, None)
-        selected_subject_ids.extend(auto_selected)
-
-        # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
-        is_may_june = normalized_series == "MAY/JUNE"
-        if is_may_june:
-            subjects_info = await get_programme_subjects_for_registration(session, programme_id)
-            selected_subject_ids.extend(subjects_info["electives"])
-
-    # Add any additional subjects from subject_ids (including optional core subjects selected by user)
     if candidate_data.subject_ids:
         selected_subject_ids.extend(candidate_data.subject_ids)
-
-    # Remove duplicates
     selected_subject_ids = list(set(selected_subject_ids))
 
-    # Validate subject selections if programme is provided
-    # For NOV/DEC: lenient validation (only enforce "at most one per group")
-    # For MAY/JUNE: strict validation (compulsory core + all electives required)
-    if programme_id:
-        is_valid, validation_errors = await validate_subject_selections(
-            session, programme_id, selected_subject_ids, exam.exam_series
+    is_valid, validation_errors = await validate_subject_selections(
+        session,
+        programme_id,
+        selected_subject_ids,
+        registration_type=RegistrationType.PRIVATE.value,
+    )
+    if not is_valid:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Subject selections do not meet programme requirements: "
+                f"{'; '.join(validation_errors)}"
+            ),
         )
-        if not is_valid:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-            )
 
     # Create subject selections
     for subject_id in selected_subject_ids:
@@ -1002,17 +980,27 @@ async def submit_draft_registration(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Selected school is not an active private examination center"
         )
 
-    # Validate subject selections if programme is provided
-    if draft.programme_id:
-        subject_ids = [s.subject_id for s in draft.subject_selections if s.subject_id]
-        is_valid, validation_errors = await validate_subject_selections(
-            session, draft.programme_id, subject_ids, exam.exam_series
+    if not draft.programme_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme selection is required",
         )
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-            )
+
+    subject_ids = [s.subject_id for s in draft.subject_selections if s.subject_id]
+    is_valid, validation_errors = await validate_subject_selections(
+        session,
+        draft.programme_id,
+        subject_ids,
+        registration_type=RegistrationType.PRIVATE.value,
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Subject selections do not meet programme requirements: "
+                f"{'; '.join(validation_errors)}"
+            ),
+        )
 
     # Only generate registration number if it doesn't already exist (preserve existing number when editing)
     if not draft.registration_number:

@@ -159,7 +159,8 @@ export function BulkUploadSubjectsDialog({
         <DialogHeader>
           <DialogTitle>Bulk Upload Subjects</DialogTitle>
           <DialogDescription>
-            Upload an Excel or CSV file with subject data. The file should have columns: Code, Name, Subject Type
+            Upload creates subjects in the catalog only (columns: code, original_code, name, subject_type, choice_group_id).
+            Attach cores and electives to each programme from Programme → Subjects. Optional programme_code links electives only.
           </DialogDescription>
         </DialogHeader>
 

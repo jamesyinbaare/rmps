@@ -4,11 +4,9 @@ import type { ProgrammeSubjectRequirements } from "@/types";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Info } from "lucide-react";
 import {
-  isMayJuneSeries,
   isStructuredRegistrationType,
   primaryRegistrationType,
 } from "@/lib/school-registration";
@@ -19,6 +17,7 @@ interface SubjectSelectionPanelProps {
   selectedSubjectIds: number[];
   onChange: (ids: number[]) => void;
   registrationType: string | null;
+  /** @deprecated Ignored — validation is by registration type, not series */
   examSeries?: string | null;
   allowsFreeTvet?: boolean | null;
 }
@@ -29,7 +28,6 @@ export function SubjectSelectionPanel({
   selectedSubjectIds,
   onChange,
   registrationType,
-  examSeries,
   allowsFreeTvet,
 }: SubjectSelectionPanelProps) {
   if (loading) {
@@ -43,12 +41,12 @@ export function SubjectSelectionPanel({
 
   if (!programmeSubjects) return null;
 
-  const isMayJune = isMayJuneSeries(examSeries);
   const primary = primaryRegistrationType({ allows_free_tvet: allowsFreeTvet });
   const resolvedType = registrationType || primary;
-  const isReferral = resolvedType === "referral";
+  const isLenient =
+    resolvedType === "referral" || resolvedType === "private";
   const isStructured = isStructuredRegistrationType(resolvedType);
-  const lockStructured = isStructured && isMayJune;
+  const lockStructured = isStructured;
 
   const toggleSubject = (subjectId: number, checked: boolean) => {
     if (checked) {
@@ -60,22 +58,37 @@ export function SubjectSelectionPanel({
 
   const handleOptionalGroupChange = (
     groupSubjectIds: number[],
-    selectedId: number
+    selectedId: number | null
   ) => {
     const withoutGroup = selectedSubjectIds.filter(
       (id) => !groupSubjectIds.includes(id)
     );
+    if (selectedId == null) {
+      onChange(withoutGroup);
+      return;
+    }
     onChange([...withoutGroup, selectedId]);
   };
 
   return (
     <div className="space-y-4">
-      {isReferral && isMayJune && (
+      {isLenient && (
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription>
-            For referral candidates in MAY/JUNE examinations, all subjects are
-            optional. Select at least one subject.
+            Pick any subjects you need — including every compulsory core and
+            elective. You only need at least one subject overall. In each
+            optional group, choose one subject. Leave an optional group
+            unchecked if you do not want any of those subjects.
+          </AlertDescription>
+        </Alert>
+      )}
+      {isStructured && programmeSubjects.optional_core_groups.length > 0 && (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            Compulsory cores and electives are already selected for you. For
+            each optional group, choose exactly one subject.
           </AlertDescription>
         </Alert>
       )}
@@ -84,12 +97,11 @@ export function SubjectSelectionPanel({
         {programmeSubjects.compulsory_core.length > 0 && (
           <div className="space-y-3">
             <Label className="text-sm font-semibold">
-              Compulsory core
-              {isReferral && isMayJune
-                ? " (optional — at least one subject total)"
+              {isLenient
+                ? "Compulsory core (pick any)"
                 : lockStructured
-                  ? " (required)"
-                  : ""}
+                  ? "Compulsory core (required)"
+                  : "Compulsory core"}
             </Label>
             <div className="space-y-2">
               {programmeSubjects.compulsory_core.map((subject) => {
@@ -124,48 +136,55 @@ export function SubjectSelectionPanel({
         {programmeSubjects.optional_core_groups.length > 0 && (
           <div className="space-y-4">
             <Label className="text-sm font-semibold">
-              Optional core groups (select one per group)
+              {isStructured
+                ? "Optional groups (one per group — required)"
+                : "Optional groups (one per group, or none)"}
             </Label>
             {programmeSubjects.optional_core_groups.map((group) => {
               const groupIds = group.subjects.map((s) => s.subject_id);
-              const selectedInGroup = selectedSubjectIds.find((id) =>
-                groupIds.includes(id)
-              );
               return (
                 <div
                   key={group.choice_group_id}
                   className="space-y-2 border-l-2 border-border pl-4"
                 >
                   <Label className="text-sm text-muted-foreground">
-                    Group {group.choice_group_id}
+                    Choose one
                   </Label>
-                  <RadioGroup
-                    value={selectedInGroup?.toString()}
-                    onValueChange={(value) =>
-                      handleOptionalGroupChange(groupIds, parseInt(value, 10))
-                    }
-                  >
-                    {group.subjects.map((subject) => (
-                      <div
-                        key={subject.subject_id}
-                        className="flex items-center gap-2"
-                      >
-                        <RadioGroupItem
-                          value={subject.subject_id.toString()}
-                          id={`group-${group.choice_group_id}-${subject.subject_id}`}
-                        />
-                        <Label
-                          htmlFor={`group-${group.choice_group_id}-${subject.subject_id}`}
-                          className="cursor-pointer font-normal"
+                  <div className="space-y-2">
+                    {group.subjects.map((subject) => {
+                      const isChecked = selectedSubjectIds.includes(
+                        subject.subject_id
+                      );
+                      return (
+                        <div
+                          key={subject.subject_id}
+                          className="flex items-center gap-2"
                         >
-                          {subject.subject_code} — {subject.subject_name}
-                        </Label>
-                        <Badge variant="secondary" className="text-xs">
-                          CORE
-                        </Badge>
-                      </div>
-                    ))}
-                  </RadioGroup>
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                handleOptionalGroupChange(
+                                  groupIds,
+                                  subject.subject_id
+                                );
+                                return;
+                              }
+                              if (isLenient) {
+                                handleOptionalGroupChange(groupIds, null);
+                              }
+                            }}
+                          />
+                          <Label className="cursor-pointer font-normal">
+                            {subject.subject_code} — {subject.subject_name}
+                          </Label>
+                          <Badge variant="secondary" className="text-xs">
+                            CORE
+                          </Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
@@ -175,12 +194,11 @@ export function SubjectSelectionPanel({
         {programmeSubjects.electives.length > 0 && (
           <div className="space-y-3">
             <Label className="text-sm font-semibold">
-              Electives
-              {isReferral && isMayJune
-                ? " (optional — at least one subject total)"
+              {isLenient
+                ? "Electives (pick any)"
                 : lockStructured
-                  ? " (all required)"
-                  : " (select any)"}
+                  ? "Electives (all required)"
+                  : "Electives (select any)"}
             </Label>
             <div className="space-y-2">
               {programmeSubjects.electives.map((subject) => {

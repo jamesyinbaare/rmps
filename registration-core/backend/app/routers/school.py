@@ -82,7 +82,6 @@ from app.services.subject_selection import (
     auto_select_subjects_for_programme,
     validate_subject_selections,
     get_programme_subjects_for_registration,
-    normalize_exam_series,
 )
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
@@ -424,43 +423,43 @@ async def register_candidate(
     else:
         candidate_school_id = current_user.school_id
 
-    # Validate programme if provided
+    # Programme is required for all registration types
     programme_id = candidate_data.programme_id
-    if programme_id:
-        # Check programme exists
-        programme_stmt = select(Programme).where(Programme.id == programme_id)
-        programme_result = await session.execute(programme_stmt)
-        programme = programme_result.scalar_one_or_none()
-        if not programme:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+    if not programme_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme selection is required",
+        )
 
-        # Validate programme is in school's programme list
-        if current_user.school_id:
-            assoc_stmt = select(school_programmes).where(
-                school_programmes.c.school_id == current_user.school_id,
-                school_programmes.c.programme_id == programme_id
-            )
-            assoc_result = await session.execute(assoc_stmt)
-            assoc_exists = assoc_result.first()
-            if not assoc_exists:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Programme is not available for your school. Please contact your administrator.",
-                )
+    programme_stmt = select(Programme).where(Programme.id == programme_id)
+    programme_result = await session.execute(programme_stmt)
+    programme = programme_result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
 
-        from app.services.programme_type_service import is_programme_enabled_for_exam
-
-        if not await is_programme_enabled_for_exam(session, exam.id, programme_id):
+    if current_user.school_id:
+        assoc_stmt = select(school_programmes).where(
+            school_programmes.c.school_id == current_user.school_id,
+            school_programmes.c.programme_id == programme_id,
+        )
+        assoc_result = await session.execute(assoc_stmt)
+        if not assoc_result.first():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Programme is not enabled for this examination",
+                detail="Programme is not available for your school. Please contact your administrator.",
             )
+
+    from app.services.programme_type_service import is_programme_enabled_for_exam
+
+    if not await is_programme_enabled_for_exam(session, exam.id, programme_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme is not enabled for this examination",
+        )
 
     registration_number = await generate_unique_registration_number(
         session, exam_id, candidate_school_id, registration_type
     )
-    normalized_series = normalize_exam_series(exam.exam_series)
-    is_may_june = normalized_series == "MAY/JUNE"
     is_referral = registration_type == RegistrationType.REFERRAL.value
     is_private_type = registration_type == RegistrationType.PRIVATE.value
     is_structured_type = registration_type in (
@@ -500,35 +499,33 @@ async def register_candidate(
         # Handle subject selections
         selected_subject_ids: list[int] = []
 
-        # Referral/private: lenient selection (no auto-select). regular/free_tvet: auto-select cores.
-        if is_referral or is_private_type:
-            pass
-        elif programme_id and is_structured_type:
-            auto_selected = await auto_select_subjects_for_programme(session, programme_id, current_user.school_id)
+        # Referral/private: lenient (no auto-select). Regular/FreeTVET: auto-select cores + electives.
+        if is_structured_type:
+            auto_selected = await auto_select_subjects_for_programme(
+                session, programme_id, current_user.school_id
+            )
             selected_subject_ids.extend(auto_selected)
-
-            if is_may_june:
-                subjects_info = await get_programme_subjects_for_registration(session, programme_id)
-                selected_subject_ids.extend(subjects_info["electives"])
 
         if candidate_data.subject_ids:
             selected_subject_ids.extend(candidate_data.subject_ids)
 
         selected_subject_ids = list(set(selected_subject_ids))
 
-        if programme_id:
-            should_validate = bool(selected_subject_ids or is_referral or is_private_type)
-
-            if should_validate:
-                is_valid, validation_errors = await validate_subject_selections(
-                    session, programme_id, selected_subject_ids, exam.exam_series, registration_type
-                )
-                if not is_valid:
-                    await session.rollback()
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-                    )
+        is_valid, validation_errors = await validate_subject_selections(
+            session,
+            programme_id,
+            selected_subject_ids,
+            registration_type=registration_type,
+        )
+        if not is_valid:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Subject selections do not meet programme requirements: "
+                    f"{'; '.join(validation_errors)}"
+                ),
+            )
 
         # Create subject selections
         for subject_id in selected_subject_ids:
@@ -646,6 +643,21 @@ async def update_candidate(
             )
 
     try:
+        # Reject clearing required bio fields when explicitly sent as null/empty
+        fields_set = candidate_update.model_fields_set
+        if "date_of_birth" in fields_set and candidate_update.date_of_birth is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Date of birth is required",
+            )
+        if "gender" in fields_set and (
+            candidate_update.gender is None or not str(candidate_update.gender).strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Gender is required",
+            )
+
         # Update basic candidate fields
         update_data = candidate_update.model_dump(exclude_unset=True, exclude={"subject_ids", "subject_codes"})
 
@@ -688,22 +700,29 @@ async def update_candidate(
             # Get current programme_id (might have been updated above)
             programme_id = candidate.programme_id
 
-            # Validate subject selections if programme is provided
-            if programme_id:
-                # Pass registration_type to validation
-                registration_type = candidate.registration_type.value if candidate.registration_type else None
-                is_valid, validation_errors = await validate_subject_selections(
-                    session,
-                    programme_id,
-                    candidate_update.subject_ids,
-                    candidate.exam.exam_series if candidate.exam else None,
-                    registration_type,
+            if not programme_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Programme selection is required",
                 )
-                if not is_valid:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-                    )
+
+            registration_type = (
+                candidate.registration_type.value if candidate.registration_type else None
+            )
+            is_valid, validation_errors = await validate_subject_selections(
+                session,
+                programme_id,
+                candidate_update.subject_ids,
+                registration_type=registration_type,
+            )
+            if not is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Subject selections do not meet programme requirements: "
+                        f"{'; '.join(validation_errors)}"
+                    ),
+                )
 
             # Delete existing subject selections
             delete_stmt = delete(RegistrationSubjectSelection).where(
@@ -1100,7 +1119,7 @@ async def bulk_upload_candidates(
                     failed += 1
                     continue
 
-            # Parse date_of_birth if provided
+            # Parse date_of_birth (required)
             date_of_birth = None
             dob_str = get_col('date_of_birth') or get_col('dob')
             if dob_str:
@@ -1112,11 +1131,28 @@ async def bulk_upload_candidates(
                     elif hasattr(dob_str, 'date'):
                         date_of_birth = dob_str.date()
                 except Exception:
-                    pass  # Keep as None if parsing fails
+                    date_of_birth = None
+
+            if date_of_birth is None:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message="Date of birth is required",
+                    field="date_of_birth",
+                ))
+                failed += 1
+                continue
 
             gender = get_col('gender')
             if gender:
-                gender = str(gender).strip()
+                gender = str(gender).strip() or None
+            if not gender:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message="Gender is required",
+                    field="gender",
+                ))
+                failed += 1
+                continue
 
             programme_code = get_col('programme_code') or get_col('programme')
             if programme_code:
@@ -1182,9 +1218,6 @@ async def bulk_upload_candidates(
                     failed += 1
                     continue
 
-            normalized_series = normalize_exam_series(exam.exam_series)
-            is_may_june = normalized_series == "MAY/JUNE"
-
             allows_free_tvet_bulk = await school_allows_free_tvet_for_exam(
                 session, exam_id, current_user.school_id
             )
@@ -1223,126 +1256,136 @@ async def bulk_upload_candidates(
                 failed += 1
                 continue
 
-            # Validate and get programme
+            # Programme is required
             programme_id = None
-            if programme_code:
-                programme_stmt = select(Programme).where(Programme.code == programme_code)
-                programme_result = await session.execute(programme_stmt)
-                programme = programme_result.scalar_one_or_none()
+            if not programme_code:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message="Programme code is required",
+                    field="programme_code",
+                ))
+                failed += 1
+                continue
 
-                if not programme:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=f"Programme with code '{programme_code}' not found",
-                        field="programme_code"
-                    ))
-                    failed += 1
-                    continue
+            programme_stmt = select(Programme).where(Programme.code == programme_code)
+            programme_result = await session.execute(programme_stmt)
+            programme = programme_result.scalar_one_or_none()
 
-                # Verify programme is associated with school
-                assoc_stmt = select(school_programmes).where(
-                    school_programmes.c.school_id == current_user.school_id,
-                    school_programmes.c.programme_id == programme.id
-                )
-                assoc_result = await session.execute(assoc_stmt)
-                if not assoc_result.first():
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=f"Programme '{programme_code}' is not available for your school",
-                        field="programme_code"
-                    ))
-                    failed += 1
-                    continue
+            if not programme:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Programme with code '{programme_code}' not found",
+                    field="programme_code",
+                ))
+                failed += 1
+                continue
 
-                programme_id = programme.id
+            assoc_stmt = select(school_programmes).where(
+                school_programmes.c.school_id == current_user.school_id,
+                school_programmes.c.programme_id == programme.id,
+            )
+            assoc_result = await session.execute(assoc_stmt)
+            if not assoc_result.first():
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Programme '{programme_code}' is not available for your school",
+                    field="programme_code",
+                ))
+                failed += 1
+                continue
 
-            # Get subject selections
+            programme_id = programme.id
+
             selected_subject_ids: list[int] = []
-
-            is_may_june = normalized_series == "MAY/JUNE"
-            is_nov_dec = normalized_series == "NOV/DEC"
-            is_referral_bulk = candidate_registration_type == RegistrationType.REFERRAL.value
             is_private_bulk = candidate_registration_type == RegistrationType.PRIVATE.value
             is_structured_bulk = candidate_registration_type in (
                 RegistrationType.FREE_TVET.value,
                 RegistrationType.REGULAR.value,
             )
-            use_subject_codes_path = is_nov_dec or is_private_bulk or is_private_exam(exam)
+            # Lenient types (referral/private) and private exams use subject_codes column
+            use_subject_codes_path = (
+                is_private_bulk
+                or is_private_exam(exam)
+                or candidate_registration_type == RegistrationType.REFERRAL.value
+            )
 
-            # Lenient path: subject_codes column (NOV/DEC series, private exams, or private type)
+            row_subject_error = False
             if use_subject_codes_path:
-                subject_codes_str = get_col('subject_codes') or get_col('subject codes') or get_col('subject_codes')
-                if subject_codes_str:
-                    # Parse comma-separated subject original codes
-                    subject_code_list = [code.strip() for code in str(subject_codes_str).split(',') if code.strip()]
-                    for subject_code in subject_code_list:
-                        # Lookup subject by original_code first, then fall back to code
-                        subject_stmt = select(Subject).where(Subject.original_code == subject_code)
-                        subject_result = await session.execute(subject_stmt)
-                        subject = subject_result.scalar_one_or_none()
-
-                        # If not found by original_code, try code for backward compatibility
-                        if not subject:
-                            subject_stmt = select(Subject).where(Subject.code == subject_code)
-                            subject_result = await session.execute(subject_stmt)
-                            subject = subject_result.scalar_one_or_none()
-
-                        if subject:
-                            if subject.id not in selected_subject_ids:
-                                selected_subject_ids.append(subject.id)
-                        else:
-                            errors.append(BulkUploadError(
-                                row_number=row_number,
-                                error_message=f"Subject not found: {subject_code}. Please use the subject's original code (e.g., C701, C30-1-01).",
-                                field="subject_codes"
-                            ))
-                            failed += 1
-                            continue
-                else:
+                subject_codes_str = get_col("subject_codes") or get_col("subject codes")
+                if not subject_codes_str:
                     errors.append(BulkUploadError(
                         row_number=row_number,
-                        error_message="subject_codes column is required for this registration. Please provide comma-separated subject original codes (e.g., C701,C702).",
-                        field="subject_codes"
+                        error_message=(
+                            "subject_codes column is required for referral/private "
+                            "registration. Provide comma-separated subject codes."
+                        ),
+                        field="subject_codes",
                     ))
                     failed += 1
                     continue
-            elif programme_id:
-                # For MAY/JUNE school exams: use existing logic with choice groups
-                subjects_info = await get_programme_subjects_for_registration(session, programme_id)
 
-                if is_referral_bulk or is_private_bulk or not is_structured_bulk:
-                    pass
-                else:
-                    # Auto-select compulsory core subjects
+                subject_code_list = [
+                    code.strip()
+                    for code in str(subject_codes_str).split(",")
+                    if code.strip()
+                ]
+                for subject_code in subject_code_list:
+                    subject_stmt = select(Subject).where(Subject.original_code == subject_code)
+                    subject_result = await session.execute(subject_stmt)
+                    subject = subject_result.scalar_one_or_none()
+                    if not subject:
+                        subject_stmt = select(Subject).where(Subject.code == subject_code)
+                        subject_result = await session.execute(subject_stmt)
+                        subject = subject_result.scalar_one_or_none()
+
+                    if not subject:
+                        errors.append(BulkUploadError(
+                            row_number=row_number,
+                            error_message=(
+                                f"Subject not found: {subject_code}. "
+                                "Please use the subject's original code."
+                            ),
+                            field="subject_codes",
+                        ))
+                        row_subject_error = True
+                        break
+                    if subject.id not in selected_subject_ids:
+                        selected_subject_ids.append(subject.id)
+
+                if row_subject_error:
+                    failed += 1
+                    continue
+
+                for code in optional_subject_codes:
+                    subject_stmt = select(Subject).where(Subject.code == code.strip())
+                    subject_result = await session.execute(subject_stmt)
+                    subject = subject_result.scalar_one_or_none()
+                    if subject and subject.id not in selected_subject_ids:
+                        selected_subject_ids.append(subject.id)
+            else:
+                # Structured Regular/FreeTVET: auto-select cores + electives; apply choice groups
+                subjects_info = await get_programme_subjects_for_registration(
+                    session, programme_id
+                )
+                if is_structured_bulk:
                     selected_subject_ids.extend(subjects_info["compulsory_core"])
+                    selected_subject_ids.extend(subjects_info["electives"])
 
-                    # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory for free_tvet)
-                    if is_may_june:
-                        selected_subject_ids.extend(subjects_info["electives"])
-
-                # Handle optional core groups
-                # Check for CSV column with optional core group selections
-                choice_groups_col = get_col('optional_core_groups') or get_col('choice_groups')
+                choice_groups_col = get_col("optional_core_groups") or get_col("choice_groups")
                 csv_choice_groups: dict[int, str] = {}
                 if choice_groups_col:
                     try:
-                        # Try to parse as JSON: {"1": "SUBJECT_CODE", "2": "SUBJECT_CODE"}
                         csv_choice_groups = json.loads(str(choice_groups_col))
                         csv_choice_groups = {int(k): v for k, v in csv_choice_groups.items()}
                     except (json.JSONDecodeError, ValueError):
-                        # If not JSON, try individual columns like choice_group_1, choice_group_2
                         for group_id in subjects_info["optional_core_groups"].keys():
-                            col_name = f'choice_group_{group_id}'
-                            col_value = get_col(col_name)
+                            col_value = get_col(f"choice_group_{group_id}")
                             if col_value:
                                 csv_choice_groups[group_id] = str(col_value).strip()
 
-                # Handle optional core groups - select one from each group if provided
-                # For NOV/DEC, skip default selections (don't apply default choice groups)
                 for group_id, group_subject_ids in subjects_info["optional_core_groups"].items():
                     selected_from_group = None
 
-                    # First priority: CSV column for this group (row-specific selection)
                     if group_id in csv_choice_groups:
                         subject_code = csv_choice_groups[group_id].strip()
                         subject_stmt = select(Subject).where(Subject.code == subject_code)
@@ -1351,21 +1394,16 @@ async def bulk_upload_candidates(
                         if subject and subject.id in group_subject_ids:
                             selected_from_group = subject.id
 
-                    # Second priority: Check if row has optional subjects that match this group
                     if not selected_from_group and optional_subject_codes:
-                        # Lookup subjects by code to find which group they belong to
                         for code in optional_subject_codes:
-                            code_trimmed = code.strip()
-                            subject_stmt = select(Subject).where(Subject.code == code_trimmed)
+                            subject_stmt = select(Subject).where(Subject.code == code.strip())
                             subject_result = await session.execute(subject_stmt)
                             subject = subject_result.scalar_one_or_none()
                             if subject and subject.id in group_subject_ids:
                                 selected_from_group = subject.id
                                 break
 
-                    # Third priority: Check default selections (from UI choice group selection)
-                    # Skip default selections for NOV/DEC - they should use subject_ids column instead
-                    if not is_nov_dec and not selected_from_group and group_id in default_selections:
+                    if not selected_from_group and group_id in default_selections:
                         default_code = str(default_selections[group_id]).strip()
                         subject_stmt = select(Subject).where(Subject.code == default_code)
                         subject_result = await session.execute(subject_stmt)
@@ -1373,47 +1411,28 @@ async def bulk_upload_candidates(
                         if subject and subject.id in group_subject_ids:
                             selected_from_group = subject.id
 
-                    # Do NOT auto-select optional core subjects if not explicitly chosen
-                    # If not selected via CSV, default selections, or optional_subjects column, leave unselected
-
-                    # Add selected subject from this choice group to the candidate's subject selections
                     if selected_from_group:
                         selected_subject_ids.append(selected_from_group)
 
-                # Add optional subjects (electives or additional subjects) - only for NOV/DEC
-                # For MAY/JUNE, all electives are already auto-selected above
-                if not is_may_june and optional_subject_codes:
-                    for code in optional_subject_codes:
-                        subject_stmt = select(Subject).where(Subject.code == code)
-                        subject_result = await session.execute(subject_stmt)
-                        subject = subject_result.scalar_one_or_none()
-                        if subject:
-                            if subject.id not in selected_subject_ids:
-                                selected_subject_ids.append(subject.id)
-                    # Note: We don't error if optional subject not found, just skip it
-
-            # Remove duplicates
             selected_subject_ids = list(set(selected_subject_ids))
 
-            # Validate subject selections if programme is provided
-            # For referral candidates, validate even if selected_subject_ids is empty to ensure at least one subject is selected
-            if programme_id:
-                # For referral candidates, we need to validate even with empty list to check "at least one" requirement
-                # For other types, only validate if there are selected subjects (or if it's free_tvet with auto-selected subjects)
-                should_validate = bool(selected_subject_ids or is_referral_bulk or is_private_bulk)
-
-                if should_validate:
-                    is_valid, validation_errors = await validate_subject_selections(
-                        session, programme_id, selected_subject_ids, exam.exam_series, candidate_registration_type
-                    )
-                    if not is_valid:
-                        errors.append(BulkUploadError(
-                            row_number=row_number,
-                            error_message=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-                            field="subjects"
-                        ))
-                        failed += 1
-                        continue
+            is_valid, validation_errors = await validate_subject_selections(
+                session,
+                programme_id,
+                selected_subject_ids,
+                registration_type=candidate_registration_type,
+            )
+            if not is_valid:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message=(
+                        "Subject selections do not meet programme requirements: "
+                        f"{'; '.join(validation_errors)}"
+                    ),
+                    field="subjects",
+                ))
+                failed += 1
+                continue
 
             registration_number = await generate_unique_registration_number(
                 session, exam_id, candidate_school_id, candidate_registration_type
@@ -1884,6 +1903,19 @@ async def get_school_dashboard(
 
 # Programme Management Endpoints
 
+def _school_programme_response(programme: Programme) -> ProgrammeResponse:
+    return ProgrammeResponse(
+        id=programme.id,
+        code=programme.code,
+        name=programme.name,
+        programme_type_id=programme.programme_type_id,
+        programme_type_name=programme.programme_type.name if programme.programme_type else None,
+        programme_type_path=None,
+        created_at=programme.created_at,
+        updated_at=programme.updated_at,
+    )
+
+
 @router.get("/programmes/available", response_model=list[ProgrammeResponse])
 async def list_available_programmes(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
@@ -1896,11 +1928,15 @@ async def list_available_programmes(
         )
 
     # Get all programmes in the system (created by system admin)
-    programme_stmt = select(Programme).order_by(Programme.code)
+    programme_stmt = (
+        select(Programme)
+        .options(selectinload(Programme.programme_type))
+        .order_by(Programme.code)
+    )
     programme_result = await session.execute(programme_stmt)
     programmes = programme_result.scalars().all()
 
-    return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+    return [_school_programme_response(programme) for programme in programmes]
 
 
 @router.get("/programmes", response_model=list[ProgrammeResponse])
@@ -1922,7 +1958,7 @@ async def list_school_programmes(
         programmes = await list_programmes_for_exam(
             session, exam_id=exam_id, school_id=current_user.school_id
         )
-        return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+        return [_school_programme_response(programme) for programme in programmes]
 
     programme_stmt = (
         select(Programme)
@@ -1934,7 +1970,7 @@ async def list_school_programmes(
     programme_result = await session.execute(programme_stmt)
     programmes = programme_result.scalars().all()
 
-    return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+    return [_school_programme_response(programme) for programme in programmes]
 
 
 @router.post("/programmes/{programme_id}", response_model=SchoolProgrammeAssociation, status_code=status.HTTP_201_CREATED)
@@ -2024,13 +2060,17 @@ async def get_programme(
         )
 
     # Get programme
-    stmt = select(Programme).where(Programme.id == programme_id)
+    stmt = (
+        select(Programme)
+        .options(selectinload(Programme.programme_type))
+        .where(Programme.id == programme_id)
+    )
     result = await session.execute(stmt)
     programme = result.scalar_one_or_none()
     if not programme:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
 
-    return ProgrammeResponse.model_validate(programme)
+    return _school_programme_response(programme)
 
 
 @router.get("/programmes/{programme_id}/subjects", response_model=ProgrammeSubjectRequirements)

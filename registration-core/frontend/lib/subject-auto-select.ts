@@ -1,15 +1,14 @@
 import type { ProgrammeSubjectRequirements } from "@/types";
 import {
-  isMayJuneSeries,
   isStructuredRegistrationType,
   primaryRegistrationType,
 } from "@/lib/school-registration";
 
-/** Auto-select subjects for structured school types; empty for referral. */
+/** Auto-select compulsory cores + electives for structured types; empty for referral/private. */
 export function autoSelectSubjectIds(
   subjects: ProgrammeSubjectRequirements,
   registrationType: string | null | undefined,
-  examSeries: string | null | undefined,
+  _examSeries?: string | null | undefined,
   allowsFreeTvet?: boolean | null
 ): number[] {
   const primary = primaryRegistrationType({ allows_free_tvet: allowsFreeTvet });
@@ -20,9 +19,8 @@ export function autoSelectSubjectIds(
   if (!isStructuredRegistrationType(resolved)) {
     return [];
   }
-  const ids = subjects.compulsory_core.map((s) => s.subject_id);
-  if (isMayJuneSeries(examSeries)) {
-    ids.push(...subjects.electives.map((s) => s.subject_id));
-  }
-  return ids;
+  return [
+    ...subjects.compulsory_core.map((s) => s.subject_id),
+    ...subjects.electives.map((s) => s.subject_id),
+  ];
 }
