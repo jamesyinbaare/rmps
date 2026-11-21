@@ -10,10 +10,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { RegistrationCandidate, RegistrationSubjectSelection } from "@/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SectionLabel } from "@/components/dashboard/SectionLabel";
 import {
   Calendar,
   ChevronLeft,
@@ -40,8 +40,6 @@ import { toast } from "sonner";
 import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -50,6 +48,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Edit2, Save, X as XIcon, FileText } from "lucide-react";
+import { SubjectSelectionPanel } from "@/components/school/SubjectSelectionPanel";
+import { isStructuredRegistrationType } from "@/lib/school-registration";
 
 interface CandidateDetailModalProps {
   candidate: RegistrationCandidate | null;
@@ -376,23 +376,14 @@ export function CandidateDetailModal({
     }
   };
 
-  const handleSubjectToggle = (subjectId: number, isChecked: boolean) => {
-    if (isChecked) {
-      setSelectedSubjectIds([...selectedSubjectIds, subjectId]);
-    } else {
-      setSelectedSubjectIds(selectedSubjectIds.filter((id) => id !== subjectId));
-    }
-  };
-
-  const handleOptionalGroupChange = (groupSubjects: { subject_id: number }[], selectedId: number) => {
-    // Remove all subjects from this group, then add the selected one
-    const groupIds = groupSubjects.map((s) => s.subject_id);
-    const filtered = selectedSubjectIds.filter((id) => !groupIds.includes(id));
-    setSelectedSubjectIds([...filtered, selectedId]);
-  };
-
   const handleSaveSubjects = async () => {
     if (!candidate) return;
+
+    const regType = candidate.registration_type;
+    if (!isStructuredRegistrationType(regType) && selectedSubjectIds.length === 0) {
+      toast.error("At least one subject must be selected");
+      return;
+    }
 
     setSavingSubjects(true);
     try {
@@ -403,7 +394,6 @@ export function CandidateDetailModal({
       toast.success("Subject selections updated successfully");
       setEditingSubjects(false);
 
-      // Update the candidate in parent component
       if (onCandidateChange) {
         onCandidateChange(updatedCandidate);
       }
@@ -430,14 +420,27 @@ export function CandidateDetailModal({
   const handleSaveBio = async () => {
     if (!candidate) return;
 
+    if (!bioData.firstname.trim() || !bioData.lastname.trim()) {
+      toast.error("First name and last name are required");
+      return;
+    }
+    if (!bioData.date_of_birth) {
+      toast.error("Date of birth is required");
+      return;
+    }
+    if (!bioData.gender.trim()) {
+      toast.error("Gender is required");
+      return;
+    }
+
     setSavingBio(true);
     try {
       const updatedCandidate = await updateCandidate(candidate.id, {
         firstname: bioData.firstname,
         lastname: bioData.lastname,
         othername: bioData.othername || null,
-        date_of_birth: bioData.date_of_birth || null,
-        gender: bioData.gender || null,
+        date_of_birth: bioData.date_of_birth,
+        gender: bioData.gender,
         contact_email: bioData.contact_email || null,
         contact_phone: bioData.contact_phone || null,
         address: bioData.address || null,
@@ -674,271 +677,274 @@ export function CandidateDetailModal({
         <div className="flex-1 overflow-y-auto px-6 pb-4">
           <div className="space-y-6 py-4">
             {/* Photo and Candidate Information - Side by Side */}
-            <div className="flex gap-6 items-stretch">
-              {/* Enhanced Candidate Information Card */}
-              <Card className="flex flex-1 flex-col border-border shadow-none">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <User className="h-4 w-4" />
-                    Candidate Information
-                  </CardTitle>
-                  {!editingBio && !isExamClosed && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setEditingBio(true)}
-                    >
-                      <Edit2 className="h-4 w-4 mr-2" />
-                      Edit Bio Data
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingBio ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-firstname">First Name *</Label>
-                        <Input
-                          id="edit-firstname"
-                          value={bioData.firstname}
-                          onChange={(e) => setBioData({ ...bioData, firstname: e.target.value })}
-                          disabled={savingBio}
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-lastname">Last Name *</Label>
-                        <Input
-                          id="edit-lastname"
-                          value={bioData.lastname}
-                          onChange={(e) => setBioData({ ...bioData, lastname: e.target.value })}
-                          disabled={savingBio}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-othername">Other Name (Optional)</Label>
-                      <Input
-                        id="edit-othername"
-                        value={bioData.othername}
-                        onChange={(e) => setBioData({ ...bioData, othername: e.target.value })}
-                        disabled={savingBio}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-dob">Date of Birth</Label>
-                        <Input
-                          id="edit-dob"
-                          type="date"
-                          value={bioData.date_of_birth}
-                          onChange={(e) => setBioData({ ...bioData, date_of_birth: e.target.value })}
-                          disabled={savingBio}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-gender">Gender</Label>
-                        <Select
-                          value={bioData.gender}
-                          onValueChange={(value) => setBioData({ ...bioData, gender: value })}
-                          disabled={savingBio}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select gender" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Male">Male</SelectItem>
-                            <SelectItem value="Female">Female</SelectItem>
-                            <SelectItem value="Other">Other</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-email">Contact Email</Label>
-                        <Input
-                          id="edit-email"
-                          type="email"
-                          value={bioData.contact_email}
-                          onChange={(e) => setBioData({ ...bioData, contact_email: e.target.value })}
-                          disabled={savingBio}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-phone">Contact Phone</Label>
-                        <Input
-                          id="edit-phone"
-                          value={bioData.contact_phone}
-                          onChange={(e) => setBioData({ ...bioData, contact_phone: e.target.value })}
-                          disabled={savingBio}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-address">Address</Label>
-                      <Input
-                        id="edit-address"
-                        value={bioData.address}
-                        onChange={(e) => setBioData({ ...bioData, address: e.target.value })}
-                        disabled={savingBio}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-national-id">National ID</Label>
-                      <Input
-                        id="edit-national-id"
-                        value={bioData.national_id}
-                        onChange={(e) => setBioData({ ...bioData, national_id: e.target.value })}
-                        disabled={savingBio}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 pt-2">
-                      <Button
-                        onClick={handleSaveBio}
-                        disabled={savingBio || !bioData.firstname.trim() || !bioData.lastname.trim()}
-                        size="sm"
-                      >
-                        {savingBio ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="h-4 w-4 mr-2" />
-                            Save Changes
-                          </>
-                        )}
-                      </Button>
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
+              <section className="min-w-0 flex-1">
+                <SectionLabel
+                  action={
+                    !editingBio && !isExamClosed ? (
                       <Button
                         variant="outline"
-                        onClick={handleCancelBioEdit}
-                        disabled={savingBio}
                         size="sm"
+                        onClick={() => setEditingBio(true)}
                       >
-                        <XIcon className="h-4 w-4 mr-2" />
-                        Cancel
+                        <Edit2 className="mr-2 h-4 w-4" />
+                        Edit bio
                       </Button>
+                    ) : undefined
+                  }
+                >
+                  Candidate information
+                </SectionLabel>
+                <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                  {editingBio ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-firstname">First Name *</Label>
+                          <Input
+                            id="edit-firstname"
+                            value={bioData.firstname}
+                            onChange={(e) => setBioData({ ...bioData, firstname: e.target.value })}
+                            disabled={savingBio}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-lastname">Last Name *</Label>
+                          <Input
+                            id="edit-lastname"
+                            value={bioData.lastname}
+                            onChange={(e) => setBioData({ ...bioData, lastname: e.target.value })}
+                            disabled={savingBio}
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-othername">Other Name (Optional)</Label>
+                        <Input
+                          id="edit-othername"
+                          value={bioData.othername}
+                          onChange={(e) => setBioData({ ...bioData, othername: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-dob">Date of Birth *</Label>
+                          <Input
+                            id="edit-dob"
+                            type="date"
+                            value={bioData.date_of_birth}
+                            onChange={(e) => setBioData({ ...bioData, date_of_birth: e.target.value })}
+                            disabled={savingBio}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-gender">Gender *</Label>
+                          <Select
+                            value={bioData.gender}
+                            onValueChange={(value) => setBioData({ ...bioData, gender: value })}
+                            disabled={savingBio}
+                          >
+                            <SelectTrigger id="edit-gender">
+                              <SelectValue placeholder="Select gender" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Male">Male</SelectItem>
+                              <SelectItem value="Female">Female</SelectItem>
+                              <SelectItem value="Other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-email">Contact Email</Label>
+                          <Input
+                            id="edit-email"
+                            type="email"
+                            value={bioData.contact_email}
+                            onChange={(e) => setBioData({ ...bioData, contact_email: e.target.value })}
+                            disabled={savingBio}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-phone">Contact Phone</Label>
+                          <Input
+                            id="edit-phone"
+                            value={bioData.contact_phone}
+                            onChange={(e) => setBioData({ ...bioData, contact_phone: e.target.value })}
+                            disabled={savingBio}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-address">Address</Label>
+                        <Input
+                          id="edit-address"
+                          value={bioData.address}
+                          onChange={(e) => setBioData({ ...bioData, address: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-national-id">National ID</Label>
+                        <Input
+                          id="edit-national-id"
+                          value={bioData.national_id}
+                          onChange={(e) => setBioData({ ...bioData, national_id: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 pt-2">
+                        <Button
+                          onClick={handleSaveBio}
+                          disabled={
+                            savingBio ||
+                            !bioData.firstname.trim() ||
+                            !bioData.lastname.trim() ||
+                            !bioData.date_of_birth ||
+                            !bioData.gender.trim()
+                          }
+                          size="sm"
+                        >
+                          {savingBio ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="mr-2 h-4 w-4" />
+                              Save Changes
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleCancelBioEdit}
+                          disabled={savingBio}
+                          size="sm"
+                        >
+                          <XIcon className="mr-2 h-4 w-4" />
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1 md:col-span-2">
-                      <div className="text-xs text-muted-foreground">Full Name</div>
-                      <div className="text-sm font-medium">{candidate.name}</div>
-                    </div>
-                    {candidate.date_of_birth && (
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="space-y-1 md:col-span-2">
+                        <div className="text-xs text-muted-foreground">Full Name</div>
+                        <div className="text-sm font-medium">{candidate.name}</div>
+                      </div>
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Calendar className="h-3 w-3" />
                           Date of Birth
                         </div>
                         <div className="text-sm font-medium">
-                          {new Date(candidate.date_of_birth).toLocaleDateString()}
-                          <span className="text-muted-foreground ml-2">
-                            (Age: {calculateAge(candidate.date_of_birth)})
-                          </span>
+                          {candidate.date_of_birth ? (
+                            <>
+                              {new Date(candidate.date_of_birth).toLocaleDateString()}
+                              <span className="ml-2 text-muted-foreground">
+                                (Age: {calculateAge(candidate.date_of_birth)})
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </div>
                       </div>
-                    )}
-                    {candidate.gender && (
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <User className="h-3 w-3" />
                           Gender
                         </div>
-                        <div className="text-sm font-medium">{candidate.gender}</div>
-                      </div>
-                    )}
-                    {candidate.programme_code && (
-                      <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground flex items-center gap-1">
-                          <GraduationCap className="h-3 w-3" />
-                          Programme Code
+                        <div className="text-sm font-medium">
+                          {candidate.gender || (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </div>
-                        <div className="text-sm font-medium">{candidate.programme_code}</div>
                       </div>
-                    )}
-                    {candidate.contact_email && (
+                      {candidate.programme_code && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <GraduationCap className="h-3 w-3" />
+                            Programme Code
+                          </div>
+                          <div className="text-sm font-medium">{candidate.programme_code}</div>
+                        </div>
+                      )}
+                      {candidate.contact_email && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Contact Email</div>
+                          <div className="text-sm font-medium">{candidate.contact_email}</div>
+                        </div>
+                      )}
+                      {candidate.contact_phone && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Contact Phone</div>
+                          <div className="text-sm font-medium">{candidate.contact_phone}</div>
+                        </div>
+                      )}
+                      {candidate.address && (
+                        <div className="space-y-1 md:col-span-2">
+                          <div className="text-xs text-muted-foreground">Address</div>
+                          <div className="text-sm font-medium">{candidate.address}</div>
+                        </div>
+                      )}
+                      {candidate.national_id && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">National ID</div>
+                          <div className="text-sm font-medium">{candidate.national_id}</div>
+                        </div>
+                      )}
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">Contact Email</div>
-                        <div className="text-sm font-medium">{candidate.contact_email}</div>
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          Registration Date
+                        </div>
+                        <div className="text-sm font-medium">
+                          {new Date(candidate.registration_date).toLocaleDateString()}
+                        </div>
                       </div>
-                    )}
-                    {candidate.contact_phone && (
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">Contact Phone</div>
-                        <div className="text-sm font-medium">{candidate.contact_phone}</div>
-                      </div>
-                    )}
-                    {candidate.address && (
-                      <div className="space-y-1 md:col-span-2">
-                        <div className="text-xs text-muted-foreground">Address</div>
-                        <div className="text-sm font-medium">{candidate.address}</div>
-                      </div>
-                    )}
-                    {candidate.national_id && (
-                      <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">National ID</div>
-                        <div className="text-sm font-medium">{candidate.national_id}</div>
-                      </div>
-                    )}
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        Registration Date
-                      </div>
-                      <div className="text-sm font-medium">
-                        {new Date(candidate.registration_date).toLocaleDateString()}
+                        <div className="text-xs text-muted-foreground">Index Number</div>
+                        <div className="font-mono text-sm font-medium">
+                          {candidate.index_number || (
+                            <span className="italic text-muted-foreground">Not available</span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Index Number</div>
-                      <div className="text-sm font-medium font-mono">
-                        {candidate.index_number || (
-                          <span className="text-muted-foreground italic">Not available</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-              </Card>
+                  )}
+                </div>
+              </section>
 
-              {/* Photo Section - Right Corner */}
-              <Card className="flex w-fit shrink-0 flex-col border-border shadow-none">
-                <CardHeader className="pb-3">
-                </CardHeader>
-                <CardContent className="pt-0 flex-1 flex flex-col items-center justify-center gap-3">
+              <section className="w-full shrink-0 lg:w-56">
+                <SectionLabel>Photo</SectionLabel>
+                <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
                   {loadingPhoto ? (
-                    <div className="flex justify-center items-center">
-                      <Skeleton className="h-48 w-48 rounded-lg" />
-                    </div>
+                    <Skeleton className="h-48 w-48 rounded-lg" />
                   ) : photo && photoUrl ? (
                     <>
                       <div
-                        className="relative w-48 h-48 border-2 border-primary rounded-lg overflow-hidden bg-muted group cursor-pointer hover:shadow-lg transition-shadow mx-auto"
+                        className="group relative mx-auto h-48 w-48 cursor-pointer overflow-hidden rounded-lg border-2 border-primary bg-muted transition-shadow hover:shadow-md"
                         onClick={() => {
-                          // Open photo in lightbox/viewer
-                          if (photoUrl) {
-                            window.open(photoUrl, '_blank');
-                          }
+                          if (photoUrl) window.open(photoUrl, "_blank");
                         }}
                       >
                         <img
                           src={photoUrl}
                           alt={candidate.name}
-                          className="w-full h-full object-cover pointer-events-none"
+                          className="pointer-events-none h-full w-full object-cover"
                         />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                          <ZoomIn className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/10">
+                          <ZoomIn className="h-8 w-8 text-white opacity-0 transition-opacity group-hover:opacity-100" />
                         </div>
-                        <div className="absolute top-2 right-2">
+                        <div className="absolute right-2 top-2">
                           <Badge className="bg-primary text-xs">Active</Badge>
                         </div>
                       </div>
@@ -949,18 +955,18 @@ export function CandidateDetailModal({
                           className="w-full"
                           onClick={() => setUploadDialogOpen(true)}
                         >
-                          <Upload className="h-4 w-4 mr-2" />
+                          <Upload className="mr-2 h-4 w-4" />
                           Change Photo
                         </Button>
                       )}
                     </>
                   ) : (
                     <>
-                      <div className="flex flex-col items-center justify-center text-muted-foreground w-48 mx-auto">
-                        <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center">
+                      <div className="mx-auto flex w-48 flex-col items-center justify-center text-muted-foreground">
+                        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-muted">
                           <User className="h-12 w-12" />
                         </div>
-                        <p className="text-xs mt-2 text-center">No photo available</p>
+                        <p className="mt-2 text-center text-xs">No photo available</p>
                       </div>
                       {!isExamClosed && (
                         <Button
@@ -969,37 +975,36 @@ export function CandidateDetailModal({
                           className="w-full"
                           onClick={() => setUploadDialogOpen(true)}
                         >
-                          <Upload className="h-4 w-4 mr-2" />
+                          <Upload className="mr-2 h-4 w-4" />
                           Upload Photo
                         </Button>
                       )}
                     </>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </section>
             </div>
 
-            {/* Guardian Information Section */}
-            <Card className="border-border shadow-none">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <User className="h-4 w-4" />
-                    Guardian Information
-                  </CardTitle>
-                  {!editingGuardian && !isExamClosed && (
+            <section>
+              <SectionLabel
+                action={
+                  !editingGuardian && !isExamClosed ? (
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => setEditingGuardian(true)}
                     >
-                      <Edit2 className="h-4 w-4 mr-2" />
-                      {candidate.guardian_name || candidate.guardian_phone ? "Edit Guardian Info" : "Add Guardian Info"}
+                      <Edit2 className="mr-2 h-4 w-4" />
+                      {candidate.guardian_name || candidate.guardian_phone
+                        ? "Edit guardian"
+                        : "Add guardian"}
                     </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
+                  ) : undefined
+                }
+              >
+                Guardian information
+              </SectionLabel>
+              <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
                 {editingGuardian ? (
                   <div className="space-y-4">
                     <div className="space-y-2">
@@ -1007,18 +1012,22 @@ export function CandidateDetailModal({
                       <Input
                         id="edit-guardian-name"
                         value={guardianData.guardian_name}
-                        onChange={(e) => setGuardianData({ ...guardianData, guardian_name: e.target.value })}
+                        onChange={(e) =>
+                          setGuardianData({ ...guardianData, guardian_name: e.target.value })
+                        }
                         disabled={savingGuardian}
                         placeholder="Enter guardian full name"
                       />
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="edit-guardian-phone">Guardian Phone</Label>
                         <Input
                           id="edit-guardian-phone"
                           value={guardianData.guardian_phone}
-                          onChange={(e) => setGuardianData({ ...guardianData, guardian_phone: e.target.value })}
+                          onChange={(e) =>
+                            setGuardianData({ ...guardianData, guardian_phone: e.target.value })
+                          }
                           disabled={savingGuardian}
                           placeholder="+1234567890"
                         />
@@ -1028,7 +1037,12 @@ export function CandidateDetailModal({
                         <Input
                           id="edit-guardian-digital-address"
                           value={guardianData.guardian_digital_address}
-                          onChange={(e) => setGuardianData({ ...guardianData, guardian_digital_address: e.target.value })}
+                          onChange={(e) =>
+                            setGuardianData({
+                              ...guardianData,
+                              guardian_digital_address: e.target.value,
+                            })
+                          }
                           disabled={savingGuardian}
                           placeholder="GA-123-4567"
                         />
@@ -1039,25 +1053,26 @@ export function CandidateDetailModal({
                       <Input
                         id="edit-guardian-national-id"
                         value={guardianData.guardian_national_id}
-                        onChange={(e) => setGuardianData({ ...guardianData, guardian_national_id: e.target.value })}
+                        onChange={(e) =>
+                          setGuardianData({
+                            ...guardianData,
+                            guardian_national_id: e.target.value,
+                          })
+                        }
                         disabled={savingGuardian}
                         placeholder="GHA-123456789-1"
                       />
                     </div>
                     <div className="flex items-center gap-2 pt-2">
-                      <Button
-                        onClick={handleSaveGuardian}
-                        disabled={savingGuardian}
-                        size="sm"
-                      >
+                      <Button onClick={handleSaveGuardian} disabled={savingGuardian} size="sm">
                         {savingGuardian ? (
                           <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Saving...
                           </>
                         ) : (
                           <>
-                            <Save className="h-4 w-4 mr-2" />
+                            <Save className="mr-2 h-4 w-4" />
                             Save Changes
                           </>
                         )}
@@ -1068,13 +1083,13 @@ export function CandidateDetailModal({
                         disabled={savingGuardian}
                         size="sm"
                       >
-                        <XIcon className="h-4 w-4 mr-2" />
+                        <XIcon className="mr-2 h-4 w-4" />
                         Cancel
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     {candidate.guardian_name ? (
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground">Guardian Name</div>
@@ -1082,7 +1097,9 @@ export function CandidateDetailModal({
                       </div>
                     ) : (
                       <div className="space-y-1 md:col-span-2">
-                        <div className="text-xs text-muted-foreground italic">No guardian information available</div>
+                        <div className="text-xs italic text-muted-foreground">
+                          No guardian information available
+                        </div>
                       </div>
                     )}
                     {candidate.guardian_phone && (
@@ -1094,237 +1111,148 @@ export function CandidateDetailModal({
                     {candidate.guardian_digital_address && (
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground">Digital Address</div>
-                        <div className="text-sm font-medium">{candidate.guardian_digital_address}</div>
+                        <div className="text-sm font-medium">
+                          {candidate.guardian_digital_address}
+                        </div>
                       </div>
                     )}
                     {candidate.guardian_national_id && (
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground">Guardian National ID</div>
-                        <div className="text-sm font-medium">{candidate.guardian_national_id}</div>
+                        <div className="text-sm font-medium">
+                          {candidate.guardian_national_id}
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-
-            {/* Subject Registrations Section */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <BookOpen className="h-5 w-5" />
-                  Registered Subjects
-                </h3>
-                {candidate?.programme_id && !editingSubjects && !isExamClosed && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditingSubjects(true)}
-                  >
-                    <Edit2 className="h-4 w-4 mr-2" />
-                    Edit Subjects
-                  </Button>
-                )}
               </div>
+            </section>
+
+            <section>
+              <SectionLabel
+                action={
+                  candidate?.programme_id && !editingSubjects && !isExamClosed ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingSubjects(true)}
+                    >
+                      <Edit2 className="mr-2 h-4 w-4" />
+                      Edit subjects
+                    </Button>
+                  ) : undefined
+                }
+              >
+                Registered subjects
+              </SectionLabel>
 
               {!editingSubjects ? (
-                // Display mode
                 subjectSelections.length === 0 ? (
-                  <Card className="border-border shadow-none">
-                    <CardContent className="pt-6">
-                      <div className="py-8 text-center text-sm text-muted-foreground">
-                        <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-50" />
-                        <p>No subjects registered for this candidate.</p>
-                        {candidate?.programme_id && !isExamClosed && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-4"
-                            onClick={() => setEditingSubjects(true)}
-                          >
-                            <Edit2 className="h-4 w-4 mr-2" />
-                            Add Subjects
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card className="border-border shadow-none">
-                    <CardHeader>
-                      {candidate.exam && (
-                        <div>
-                          <CardTitle className="text-base font-semibold">
-                            {candidate.exam.exam_type}{candidate.exam.exam_series ? ` ${candidate.exam.exam_series}` : ""} {candidate.exam.year}
-                          </CardTitle>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="text-xs text-muted-foreground">
-                              {subjectSelections.length} {subjectSelections.length === 1 ? "subject" : "subjects"}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        {subjectSelections.map((subject: RegistrationSubjectSelection) => (
-                          <div
-                            key={subject.id}
-                            className="flex items-center justify-between py-2 px-3 rounded-md border bg-card hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex-1">
-                              <div className="font-medium text-sm">{subject.subject_name}</div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                Code: {subject.subject_code}
-                                {subject.series && ` • Series ${subject.series}`}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              ) : (
-                // Edit mode
-                <Card className="border-border shadow-none">
-                  <CardHeader>
-                    <CardTitle className="text-base font-semibold">Edit Subject Selections</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Select subjects for {candidate?.name}. Changes will be validated against programme requirements.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    {loadingSubjects ? (
-                      <div className="flex justify-center py-8">
-                        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : programmeSubjects ? (
-                      <div className="space-y-6">
-                        {/* Compulsory Core Subjects */}
-                        {programmeSubjects.compulsory_core.length > 0 && (
-                          <div className="space-y-2">
-                            <Label className="text-base font-medium">Compulsory Core Subjects</Label>
-                            <div className="space-y-2 pl-4">
-                              {programmeSubjects.compulsory_core.map((subject) => {
-                                const isChecked = selectedSubjectIds.includes(subject.subject_id);
-                                return (
-                                  <div key={subject.subject_id} className="flex items-center gap-2">
-                                    <Checkbox checked={isChecked} disabled />
-                                    <Label className="font-normal">
-                                      {subject.subject_code} - {subject.subject_name}
-                                    </Label>
-                                    <Badge variant="secondary" className="text-xs">
-                                      CORE
-                                    </Badge>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Optional Core Groups */}
-                        {programmeSubjects.optional_core_groups.length > 0 && (
-                          <div className="space-y-3">
-                            <Label className="text-base font-medium">Optional Core Groups (Select one per group)</Label>
-                            {programmeSubjects.optional_core_groups.map((group) => {
-                              const selectedInGroup = selectedSubjectIds.find((id) =>
-                                group.subjects.some((s) => s.subject_id === id)
-                              );
-                              return (
-                                <div key={group.choice_group_id} className="space-y-2 pl-4 border-l-2">
-                                  <Label className="text-sm font-medium">Group {group.choice_group_id}</Label>
-                                  <RadioGroup
-                                    value={selectedInGroup?.toString()}
-                                    onValueChange={(value) =>
-                                      handleOptionalGroupChange(group.subjects, parseInt(value))
-                                    }
-                                  >
-                                    {group.subjects.map((subject) => (
-                                      <div key={subject.subject_id} className="flex items-center gap-2">
-                                        <RadioGroupItem value={subject.subject_id.toString()} id={`edit-group-${group.choice_group_id}-${subject.subject_id}`} />
-                                        <Label htmlFor={`edit-group-${group.choice_group_id}-${subject.subject_id}`} className="font-normal cursor-pointer">
-                                          {subject.subject_code} - {subject.subject_name}
-                                        </Label>
-                                        <Badge variant="secondary" className="text-xs">
-                                          CORE
-                                        </Badge>
-                                      </div>
-                                    ))}
-                                  </RadioGroup>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* Elective Subjects */}
-                        {programmeSubjects.electives.length > 0 && (() => {
-                          const isMayJune = candidate?.exam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
-                          return (
-                            <div className="space-y-2">
-                              <Label className="text-base font-medium">
-                                Elective Subjects {isMayJune ? "(All Required)" : "(Select any)"}
-                              </Label>
-                              <div className="space-y-2 pl-4">
-                                {programmeSubjects.electives.map((subject) => {
-                                  const isChecked = selectedSubjectIds.includes(subject.subject_id);
-                                  return (
-                                    <div key={subject.subject_id} className="flex items-center gap-2">
-                                      <Checkbox
-                                        checked={isChecked}
-                                        disabled={isMayJune}
-                                        onCheckedChange={(checked) =>
-                                          handleSubjectToggle(subject.subject_id, checked as boolean)
-                                        }
-                                      />
-                                      <Label className={`font-normal ${isMayJune ? "" : "cursor-pointer"}`}>
-                                        {subject.subject_code} - {subject.subject_name}
-                                      </Label>
-                                      <Badge variant="outline" className="text-xs">
-                                        ELECTIVE
-                                      </Badge>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        <div className="flex justify-end gap-2 pt-4 border-t">
-                          <Button variant="outline" onClick={handleCancelEdit} disabled={savingSubjects}>
-                            <XIcon className="h-4 w-4 mr-2" />
-                            Cancel
-                          </Button>
-                          <Button onClick={handleSaveSubjects} disabled={savingSubjects}>
-                            {savingSubjects ? (
-                              <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Saving...
-                              </>
-                            ) : (
-                              <>
-                                <Save className="h-4 w-4 mr-2" />
-                                Save Changes
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-center text-muted-foreground py-8">
-                        <p>No programme subjects available.</p>
-                        <Button variant="outline" className="mt-4" onClick={handleCancelEdit}>
-                          Cancel
+                  <div className="rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-50" />
+                      <p>No subjects registered for this candidate.</p>
+                      {candidate?.programme_id && !isExamClosed && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4"
+                          onClick={() => setEditingSubjects(true)}
+                        >
+                          <Edit2 className="mr-2 h-4 w-4" />
+                          Add Subjects
                         </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                    {candidate.exam && (
+                      <div>
+                        <p className="text-sm font-medium">
+                          {candidate.exam.exam_type}
+                          {candidate.exam.exam_series
+                            ? ` ${candidate.exam.exam_series}`
+                            : ""}{" "}
+                          {candidate.exam.year}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {subjectSelections.length}{" "}
+                          {subjectSelections.length === 1 ? "subject" : "subjects"}
+                        </p>
                       </div>
                     )}
-                  </CardContent>
-                </Card>
+                    <div className="space-y-3">
+                      {subjectSelections.map((subject: RegistrationSubjectSelection) => (
+                        <div
+                          key={subject.id}
+                          className="flex items-center justify-between rounded-md border border-border px-3 py-2 transition-colors hover:bg-muted/50"
+                        >
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">{subject.subject_name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Code: {subject.subject_code}
+                              {subject.series && ` • Series ${subject.series}`}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              ) : (
+                <div className="space-y-6 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                  <div>
+                    <p className="text-sm font-medium">Edit subject selections</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Select subjects for {candidate?.name}. Changes will be validated against
+                      programme requirements.
+                    </p>
+                  </div>
+                  <SubjectSelectionPanel
+                    programmeSubjects={programmeSubjects}
+                    loading={loadingSubjects}
+                    selectedSubjectIds={selectedSubjectIds}
+                    onChange={setSelectedSubjectIds}
+                    registrationType={candidate?.registration_type ?? null}
+                    allowsFreeTvet={candidate?.exam?.allows_free_tvet}
+                  />
+                  {!loadingSubjects && !programmeSubjects ? (
+                    <div className="py-8 text-center text-muted-foreground">
+                      <p>No programme subjects available.</p>
+                      <Button variant="outline" className="mt-4" onClick={handleCancelEdit}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end gap-2 border-t border-border pt-4">
+                      <Button
+                        variant="outline"
+                        onClick={handleCancelEdit}
+                        disabled={savingSubjects}
+                      >
+                        <XIcon className="mr-2 h-4 w-4" />
+                        Cancel
+                      </Button>
+                      <Button onClick={handleSaveSubjects} disabled={savingSubjects}>
+                        {savingSubjects ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="mr-2 h-4 w-4" />
+                            Save Changes
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               )}
-            </div>
+            </section>
           </div>
         </div>
 

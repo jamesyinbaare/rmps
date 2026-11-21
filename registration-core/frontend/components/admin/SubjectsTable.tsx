@@ -11,6 +11,13 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Search, ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
 import type { Subject, SubjectListResponse } from "@/types";
 
@@ -18,9 +25,11 @@ interface SubjectsTableProps {
   data: SubjectListResponse;
   loading: boolean;
   onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onSearchChange: (search: string) => void;
   onSortChange: (field: string, direction: "asc" | "desc") => void;
   currentSearch: string;
+  pageSize: number;
   sortField?: string;
   sortDirection?: "asc" | "desc";
 }
@@ -29,9 +38,11 @@ export function SubjectsTable({
   data,
   loading,
   onPageChange,
+  onPageSizeChange,
   onSearchChange,
   onSortChange,
   currentSearch,
+  pageSize,
   sortField,
   sortDirection,
 }: SubjectsTableProps) {
@@ -65,9 +76,12 @@ export function SubjectsTable({
     );
   };
 
+  const totalPages = Math.max(data.total_pages, 1);
+  const showFrom = data.total === 0 ? 0 : (data.page - 1) * data.page_size + 1;
+  const showTo = Math.min(data.page * data.page_size, data.total);
+
   return (
     <div className="space-y-4">
-      {/* Search */}
       <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -81,7 +95,6 @@ export function SubjectsTable({
         </div>
       </form>
 
-      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -137,14 +150,31 @@ export function SubjectsTable({
         </Table>
       </div>
 
-      {/* Pagination */}
-      {data.total_pages > 1 && (
-        <div className="flex items-center justify-between">
+      {data.total > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
-            Showing {(data.page - 1) * data.page_size + 1} to{" "}
-            {Math.min(data.page * data.page_size, data.total)} of {data.total} subjects
+            Showing {showFrom} to {showTo} of {data.total} subjects
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="whitespace-nowrap text-sm text-muted-foreground">Rows per page:</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) => onPageSizeChange(parseInt(v, 10))}
+              disabled={loading}
+            >
+              <SelectTrigger className="h-8 w-[70px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="20">20</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="whitespace-nowrap text-sm text-muted-foreground">
+              Page {data.page} of {totalPages}
+            </span>
             <Button
               variant="outline"
               size="sm"
@@ -154,14 +184,11 @@ export function SubjectsTable({
               <ChevronLeft className="h-4 w-4" />
               Previous
             </Button>
-            <div className="text-sm">
-              Page {data.page} of {data.total_pages}
-            </div>
             <Button
               variant="outline"
               size="sm"
               onClick={() => onPageChange(data.page + 1)}
-              disabled={data.page >= data.total_pages || loading}
+              disabled={data.page >= totalPages || loading}
             >
               Next
               <ChevronRight className="h-4 w-4" />

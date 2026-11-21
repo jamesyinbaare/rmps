@@ -2196,11 +2196,18 @@ export async function downloadCandidateTemplate(examId?: number): Promise<Blob> 
 }
 
 // Admin API - Programmes
-export async function listProgrammes(page: number = 1, pageSize: number = 20): Promise<ProgrammeListResponse> {
+export async function listProgrammes(
+  page: number = 1,
+  pageSize: number = 20,
+  programmeTypeId?: number
+): Promise<ProgrammeListResponse> {
   const params = new URLSearchParams({
     page: page.toString(),
     page_size: pageSize.toString(),
   });
+  if (programmeTypeId != null) {
+    params.set("programme_type_id", programmeTypeId.toString());
+  }
   const response = await fetchWithAuth(`/api/v1/admin/programmes?${params.toString()}`);
   return handleResponse<ProgrammeListResponse>(response);
 }
@@ -2226,6 +2233,13 @@ export async function updateProgramme(
     body: JSON.stringify(data),
   });
   return handleResponse<Programme>(response);
+}
+
+export async function listAttachableSubjects(programmeId: number): Promise<Subject[]> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/programmes/${programmeId}/attachable-subjects`
+  );
+  return handleResponse<Subject[]>(response);
 }
 
 export async function addSubjectToProgramme(

@@ -193,6 +193,22 @@ export default function RegisterSingleCandidatePage() {
       toast.error("First name and last name are required");
       return;
     }
+    if (!formData.date_of_birth) {
+      toast.error("Date of birth is required");
+      return;
+    }
+    if (!formData.gender) {
+      toast.error("Gender is required");
+      return;
+    }
+    if (!formData.programme_id) {
+      toast.error("Programme selection is required");
+      return;
+    }
+    if (selectedSubjectIds.length === 0) {
+      toast.error("At least one subject must be selected");
+      return;
+    }
     setSubmitting(true);
     try {
       const isPrivate = exam.exam_kind === "private";
@@ -353,7 +369,7 @@ export default function RegisterSingleCandidatePage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="dob">Date of birth</Label>
+                <Label htmlFor="dob">Date of birth *</Label>
                 <Input
                   id="dob"
                   type="date"
@@ -364,10 +380,11 @@ export default function RegisterSingleCandidatePage() {
                       date_of_birth: e.target.value || null,
                     })
                   }
+                  required
                 />
               </div>
               <div className="space-y-2">
-                <Label>Gender</Label>
+                <Label>Gender *</Label>
                 <Select
                   value={formData.gender || ""}
                   onValueChange={(value) =>
@@ -380,6 +397,7 @@ export default function RegisterSingleCandidatePage() {
                   <SelectContent>
                     <SelectItem value="Male">Male</SelectItem>
                     <SelectItem value="Female">Female</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -521,7 +539,7 @@ export default function RegisterSingleCandidatePage() {
           <SectionLabel>Programme & subjects</SectionLabel>
           <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
             <div className="space-y-2">
-              <Label>Programme</Label>
+              <Label>Programme *</Label>
               <SearchableSelect
                 options={programmes.map((p) => ({
                   value: String(p.id),
@@ -541,6 +559,12 @@ export default function RegisterSingleCandidatePage() {
                 placeholder="Search programmes…"
                 searchPlaceholder="Search programmes…"
               />
+              {programmes.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No programmes available for this examination. Add programmes
+                  under My School → Programmes first.
+                </p>
+              )}
             </div>
             <SubjectSelectionPanel
               programmeSubjects={programmeSubjects}

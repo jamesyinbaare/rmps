@@ -365,8 +365,10 @@ export interface RegistrationCandidateCreate {
   firstname: string;
   lastname: string;
   othername?: string | null;
-  date_of_birth?: string | null;
-  gender?: string | null;
+  /** Required on submit (API rejects null). */
+  date_of_birth: string | null;
+  /** Required on submit (API rejects null). */
+  gender: string | null;
   programme_code?: string | null;
   programme_id?: number | null;
   contact_email?: string | null;

@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { SubjectsTable } from "@/components/admin/SubjectsTable";
 import { CreateSubjectDialog } from "@/components/admin/CreateSubjectDialog";
 import { BulkUploadSubjectsDialog } from "@/components/admin/BulkUploadSubjectsDialog";
-import { listSubjects } from "@/lib/api";
+import { listSubjects, listAllSubjects } from "@/lib/api";
 import { toast } from "sonner";
 import type { SubjectListResponse } from "@/types";
 import { Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { StatStrip } from "@/components/dashboard/StatStrip";
+import { StatStrip, type StatStripItem } from "@/components/dashboard/StatStrip";
+
+const PAGE_SIZE_OPTIONS = new Set([10, 20, 50, 100]);
 
 interface SubjectsSectionProps {
   showAddButtons?: boolean;
@@ -17,6 +19,10 @@ interface SubjectsSectionProps {
   onCreateOpenChange?: (open: boolean) => void;
   uploadOpen?: boolean;
   onUploadOpenChange?: (open: boolean) => void;
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
 }
 
 export function SubjectsSection({
@@ -25,6 +31,10 @@ export function SubjectsSection({
   onCreateOpenChange,
   uploadOpen: controlledUploadOpen,
   onUploadOpenChange,
+  page: controlledPage,
+  pageSize: controlledPageSize,
+  onPageChange,
+  onPageSizeChange,
 }: SubjectsSectionProps = {}) {
   const [data, setData] = useState<SubjectListResponse>({
     items: [],
@@ -35,28 +45,62 @@ export function SubjectsSection({
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const [internalPage, setInternalPage] = useState(1);
+  const [internalPageSize, setInternalPageSize] = useState(20);
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
   const [internalUploadOpen, setInternalUploadOpen] = useState(false);
   const [sortField, setSortField] = useState<string | undefined>(undefined);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [kpiTotal, setKpiTotal] = useState(0);
+  const [kpiCore, setKpiCore] = useState(0);
+  const [kpiElective, setKpiElective] = useState(0);
 
   const createDialogOpen = controlledCreateOpen ?? internalCreateOpen;
   const setCreateDialogOpen = onCreateOpenChange ?? setInternalCreateOpen;
   const uploadDialogOpen = controlledUploadOpen ?? internalUploadOpen;
   const setUploadDialogOpen = onUploadOpenChange ?? setInternalUploadOpen;
 
+  const page = controlledPage ?? internalPage;
+  const pageSize = PAGE_SIZE_OPTIONS.has(controlledPageSize ?? internalPageSize)
+    ? (controlledPageSize ?? internalPageSize)
+    : 20;
+
+  const setPage = (next: number) => {
+    if (onPageChange) onPageChange(next);
+    else setInternalPage(next);
+  };
+
+  const setPageSize = (next: number) => {
+    if (onPageSizeChange) onPageSizeChange(next);
+    else {
+      setInternalPageSize(next);
+      setInternalPage(1);
+    }
+  };
+
+  const loadKpis = useCallback(async () => {
+    try {
+      const all = await listAllSubjects();
+      setKpiTotal(all.length);
+      setKpiCore(all.filter((s) => s.subject_type === "CORE").length);
+      setKpiElective(all.filter((s) => s.subject_type === "ELECTIVE").length);
+    } catch (error) {
+      console.error("Failed to load subject KPIs", error);
+    }
+  }, []);
+
   const loadSubjects = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await listSubjects(page, 20);
+      const result = await listSubjects(page, pageSize);
       let filteredItems = result.items;
       if (search) {
         const searchLower = search.toLowerCase();
         filteredItems = result.items.filter(
           (s) =>
             s.code.toLowerCase().includes(searchLower) ||
-            s.name.toLowerCase().includes(searchLower)
+            s.name.toLowerCase().includes(searchLower) ||
+            (s.original_code || "").toLowerCase().includes(searchLower)
         );
       }
 
@@ -92,11 +136,15 @@ export function SubjectsSection({
     } finally {
       setLoading(false);
     }
-  }, [page, search, sortField, sortDirection]);
+  }, [page, pageSize, search, sortField, sortDirection]);
 
   useEffect(() => {
     loadSubjects();
   }, [loadSubjects]);
+
+  useEffect(() => {
+    loadKpis();
+  }, [loadKpis]);
 
   const handleSearchChange = (newSearch: string) => {
     setSearch(newSearch);
@@ -107,10 +155,27 @@ export function SubjectsSection({
     setPage(newPage);
   };
 
+  const handlePageSizeChange = (newPageSize: number) => {
+    setPageSize(newPageSize);
+  };
+
   const handleSortChange = (field: string, direction: "asc" | "desc") => {
     setSortField(field);
     setSortDirection(direction);
   };
+
+  const refreshAll = async () => {
+    await Promise.all([loadSubjects(), loadKpis()]);
+  };
+
+  const kpiItems: StatStripItem[] = useMemo(
+    () => [
+      { label: "Total Subjects", value: kpiTotal },
+      { label: "Core", value: kpiCore },
+      { label: "Elective", value: kpiElective },
+    ],
+    [kpiTotal, kpiCore, kpiElective]
+  );
 
   return (
     <div className="space-y-6">
@@ -127,15 +192,17 @@ export function SubjectsSection({
         </div>
       )}
 
-      <StatStrip items={[{ label: "Total Subjects", value: data.total }]} />
+      <StatStrip items={kpiItems} />
 
       <SubjectsTable
         data={data}
         loading={loading}
         onPageChange={handlePageChange}
+        onPageSizeChange={handlePageSizeChange}
         onSearchChange={handleSearchChange}
         onSortChange={handleSortChange}
         currentSearch={search}
+        pageSize={pageSize}
         sortField={sortField}
         sortDirection={sortDirection}
       />
@@ -143,13 +210,13 @@ export function SubjectsSection({
       <CreateSubjectDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
-        onSuccess={loadSubjects}
+        onSuccess={refreshAll}
       />
 
       <BulkUploadSubjectsDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
-        onSuccess={loadSubjects}
+        onSuccess={refreshAll}
       />
     </div>
   );

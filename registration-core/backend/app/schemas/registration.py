@@ -105,6 +105,8 @@ class RegistrationCandidateBase(BaseModel):
 class RegistrationCandidateCreate(RegistrationCandidateBase):
     """Schema for creating a registration candidate."""
 
+    date_of_birth: date = Field(..., description="Candidate date of birth")
+    gender: str = Field(..., min_length=1, max_length=20, description="Candidate gender")
     school_id: int | None = Field(None, description="Examination center (school) ID - required for private candidates")
     subject_codes: list[str] = Field(default_factory=list, description="List of subject codes (for backward compatibility)")
     subject_ids: list[int] = Field(default_factory=list, description="List of subject IDs")

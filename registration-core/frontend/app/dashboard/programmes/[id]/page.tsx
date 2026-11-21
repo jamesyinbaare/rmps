@@ -10,7 +10,7 @@ import {
   addSubjectToProgramme,
   updateProgrammeSubject,
   removeSubjectFromProgramme,
-  listAllSubjects,
+  listAttachableSubjects,
   getProgrammeTypeTree,
 } from "@/lib/api";
 import type {
@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -54,6 +55,8 @@ import { ArrowLeft, GraduationCap, Edit, Calendar, BookOpen, Loader2, Save, X, P
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 
+type SubjectTypeFilter = "ALL" | "CORE" | "ELECTIVE";
+
 export default function ProgrammeDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -73,15 +76,17 @@ export default function ProgrammeDetailPage() {
   });
   const [typeOptions, setTypeOptions] = useState<{ id: number; path: string }[]>([]);
   const [saving, setSaving] = useState(false);
-  const [manageSubjectsDialogOpen, setManageSubjectsDialogOpen] = useState(false);
-  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
-  const [loadingAllSubjects, setLoadingAllSubjects] = useState(false);
+  const [attachableSubjects, setAttachableSubjects] = useState<Subject[]>([]);
+  const [loadingAttachableSubjects, setLoadingAttachableSubjects] = useState(false);
   const [editSubjectDialogOpen, setEditSubjectDialogOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<{ subject_id: number; is_compulsory: boolean | null; choice_group_id: number | null } | null>(null);
   const [addSubjectDialogOpen, setAddSubjectDialogOpen] = useState(false);
-  const [selectedSubjectToAdd, setSelectedSubjectToAdd] = useState<number | null>(null);
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState<Set<number>>(new Set());
+  const [subjectSearch, setSubjectSearch] = useState("");
+  const [addingSubjects, setAddingSubjects] = useState(false);
   const [newSubjectIsCompulsory, setNewSubjectIsCompulsory] = useState<boolean>(true);
   const [newSubjectChoiceGroup, setNewSubjectChoiceGroup] = useState<number | null>(null);
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<SubjectTypeFilter>("ALL");
 
   const isSystemAdmin = user?.role === "SystemAdmin";
 
@@ -168,18 +173,25 @@ export default function ProgrammeDetailPage() {
     }
   };
 
-  const loadAllSubjects = async () => {
-    setLoadingAllSubjects(true);
+  const loadAttachableSubjects = async () => {
+    if (!programmeId) return;
+    setLoadingAttachableSubjects(true);
     try {
-      const subjects = await listAllSubjects();
-      setAllSubjects(subjects);
+      const subjects = await listAttachableSubjects(programmeId);
+      setAttachableSubjects(subjects);
     } catch (err) {
       toast.error("Failed to load subjects");
       console.error(err);
     } finally {
-      setLoadingAllSubjects(false);
+      setLoadingAttachableSubjects(false);
     }
   };
+
+  useEffect(() => {
+    if (addSubjectDialogOpen) {
+      void loadAttachableSubjects();
+    }
+  }, [addSubjectDialogOpen, programmeId]);
 
   const reloadSubjects = async () => {
     if (!programmeId) return;
@@ -194,23 +206,80 @@ export default function ProgrammeDetailPage() {
     }
   };
 
-  const handleAddSubject = async () => {
-    if (!programmeId || !selectedSubjectToAdd) return;
+  const resetAddSubjectDialog = () => {
+    setSelectedSubjectIds(new Set());
+    setSubjectSearch("");
+    setSubjectTypeFilter("ALL");
+    setNewSubjectIsCompulsory(true);
+    setNewSubjectChoiceGroup(null);
+  };
 
-    try {
-      await addSubjectToProgramme(programmeId, selectedSubjectToAdd, {
-        is_compulsory: newSubjectIsCompulsory ? true : (newSubjectChoiceGroup ? false : null),
-        choice_group_id: newSubjectChoiceGroup,
-      });
-      toast.success("Subject added successfully");
-      setAddSubjectDialogOpen(false);
-      setSelectedSubjectToAdd(null);
-      setNewSubjectIsCompulsory(true);
-      setNewSubjectChoiceGroup(null);
-      await reloadSubjects();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add subject");
+  const buildPayloadForSubject = (subject: Subject) => {
+    if (subject.subject_type === "ELECTIVE") {
+      return { is_compulsory: null as boolean | null, choice_group_id: null as number | null };
     }
+    if (newSubjectIsCompulsory) {
+      return { is_compulsory: true as boolean | null, choice_group_id: null as number | null };
+    }
+    return {
+      is_compulsory: false as boolean | null,
+      choice_group_id: newSubjectChoiceGroup,
+    };
+  };
+
+  const handleAddSubjects = async () => {
+    if (!programmeId || selectedSubjectIds.size === 0) return;
+
+    const selected = attachableSubjects.filter((s) => selectedSubjectIds.has(s.id));
+    const hasOptionalCore = selected.some(
+      (s) => s.subject_type === "CORE" && !newSubjectIsCompulsory
+    );
+    if (hasOptionalCore && (!newSubjectChoiceGroup || newSubjectChoiceGroup <= 0)) {
+      toast.error("Choice group ID is required for optional core subjects");
+      return;
+    }
+
+    setAddingSubjects(true);
+    let successCount = 0;
+    let firstError: string | null = null;
+    const succeeded = new Set<number>();
+
+    for (const subject of selected) {
+      try {
+        await addSubjectToProgramme(programmeId, subject.id, buildPayloadForSubject(subject));
+        successCount += 1;
+        succeeded.add(subject.id);
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof Error ? err.message : "Failed to add subject";
+        }
+      }
+    }
+
+    setAddingSubjects(false);
+    await reloadSubjects();
+
+    if (firstError) {
+      const remaining = new Set(
+        [...selectedSubjectIds].filter((id) => !succeeded.has(id))
+      );
+      setSelectedSubjectIds(remaining);
+      setAttachableSubjects((prev) => prev.filter((s) => !succeeded.has(s.id)));
+      toast.error(
+        successCount > 0
+          ? `Added ${successCount}, but some failed: ${firstError}`
+          : firstError
+      );
+      return;
+    }
+
+    toast.success(
+      successCount === 1
+        ? "Subject added successfully"
+        : `${successCount} subjects added successfully`
+    );
+    setAddSubjectDialogOpen(false);
+    resetAddSubjectDialog();
   };
 
   const handleRemoveSubject = async (subjectId: number) => {
@@ -255,15 +324,72 @@ export default function ProgrammeDetailPage() {
     }
   };
 
-  const getAvailableSubjects = () => {
-    if (!subjects) return allSubjects;
-    const associatedSubjectIds = new Set([
-      ...subjects.compulsory_core.map((s) => s.subject_id),
-      ...subjects.optional_core_groups.flatMap((g) => g.subjects.map((s) => s.subject_id)),
-      ...subjects.electives.map((s) => s.subject_id),
-    ]);
-    return allSubjects.filter((s) => !associatedSubjectIds.has(s.id));
+  const getFilteredAvailableSubjects = () => {
+    let available = attachableSubjects;
+    if (subjectTypeFilter !== "ALL") {
+      available = available.filter((s) => s.subject_type === subjectTypeFilter);
+    }
+    const searchLower = subjectSearch.trim().toLowerCase();
+    if (searchLower) {
+      available = available.filter((s) => {
+        const haystack = `${s.code} ${s.original_code || ""} ${s.name}`.toLowerCase();
+        return haystack.includes(searchLower);
+      });
+    }
+    return available;
   };
+
+  const formatSubjectOptionLabel = (subject: Subject) => {
+    const codePart = subject.original_code
+      ? `${subject.code} / ${subject.original_code}`
+      : subject.code;
+    return `${codePart} — ${subject.name} (${subject.subject_type})`;
+  };
+
+  const handleSubjectTypeFilterChange = (filter: SubjectTypeFilter) => {
+    setSubjectTypeFilter(filter);
+    if (filter === "ALL") return;
+    setSelectedSubjectIds((prev) => {
+      const next = new Set<number>();
+      for (const id of prev) {
+        const subject = attachableSubjects.find((s) => s.id === id);
+        if (subject && subject.subject_type === filter) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubjectSelection = (subjectId: number) => {
+    setSelectedSubjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(subjectId)) next.delete(subjectId);
+      else next.add(subjectId);
+      return next;
+    });
+  };
+
+  const selectFilteredSubjects = () => {
+    const filtered = getFilteredAvailableSubjects();
+    setSelectedSubjectIds((prev) => {
+      const next = new Set(prev);
+      for (const subject of filtered) next.add(subject.id);
+      return next;
+    });
+  };
+
+  const clearFilteredSubjects = () => {
+    const filteredIds = new Set(getFilteredAvailableSubjects().map((s) => s.id));
+    setSelectedSubjectIds((prev) => {
+      const next = new Set(prev);
+      for (const id of filteredIds) next.delete(id);
+      return next;
+    });
+  };
+
+  const selectedHasCore = [...selectedSubjectIds].some((id) => {
+    const subject = attachableSubjects.find((s) => s.id === id);
+    return subject?.subject_type === "CORE";
+  });
 
   const getMaxChoiceGroupId = () => {
     if (!subjects) return 0;
@@ -380,11 +506,23 @@ export default function ProgrammeDetailPage() {
 
       {/* Subjects */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="flex items-center gap-2">
             <BookOpen className="h-5 w-5" />
             Subjects ({totalSubjects})
           </CardTitle>
+          {isSystemAdmin && (
+            <Button
+              size="sm"
+              onClick={() => {
+                resetAddSubjectDialog();
+                setAddSubjectDialogOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Subjects
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {subjectsLoading ? (
@@ -641,111 +779,195 @@ export default function ProgrammeDetailPage() {
       </Dialog>
       )}
 
-      {/* Add Subject Dialog */}
+      {/* Add Subjects Dialog */}
       {isSystemAdmin && (
-        <Dialog open={addSubjectDialogOpen} onOpenChange={setAddSubjectDialogOpen}>
-          <DialogContent>
+        <Dialog
+          open={addSubjectDialogOpen}
+          onOpenChange={(open) => {
+            setAddSubjectDialogOpen(open);
+            if (!open) resetAddSubjectDialog();
+          }}
+        >
+          <DialogContent className="sm:max-w-xl">
             <DialogHeader>
-              <DialogTitle>Add Subject to Programme</DialogTitle>
-              <DialogDescription>Select a subject to add to this programme.</DialogDescription>
+              <DialogTitle>Add Subjects to Programme</DialogTitle>
+              <DialogDescription>
+                CORE subjects plus subjects already used on programmes of the same type.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="subject-select">Subject</Label>
-                {loadingAllSubjects ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading subjects...
-                  </div>
-                ) : (
-                  <Select
-                    value={selectedSubjectToAdd?.toString() || ""}
-                    onValueChange={(value) => {
-                      const subjectId = parseInt(value);
-                      setSelectedSubjectToAdd(subjectId);
-                      const subject = allSubjects.find((s) => s.id === subjectId);
-                      if (subject?.subject_type === "CORE") {
-                        setNewSubjectIsCompulsory(true);
-                        setNewSubjectChoiceGroup(null);
-                      } else {
-                        setNewSubjectIsCompulsory(false);
-                        setNewSubjectChoiceGroup(null);
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a subject..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getAvailableSubjects().map((subject) => (
-                        <SelectItem key={subject.id} value={subject.id.toString()}>
-                          {subject.code} - {subject.name} ({subject.subject_type})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+                <Label>Type</Label>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: "ALL", label: "All" },
+                      { value: "CORE", label: "Core" },
+                      { value: "ELECTIVE", label: "Elective" },
+                    ] as const
+                  ).map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      size="sm"
+                      variant={subjectTypeFilter === option.value ? "default" : "outline"}
+                      className="flex-1"
+                      onClick={() => handleSubjectTypeFilterChange(option.value)}
+                      disabled={loadingAttachableSubjects}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
-              {selectedSubjectToAdd && (
+
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <Label>
+                    Subjects ({selectedSubjectIds.size} selected
+                    {!loadingAttachableSubjects
+                      ? `, ${getFilteredAvailableSubjects().length} shown`
+                      : ""}
+                    )
+                  </Label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={selectFilteredSubjects}
+                      disabled={loadingAttachableSubjects || getFilteredAvailableSubjects().length === 0}
+                    >
+                      Select filtered
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearFilteredSubjects}
+                      disabled={selectedSubjectIds.size === 0}
+                    >
+                      Clear filtered
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  placeholder="Search by code or name..."
+                  value={subjectSearch}
+                  onChange={(e) => setSubjectSearch(e.target.value)}
+                  disabled={loadingAttachableSubjects}
+                />
+                <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+                  {loadingAttachableSubjects ? (
+                    <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading subjects...
+                    </div>
+                  ) : attachableSubjects.length === 0 ? (
+                    <p className="p-4 text-sm text-muted-foreground">
+                      No subjects available to add. CORE subjects and subjects already linked to
+                      programmes of this type will appear here once they exist and are not already
+                      on this programme.
+                    </p>
+                  ) : getFilteredAvailableSubjects().length === 0 ? (
+                    <p className="p-4 text-sm text-muted-foreground">
+                      No subjects match your filters. Try another type or search.
+                    </p>
+                  ) : (
+                    getFilteredAvailableSubjects().map((subject) => (
+                      <label
+                        key={subject.id}
+                        className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted/30"
+                      >
+                        <Checkbox
+                          checked={selectedSubjectIds.has(subject.id)}
+                          onCheckedChange={() => toggleSubjectSelection(subject.id)}
+                        />
+                        <span className="min-w-0 flex-1 text-sm">
+                          {formatSubjectOptionLabel(subject)}
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {selectedHasCore && (
                 <>
-                  {allSubjects.find((s) => s.id === selectedSubjectToAdd)?.subject_type === "CORE" && (
-                    <>
-                      <div className="space-y-2">
-                        <Label>Subject Type</Label>
-                        <div className="flex items-center gap-4">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              checked={newSubjectIsCompulsory}
-                              onChange={() => {
-                                setNewSubjectIsCompulsory(true);
-                                setNewSubjectChoiceGroup(null);
-                              }}
-                            />
-                            <span className="text-sm">Compulsory</span>
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              checked={!newSubjectIsCompulsory}
-                              onChange={() => setNewSubjectIsCompulsory(false)}
-                            />
-                            <span className="text-sm">Optional (Choice Group)</span>
-                          </label>
-                        </div>
-                      </div>
-                      {!newSubjectIsCompulsory && (
-                        <div className="space-y-2">
-                          <Label htmlFor="choice-group">Choice Group ID</Label>
-                          <Input
-                            id="choice-group"
-                            type="number"
-                            min="1"
-                            value={newSubjectChoiceGroup?.toString() || ""}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setNewSubjectChoiceGroup(value ? parseInt(value) : null);
-                            }}
-                            placeholder="Enter choice group ID"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Maximum existing group ID: {getMaxChoiceGroupId()}
-                          </p>
-                        </div>
-                      )}
-                    </>
+                  <div className="space-y-2">
+                    <Label>Association (applies to selected CORE subjects)</Label>
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={newSubjectIsCompulsory}
+                          onChange={() => {
+                            setNewSubjectIsCompulsory(true);
+                            setNewSubjectChoiceGroup(null);
+                          }}
+                        />
+                        <span className="text-sm">Compulsory</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={!newSubjectIsCompulsory}
+                          onChange={() => setNewSubjectIsCompulsory(false)}
+                        />
+                        <span className="text-sm">Optional (Choice Group)</span>
+                      </label>
+                    </div>
+                  </div>
+                  {!newSubjectIsCompulsory && (
+                    <div className="space-y-2">
+                      <Label htmlFor="choice-group">Choice Group ID</Label>
+                      <Input
+                        id="choice-group"
+                        type="number"
+                        min="1"
+                        value={newSubjectChoiceGroup?.toString() || ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setNewSubjectChoiceGroup(value ? parseInt(value) : null);
+                        }}
+                        placeholder="Enter choice group ID"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum existing group ID: {getMaxChoiceGroupId()}
+                      </p>
+                    </div>
                   )}
                 </>
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setAddSubjectDialogOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setAddSubjectDialogOpen(false)}
+                disabled={addingSubjects}
+              >
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </Button>
-              <Button onClick={handleAddSubject} disabled={!selectedSubjectToAdd || loadingAllSubjects}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Subject
+              <Button
+                onClick={handleAddSubjects}
+                disabled={
+                  selectedSubjectIds.size === 0 ||
+                  loadingAttachableSubjects ||
+                  addingSubjects ||
+                  (selectedHasCore &&
+                    !newSubjectIsCompulsory &&
+                    (!newSubjectChoiceGroup || newSubjectChoiceGroup <= 0))
+                }
+              >
+                {addingSubjects ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-2" />
+                )}
+                {selectedSubjectIds.size <= 1
+                  ? "Add Subject"
+                  : `Add ${selectedSubjectIds.size} Subjects`}
               </Button>
             </DialogFooter>
           </DialogContent>

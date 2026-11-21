@@ -12,7 +12,7 @@ import zipfile
 import re
 from pathlib import Path
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
+from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce, or_
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
@@ -3943,22 +3943,27 @@ async def import_candidates(
             failed += 1
             continue
 
-        if programme_id and selected_subject_ids:
-            should_validate = True
-            if should_validate:
-                is_valid, validation_errors = await validate_subject_selections(
-                    session, programme_id, selected_subject_ids, exam.exam_series, candidate_registration_type
-                )
-                if not is_valid:
-                    errors.append(BulkUploadError(row_number=row_number, error_message="; ".join(validation_errors), field="subjects"))
-                    failed += 1
-                    continue
-        elif programme_id and not selected_subject_ids and candidate_registration_type in (RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
-            errors.append(BulkUploadError(row_number=row_number, error_message="At least one subject must be selected", field="subjects"))
+        if not programme_id:
+            errors.append(BulkUploadError(
+                row_number=row_number,
+                error_message="programme_code or programme_id is required",
+                field="programme_code",
+            ))
             failed += 1
             continue
-        elif programme_id and not selected_subject_ids and candidate_registration_type == RegistrationType.FREE_TVET.value:
-            errors.append(BulkUploadError(row_number=row_number, error_message="free_tvet requires all compulsory and elective subjects", field="subjects"))
+
+        is_valid, validation_errors = await validate_subject_selections(
+            session,
+            programme_id,
+            selected_subject_ids,
+            registration_type=candidate_registration_type,
+        )
+        if not is_valid:
+            errors.append(BulkUploadError(
+                row_number=row_number,
+                error_message="; ".join(validation_errors),
+                field="subjects",
+            ))
             failed += 1
             continue
 
@@ -5927,6 +5932,49 @@ async def list_programme_subjects(
     ]
 
 
+@router.get(
+    "/programmes/{programme_id}/attachable-subjects",
+    response_model=list[SubjectResponse],
+)
+async def list_attachable_subjects(
+    programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[SubjectResponse]:
+    """Subjects that can be attached to this programme.
+
+    Returns CORE subjects plus subjects already linked to any programme of the
+    same programme_type, excluding subjects already attached to this programme.
+    If the programme has no programme_type_id, returns the full catalog minus attached.
+    """
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    already_attached = select(programme_subjects.c.subject_id).where(
+        programme_subjects.c.programme_id == programme_id
+    )
+
+    subject_stmt = select(Subject).where(Subject.id.notin_(already_attached))
+
+    if programme.programme_type_id is not None:
+        same_type_subject_ids = (
+            select(programme_subjects.c.subject_id)
+            .join(Programme, Programme.id == programme_subjects.c.programme_id)
+            .where(Programme.programme_type_id == programme.programme_type_id)
+        )
+        subject_stmt = subject_stmt.where(
+            or_(
+                Subject.subject_type == SubjectType.CORE,
+                Subject.id.in_(same_type_subject_ids),
+            )
+        )
+
+    subject_stmt = subject_stmt.order_by(Subject.code)
+    subjects = (await session.execute(subject_stmt)).scalars().all()
+    return [SubjectResponse.model_validate(subject) for subject in subjects]
+
+
 @router.get("/programmes/{programme_id}/subject-requirements", response_model=ProgrammeSubjectRequirements)
 async def get_programme_subject_requirements(
     programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
@@ -6453,6 +6501,23 @@ async def bulk_upload_subjects(
                     failed += 1
                     continue
 
+            # CORE subjects are catalog-only on upload; attach via programme UI.
+            # Validate choice_group_id early if present (set on attach, not here).
+            if subject_data["subject_type"] == SubjectType.CORE:
+                parsed_choice_group_id = subject_data.get("choice_group_id")
+                if parsed_choice_group_id is not None and not (
+                    isinstance(parsed_choice_group_id, int) and parsed_choice_group_id > 0
+                ):
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Invalid choice_group_id '{parsed_choice_group_id}' for core subject. Must be a positive integer.",
+                            field="choice_group_id",
+                        )
+                    )
+                    failed += 1
+                    continue
+
             # Create subject
             db_subject = Subject(
                 code=subject_data["code"],
@@ -6463,64 +6528,8 @@ async def bulk_upload_subjects(
             session.add(db_subject)
             await session.flush()  # Flush to get ID but don't commit yet
 
-            # Determine is_compulsory and choice_group_id based on subject type and choice_group_id
-            is_compulsory = None
-            choice_group_id = None
-
-            if subject_data["subject_type"] == SubjectType.CORE:
-                # If choice_group_id is provided, it's an optional core subject
-                parsed_choice_group_id = subject_data.get("choice_group_id")
-                if parsed_choice_group_id is not None:
-                    # Validate choice_group_id is a positive integer
-                    if isinstance(parsed_choice_group_id, int) and parsed_choice_group_id > 0:
-                        is_compulsory = False
-                        choice_group_id = parsed_choice_group_id
-                    else:
-                        # Invalid choice_group_id - treat as compulsory but log warning
-                        # This shouldn't happen if parsing is correct, but handle gracefully
-                        errors.append(
-                            SubjectBulkUploadError(
-                                row_number=row_number,
-                                error_message=f"Invalid choice_group_id '{parsed_choice_group_id}' for core subject. Must be a positive integer.",
-                                field="choice_group_id",
-                            )
-                        )
-                        failed += 1
-                        continue
-                else:
-                    # Default to compulsory if no choice_group_id
-                    is_compulsory = True
-
-            # For CORE subjects: if choice_group_id is specified, add to ALL programmes
-            # This ensures that subjects with the same choice_group_id are consistently
-            # applied across all programmes
-            if subject_data["subject_type"] == SubjectType.CORE:
-                # Get all programmes
-                all_programmes_stmt = select(Programme)
-                all_programmes_result = await session.execute(all_programmes_stmt)
-                all_programmes = all_programmes_result.scalars().all()
-
-                for prog in all_programmes:
-                    # Check if association already exists
-                    assoc_stmt = select(programme_subjects).where(
-                        programme_subjects.c.programme_id == prog.id,
-                        programme_subjects.c.subject_id == db_subject.id,
-                    )
-                    assoc_result = await session.execute(assoc_stmt)
-                    existing_assoc = assoc_result.first()
-                    if not existing_assoc:
-                        # Create association with the determined is_compulsory and choice_group_id
-                        await session.execute(
-                            insert(programme_subjects).values(
-                                programme_id=prog.id,
-                                subject_id=db_subject.id,
-                                is_compulsory=is_compulsory,
-                                choice_group_id=choice_group_id,
-                            )
-                        )
-            elif programme:
-                # For ELECTIVE subjects: only link to programme if programme_code was provided
-                # Check if association already exists
+            # ELECTIVE only: link to programme when programme_code was provided
+            if subject_data["subject_type"] == SubjectType.ELECTIVE and programme:
                 assoc_stmt = select(programme_subjects).where(
                     programme_subjects.c.programme_id == programme.id,
                     programme_subjects.c.subject_id == db_subject.id,
@@ -6528,7 +6537,6 @@ async def bulk_upload_subjects(
                 assoc_result = await session.execute(assoc_stmt)
                 existing_assoc = assoc_result.first()
                 if not existing_assoc:
-                    # Create association (electives don't have is_compulsory or choice_group_id)
                     await session.execute(
                         insert(programme_subjects).values(
                             programme_id=programme.id,
