@@ -8,11 +8,11 @@ from app.models import ExamKind, RegistrationCandidate, RegistrationExam, Regist
 
 
 def school_mediated_type_filter():
-    """regular, free_tvet, referral, or null (legacy school rows)."""
+    """fee_paying, free_tvet, referral, or null (legacy school rows)."""
     return or_(
         RegistrationCandidate.registration_type.in_(
             [
-                RegistrationType.REGULAR,
+                RegistrationType.FEE_PAYING,
                 RegistrationType.FREE_TVET,
                 RegistrationType.REFERRAL,
             ]

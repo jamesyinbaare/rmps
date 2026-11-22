@@ -45,8 +45,6 @@ import {
   updateCandidate,
   getProgrammeSubjects,
   listSchoolProgrammes,
-  markCandidateFeePaid,
-  markCandidateFeeWaived,
   getCurrentUser,
 } from "@/lib/api";
 import { toast } from "sonner";
@@ -148,7 +146,6 @@ export function CandidateDetailModal({
 
   // Approval state
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
-  const [updatingFee, setUpdatingFee] = useState(false);
 
   // Load current user on mount
   useEffect(() => {
@@ -606,46 +603,14 @@ export function CandidateDetailModal({
     setEditingGuardian(false);
   };
 
-  const handleMarkFeePaid = async () => {
-    if (!candidate) return;
-    setUpdatingFee(true);
-    try {
-      const updatedCandidate = await markCandidateFeePaid(candidate.id);
-      toast.success("Fee marked as paid");
-      onCandidateChange?.(updatedCandidate);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to mark fee paid");
-      console.error(error);
-    } finally {
-      setUpdatingFee(false);
-    }
-  };
-
-  const handleMarkFeeWaived = async () => {
-    if (!candidate) return;
-    setUpdatingFee(true);
-    try {
-      const updatedCandidate = await markCandidateFeeWaived(candidate.id);
-      toast.success("Fee waived");
-      onCandidateChange?.(updatedCandidate);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to waive fee");
-      console.error(error);
-    } finally {
-      setUpdatingFee(false);
-    }
-  };
-
   if (!candidate) return null;
 
   const subjectSelections = candidate.subject_selections || [];
 
-  const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
   const hasPhoto = !!photo;
   const feeStatus = candidate.fee_payment_status || "unpaid";
   const isFreeTvet = candidate.registration_type === "free_tvet";
-  // Free TVET candidates have no fee — never show mark paid / waive
-  const feeNeedsAction =
+  const feeUnpaid =
     !isFreeTvet && feeStatus !== "not_required" && feeStatus === "unpaid";
 
   // Check if exam is closed
@@ -719,35 +684,6 @@ export function CandidateDetailModal({
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {isSchoolAdmin && feeNeedsAction && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleMarkFeeWaived}
-                    disabled={updatingFee}
-                    className="shadow-none"
-                  >
-                    {updatingFee ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
-                    Waive fee
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleMarkFeePaid}
-                    disabled={updatingFee}
-                    className="shadow-none"
-                  >
-                    {updatingFee ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                    )}
-                    Mark fee paid
-                  </Button>
-                </>
-              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -775,12 +711,12 @@ export function CandidateDetailModal({
             </span>
             <span
               className={
-                !feeNeedsAction
+                !feeUnpaid
                   ? "inline-flex items-center gap-1 text-success"
                   : "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
               }
             >
-              {!feeNeedsAction ? (
+              {!feeUnpaid ? (
                 <CheckCircle2 className="h-3.5 w-3.5" />
               ) : (
                 <XCircle className="h-3.5 w-3.5" />

@@ -57,6 +57,7 @@ export function ExamCandidateStats({
     let complete = 0;
     let incomplete = 0;
     let draft = 0;
+    let paymentRequired = 0;
     let male = 0;
     let female = 0;
     let unspecified = 0;
@@ -68,6 +69,9 @@ export function ExamCandidateStats({
       if (status === "COMPLETE") complete += 1;
       else if (status === "INCOMPLETE") incomplete += 1;
       else if (status === "DRAFT") draft += 1;
+
+      const feeStatus = (c.fee_payment_status || "unpaid").toLowerCase();
+      if (feeStatus === "unpaid") paymentRequired += 1;
 
       const gender = normalizeCandidateGender(c.gender);
       if (gender === "male") male += 1;
@@ -102,6 +106,7 @@ export function ExamCandidateStats({
       complete,
       incomplete,
       draft,
+      paymentRequired,
       male,
       female,
       unspecified,
@@ -138,6 +143,9 @@ export function ExamCandidateStats({
       ? `${stats.incomplete.toLocaleString()} incomplete`
       : null,
     stats.draft > 0 ? `${stats.draft.toLocaleString()} draft` : null,
+    stats.paymentRequired > 0
+      ? `${stats.paymentRequired.toLocaleString()} fee-paying`
+      : null,
   ].filter(Boolean);
 
   const expectedHint =

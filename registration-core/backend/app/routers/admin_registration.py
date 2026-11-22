@@ -2387,7 +2387,7 @@ async def create_or_update_application_fee(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {fee_data.registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {fee_data.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     # Check if application fee exists
@@ -2438,7 +2438,7 @@ async def delete_application_fee(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     stmt = select(RegistrationApplicationFee).where(
@@ -2480,7 +2480,7 @@ async def get_subject_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     conditions = [SubjectPricing.exam_id == exam_id]
@@ -2539,7 +2539,7 @@ async def create_or_update_subject_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
                 )
 
         # Check if pricing exists
@@ -2794,7 +2794,7 @@ async def get_tiered_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     conditions = [RegistrationTieredPricing.exam_id == exam_id]
@@ -2865,7 +2865,7 @@ async def create_or_update_tiered_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {tier_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {tier_item.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
                 )
 
         new_tier = RegistrationTieredPricing(
@@ -2930,7 +2930,7 @@ async def get_programme_pricing(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     conditions = [ProgrammePricing.exam_id == exam_id]
@@ -2989,7 +2989,7 @@ async def create_or_update_programme_pricing(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: regular, free_tvet, private, referral"
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
                 )
 
         existing_stmt = select(ProgrammePricing).where(
@@ -3460,7 +3460,7 @@ async def create_or_update_pricing_model(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     # Handle case where table doesn't exist yet
@@ -3517,7 +3517,7 @@ async def delete_pricing_model(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid registration_type: {registration_type}. Must be one of: regular, free_tvet, private, referral"
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
     try:
@@ -3874,7 +3874,7 @@ async def import_candidates(
             elif allows_free_tvet_row is True:
                 default_type = RegistrationType.FREE_TVET.value
             else:
-                default_type = RegistrationType.REGULAR.value
+                default_type = RegistrationType.FEE_PAYING.value
             candidate_registration_type = validate_registration_type_for_exam(
                 exam,
                 registration_type_str or default_type,
@@ -6594,14 +6594,14 @@ async def bulk_upload_subjects(
 
 # Invoice Generation Endpoints for System Admin
 
-@router.get("/invoices/regular/by-school", response_model=SchoolInvoiceResponse)
-async def get_regular_invoice_by_school(
+@router.get("/invoices/fee-paying/by-school", response_model=SchoolInvoiceResponse)
+async def get_fee_paying_invoice_by_school(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
     school_id: int = Query(..., description="The school ID"),
 ) -> SchoolInvoiceResponse:
-    """Generate invoice for regular candidates for a specific school and examination."""
+    """Generate invoice for fee-paying candidates for a specific school and examination."""
     school_stmt = select(School).where(School.id == school_id)
     school_result = await session.execute(school_stmt)
     school = school_result.scalar_one_or_none()
@@ -6609,7 +6609,7 @@ async def get_regular_invoice_by_school(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
     invoice_data = await aggregate_candidates_by_examination(
-        session, school_id, exam_id, RegistrationType.REGULAR.value
+        session, school_id, exam_id, RegistrationType.FEE_PAYING.value
     )
 
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
@@ -6622,7 +6622,7 @@ async def get_regular_invoice_by_school(
         school_id=school.id,
         school_code=school.code,
         school_name=school.name,
-        registration_type=RegistrationType.REGULAR.value,
+        registration_type=RegistrationType.FEE_PAYING.value,
         examination=ExaminationInvoiceItem(
             exam_id=invoice_data["exam_id"],
             exam_type=invoice_data["exam_type"],
@@ -6635,15 +6635,15 @@ async def get_regular_invoice_by_school(
     )
 
 
-@router.get("/invoices/regular/summary", response_model=AdminSummaryInvoiceResponse)
-async def get_regular_invoice_summary(
+@router.get("/invoices/fee-paying/summary", response_model=AdminSummaryInvoiceResponse)
+async def get_fee_paying_invoice_summary(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
 ) -> AdminSummaryInvoiceResponse:
-    """Generate summary invoice for regular candidates across all schools for an examination."""
+    """Generate summary invoice for fee-paying candidates across all schools for an examination."""
     summary_data = await aggregate_candidates_by_school(
-        session, exam_id, RegistrationType.REGULAR.value
+        session, exam_id, RegistrationType.FEE_PAYING.value
     )
 
     school_items = [
@@ -6658,7 +6658,7 @@ async def get_regular_invoice_summary(
     ]
 
     return AdminSummaryInvoiceResponse(
-        registration_type=RegistrationType.REGULAR.value,
+        registration_type=RegistrationType.FEE_PAYING.value,
         examination=ExaminationInvoiceItem(
             exam_id=summary_data["exam_id"],
             exam_type=summary_data["exam_type"],
@@ -6674,25 +6674,25 @@ async def get_regular_invoice_summary(
     )
 
 
-@router.get("/invoices/regular/by-school/pdf")
-async def download_regular_invoice_pdf_by_school(
+@router.get("/invoices/fee-paying/by-school/pdf")
+async def download_fee_paying_invoice_pdf_by_school(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
     school_id: int = Query(..., description="The school ID"),
 ) -> StreamingResponse:
-    """Download PDF invoice for regular candidates for a specific school."""
+    """Download PDF invoice for fee-paying candidates for a specific school."""
     try:
         pdf_bytes = await generate_admin_invoice_pdf(
             session,
             exam_id,
-            RegistrationType.REGULAR.value,
+            RegistrationType.FEE_PAYING.value,
             school_id=school_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"regular_invoice_exam_{exam_id}_school_{school_id}.pdf"
+    filename = f"fee_paying_invoice_exam_{exam_id}_school_{school_id}.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -6701,24 +6701,24 @@ async def download_regular_invoice_pdf_by_school(
     )
 
 
-@router.get("/invoices/regular/summary/pdf")
-async def download_regular_invoice_summary_pdf(
+@router.get("/invoices/fee-paying/summary/pdf")
+async def download_fee_paying_invoice_summary_pdf(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
 ) -> StreamingResponse:
-    """Download PDF summary invoice for regular candidates across all schools."""
+    """Download PDF summary invoice for fee-paying candidates across all schools."""
     try:
         pdf_bytes = await generate_admin_invoice_pdf(
             session,
             exam_id,
-            RegistrationType.REGULAR.value,
+            RegistrationType.FEE_PAYING.value,
             school_id=None,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"regular_invoice_summary_exam_{exam_id}.pdf"
+    filename = f"fee_paying_invoice_summary_exam_{exam_id}.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

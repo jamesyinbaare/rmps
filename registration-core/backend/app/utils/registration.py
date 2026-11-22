@@ -38,7 +38,7 @@ async def generate_unique_registration_number(
     [F/R/P][last 5 chars of school code][2-digit year][4-digit sequential number]
 
     Format:
-    - Prefix: "G" for REGULAR, "F" for FREE_TVET, "R" for REFERRAL, "P" for PRIVATE
+    - Prefix: "G" for FEE_PAYING, "F" for FREE_TVET, "R" for REFERRAL, "P" for PRIVATE
     - School code: Last 5 characters of the 6-character school code
     - Year: Last 2 digits of the exam year (e.g., "25" for 2025)
     - Sequential number: 4-digit number (0000-9999) per school, per exam, per year, per registration_type
@@ -80,9 +80,9 @@ async def generate_unique_registration_number(
         raise ValueError(f"School with id {school_id} not found")
 
     # Determine prefix based on registration_type
-    # Default to REGULAR if not provided
+    # Default to FEE_PAYING if not provided
     if registration_type is None:
-        registration_type = RegistrationType.REGULAR.value
+        registration_type = RegistrationType.FEE_PAYING.value
 
     # Normalize registration_type to handle enum values or strings
     registration_type_value = registration_type
@@ -90,7 +90,7 @@ async def generate_unique_registration_number(
         registration_type_value = registration_type.value
 
     # Map registration_type to prefix
-    if registration_type_value == RegistrationType.REGULAR.value:
+    if registration_type_value == RegistrationType.FEE_PAYING.value:
         prefix = "G"
     elif registration_type_value == RegistrationType.FREE_TVET.value:
         prefix = "F"
@@ -101,7 +101,7 @@ async def generate_unique_registration_number(
     else:
         raise ValueError(
             f"Invalid registration_type: {registration_type_value}. "
-            "Must be one of: REGULAR, FREE_TVET, REFERRAL, PRIVATE"
+            "Must be one of: FEE_PAYING, FREE_TVET, REFERRAL, PRIVATE"
         )
 
     # Extract last 5 characters of school code

@@ -608,7 +608,7 @@ async def register_candidate(
     is_private_type = registration_type == RegistrationType.PRIVATE.value
     is_structured_type = registration_type in (
         RegistrationType.FREE_TVET.value,
-        RegistrationType.REGULAR.value,
+        RegistrationType.FEE_PAYING.value,
     )
 
     # Create candidate
@@ -644,7 +644,7 @@ async def register_candidate(
         # Handle subject selections
         selected_subject_ids: list[int] = []
 
-        # Referral/private: lenient (no auto-select). Regular/FreeTVET: auto-select cores + electives.
+        # Referral/private: lenient (no auto-select). Fee-paying/FreeTVET: auto-select cores + electives.
         if is_structured_type:
             auto_selected = await auto_select_subjects_for_programme(
                 session, programme_id, current_user.school_id
@@ -3478,13 +3478,13 @@ async def bulk_replace_background(
         )
 
 
-@router.get("/invoices/regular/by-examination", response_model=SchoolInvoiceResponse)
-async def get_regular_invoice_by_examination(
+@router.get("/invoices/fee-paying/by-examination", response_model=SchoolInvoiceResponse)
+async def get_fee_paying_invoice_by_examination(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
 ) -> SchoolInvoiceResponse:
-    """Generate invoice for regular candidates by examination."""
+    """Generate invoice for fee-paying candidates by examination."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3498,7 +3498,7 @@ async def get_regular_invoice_by_examination(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
     invoice_data = await aggregate_candidates_by_examination(
-        session, current_user.school_id, exam_id, RegistrationType.REGULAR.value
+        session, current_user.school_id, exam_id, RegistrationType.FEE_PAYING.value
     )
 
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
@@ -3511,7 +3511,7 @@ async def get_regular_invoice_by_examination(
         school_id=school.id,
         school_code=school.code,
         school_name=school.name,
-        registration_type=RegistrationType.REGULAR.value,
+        registration_type=RegistrationType.FEE_PAYING.value,
         examination=ExaminationInvoiceItem(
             exam_id=invoice_data["exam_id"],
             exam_type=invoice_data["exam_type"],
@@ -3524,13 +3524,13 @@ async def get_regular_invoice_by_examination(
     )
 
 
-@router.get("/invoices/regular/by-examination-grouped-by-programme", response_model=SchoolInvoiceResponse)
-async def get_regular_invoice_by_examination_grouped_by_programme(
+@router.get("/invoices/fee-paying/by-examination-grouped-by-programme", response_model=SchoolInvoiceResponse)
+async def get_fee_paying_invoice_by_examination_grouped_by_programme(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
 ) -> SchoolInvoiceResponse:
-    """Generate invoice for regular candidates by examination grouped by programme."""
+    """Generate invoice for fee-paying candidates by examination grouped by programme."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3544,7 +3544,7 @@ async def get_regular_invoice_by_examination_grouped_by_programme(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
     invoice_data = await aggregate_candidates_by_examination_and_programme(
-        session, current_user.school_id, exam_id, RegistrationType.REGULAR.value
+        session, current_user.school_id, exam_id, RegistrationType.FEE_PAYING.value
     )
 
     programme_items = [
@@ -3562,7 +3562,7 @@ async def get_regular_invoice_by_examination_grouped_by_programme(
         school_id=school.id,
         school_code=school.code,
         school_name=school.name,
-        registration_type=RegistrationType.REGULAR.value,
+        registration_type=RegistrationType.FEE_PAYING.value,
         examination=ExaminationInvoiceItem(
             exam_id=invoice_data["exam_id"],
             exam_type=invoice_data["exam_type"],
@@ -3722,14 +3722,14 @@ async def get_referral_invoice_by_examination(
     )
 
 
-@router.get("/invoices/regular/pdf")
-async def download_regular_invoice_pdf(
+@router.get("/invoices/fee-paying/pdf")
+async def download_fee_paying_invoice_pdf(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
     group_by_programme: bool = Query(False, description="Group by programme"),
 ) -> StreamingResponse:
-    """Download PDF invoice for regular candidates."""
+    """Download PDF invoice for fee-paying candidates."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3741,13 +3741,13 @@ async def download_regular_invoice_pdf(
             session,
             current_user.school_id,
             exam_id,
-            RegistrationType.REGULAR.value,
+            RegistrationType.FEE_PAYING.value,
             group_by_programme=group_by_programme,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"regular_invoice_exam_{exam_id}"
+    filename = f"fee_paying_invoice_exam_{exam_id}"
     if group_by_programme:
         filename += "_by_programme"
     filename += ".pdf"

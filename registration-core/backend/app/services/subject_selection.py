@@ -56,9 +56,9 @@ async def get_programme_subjects_for_registration(
 
 
 def is_structured_registration_type(registration_type: str | None) -> bool:
-    """Regular and FreeTVET share the same structured subject rules."""
+    """Fee-paying and FreeTVET share the same structured subject rules."""
     return registration_type in (
-        RegistrationType.REGULAR.value,
+        RegistrationType.FEE_PAYING.value,
         RegistrationType.FREE_TVET.value,
     )
 
@@ -129,7 +129,7 @@ async def validate_subject_selections(
     """
     Validate subject selections by registration type (not exam series).
 
-    Structured (regular / free_tvet):
+    Structured (fee_paying / free_tvet):
     - All compulsory cores required
     - All electives required
     - Exactly one subject from each optional core group required

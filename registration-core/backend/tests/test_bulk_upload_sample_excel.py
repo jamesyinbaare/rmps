@@ -172,7 +172,7 @@ async def test_sample_excel_all_columns_dry_run():
         ),
         patch(
             "app.services.bulk_candidate_upload.validate_registration_type_for_exam",
-            lambda *a, **k: RegistrationType.REGULAR.value,
+            lambda *a, **k: RegistrationType.FEE_PAYING.value,
         ),
         patch(
             "app.services.bulk_candidate_upload.is_private_exam",
@@ -192,7 +192,7 @@ async def test_sample_excel_all_columns_dry_run():
             exam=exam,
             current_user=user,
             rows=rows,
-            default_registration_type="regular",
+            default_registration_type="fee_paying",
             commit=False,
             dry_run=True,
         )

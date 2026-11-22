@@ -17,7 +17,7 @@ import { listAllSchoolExams } from "@/lib/api";
 import type { RegistrationExam } from "@/types";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import {
-  downloadRegularInvoicePdf,
+  downloadFeePayingInvoicePdf,
   downloadFreeTvetInvoicePdf,
   downloadReferralInvoicePdf,
 } from "@/lib/api";
@@ -45,7 +45,7 @@ export default function InvoicesPage() {
   }, []);
 
   const handleDownload = async (
-    type: "regular" | "free-tvet" | "referral",
+    type: "fee-paying" | "free-tvet" | "referral",
     groupByProgramme: boolean = false
   ) => {
     if (!selectedExamId) {
@@ -58,8 +58,8 @@ export default function InvoicesPage() {
 
     try {
       let blob: Blob;
-      if (type === "regular") {
-        blob = await downloadRegularInvoicePdf(selectedExamId, groupByProgramme);
+      if (type === "fee-paying") {
+        blob = await downloadFeePayingInvoicePdf(selectedExamId, groupByProgramme);
       } else if (type === "free-tvet") {
         blob = await downloadFreeTvetInvoicePdf(selectedExamId, groupByProgramme);
       } else {
@@ -129,19 +129,19 @@ export default function InvoicesPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Receipt className="h-5 w-5" />
-                  Regular Invoices
+                  Fee-paying Invoices
                 </CardTitle>
                 <CardDescription>
-                  Generate invoices for regular candidates
+                  Generate invoices for fee-paying candidates
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Button
                   className="w-full"
-                  onClick={() => handleDownload("regular", false)}
+                  onClick={() => handleDownload("fee-paying", false)}
                   disabled={downloading !== null}
                 >
-                  {downloading === `regular-${selectedExamId}-false` ? (
+                  {downloading === `fee-paying-${selectedExamId}-false` ? (
                     "Downloading..."
                   ) : (
                     <>
@@ -153,10 +153,10 @@ export default function InvoicesPage() {
                 <Button
                   className="w-full"
                   variant="outline"
-                  onClick={() => handleDownload("regular", true)}
+                  onClick={() => handleDownload("fee-paying", true)}
                   disabled={downloading !== null}
                 >
-                  {downloading === `regular-${selectedExamId}-true` ? (
+                  {downloading === `fee-paying-${selectedExamId}-true` ? (
                     "Downloading..."
                   ) : (
                     <>

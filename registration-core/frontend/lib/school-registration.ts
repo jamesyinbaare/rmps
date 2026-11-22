@@ -1,11 +1,11 @@
 import type { RegistrationCandidateCreate, RegistrationExam } from "@/types";
 
-export type SchoolPrimaryRegistrationType = "free_tvet" | "regular";
+export type SchoolPrimaryRegistrationType = "free_tvet" | "fee_paying";
 
 export function primaryRegistrationType(
   exam: Pick<RegistrationExam, "allows_free_tvet"> | null | undefined
 ): SchoolPrimaryRegistrationType {
-  return exam?.allows_free_tvet ? "free_tvet" : "regular";
+  return exam?.allows_free_tvet ? "free_tvet" : "fee_paying";
 }
 
 export function allowedSchoolRegistrationTypes(
@@ -19,7 +19,11 @@ export function allowedSchoolRegistrationTypes(
 ): string[] {
   if (!exam) return [];
   if (exam.exam_kind === "private") return ["private"];
-  const types: string[] = [primaryRegistrationType(exam)];
+  const types: string[] = [];
+  if (exam.allows_free_tvet) {
+    types.push("free_tvet");
+  }
+  types.push("fee_paying");
   if (exam.allows_referral_registration !== false) {
     types.push("referral");
   }
@@ -29,7 +33,7 @@ export function allowedSchoolRegistrationTypes(
 export function isStructuredRegistrationType(
   type: string | null | undefined
 ): boolean {
-  return type === "free_tvet" || type === "regular";
+  return type === "free_tvet" || type === "fee_paying";
 }
 
 export function isMayJuneSeries(
@@ -73,8 +77,8 @@ export function registrationTypeLabel(type: string | null | undefined): string {
   switch (type) {
     case "free_tvet":
       return "Free TVET";
-    case "regular":
-      return "Regular";
+    case "fee_paying":
+      return "Fee-paying";
     case "referral":
       return "Referral";
     case "private":
