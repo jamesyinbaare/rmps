@@ -722,6 +722,17 @@ export interface PhotoAlbumResponse {
   total_pages: number;
 }
 
+export interface PhotoExamSummaryItem {
+  exam_id: number;
+  total: number;
+  with_photo: number;
+  without_photo: number;
+}
+
+export interface PhotoExamSummaryResponse {
+  items: PhotoExamSummaryItem[];
+}
+
 export interface PhotoBulkUploadError {
   filename: string;
   registration_number?: string | null;

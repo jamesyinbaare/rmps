@@ -26,6 +26,7 @@ function titleFromPath(pathname: string, user: User | null): string {
   if (pathname.startsWith("/dashboard/my-school/programmes")) return "Programmes";
   if (pathname.startsWith("/dashboard/my-school/users")) return "Users";
   if (pathname.startsWith("/dashboard/my-school/profile")) return "School Profile";
+  if (/^\/dashboard\/my-school\/photo-album\/\d+/.test(pathname)) return "Photo Album";
   if (pathname.startsWith("/dashboard/my-school/photo-album")) return "Photo Album";
   if (pathname.startsWith("/dashboard/my-school/documents")) return "Documents";
   if (pathname.startsWith("/dashboard/my-school/timetables")) return "Timetables";

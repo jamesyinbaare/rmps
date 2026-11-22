@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -313,3 +313,101 @@ async def generate_registration_detailed_pdf(
 
     pdf_bytes = pdf_gen.render_pdf()
     return pdf_bytes
+
+
+def _programme_label(candidate: RegistrationCandidate) -> str:
+    if candidate.programme:
+        code = (candidate.programme.code or "").strip()
+        name = (candidate.programme.name or "").strip()
+        if code and name:
+            return f"{code} — {name}"
+        return name or code or "Unassigned"
+    if getattr(candidate, "programme_code", None):
+        return candidate.programme_code
+    return "Unassigned"
+
+
+async def generate_missing_photos_summary_pdf(
+    session: AsyncSession,
+    exam_id: int,
+    school_id: int,
+) -> bytes:
+    """Generate PDF of candidates without photos, grouped by programme (A–Z)."""
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise ValueError("Registration exam not found")
+
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise ValueError("School not found")
+
+    has_photo = exists().where(
+        RegistrationCandidatePhoto.registration_candidate_id == RegistrationCandidate.id
+    )
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.school_id == school_id,
+            ~has_photo,
+        )
+        .options(selectinload(RegistrationCandidate.programme))
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidates = list(candidate_result.scalars().all())
+
+    candidates_by_programme: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for candidate in candidates:
+        programme_name = _programme_label(candidate)
+        candidates_by_programme[programme_name].append(
+            {
+                "name": candidate.name,
+                "registration_number": candidate.registration_number or "—",
+                "index_number": candidate.index_number or "—",
+            }
+        )
+
+    for programme_name in candidates_by_programme:
+        candidates_by_programme[programme_name].sort(
+            key=lambda c: (c["name"] or "").casefold()
+        )
+
+    sorted_programmes = sorted(
+        candidates_by_programme.keys(), key=lambda name: name.casefold()
+    )
+
+    context = {
+        "exam": exam,
+        "school": school,
+        "programmes_data": [
+            {
+                "programme_name": programme_name,
+                "candidates": candidates_by_programme[programme_name],
+            }
+            for programme_name in sorted_programmes
+        ],
+        "total_missing": len(candidates),
+        "generated_at": datetime.utcnow(),
+    }
+
+    templates_dir = Path(__file__).parent.parent / "templates"
+    main_html = render_html(
+        context, "registration-downloads/missing-photos.html", templates_dir
+    )
+
+    app_dir = Path(__file__).parent.parent.resolve()
+    base_url = str(app_dir)
+
+    pdf_gen = PdfGenerator(
+        main_html=main_html,
+        header_html=None,
+        footer_html=None,
+        base_url=base_url,
+        side_margin=1.5,
+        extra_vertical_margin=20,
+    )
+    return pdf_gen.render_pdf()

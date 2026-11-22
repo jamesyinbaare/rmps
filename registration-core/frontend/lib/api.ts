@@ -34,6 +34,7 @@ import type {
   SubjectBulkUploadResponse,
   PhotoAlbumResponse,
   PhotoAlbumItem,
+  PhotoExamSummaryResponse,
   PhotoBulkUploadResponse,
   RegistrationCandidatePhoto,
   PhotoValidationJobResponse,
@@ -2149,6 +2150,35 @@ export async function downloadRegistrationSummary(examId: number, programmeId?: 
   window.URL.revokeObjectURL(downloadUrl);
 }
 
+export async function downloadMissingPhotosSummary(examId: number): Promise<void> {
+  const url = `/api/v1/school/exams/${examId}/candidates/missing-photos.pdf`;
+
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download PDF" }));
+    throw new Error(error.detail || "Failed to download missing photos PDF");
+  }
+
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `missing_photos_${examId}.pdf`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 export async function downloadRegistrationDetailed(examId: number, programmeId?: number): Promise<void> {
   const params = new URLSearchParams();
   if (programmeId !== undefined) {
@@ -2572,6 +2602,18 @@ export async function getPhotoAlbum(
 
   const response = await fetchWithAuth(`/api/v1/school/candidates/photos/album?${params.toString()}`);
   return handleResponse<PhotoAlbumResponse>(response);
+}
+
+export async function getPhotoAlbumSummary(
+  examId?: number
+): Promise<PhotoExamSummaryResponse> {
+  const params = new URLSearchParams();
+  if (examId !== undefined) params.append("exam_id", examId.toString());
+  const query = params.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/school/candidates/photos/summary${query ? `?${query}` : ""}`
+  );
+  return handleResponse<PhotoExamSummaryResponse>(response);
 }
 
 // Admin API - Photo Album

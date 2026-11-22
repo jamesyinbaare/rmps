@@ -41,11 +41,11 @@ export function chunkRows<T>(rows: T[], size: number = BULK_CHUNK_SIZE): T[][] {
   return chunks;
 }
 
-function sleep(ms: number) {
+export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryableError(error: unknown): boolean {
+export function isRetryableError(error: unknown): boolean {
   if (!(error instanceof Error)) return true;
   const msg = error.message.toLowerCase();
   if (msg.includes("unable to connect")) return true;
