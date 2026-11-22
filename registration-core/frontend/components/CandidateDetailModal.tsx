@@ -35,9 +35,27 @@ import {
   XCircle,
   CheckCircle2,
 } from "lucide-react";
-import { uploadCandidatePhoto, getCandidatePhoto, getAdminCandidatePhoto, getAdminPhotoFile, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
+import {
+  uploadCandidatePhoto,
+  getCandidatePhoto,
+  getAdminCandidatePhoto,
+  getAdminPhotoFile,
+  deleteCandidatePhoto,
+  getPhotoFile,
+  updateCandidate,
+  getProgrammeSubjects,
+  listSchoolProgrammes,
+  markCandidateFeePaid,
+  markCandidateFeeWaived,
+  getCurrentUser,
+} from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
+import type {
+  RegistrationCandidatePhoto,
+  ProgrammeSubjectRequirements,
+  Programme,
+  User as UserType,
+} from "@/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -49,7 +67,14 @@ import {
 } from "@/components/ui/select";
 import { Edit2, Save, X as XIcon, FileText } from "lucide-react";
 import { SubjectSelectionPanel } from "@/components/school/SubjectSelectionPanel";
+import { SearchableSelect } from "@/components/SearchableSelect";
 import { isStructuredRegistrationType } from "@/lib/school-registration";
+import { autoSelectSubjectIds } from "@/lib/subject-auto-select";
+import {
+  feePaymentStatusLabel,
+  registrationStatusBadgeClass,
+  registrationStatusLabel,
+} from "@/lib/registration-status";
 
 interface CandidateDetailModalProps {
   candidate: RegistrationCandidate | null;
@@ -71,20 +96,6 @@ function calculateAge(dateOfBirth: string): number {
   return age;
 }
 
-// Helper function to get registration status badge style
-function getStatusBadgeClass(status: string): string {
-  switch (status) {
-    case "APPROVED":
-      return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
-    case "REJECTED":
-      return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
-    case "PENDING":
-      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-}
-
 export function CandidateDetailModal({
   candidate,
   candidates,
@@ -100,12 +111,15 @@ export function CandidateDetailModal({
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Subject editing state
+  // Subject / programme editing state
   const [editingSubjects, setEditingSubjects] = useState(false);
   const [programmeSubjects, setProgrammeSubjects] = useState<ProgrammeSubjectRequirements | null>(null);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<number[]>([]);
   const [savingSubjects, setSavingSubjects] = useState(false);
+  const [editProgrammeId, setEditProgrammeId] = useState<number | null>(null);
+  const [programmes, setProgrammes] = useState<Programme[]>([]);
+  const [loadingProgrammes, setLoadingProgrammes] = useState(false);
 
   // Bio data editing state
   const [editingBio, setEditingBio] = useState(false);
@@ -134,7 +148,7 @@ export function CandidateDetailModal({
 
   // Approval state
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
-  const [approving, setApproving] = useState(false);
+  const [updatingFee, setUpdatingFee] = useState(false);
 
   // Load current user on mount
   useEffect(() => {
@@ -242,6 +256,9 @@ export function CandidateDetailModal({
         .map((s) => s.subject_id)
         .filter((id): id is number => id !== null && id !== undefined);
       setSelectedSubjectIds(currentSubjectIds);
+      setEditProgrammeId(candidate.programme_id);
+      setProgrammeSubjects(null);
+      setProgrammes([]);
 
       // Exit edit mode when candidate changes
       setEditingSubjects(false);
@@ -271,12 +288,55 @@ export function CandidateDetailModal({
     }
   }, [candidate?.id]);
 
-  // Load programme subjects when entering edit mode
+  // Load programmes + subjects when entering programme/subject edit mode
   useEffect(() => {
-    if (editingSubjects && candidate?.programme_id && !programmeSubjects && !loadingSubjects) {
-      loadProgrammeSubjects();
+    if (!editingSubjects || !candidate) return;
+
+    let cancelled = false;
+    async function loadEditContext() {
+      setLoadingProgrammes(true);
+      try {
+        const examId = candidate!.registration_exam_id;
+        const progs = await listSchoolProgrammes(examId);
+        if (cancelled) return;
+        setProgrammes(progs);
+
+        const programmeId = editProgrammeId ?? candidate!.programme_id;
+        if (programmeId) {
+          setLoadingSubjects(true);
+          try {
+            const subjects = await getProgrammeSubjects(programmeId);
+            if (cancelled) return;
+            setProgrammeSubjects(subjects);
+          } catch (error) {
+            console.error(error);
+            toast.error("Failed to load programme subjects");
+            if (!cancelled) setProgrammeSubjects(null);
+          } finally {
+            if (!cancelled) setLoadingSubjects(false);
+          }
+        } else {
+          setProgrammeSubjects(null);
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to load programmes");
+        if (!cancelled) {
+          setProgrammes([]);
+          setEditingSubjects(false);
+        }
+      } finally {
+        if (!cancelled) setLoadingProgrammes(false);
+      }
     }
-  }, [editingSubjects, candidate?.programme_id]);
+
+    void loadEditContext();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when opening edit mode or switching candidate; programme changes handled separately
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSubjects, candidate?.id]);
 
   const loadPhoto = async () => {
     if (!candidate) return;
@@ -361,16 +421,29 @@ export function CandidateDetailModal({
     }
   };
 
-  const loadProgrammeSubjects = async () => {
-    if (!candidate?.programme_id) return;
+  const handleProgrammeChange = async (value: string) => {
+    const programmeId = value ? parseInt(value, 10) : null;
+    setEditProgrammeId(programmeId);
+    setProgrammeSubjects(null);
+    setSelectedSubjectIds([]);
+    if (!programmeId || !candidate) return;
+
     setLoadingSubjects(true);
     try {
-      const subjects = await getProgrammeSubjects(candidate.programme_id);
+      const subjects = await getProgrammeSubjects(programmeId);
       setProgrammeSubjects(subjects);
+      setSelectedSubjectIds(
+        autoSelectSubjectIds(
+          subjects,
+          candidate.registration_type,
+          candidate.exam?.exam_series,
+          candidate.exam?.allows_free_tvet
+        )
+      );
     } catch (error) {
-      toast.error("Failed to load programme subjects");
       console.error(error);
-      setEditingSubjects(false);
+      toast.error("Failed to load programme subjects");
+      setProgrammeSubjects(null);
     } finally {
       setLoadingSubjects(false);
     }
@@ -378,6 +451,11 @@ export function CandidateDetailModal({
 
   const handleSaveSubjects = async () => {
     if (!candidate) return;
+
+    if (!editProgrammeId) {
+      toast.error("Programme selection is required");
+      return;
+    }
 
     const regType = candidate.registration_type;
     if (!isStructuredRegistrationType(regType) && selectedSubjectIds.length === 0) {
@@ -388,11 +466,13 @@ export function CandidateDetailModal({
     setSavingSubjects(true);
     try {
       const updatedCandidate = await updateCandidate(candidate.id, {
+        programme_id: editProgrammeId,
         subject_ids: selectedSubjectIds,
       });
 
-      toast.success("Subject selections updated successfully");
+      toast.success("Programme and subjects updated successfully");
       setEditingSubjects(false);
+      setProgrammeSubjects(null);
 
       if (onCandidateChange) {
         onCandidateChange(updatedCandidate);
@@ -406,15 +486,21 @@ export function CandidateDetailModal({
   };
 
   const handleCancelEdit = () => {
-    // Reset to original selections
     if (candidate) {
       const currentSubjectIds = (candidate.subject_selections || [])
         .map((s) => s.subject_id)
         .filter((id): id is number => id !== null && id !== undefined);
       setSelectedSubjectIds(currentSubjectIds);
+      setEditProgrammeId(candidate.programme_id);
     }
     setEditingSubjects(false);
     setProgrammeSubjects(null);
+  };
+
+  const startEditingSubjects = () => {
+    if (!candidate) return;
+    setEditProgrammeId(candidate.programme_id);
+    setEditingSubjects(true);
   };
 
   const handleSaveBio = async () => {
@@ -520,23 +606,33 @@ export function CandidateDetailModal({
     setEditingGuardian(false);
   };
 
-  const handleApprove = async () => {
+  const handleMarkFeePaid = async () => {
     if (!candidate) return;
-
-    setApproving(true);
+    setUpdatingFee(true);
     try {
-      const updatedCandidate = await approveCandidate(candidate.id);
-      toast.success("Registration approved successfully");
-
-      // Update the candidate in parent component
-      if (onCandidateChange) {
-        onCandidateChange(updatedCandidate);
-      }
+      const updatedCandidate = await markCandidateFeePaid(candidate.id);
+      toast.success("Fee marked as paid");
+      onCandidateChange?.(updatedCandidate);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to approve registration");
+      toast.error(error instanceof Error ? error.message : "Failed to mark fee paid");
       console.error(error);
     } finally {
-      setApproving(false);
+      setUpdatingFee(false);
+    }
+  };
+
+  const handleMarkFeeWaived = async () => {
+    if (!candidate) return;
+    setUpdatingFee(true);
+    try {
+      const updatedCandidate = await markCandidateFeeWaived(candidate.id);
+      toast.success("Fee waived");
+      onCandidateChange?.(updatedCandidate);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to waive fee");
+      console.error(error);
+    } finally {
+      setUpdatingFee(false);
     }
   };
 
@@ -544,10 +640,13 @@ export function CandidateDetailModal({
 
   const subjectSelections = candidate.subject_selections || [];
 
-  // Compute validation status for approval
   const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
-  const canApprove = candidate.registration_status === "PENDING" || candidate.registration_status === "DRAFT";
   const hasPhoto = !!photo;
+  const feeStatus = candidate.fee_payment_status || "unpaid";
+  const isFreeTvet = candidate.registration_type === "free_tvet";
+  // Free TVET candidates have no fee — never show mark paid / waive
+  const feeNeedsAction =
+    !isFreeTvet && feeStatus !== "not_required" && feeStatus === "unpaid";
 
   // Check if exam is closed
   const isExamClosed = candidate.exam?.registration_period
@@ -607,35 +706,47 @@ export function CandidateDetailModal({
                     </span>
                   )}
                   <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusBadgeClass(
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${registrationStatusBadgeClass(
                       candidate.registration_status
                     )}`}
                   >
-                    {candidate.registration_status}
+                    {registrationStatusLabel(candidate.registration_status)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Fee: {feePaymentStatusLabel(feeStatus)}
                   </span>
                 </DialogDescription>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {isSchoolAdmin && canApprove && (
-                <Button
-                  onClick={handleApprove}
-                  disabled={approving || !hasPhoto}
-                  className="shadow-none"
-                  title={!hasPhoto ? "Photo is required for approval" : "Approve registration (validation will be performed by the system)"}
-                >
-                  {approving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Approving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Approve
-                    </>
-                  )}
-                </Button>
+              {isSchoolAdmin && feeNeedsAction && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleMarkFeeWaived}
+                    disabled={updatingFee}
+                    className="shadow-none"
+                  >
+                    {updatingFee ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Waive fee
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleMarkFeePaid}
+                    disabled={updatingFee}
+                    className="shadow-none"
+                  >
+                    {updatingFee ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    Mark fee paid
+                  </Button>
+                </>
               )}
               <Button
                 variant="ghost"
@@ -646,6 +757,36 @@ export function CandidateDetailModal({
                 <Keyboard className="h-4 w-4" />
               </Button>
             </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+            <span
+              className={
+                hasPhoto
+                  ? "inline-flex items-center gap-1 text-success"
+                  : "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+              }
+            >
+              {hasPhoto ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              {hasPhoto ? "Photo uploaded" : "Photo missing"}
+            </span>
+            <span
+              className={
+                !feeNeedsAction
+                  ? "inline-flex items-center gap-1 text-success"
+                  : "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+              }
+            >
+              {!feeNeedsAction ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              {feePaymentStatusLabel(feeStatus)}
+            </span>
           </div>
         </DialogHeader>
 
@@ -1132,14 +1273,14 @@ export function CandidateDetailModal({
             <section>
               <SectionLabel
                 action={
-                  candidate?.programme_id && !editingSubjects && !isExamClosed ? (
+                  !editingSubjects && !isExamClosed ? (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setEditingSubjects(true)}
+                      onClick={startEditingSubjects}
                     >
                       <Edit2 className="mr-2 h-4 w-4" />
-                      Edit subjects
+                      {candidate?.programme_id ? "Edit subjects" : "Add programme & subjects"}
                     </Button>
                   ) : undefined
                 }
@@ -1152,16 +1293,22 @@ export function CandidateDetailModal({
                   <div className="rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
                     <div className="py-8 text-center text-sm text-muted-foreground">
                       <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-50" />
-                      <p>No subjects registered for this candidate.</p>
-                      {candidate?.programme_id && !isExamClosed && (
+                      <p>
+                        {candidate?.programme_id
+                          ? "No subjects registered for this candidate."
+                          : "No programme or subjects have been selected for this candidate."}
+                      </p>
+                      {!isExamClosed && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="mt-4"
-                          onClick={() => setEditingSubjects(true)}
+                          onClick={startEditingSubjects}
                         >
                           <Edit2 className="mr-2 h-4 w-4" />
-                          Add Subjects
+                          {candidate?.programme_id
+                            ? "Add subjects"
+                            : "Add programme & subjects"}
                         </Button>
                       )}
                     </div>
@@ -1204,52 +1351,85 @@ export function CandidateDetailModal({
               ) : (
                 <div className="space-y-6 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
                   <div>
-                    <p className="text-sm font-medium">Edit subject selections</p>
+                    <p className="text-sm font-medium">Edit programme & subjects</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Select subjects for {candidate?.name}. Changes will be validated against
-                      programme requirements.
+                      Choose a programme for {candidate?.name}, then select subjects.
+                      Changes are validated against programme requirements.
                     </p>
                   </div>
-                  <SubjectSelectionPanel
-                    programmeSubjects={programmeSubjects}
-                    loading={loadingSubjects}
-                    selectedSubjectIds={selectedSubjectIds}
-                    onChange={setSelectedSubjectIds}
-                    registrationType={candidate?.registration_type ?? null}
-                    allowsFreeTvet={candidate?.exam?.allows_free_tvet}
-                  />
-                  {!loadingSubjects && !programmeSubjects ? (
-                    <div className="py-8 text-center text-muted-foreground">
-                      <p>No programme subjects available.</p>
-                      <Button variant="outline" className="mt-4" onClick={handleCancelEdit}>
-                        Cancel
-                      </Button>
-                    </div>
+
+                  <div className="space-y-2">
+                    <Label>Programme *</Label>
+                    <SearchableSelect
+                      options={programmes.map((p) => ({
+                        value: String(p.id),
+                        label: `${p.code} — ${p.name}`,
+                      }))}
+                      value={editProgrammeId != null ? String(editProgrammeId) : undefined}
+                      onValueChange={(value) => {
+                        void handleProgrammeChange(value ?? "");
+                      }}
+                      placeholder={
+                        loadingProgrammes ? "Loading programmes…" : "Search programmes…"
+                      }
+                      searchPlaceholder="Search programmes…"
+                      disabled={loadingProgrammes || savingSubjects}
+                    />
+                    {!loadingProgrammes && programmes.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No programmes available for this examination. Add programmes under
+                        My School → Programmes first.
+                      </p>
+                    )}
+                  </div>
+
+                  {editProgrammeId ? (
+                    <SubjectSelectionPanel
+                      programmeSubjects={programmeSubjects}
+                      loading={loadingSubjects || loadingProgrammes}
+                      selectedSubjectIds={selectedSubjectIds}
+                      onChange={setSelectedSubjectIds}
+                      registrationType={candidate?.registration_type ?? null}
+                      examSeries={candidate?.exam?.exam_series}
+                      allowsFreeTvet={candidate?.exam?.allows_free_tvet}
+                    />
                   ) : (
-                    <div className="flex justify-end gap-2 border-t border-border pt-4">
-                      <Button
-                        variant="outline"
-                        onClick={handleCancelEdit}
-                        disabled={savingSubjects}
-                      >
-                        <XIcon className="mr-2 h-4 w-4" />
-                        Cancel
-                      </Button>
-                      <Button onClick={handleSaveSubjects} disabled={savingSubjects}>
-                        {savingSubjects ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="mr-2 h-4 w-4" />
-                            Save Changes
-                          </>
-                        )}
-                      </Button>
-                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Select a programme to load available subjects.
+                    </p>
                   )}
+
+                  <div className="flex justify-end gap-2 border-t border-border pt-4">
+                    <Button
+                      variant="outline"
+                      onClick={handleCancelEdit}
+                      disabled={savingSubjects}
+                    >
+                      <XIcon className="mr-2 h-4 w-4" />
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSaveSubjects}
+                      disabled={
+                        savingSubjects ||
+                        loadingSubjects ||
+                        loadingProgrammes ||
+                        !editProgrammeId
+                      }
+                    >
+                      {savingSubjects ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="mr-2 h-4 w-4" />
+                          Save Changes
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               )}
             </section>

@@ -86,51 +86,64 @@ def generate_candidate_template(
     kind = (exam_kind or "school").strip().lower()
     is_private = kind == "private"
 
-    # Required columns first
-    data = {
-        "firstname": ["John", "Jane"],
-        "lastname": ["Doe", "Smith"],
-        "othername": ["", "Mary"],
-        "date_of_birth": ["2005-01-15", "2005-03-20"],
-        "gender": ["M", "F"],
-        "programme_code": ["PROG01", "PROG02"],
+    # Required columns first — sample programmes: C301, C421, C601
+    data: dict[str, list[str]] = {
+        "firstname": ["John", "Jane", "Kwame"],
+        "lastname": ["Doe", "Smith", "Mensah"],
+        "othername": ["", "Mary", "Kofi"],
+        "date_of_birth": ["15/01/2005", "20/03/2005", "08/11/2004"],
+        "gender": ["M", "F", "M"],
+        "programme_code": ["C301", "C421", "C601"],
     }
 
+    # School structured uploads require option (SOC/ENT)
+    if not is_private:
+        data["option"] = ["SOC", "ENT", "SOC"]
+
     # Optional columns
-    optional_cols = {
-        "national_id": ["123456789", "987654321"],
-        "contact_email": ["john@example.com", "jane@example.com"],
-        "contact_phone": ["+1234567890", "+0987654321"],
-        "address": ["123 Main St", "456 Oak Ave"],
-        "guardian_name": ["John Doe Sr.", "Jane Smith Sr."],
-        "guardian_phone": ["+1234567891", "+0987654322"],
-        "disability": ["", "Visual"],
-        "guardian_digital_address": ["GA-123-4567", "GA-789-0123"],
-        "guardian_national_id": ["GHA-123456789-1", "GHA-987654321-2"],
+    optional_cols: dict[str, list[str]] = {
+        "national_id": ["123456789", "987654321", "456789123"],
+        "contact_email": ["john@example.com", "jane@example.com", "kwame@example.com"],
+        "contact_phone": ["0244123456", "0554210052", "0201234567"],
+        "address": ["123 Main St", "456 Oak Ave", "12 Ring Road"],
+        "guardian_name": ["John Doe Sr.", "Jane Smith Sr.", "Ama Mensah"],
+        "guardian_phone": ["0201234567", "0277654321", "0244987654"],
+        "disability": ["", "Visual", ""],
+        "guardian_digital_address": ["GA-123-4567", "GA-789-0123", "AK-456-7890"],
+        "guardian_national_id": ["GHA-123456789-1", "GHA-987654321-2", "GHA-456789123-3"],
     }
 
     if is_private:
-        optional_cols["registration_type"] = ["private", "private"]
-        optional_cols["examination_center"] = ["", ""]  # defaults to registering school
+        optional_cols["registration_type"] = ["private", "private", "private"]
+        optional_cols["examination_center"] = ["", "", ""]  # defaults to registering school
     else:
         primary = "free_tvet" if allows_free_tvet else "regular"
         if allows_referral_registration:
-            optional_cols["registration_type"] = [primary, "referral"]
+            optional_cols["registration_type"] = [primary, "referral", primary]
         else:
-            optional_cols["registration_type"] = [primary, primary]
+            optional_cols["registration_type"] = [primary, primary, primary]
 
     data.update(optional_cols)
 
     # subject_codes for NOV/DEC series layout or private exams (lenient subject pick)
     if is_nov_dec or is_private:
-        data.update({
-            "subject_codes": ["C701,C702", "C30-1-01"],
-        })
+        data["subject_codes"] = ["C701,C702", "C30-1-01", "C701,C705"]
 
     # Convert all values to strings to ensure text formatting
     df = pd.DataFrame(data)
     for col in df.columns:
         df[col] = df[col].astype(str)
+
+    # Columns Excel commonly auto-converts to numbers (losing leading zeros)
+    force_text_columns = {
+        "contact_phone",
+        "guardian_phone",
+        "national_id",
+        "guardian_national_id",
+        "date_of_birth",
+        "programme_code",
+        "option",
+    }
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -146,11 +159,13 @@ def generate_candidate_template(
 
         # Define required columns
         required_columns = {"firstname", "lastname", "date_of_birth", "gender", "programme_code"}
-        # For NOV/DEC, subject_codes is also required
-        if is_nov_dec:
+        if not is_private:
+            required_columns.add("option")
+        if is_private:
             required_columns.add("subject_codes")
 
-        # Get column headers from first row
+        # Pre-format many empty rows as Text so newly typed phones keep leading zeros
+        text_preformat_rows = 500
         header_row = 1
         for col_idx, col in enumerate(worksheet.columns, start=1):
             header_cell = worksheet.cell(row=header_row, column=col_idx)
@@ -165,16 +180,82 @@ def generate_candidate_template(
             else:
                 header_cell.fill = optional_fill
 
-            # Format data cells as text
-            for cell in col:
-                if cell.row > header_row:  # Data rows
+            col_letter = get_column_letter(col_idx)
+            # Entire column default format as text (helps Excel keep phone as text)
+            worksheet.column_dimensions[col_letter].number_format = FORMAT_TEXT
+
+            # Format sample + blank rows as text; store values as Excel strings
+            for row_idx in range(header_row + 1, text_preformat_rows + 2):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                cell.number_format = FORMAT_TEXT
+                if cell.value is not None:
+                    text_value = str(cell.value)
+                    # Leading apostrophe is unnecessary when data_type is string + @ format,
+                    # but phone/id columns must never become numeric.
+                    cell.value = text_value
+                    cell.data_type = "s"
+
+            if column_name in force_text_columns:
+                for row_idx in range(header_row + 1, text_preformat_rows + 2):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
                     cell.number_format = FORMAT_TEXT
-                    # Ensure value is stored as text
-                    if cell.value is not None:
-                        cell.value = str(cell.value)
 
     output.seek(0)
     return output.getvalue()
+
+
+def generate_bulk_upload_instructions_pdf(
+    *,
+    exam_year: int | None = None,
+    exam_series: str | None = None,
+    exam_type: str | None = None,
+    exam_kind: str | None = None,
+    allows_referral_registration: bool = True,
+    allows_free_tvet: bool = False,
+) -> bytes:
+    """Generate a short PDF guide for school bulk candidate upload."""
+    from pathlib import Path
+
+    from app.services.pdf_generator import PdfGenerator, render_html
+    from app.services.subject_selection import normalize_exam_series
+
+    kind = (exam_kind or "school").strip().lower()
+    is_private = kind == "private"
+    normalized_series = normalize_exam_series(exam_series)
+    primary_type = "free_tvet" if allows_free_tvet else "regular"
+
+    example_programmes = [
+        {"code": "C301", "name": "Building Construction"},
+        {"code": "C421", "name": "Electrical Engineering Technology"},
+        {"code": "C601", "name": "Catering and Hospitality Management"},
+    ]
+
+    context = {
+        "exam_year": exam_year,
+        "exam_series": exam_series,
+        "exam_type": exam_type,
+        "exam_kind": kind,
+        "is_private": is_private,
+        "normalized_series": normalized_series,
+        "allows_referral_registration": allows_referral_registration,
+        "allows_free_tvet": allows_free_tvet,
+        "primary_registration_type": primary_type,
+        "example_programmes": example_programmes,
+    }
+
+    templates_dir = Path(__file__).parent.parent / "templates"
+    main_html = render_html(context, "bulk-upload/instructions.html", templates_dir)
+    app_dir = Path(__file__).parent.parent.resolve()
+
+    pdf_gen = PdfGenerator(
+        main_html=main_html,
+        header_html=None,
+        footer_html=None,
+        base_url=str(app_dir),
+        side_margin=1.5,
+        extra_vertical_margin=16,
+    )
+    return pdf_gen.render_pdf()
 
 
 async def generate_schedule_template(

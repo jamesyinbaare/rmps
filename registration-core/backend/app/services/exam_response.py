@@ -18,6 +18,7 @@ def serialize_exam(
     has_index_numbers: bool = False,
     eligible_school_count: int | None = None,
     allows_free_tvet: bool | None = None,
+    expected_total: int | None = None,
 ) -> RegistrationExamResponse:
     enabled_ids = [e.programme_type_id for e in (exam.enabled_programme_types or [])]
     if eligible_school_count is None:
@@ -51,6 +52,7 @@ def serialize_exam(
         candidate_count=candidate_count,
         approved_candidates=approved_candidates,
         eligible_school_count=eligible_school_count,
+        expected_total=expected_total,
         created_at=exam.created_at,
         updated_at=exam.updated_at,
     )

@@ -379,16 +379,23 @@ async def process_webhook_event(
                         current_paid = Decimal(str(candidate.total_paid_amount or 0))
                         candidate.total_paid_amount = current_paid + payment.amount
 
-                        # Update status to PENDING only if this is the first payment (was DRAFT)
-                        # Don't change status if already PENDING or beyond (to preserve status for returning users)
+                        from app.services.registration_completeness import (
+                            apply_fee_paid,
+                            recompute_registration_status,
+                        )
+
+                        apply_fee_paid(candidate, at=payment.paid_at or datetime.utcnow())
+                        # First payment exits DRAFT so completeness can advance
                         if candidate.registration_status == RegistrationStatus.DRAFT:
-                            candidate.registration_status = RegistrationStatus.PENDING
+                            candidate.registration_status = RegistrationStatus.INCOMPLETE
                             candidate.registration_date = payment.paid_at or datetime.utcnow()
+                        await recompute_registration_status(session, candidate)
 
                         logger.info(
                             f"Updated registration candidate {candidate.id}: "
                             f"total_paid_amount={candidate.total_paid_amount}, "
                             f"status={candidate.registration_status.value}, "
+                            f"fee_payment_status={candidate.fee_payment_status.value}, "
                             f"payment_amount={payment.amount}"
                         )
 

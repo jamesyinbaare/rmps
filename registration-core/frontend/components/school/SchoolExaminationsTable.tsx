@@ -284,7 +284,7 @@ export function SchoolExaminationsTable({
         id: "approved",
         accessorFn: (exam) => exam.kpis.approved,
         header: ({ column }) => (
-          <SortHeader label="Approved" column={column} />
+          <SortHeader label="Complete" column={column} />
         ),
         cell: ({ row }) => (
           <div className="font-mono text-sm tabular-nums">
@@ -295,7 +295,7 @@ export function SchoolExaminationsTable({
       {
         id: "pending",
         accessorFn: (exam) => exam.kpis.pending,
-        header: ({ column }) => <SortHeader label="Pending" column={column} />,
+        header: ({ column }) => <SortHeader label="Incomplete" column={column} />,
         cell: ({ row }) => (
           <div className="font-mono text-sm tabular-nums">
             {row.original.kpis.pending.toLocaleString()}

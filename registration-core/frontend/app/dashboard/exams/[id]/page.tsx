@@ -382,7 +382,7 @@ export default function ExamDetailPage() {
               hint: "Total registrations",
             },
             {
-              label: "Approved Registrations",
+              label: "Complete Registrations",
               value: statistics.approved_candidates.toLocaleString(),
               hint: `${statistics.completion_percentage.toFixed(1)}% completed`,
             },

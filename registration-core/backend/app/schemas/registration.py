@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, computed_field
 from uuid import UUID
 
-from app.models import ExamKind, RegistrationStatus
+from app.models import ExamKind, FeePaymentStatus, RegistrationStatus
 
 
 class RegistrationCandidatePhotoResponse(BaseModel):
@@ -160,6 +160,9 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     registration_number: str
     index_number: str | None = None
     registration_status: RegistrationStatus
+    fee_payment_status: FeePaymentStatus = FeePaymentStatus.UNPAID
+    fee_paid_at: datetime | None = None
+    fee_paid_by_user_id: str | None = None
     registration_date: datetime
     subject_selections: list[RegistrationSubjectSelectionResponse] = []
     exam: RegistrationExamResponse | None = None
@@ -167,6 +170,20 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("fee_paid_by_user_id", mode="before")
+    @classmethod
+    def convert_fee_paid_by_uuid(cls, v):
+        if v is None:
+            return None
+        return str(v)
+
+
+class CandidateFeeBulkUpdate(BaseModel):
+    """Mark fees paid/waived for multiple candidates."""
+
+    candidate_ids: list[int] = Field(default_factory=list, min_length=1)
+    action: str = Field(..., description="paid or waived")
 
 
 class CandidateListResponse(BaseModel):
@@ -194,6 +211,62 @@ class BulkUploadResponse(BaseModel):
     successful: int
     failed: int
     errors: list[BulkUploadError]
+
+
+class BulkCandidateRow(BaseModel):
+    """One spreadsheet row for chunked bulk upload (extra keys allowed)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    row_number: int
+    firstname: str | None = None
+    lastname: str | None = None
+    othername: str | None = None
+    date_of_birth: str | None = None
+    dob: str | None = None
+    gender: str | None = None
+    programme_code: str | None = None
+    programme: str | None = None
+    option: str | None = None
+    subject_codes: str | None = None
+    registration_type: str | None = None
+    contact_email: str | None = None
+    email: str | None = None
+    contact_phone: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    national_id: str | None = None
+    guardian_name: str | None = None
+    guardian_phone: str | None = None
+    guardian_digital_address: str | None = None
+    guardian_national_id: str | None = None
+    disability: str | None = None
+    examination_center: str | int | None = None
+    school_id: str | int | None = None
+    center_id: str | int | None = None
+
+
+class BulkCandidateChunkRequest(BaseModel):
+    """JSON body for chunked school bulk upload."""
+
+    exam_id: int
+    registration_type: str | None = None
+    rows: list[BulkCandidateRow]
+    dry_run: bool = False
+
+
+class BulkCandidateParseResponse(BaseModel):
+    """Parsed spreadsheet rows for client-side chunked upload."""
+
+    total_rows: int
+    rows: list[dict]
+
+
+class BulkUploadResultsExportRequest(BaseModel):
+    """Rows + errors to export as an Excel results workbook."""
+
+    rows: list[dict]
+    errors: list[BulkUploadError] = []
 
 
 class ExamRegistrationPeriodCreate(BaseModel):
@@ -313,6 +386,8 @@ class RegistrationExamResponse(BaseModel):
     candidate_count: int | None = None
     approved_candidates: int | None = None
     eligible_school_count: int | None = None
+    # School-facing: optional self-declared expected registration total for this school×exam
+    expected_total: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -449,3 +524,64 @@ class ExamStatisticsResponse(BaseModel):
     days_to_end: int | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateCandidateSummary(BaseModel):
+    """Candidate fields shown in duplicate match groups / side-by-side compare."""
+
+    id: int
+    firstname: str
+    lastname: str
+    othername: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    programme_id: int | None = None
+    programme_code: str | None = None
+    registration_number: str
+    index_number: str | None = None
+    registration_status: RegistrationStatus
+    fee_payment_status: FeePaymentStatus = FeePaymentStatus.UNPAID
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    national_id: str | None = None
+    registration_type: str | None = None
+    subject_selections: list[RegistrationSubjectSelectionResponse] = []
+    has_photo: bool = False
+    can_remove: bool = False
+    remove_blocked_reason: str | None = None
+
+    @computed_field
+    def name(self) -> str:
+        parts = [self.firstname]
+        if self.othername:
+            parts.append(self.othername)
+        parts.append(self.lastname)
+        return " ".join(parts)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateMatchGroup(BaseModel):
+    """A cluster of likely duplicate candidates for one school × exam."""
+
+    group_id: int
+    best_score: float
+    match_reasons: list[str] = Field(default_factory=list)
+    candidates: list[DuplicateCandidateSummary]
+
+
+class DuplicateMatchesResponse(BaseModel):
+    """Response for school duplicate registration scan."""
+
+    exam_id: int
+    groups: list[DuplicateMatchGroup]
+    threshold: float
+    same_programme: bool
+    same_dob: bool = True
+
+
+class CandidateNotDuplicateCreate(BaseModel):
+    """Mark two candidates as not duplicates of each other."""
+
+    candidate_a_id: int
+    candidate_b_id: int

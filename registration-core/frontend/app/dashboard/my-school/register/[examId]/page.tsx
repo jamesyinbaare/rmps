@@ -1,77 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   listAvailableExams,
   listSchoolCandidates,
-  getSchoolDashboard,
 } from "@/lib/api";
 import type {
   RegistrationCandidate,
   RegistrationExam,
-  SchoolDashboardData,
+  SchoolExamExpectations,
 } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Plus,
   Upload,
-  Search,
-  Users,
-  CheckCircle2,
-  Clock,
   AlertCircle,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
   ArrowLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
 import { PageHeader } from "@/components/dashboard/PageHeader";
-import { SectionLabel } from "@/components/dashboard/SectionLabel";
-import { StatStrip } from "@/components/dashboard/StatStrip";
 import {
-  primaryRegistrationType,
-  registrationTypeLabel,
-} from "@/lib/school-registration";
-import { cn } from "@/lib/utils";
-
-type SortKey = "name" | "status" | "type" | "programme";
-type SortDir = "asc" | "desc";
-
-const STATUS_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "PENDING", label: "Pending" },
-  { value: "APPROVED", label: "Approved" },
-  { value: "REJECTED", label: "Rejected" },
-] as const;
-
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "APPROVED":
-      return "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300";
-    case "REJECTED":
-      return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
-    case "PENDING":
-      return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-}
+  ExamRegistrationWorkspace,
+  type WorkbenchTab,
+} from "@/components/school/ExamRegistrationWorkspace";
+import {
+  CANDIDATE_TABLE_PAGE_SIZES,
+  type CandidateTablePageSize,
+} from "@/components/school/SchoolExamCandidatesTable";
 
 function examTitle(exam: RegistrationExam): string {
   const type = exam.programme_type_name || exam.exam_type;
@@ -79,43 +39,139 @@ function examTitle(exam: RegistrationExam): string {
   return [type, series, exam.year].filter(Boolean).join(" · ");
 }
 
+function parseWorkbenchTab(value: string | null): WorkbenchTab {
+  return value === "candidates" ? "candidates" : "programme";
+}
+
+function parsePageSize(value: string | null): CandidateTablePageSize {
+  const n = value ? parseInt(value, 10) : NaN;
+  return (CANDIDATE_TABLE_PAGE_SIZES as readonly number[]).includes(n)
+    ? (n as CandidateTablePageSize)
+    : 20;
+}
+
+function parsePageIndex(value: string | null): number {
+  const n = value ? parseInt(value, 10) : NaN;
+  if (!Number.isInteger(n) || n < 1) return 0;
+  return n - 1;
+}
+
 export default function ExamRegistrationWorkspacePage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const params = useParams();
   const examIdParam = params.examId as string | undefined;
   const examId = examIdParam ? parseInt(examIdParam, 10) : NaN;
-  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const workbenchTab = parseWorkbenchTab(searchParams.get("tab"));
+  const candidatePageIndex = parsePageIndex(searchParams.get("page"));
+  const candidatePageSize = parsePageSize(searchParams.get("pageSize"));
 
   const [exam, setExam] = useState<RegistrationExam | null>(null);
   const [candidates, setCandidates] = useState<RegistrationCandidate[]>([]);
+  const [filteredCandidates, setFilteredCandidates] = useState<
+    RegistrationCandidate[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
-  const [schoolData, setSchoolData] = useState<SchoolDashboardData | null>(null);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
 
   const [selectedCandidate, setSelectedCandidate] =
     useState<RegistrationCandidate | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [candidatesLoaded, setCandidatesLoaded] = useState(false);
 
   const loadCandidates = useCallback(async (id: number) => {
     setLoadingCandidates(true);
     try {
       const data = await listSchoolCandidates(id);
       setCandidates(data);
+      setFilteredCandidates(data);
+      setCandidatesLoaded(true);
     } catch (error) {
       console.error(error);
       toast.error("Failed to load candidates");
       setCandidates([]);
+      setFilteredCandidates([]);
     } finally {
       setLoadingCandidates(false);
     }
   }, []);
+
+  const pushHubParams = useCallback(
+    (patch: {
+      tab?: WorkbenchTab;
+      pageIndex?: number;
+      pageSize?: number;
+    }) => {
+      const next = new URLSearchParams(searchParams.toString());
+      const tab = patch.tab ?? parseWorkbenchTab(next.get("tab"));
+      const pageIndex =
+        patch.pageIndex ?? parsePageIndex(next.get("page"));
+      const pageSize =
+        patch.pageSize ?? parsePageSize(next.get("pageSize"));
+
+      if (tab === "programme") {
+        next.delete("tab");
+        next.delete("page");
+        next.delete("pageSize");
+      } else {
+        next.set("tab", "candidates");
+        if (pageIndex > 0) next.set("page", String(pageIndex + 1));
+        else next.delete("page");
+        if (pageSize !== 20) next.set("pageSize", String(pageSize));
+        else next.delete("pageSize");
+      }
+
+      const qs = next.toString();
+      const href = qs ? `${pathname}?${qs}` : pathname;
+      const current = searchParams.toString()
+        ? `${pathname}?${searchParams.toString()}`
+        : pathname;
+      if (href === current) return;
+      router.push(href, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
+
+  const handleTabChange = useCallback(
+    (tab: WorkbenchTab) => {
+      pushHubParams({
+        tab,
+        pageIndex: tab === "candidates" ? candidatePageIndex : 0,
+        pageSize: candidatePageSize,
+      });
+    },
+    [pushHubParams, candidatePageIndex, candidatePageSize]
+  );
+
+  const handleCandidatePaginationChange = useCallback(
+    (pageIndex: number, pageSize: number) => {
+      pushHubParams({
+        tab: "candidates",
+        pageIndex,
+        pageSize,
+      });
+    },
+    [pushHubParams]
+  );
+
+  const handleCandidatesTabOpen = useCallback(() => {
+    if (
+      !candidatesLoaded &&
+      !loadingCandidates &&
+      Number.isInteger(examId) &&
+      examId > 0
+    ) {
+      void loadCandidates(examId);
+    }
+  }, [candidatesLoaded, loadingCandidates, examId, loadCandidates]);
+
+  useEffect(() => {
+    if (workbenchTab === "candidates") {
+      handleCandidatesTabOpen();
+    }
+  }, [workbenchTab, handleCandidatesTabOpen]);
 
   useEffect(() => {
     if (!Number.isInteger(examId) || examId <= 0) {
@@ -126,12 +182,11 @@ export default function ExamRegistrationWorkspacePage() {
 
     const init = async () => {
       setLoading(true);
+      setCandidates([]);
+      setFilteredCandidates([]);
+      setCandidatesLoaded(false);
       try {
-        const [examsData, dashboard] = await Promise.all([
-          listAvailableExams(),
-          getSchoolDashboard(),
-        ]);
-        setSchoolData(dashboard);
+        const examsData = await listAvailableExams();
         const found = examsData.find((e) => e.id === examId);
         if (!found) {
           toast.error("Examination not available for your school");
@@ -139,7 +194,6 @@ export default function ExamRegistrationWorkspacePage() {
           return;
         }
         setExam(found);
-        await loadCandidates(examId);
       } catch (error) {
         console.error(error);
         toast.error("Failed to load registration data");
@@ -148,91 +202,18 @@ export default function ExamRegistrationWorkspacePage() {
       }
     };
     init();
-  }, [examId, router, loadCandidates]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [examId, router]);
 
   const stats = useMemo(() => {
     const total = candidates.length;
-    const approved = candidates.filter(
-      (c) => c.registration_status === "APPROVED"
+    const complete = candidates.filter(
+      (c) => c.registration_status === "COMPLETE"
     ).length;
-    const pending = candidates.filter(
-      (c) => c.registration_status === "PENDING"
+    const incomplete = candidates.filter(
+      (c) => c.registration_status === "INCOMPLETE"
     ).length;
-    return { total, approved, pending };
+    return { total, complete, incomplete };
   }, [candidates]);
-
-  const filtered = useMemo(() => {
-    let rows = [...candidates];
-    if (statusFilter !== "all") {
-      rows = rows.filter((c) => c.registration_status === statusFilter);
-    }
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      rows = rows.filter((c) => {
-        const name =
-          `${c.firstname} ${c.lastname} ${c.othername || ""}`.toLowerCase();
-        return (
-          name.includes(q) ||
-          (c.registration_number || "").toLowerCase().includes(q) ||
-          (c.index_number || "").toLowerCase().includes(q) ||
-          (c.programme_code || "").toLowerCase().includes(q)
-        );
-      });
-    }
-    rows.sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === "name") {
-        cmp = `${a.firstname} ${a.lastname}`.localeCompare(
-          `${b.firstname} ${b.lastname}`
-        );
-      } else if (sortKey === "status") {
-        cmp = (a.registration_status || "").localeCompare(
-          b.registration_status || ""
-        );
-      } else if (sortKey === "type") {
-        cmp = (a.registration_type || "").localeCompare(
-          b.registration_type || ""
-        );
-      } else {
-        cmp = (a.programme_code || "").localeCompare(b.programme_code || "");
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return rows;
-  }, [candidates, statusFilter, searchQuery, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  };
-
-  const SortIcon = ({ column }: { column: SortKey }) => {
-    if (sortKey !== column)
-      return <ArrowUpDown className="ml-1 h-3.5 w-3.5 opacity-40" />;
-    return sortDir === "asc" ? (
-      <ArrowUp className="ml-1 h-3.5 w-3.5" />
-    ) : (
-      <ArrowDown className="ml-1 h-3.5 w-3.5" />
-    );
-  };
 
   const periodOpen =
     exam?.registration_period &&
@@ -243,6 +224,15 @@ export default function ExamRegistrationWorkspacePage() {
       new Date(exam.registration_period.registration_start_date);
 
   const querySuffix = `?exam_id=${examId}`;
+
+  const handleExpectationsUpdated = useCallback(
+    (next: SchoolExamExpectations) => {
+      setExam((prev) =>
+        prev ? { ...prev, expected_total: next.expected_total } : prev
+      );
+    },
+    []
+  );
 
   if (loading) {
     return (
@@ -266,6 +256,24 @@ export default function ExamRegistrationWorkspacePage() {
     );
   }
 
+  const endDate = exam.registration_period
+    ? new Date(
+        exam.registration_period.registration_end_date
+      ).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
+
+  const statusLine = periodOpen
+    ? endDate
+      ? `Open · ends ${endDate}`
+      : "Registration open"
+    : endDate
+      ? `Closed · ended ${endDate}`
+      : "Registration closed";
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader
@@ -273,16 +281,12 @@ export default function ExamRegistrationWorkspacePage() {
           <Button variant="ghost" asChild>
             <Link href="/dashboard/my-school/register">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              All examinations
+              Examinations
             </Link>
           </Button>
         }
         title={examTitle(exam)}
-        subtitle={
-          schoolData?.school
-            ? `${schoolData.school.code} — ${schoolData.school.name}`
-            : "Register candidates for this examination"
-        }
+        subtitle={statusLine}
         actions={
           <>
             <Button variant="outline" asChild disabled={!periodOpen}>
@@ -301,247 +305,29 @@ export default function ExamRegistrationWorkspacePage() {
         }
       />
 
-      <div className="rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={periodOpen ? "default" : "secondary"}>
-            {periodOpen ? "Registration open" : "Registration closed"}
-          </Badge>
-          {exam.exam_kind === "private" ? (
-            <Badge variant="outline">Private exam</Badge>
-          ) : (
-            <Badge variant="outline">
-              Default: {registrationTypeLabel(primaryRegistrationType(exam))}
-            </Badge>
-          )}
-        </div>
-        {exam.registration_period && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Period:{" "}
-            {new Date(
-              exam.registration_period.registration_start_date
-            ).toLocaleDateString()}{" "}
-            –{" "}
-            {new Date(
-              exam.registration_period.registration_end_date
-            ).toLocaleDateString()}
-          </p>
-        )}
-      </div>
-
-      {!periodOpen && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            Registration is closed for this examination. You can still review
-            candidates below.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <StatStrip
-        items={[
-          {
-            label: "Registered",
-            value: loadingCandidates ? "—" : stats.total,
-            hint: (
-              <span className="inline-flex items-center gap-1">
-                <Users className="h-3 w-3" /> Candidates
-              </span>
-            ),
-          },
-          {
-            label: "Approved",
-            value: loadingCandidates ? "—" : stats.approved,
-            hint: (
-              <span className="inline-flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Ready
-              </span>
-            ),
-          },
-          {
-            label: "Pending",
-            value: loadingCandidates ? "—" : stats.pending,
-            hint: (
-              <span className="inline-flex items-center gap-1">
-                <Clock className="h-3 w-3" /> Awaiting review
-              </span>
-            ),
-          },
-        ]}
+      <ExamRegistrationWorkspace
+        examId={examId}
+        onExpectationsUpdated={handleExpectationsUpdated}
+        candidates={candidates}
+        loadingCandidates={loadingCandidates}
+        candidatesLoaded={candidatesLoaded}
+        candidateStats={stats}
+        tab={workbenchTab}
+        onTabChange={handleTabChange}
+        candidatePageIndex={candidatePageIndex}
+        candidatePageSize={candidatePageSize}
+        onCandidatePaginationChange={handleCandidatePaginationChange}
+        onCandidatesTabOpen={handleCandidatesTabOpen}
+        onCandidateRowClick={(c) => {
+          setSelectedCandidate(c);
+          setDetailOpen(true);
+        }}
+        onFilteredChange={setFilteredCandidates}
       />
-
-      <div>
-        <SectionLabel>Registered candidates</SectionLabel>
-        <div className="rounded-lg border border-border bg-card shadow-none">
-          <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                ref={searchInputRef}
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setPage(1);
-                }}
-                placeholder="Search name, reg no, programme…"
-                className="pl-9"
-              />
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {STATUS_FILTERS.map((f) => (
-                <Button
-                  key={f.value}
-                  size="sm"
-                  variant={statusFilter === f.value ? "default" : "outline"}
-                  className="shadow-none"
-                  onClick={() => {
-                    setStatusFilter(f.value);
-                    setPage(1);
-                  }}
-                >
-                  {f.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>
-                    <button
-                      type="button"
-                      className="inline-flex items-center font-medium"
-                      onClick={() => toggleSort("name")}
-                    >
-                      Name
-                      <SortIcon column="name" />
-                    </button>
-                  </TableHead>
-                  <TableHead>Reg. number</TableHead>
-                  <TableHead>
-                    <button
-                      type="button"
-                      className="inline-flex items-center font-medium"
-                      onClick={() => toggleSort("programme")}
-                    >
-                      Programme
-                      <SortIcon column="programme" />
-                    </button>
-                  </TableHead>
-                  <TableHead>
-                    <button
-                      type="button"
-                      className="inline-flex items-center font-medium"
-                      onClick={() => toggleSort("type")}
-                    >
-                      Type
-                      <SortIcon column="type" />
-                    </button>
-                  </TableHead>
-                  <TableHead>
-                    <button
-                      type="button"
-                      className="inline-flex items-center font-medium"
-                      onClick={() => toggleSort("status")}
-                    >
-                      Status
-                      <SortIcon column="status" />
-                    </button>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loadingCandidates ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-10 text-center text-muted-foreground"
-                    >
-                      Loading candidates…
-                    </TableCell>
-                  </TableRow>
-                ) : pageRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-10 text-center text-muted-foreground"
-                    >
-                      No candidates match your filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  pageRows.map((c) => (
-                    <TableRow
-                      key={c.id}
-                      className="cursor-pointer"
-                      onClick={() => {
-                        setSelectedCandidate(c);
-                        setDetailOpen(true);
-                      }}
-                    >
-                      <TableCell className="font-medium">
-                        {c.firstname} {c.lastname}
-                        {c.othername ? ` ${c.othername}` : ""}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {c.registration_number || "—"}
-                      </TableCell>
-                      <TableCell>{c.programme_code || "—"}</TableCell>
-                      <TableCell>
-                        {registrationTypeLabel(c.registration_type)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={cn(
-                            "shadow-none",
-                            statusBadgeClass(c.registration_status || "")
-                          )}
-                        >
-                          {c.registration_status}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          {filtered.length > pageSize && (
-            <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm text-muted-foreground">
-              <span>
-                {(page - 1) * pageSize + 1}–
-                {Math.min(page * pageSize, filtered.length)} of{" "}
-                {filtered.length}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
       <CandidateDetailModal
         candidate={selectedCandidate}
-        candidates={filtered}
+        candidates={filteredCandidates}
         open={detailOpen}
         onOpenChange={setDetailOpen}
         onCandidateChange={(updated) => {

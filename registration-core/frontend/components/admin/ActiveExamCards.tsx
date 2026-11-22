@@ -113,7 +113,7 @@ export function ActiveExamCards({ exams, loading = false, max = 3 }: ActiveExamC
                 </div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">Approved</div>
+                <div className="text-xs text-muted-foreground">Complete</div>
                 <div className="font-mono text-xl font-medium tracking-tight">
                   {(exam.approved_candidates || 0).toLocaleString()}
                 </div>

@@ -1,26 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   listAvailableExams,
   listSchoolProgrammes,
-  getProgrammeSubjects,
-  bulkUploadCandidates,
   downloadCandidateTemplate,
+  downloadCandidateTemplateInstructionsPdf,
+  downloadBulkUploadResultsExcel,
 } from "@/lib/api";
 import type {
   RegistrationExam,
   Programme,
-  ProgrammeSubjectRequirements,
   BulkUploadResponse,
 } from "@/types";
+import {
+  uploadBulkCandidatesInChunks,
+  validateBulkCandidatesInChunks,
+  type BulkCandidateRowPayload,
+  type BulkUploadProgressState,
+} from "@/lib/bulk-upload";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -38,29 +48,66 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ArrowLeft,
+  CalendarDays,
+  CheckCircle2,
+  CircleAlert,
   Download,
   FileSpreadsheet,
-  Loader2,
-  Upload,
   HelpCircle,
+  IdCard,
+  Loader2,
+  Phone,
+  RefreshCw,
+  Shield,
+  Upload,
+  UserRound,
+  Users,
+  Wifi,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import { SectionLabel } from "@/components/dashboard/SectionLabel";
 import {
   allowedSchoolRegistrationTypes,
-  isMayJuneSeries,
-  isNovDecSeries,
   primaryRegistrationType,
   registrationTypeLabel,
 } from "@/lib/school-registration";
 import { cn } from "@/lib/utils";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+
+const EXAMPLE_PROGRAMMES = [
+  { code: "C301", name: "Building Construction" },
+  { code: "C421", name: "Electrical Engineering Technology" },
+  { code: "C601", name: "Catering and Hospitality Management" },
+] as const;
+
+function examFileBase(exam: RegistrationExam): string {
+  const seriesSafe = (exam.exam_series || "").replace("/", "_");
+  const typeSafe = exam.exam_type.replace(/ /g, "_").replace(/\//g, "_");
+  return seriesSafe
+    ? `${exam.year}_${seriesSafe}_${typeSafe}`
+    : `${exam.year}_${typeSafe}`;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
 
 export default function BulkRegisterPage() {
   const router = useRouter();
@@ -73,16 +120,22 @@ export default function BulkRegisterPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [validating, setValidating] = useState(false);
+  const [progress, setProgress] = useState<BulkUploadProgressState | null>(
+    null
+  );
   const [result, setResult] = useState<BulkUploadResponse | null>(null);
+  const [resultMode, setResultMode] = useState<"upload" | "validation" | null>(
+    null
+  );
+  const [uploadedRows, setUploadedRows] = useState<BulkCandidateRowPayload[]>(
+    []
+  );
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadingResults, setDownloadingResults] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [bulkRegistrationType, setBulkRegistrationType] = useState("");
-  const [defaultChoiceGroups, setDefaultChoiceGroups] = useState<
-    Record<number, string>
-  >({});
-  const [bulkProgrammeSubjects, setBulkProgrammeSubjects] =
-    useState<ProgrammeSubjectRequirements | null>(null);
-  const [loadingBulkSubjects, setLoadingBulkSubjects] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -118,41 +171,12 @@ export default function BulkRegisterPage() {
     init();
   }, [examIdParam, router]);
 
-  useEffect(() => {
-    if (!exam || programmes.length === 0) {
-      setBulkProgrammeSubjects(null);
-      return;
-    }
-    if (
-      exam.exam_kind === "private" ||
-      !isMayJuneSeries(exam.exam_series)
-    ) {
-      setBulkProgrammeSubjects(null);
-      return;
-    }
-    const load = async () => {
-      setLoadingBulkSubjects(true);
-      try {
-        const subjects = await getProgrammeSubjects(programmes[0].id);
-        if (subjects?.optional_core_groups?.length) {
-          setBulkProgrammeSubjects(subjects);
-        } else {
-          setBulkProgrammeSubjects(null);
-        }
-      } catch {
-        setBulkProgrammeSubjects(null);
-      } finally {
-        setLoadingBulkSubjects(false);
-      }
-    };
-    load();
-  }, [exam, programmes]);
-
   const hubHref = exam
     ? `/dashboard/my-school/register/${exam.id}`
     : "/dashboard/my-school/register";
 
   const typeOptions = allowedSchoolRegistrationTypes(exam);
+  const isPrivate = exam?.exam_kind === "private";
 
   const acceptFile = (f: File | undefined) => {
     if (!f) return;
@@ -168,6 +192,9 @@ export default function BulkRegisterPage() {
     }
     setFile(f);
     setResult(null);
+    setResultMode(null);
+    setUploadedRows([]);
+    setProgress(null);
   };
 
   const handleDownloadTemplate = async () => {
@@ -175,21 +202,120 @@ export default function BulkRegisterPage() {
     setDownloadingTemplate(true);
     try {
       const blob = await downloadCandidateTemplate(exam.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${exam.year}_${(exam.exam_series || "").replace("/", "_")}_${exam.exam_type.replace(/ /g, "_")}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success("Template downloaded");
+      triggerBlobDownload(blob, `${examFileBase(exam)}.xlsx`);
+      toast.success("Excel template downloaded");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to download template"
       );
     } finally {
       setDownloadingTemplate(false);
+    }
+  };
+
+  const handleDownloadInstructionsPdf = async () => {
+    if (!exam) return;
+    setDownloadingPdf(true);
+    try {
+      const blob = await downloadCandidateTemplateInstructionsPdf(exam.id);
+      triggerBlobDownload(blob, `${examFileBase(exam)}_instructions.pdf`);
+      toast.success("Instructions PDF downloaded");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to download instructions"
+      );
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const handleDownloadResults = async () => {
+    if (!exam || !result || uploadedRows.length === 0) return;
+    setDownloadingResults(true);
+    try {
+      const blob = await downloadBulkUploadResultsExcel({
+        rows: uploadedRows,
+        errors: result.errors || [],
+      });
+      triggerBlobDownload(
+        blob,
+        `${examFileBase(exam)}_bulk_upload_results.xlsx`
+      );
+      toast.success("Results Excel downloaded");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to download results"
+      );
+    } finally {
+      setDownloadingResults(false);
+    }
+  };
+
+  const busy = uploading || validating;
+
+  const handleValidate = async () => {
+    if (!exam || !file) {
+      toast.error("Select a file to validate");
+      return;
+    }
+    setValidating(true);
+    setResult(null);
+    setResultMode(null);
+    setUploadedRows([]);
+    setProgress({
+      phase: "preparing",
+      percent: 1,
+      currentBatch: 0,
+      totalBatches: 0,
+      totalRows: 0,
+      successful: 0,
+      failed: 0,
+      remaining: 0,
+      message: "Preparing validation…",
+    });
+
+    try {
+      const registrationTypeToSend = isPrivate
+        ? "private"
+        : bulkRegistrationType || undefined;
+
+      const { result: validationResult, rows } =
+        await validateBulkCandidatesInChunks({
+          examId: exam.id,
+          file,
+          registrationType: registrationTypeToSend,
+          onProgress: setProgress,
+        });
+      setResult(validationResult);
+      setResultMode("validation");
+      setUploadedRows(rows);
+      if (validationResult.failed === 0) {
+        toast.success(
+          `Validation passed — ${validationResult.successful} row(s) would succeed`
+        );
+      } else {
+        toast.warning(
+          `Validation found ${validationResult.failed} error(s)`
+        );
+      }
+    } catch (error) {
+      setProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              phase: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to validate file",
+            }
+          : prev
+      );
+      toast.error(
+        error instanceof Error ? error.message : "Failed to validate file"
+      );
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -200,33 +326,34 @@ export default function BulkRegisterPage() {
     }
     setUploading(true);
     setResult(null);
-    setUploadProgress(15);
-
-    const tick = window.setInterval(() => {
-      setUploadProgress((p) => (p >= 90 ? p : p + 8));
-    }, 400);
+    setResultMode(null);
+    setUploadedRows([]);
+    setProgress({
+      phase: "preparing",
+      percent: 1,
+      currentBatch: 0,
+      totalBatches: 0,
+      totalRows: 0,
+      successful: 0,
+      failed: 0,
+      remaining: 0,
+      message: "Preparing upload…",
+    });
 
     try {
-      const isPrivate = exam.exam_kind === "private";
       const registrationTypeToSend = isPrivate
         ? "private"
         : bulkRegistrationType || undefined;
-      const useSubjectCodesPath =
-        isPrivate || isNovDecSeries(exam.exam_series);
-      const defaultSelections = useSubjectCodesPath
-        ? undefined
-        : Object.keys(defaultChoiceGroups).length > 0
-          ? defaultChoiceGroups
-          : undefined;
 
-      const uploadResult = await bulkUploadCandidates(
-        exam.id,
+      const { result: uploadResult, rows } = await uploadBulkCandidatesInChunks({
+        examId: exam.id,
         file,
-        defaultSelections,
-        registrationTypeToSend
-      );
-      setUploadProgress(100);
+        registrationType: registrationTypeToSend,
+        onProgress: setProgress,
+      });
       setResult(uploadResult);
+      setResultMode("upload");
+      setUploadedRows(rows);
       if (uploadResult.failed === 0) {
         toast.success(
           `Successfully uploaded ${uploadResult.successful} candidate(s)`
@@ -237,15 +364,24 @@ export default function BulkRegisterPage() {
         );
       }
       setFile(null);
-      setDefaultChoiceGroups({});
     } catch (error) {
+      setProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              phase: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to upload candidates",
+            }
+          : prev
+      );
       toast.error(
         error instanceof Error ? error.message : "Failed to upload candidates"
       );
     } finally {
-      window.clearInterval(tick);
       setUploading(false);
-      setTimeout(() => setUploadProgress(0), 600);
     }
   };
 
@@ -274,23 +410,14 @@ export default function BulkRegisterPage() {
         title="Bulk upload"
         subtitle={`${exam.exam_type} ${exam.exam_series || ""} ${exam.year}`}
         actions={
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm">
-                <HelpCircle className="mr-2 h-4 w-4" />
-                Template help
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 text-sm" align="end">
-              <p className="font-medium">File columns</p>
-              <p className="mt-2 text-muted-foreground">
-                Required: name (or firstname + lastname), programme_code (or
-                programme_id). Optional: registration_type, subject_codes,
-                guardian fields
-                {exam.exam_kind === "private" ? ", examination_center" : ""}.
-              </p>
-            </PopoverContent>
-          </Popover>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setInstructionsOpen(true)}
+          >
+            <HelpCircle className="mr-2 h-4 w-4" />
+            Instructions
+          </Button>
         }
       />
 
@@ -302,7 +429,7 @@ export default function BulkRegisterPage() {
             <Select
               value={bulkRegistrationType}
               onValueChange={setBulkRegistrationType}
-              disabled={exam.exam_kind === "private" || uploading}
+              disabled={isPrivate || busy}
             >
               <SelectTrigger className="max-w-xs">
                 <SelectValue />
@@ -317,50 +444,11 @@ export default function BulkRegisterPage() {
             </Select>
             <p className="text-xs text-muted-foreground">
               Applied when a row omits registration_type. Rows can still
-              override with referral when allowed.
+              override with referral when allowed. For free_tvet and regular,
+              each row must include option (SOC or ENT). Dates use DD/MM/YYYY;
+              phones are 10-digit Ghana numbers starting with 0.
             </p>
           </div>
-
-          {loadingBulkSubjects && (
-            <p className="text-sm text-muted-foreground">
-              Loading optional core defaults…
-            </p>
-          )}
-
-          {bulkProgrammeSubjects?.optional_core_groups?.map((group) => (
-            <div key={group.choice_group_id} className="space-y-2">
-              <Label>
-                Default optional core — group {group.choice_group_id}
-              </Label>
-              <Select
-                value={defaultChoiceGroups[group.choice_group_id] || "__none__"}
-                onValueChange={(value) => {
-                  setDefaultChoiceGroups((prev) => {
-                    const next = { ...prev };
-                    if (!value || value === "__none__") {
-                      delete next[group.choice_group_id];
-                    } else {
-                      next[group.choice_group_id] = value;
-                    }
-                    return next;
-                  });
-                }}
-                disabled={uploading}
-              >
-                <SelectTrigger className="max-w-md">
-                  <SelectValue placeholder="No default" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">No default</SelectItem>
-                  {group.subjects.map((s) => (
-                    <SelectItem key={s.subject_id} value={s.subject_code}>
-                      {s.subject_code} — {s.subject_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -408,13 +496,11 @@ export default function BulkRegisterPage() {
             Drag and drop CSV or Excel here
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            or choose a file from your computer
+            or choose a file from your computer. Uploads run in small batches
+            with automatic retry on poor connections.
           </p>
           <div className="mt-4">
-            <InputFile
-              disabled={uploading}
-              onFile={acceptFile}
-            />
+            <InputFile disabled={busy} onFile={acceptFile} />
           </div>
           {file && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm">
@@ -423,37 +509,68 @@ export default function BulkRegisterPage() {
                 type="button"
                 className="text-muted-foreground hover:text-foreground"
                 onClick={() => setFile(null)}
-                disabled={uploading}
+                disabled={busy}
               >
                 Remove
               </button>
             </div>
           )}
         </div>
+        {programmes.length === 0 && (
+          <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+            No programmes linked to your school for this exam yet.
+          </p>
+        )}
       </section>
 
-      {uploading && (
-        <div className="space-y-2 rounded-lg border border-border bg-card p-5 shadow-none">
-          <div className="flex items-center justify-between text-sm">
-            <span>Uploading…</span>
-            <span className="font-mono">{uploadProgress}%</span>
-          </div>
-          <Progress value={uploadProgress} />
-        </div>
+      {(busy || progress) && progress && (
+        <BulkUploadProgressCard
+          progress={progress}
+          mode={
+            validating || resultMode === "validation" ? "validation" : "upload"
+          }
+          onDismiss={
+            progress.phase === "done" || progress.phase === "error"
+              ? () => setProgress(null)
+              : undefined
+          }
+        />
       )}
 
       {result && (
         <section>
-          <SectionLabel>Results</SectionLabel>
+          <SectionLabel>
+            {resultMode === "validation" ? "Validation results" : "Results"}
+          </SectionLabel>
           <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
-            <Alert
-              variant={result.failed > 0 ? "destructive" : "default"}
-            >
-              <AlertDescription>
-                {result.successful} successful, {result.failed} failed of{" "}
-                {result.total_rows} rows.
-              </AlertDescription>
-            </Alert>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Alert
+                variant={result.failed > 0 ? "destructive" : "default"}
+                className="min-w-0 flex-1"
+              >
+                <AlertDescription>
+                  {resultMode === "validation"
+                    ? `${result.successful} would succeed, ${result.failed} failed of ${result.total_rows} rows. No candidates were created.`
+                    : `${result.successful} successful, ${result.failed} failed of ${result.total_rows} rows.`}
+                </AlertDescription>
+              </Alert>
+              {uploadedRows.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadResults}
+                  disabled={downloadingResults}
+                >
+                  {downloadingResults ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  Download results (Excel)
+                </Button>
+              )}
+            </div>
             {result.errors?.length > 0 && (
               <div className="overflow-x-auto rounded-md border border-border">
                 <Table>
@@ -486,7 +603,25 @@ export default function BulkRegisterPage() {
         <Button type="button" variant="outline" asChild>
           <Link href={hubHref}>Cancel</Link>
         </Button>
-        <Button onClick={handleUpload} disabled={!file || uploading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleValidate}
+          disabled={!file || busy}
+        >
+          {validating ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Validating…
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Validate file
+            </>
+          )}
+        </Button>
+        <Button onClick={handleUpload} disabled={!file || busy}>
           {uploading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -500,6 +635,761 @@ export default function BulkRegisterPage() {
           )}
         </Button>
       </div>
+
+      <Dialog open={instructionsOpen} onOpenChange={setInstructionsOpen}>
+        <DialogContent className="flex max-h-[92vh] w-[calc(100%-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden border-border/80 p-0 shadow-2xl sm:rounded-2xl">
+          <DialogHeader className="relative shrink-0 overflow-hidden border-b border-border/60 px-0 py-0 text-left">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_0%_0%,color-mix(in_oklab,var(--primary)_18%,transparent),transparent_55%),linear-gradient(180deg,color-mix(in_oklab,var(--primary)_8%,var(--background)),var(--background))]"
+            />
+            <div className="relative px-6 pb-5 pt-6 pr-12">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+                School registration guide
+              </p>
+              <DialogTitle className="mt-1.5 text-2xl font-semibold tracking-tight">
+                Bulk upload instructions
+              </DialogTitle>
+              <DialogDescription className="mt-2 max-w-xl text-[15px] leading-relaxed">
+                A clear walkthrough of the spreadsheet columns, formats, and
+                what happens after you upload.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background">
+            <BulkInstructionsContent isPrivate={!!isPrivate} />
+          </div>
+
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/70 bg-muted/30 px-6 py-4 sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              className="bg-background"
+              onClick={handleDownloadInstructionsPdf}
+              disabled={downloadingPdf}
+            >
+              {downloadingPdf ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Download PDF
+            </Button>
+            <Button type="button" onClick={() => setInstructionsOpen(false)}>
+              Got it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function BulkInstructionsContent({ isPrivate }: { isPrivate: boolean }) {
+  const requiredColumns: ColumnItem[] = [
+    {
+      name: "firstname",
+      text: "Candidate’s given / first name. Required on every row.",
+      example: "Kwame",
+    },
+    {
+      name: "lastname",
+      text: "Candidate’s family / surname. Required on every row.",
+      example: "Mensah",
+    },
+    {
+      name: "date_of_birth",
+      text: "Date only as DD/MM/YYYY. Alias: dob.",
+      example: "15/01/2005",
+    },
+    {
+      name: "gender",
+      text: "Recorded gender for the candidate.",
+      example: "M or F",
+    },
+    {
+      name: "programme_code",
+      text: "Programme code assigned to your school. Alias: programme.",
+      example: "C301",
+    },
+    ...(isPrivate
+      ? [
+          {
+            name: "subject_codes",
+            text: "Comma-separated subject codes for private registration.",
+            example: "C701,C702",
+          },
+        ]
+      : [
+          {
+            name: "option",
+            text: "Optional core for free_tvet and regular. SOC/C702 or ENT/C705.",
+            example: "SOC",
+          },
+        ]),
+  ];
+
+  return (
+    <div className="space-y-8 px-6 py-6">
+      <section className="space-y-3">
+        <SectionEyebrow>How it works</SectionEyebrow>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              step: "1",
+              title: "Download template",
+              body: "Get the Excel file and keep the header row intact.",
+            },
+            {
+              step: "2",
+              title: "Fill one row each",
+              body: "Enter candidates using the formats below.",
+            },
+            {
+              step: "3",
+              title: "Upload & review",
+              body: "Fix any failed rows, then add photos and fees.",
+            },
+          ].map((item) => (
+            <div
+              key={item.step}
+              className="relative overflow-hidden rounded-xl border border-border/80 bg-card p-4 shadow-none"
+            >
+              <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                {item.step}
+              </div>
+              <p className="font-medium text-foreground">{item.title}</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                {item.body}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Successful rows create <span className="font-medium text-foreground">Incomplete</span>{" "}
+          candidates. Photos and fee payment may still be needed before
+          registration is complete.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <SectionEyebrow>Must get right</SectionEyebrow>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <RuleCard
+            icon={UserRound}
+            title="Split the name"
+            body={
+              <>
+                Use <Code>firstname</Code> and <Code>lastname</Code>. There is
+                no single name column. <Code>othername</Code> is optional.
+              </>
+            }
+          />
+          <RuleCard
+            icon={CalendarDays}
+            title="Date format"
+            body={
+              <>
+                Always use <Code>DD/MM/YYYY</Code>. Example:{" "}
+                <Code>15/01/2005</Code>. Do not use YYYY-MM-DD.
+              </>
+            }
+          />
+          <RuleCard
+            icon={Phone}
+            title="Ghana phone numbers"
+            body={
+              <>
+                If provided, use 10 digits starting with <Code>0</Code>. Example:{" "}
+                <Code>0244123456</Code>. No <Code>+233</Code>.
+              </>
+            }
+          />
+          {!isPrivate ? (
+            <RuleCard
+              icon={CheckCircle2}
+              title="Option subject"
+              body={
+                <>
+                  For free_tvet and regular, set <Code>option</Code> to{" "}
+                  <Code>SOC</Code> / <Code>C702</Code> or <Code>ENT</Code> /{" "}
+                  <Code>C705</Code>.
+                </>
+              }
+            />
+          ) : (
+            <RuleCard
+              icon={CheckCircle2}
+              title="Subject codes"
+              body={
+                <>
+                  Private rows need <Code>subject_codes</Code> as a
+                  comma-separated list.
+                </>
+              }
+            />
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <SectionEyebrow>Required columns</SectionEyebrow>
+          <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-200">
+            Green headers in Excel
+          </Badge>
+        </div>
+        <ColumnGrid items={requiredColumns} tone="required" />
+
+        <div className="overflow-hidden rounded-xl border border-border/80 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--primary)_7%,var(--card)),var(--card))] p-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <IdCard className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-foreground">
+                Example programmes in the template
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Replace these with codes assigned to your school for this exam.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {EXAMPLE_PROGRAMMES.map((p) => (
+                  <div
+                    key={p.code}
+                    className="rounded-lg border border-border/70 bg-background/80 px-3 py-2.5"
+                  >
+                    <p className="font-mono text-sm font-semibold text-foreground">
+                      {p.code}
+                    </p>
+                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                      {p.name}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <SectionEyebrow>Optional · identity & contact</SectionEyebrow>
+          <Badge variant="secondary" className="font-normal">
+            Yellow headers
+          </Badge>
+        </div>
+        <ColumnGrid
+          items={[
+            { name: "othername", text: "Middle or other given name." },
+            { name: "national_id", text: "National ID if available." },
+            {
+              name: "contact_email",
+              text: "Email address. Alias: email.",
+            },
+            {
+              name: "contact_phone",
+              text: "10-digit Ghana mobile starting with 0. Alias: phone.",
+              example: "0244123456",
+            },
+            { name: "address", text: "Residential or postal address." },
+            {
+              name: "disability",
+              text: "Disability information if applicable; leave blank if none.",
+            },
+          ]}
+          tone="optional"
+        />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" />
+          <SectionEyebrow className="mb-0">Guardian</SectionEyebrow>
+        </div>
+        <ColumnGrid
+          items={[
+            { name: "guardian_name", text: "Parent or guardian full name." },
+            {
+              name: "guardian_phone",
+              text: "Same 10-digit Ghana phone rule as contact_phone.",
+              example: "0201234567",
+            },
+            {
+              name: "guardian_digital_address",
+              text: "GhanaPost GPS / digital address.",
+              example: "GA-123-4567",
+            },
+            {
+              name: "guardian_national_id",
+              text: "Guardian national ID if available.",
+            },
+          ]}
+          tone="optional"
+        />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-primary" />
+          <SectionEyebrow className="mb-0">Registration</SectionEyebrow>
+        </div>
+        <ColumnGrid
+          items={[
+            {
+              name: "registration_type",
+              text: isPrivate
+                ? "Use private. Applied automatically if omitted."
+                : "Overrides the page default. free_tvet/regular need option; referral needs subject_codes.",
+            },
+            ...(!isPrivate
+              ? [
+                  {
+                    name: "subject_codes",
+                    text: "Required for referral rows — comma-separated codes.",
+                    example: "C701,C702",
+                  },
+                ]
+              : [
+                  {
+                    name: "examination_center",
+                    text: "Center school id. Aliases: school_id, center_id. Blank uses your school.",
+                  },
+                ]),
+          ]}
+          tone="optional"
+        />
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-amber-200/80 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+        <div className="flex gap-3">
+          <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="space-y-2">
+            <p className="font-medium text-foreground">After upload</p>
+            <ul className="space-y-1.5 text-sm leading-relaxed text-muted-foreground">
+              <li>
+                Failed rows are skipped — use the field name in the results
+                table to fix and re-upload.
+              </li>
+              <li>
+                Keep Excel cells formatted as text so leading zeros in phone
+                numbers are preserved.
+              </li>
+              <li>
+                Green headers are required; yellow headers are optional.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+type ColumnItem = {
+  name: string;
+  text: string;
+  example?: string;
+};
+
+function SectionEyebrow({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <h3
+      className={cn(
+        "mb-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary",
+        className
+      )}
+    >
+      {children}
+    </h3>
+  );
+}
+
+function Code({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[12px] font-medium text-foreground">
+      {children}
+    </code>
+  );
+}
+
+function RuleCard({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  title: string;
+  body: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/80 bg-card p-4 shadow-none">
+      <div className="mb-2.5 flex items-center gap-2.5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </div>
+        <p className="font-medium text-foreground">{title}</p>
+      </div>
+      <p className="text-sm leading-relaxed text-muted-foreground">{body}</p>
+    </div>
+  );
+}
+
+function ColumnGrid({
+  items,
+  tone,
+}: {
+  items: ColumnItem[];
+  tone: "required" | "optional";
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/80">
+      {items.map((item, index) => (
+        <div
+          key={item.name}
+          className={cn(
+            "grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,11rem)_1fr] sm:gap-4",
+            index > 0 && "border-t border-border/70",
+            index % 2 === 1 && "bg-muted/25"
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="font-mono text-[13px] font-semibold text-foreground">
+              {item.name}
+            </code>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                tone === "required"
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                  : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+              )}
+            >
+              {tone === "required" ? "Required" : "Optional"}
+            </span>
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {item.text}
+            </p>
+            {item.example && (
+              <p className="mt-1 font-mono text-xs text-foreground/80">
+                e.g. {item.example}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function useAnimatedNumber(target: number, durationMs = 380) {
+  const [display, setDisplay] = useState(target);
+  const displayRef = useRef(target);
+
+  useEffect(() => {
+    const from = displayRef.current;
+    if (from === target) return;
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      displayRef.current = target;
+      setDisplay(target);
+      return;
+    }
+    const start = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = Math.round(from + (target - from) * eased);
+      displayRef.current = next;
+      setDisplay(next);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, durationMs]);
+
+  return display;
+}
+
+function BulkUploadProgressCard({
+  progress,
+  mode = "upload",
+  onDismiss,
+}: {
+  progress: BulkUploadProgressState;
+  mode?: "upload" | "validation";
+  onDismiss?: () => void;
+}) {
+  const isValidation = mode === "validation";
+  const isRetrying = progress.phase === "retrying";
+  const isError = progress.phase === "error";
+  const isDone = progress.phase === "done";
+  const isActive = !isDone && !isError;
+  const canDismiss = Boolean(onDismiss) && (isDone || isError);
+
+  const percent = useAnimatedNumber(Math.round(progress.percent));
+  const successful = useAnimatedNumber(progress.successful);
+  const failed = useAnimatedNumber(progress.failed);
+  const remaining = useAnimatedNumber(progress.remaining);
+
+  const eyebrow = isError
+    ? isValidation
+      ? "Validation interrupted"
+      : "Upload interrupted"
+    : isDone
+      ? isValidation
+        ? "Validation complete"
+        : "Upload complete"
+      : isRetrying
+        ? "Retrying connection"
+        : progress.phase === "preparing"
+          ? "Preparing"
+          : progress.phase === "finishing"
+            ? "Finishing"
+            : isValidation
+              ? "Validating file"
+              : "Uploading securely";
+
+  const totalBatches = progress.totalBatches;
+  const currentBatch = Math.min(progress.currentBatch, totalBatches || 0);
+  const maxDots = 16;
+  let dotStart = 1;
+  let dotEnd = totalBatches;
+  if (totalBatches > maxDots) {
+    const half = Math.floor(maxDots / 2);
+    dotStart = Math.max(1, currentBatch - half);
+    dotEnd = Math.min(totalBatches, dotStart + maxDots - 1);
+    dotStart = Math.max(1, dotEnd - maxDots + 1);
+  }
+
+  return (
+    <section
+      className="relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-none"
+      role="status"
+      aria-live="polite"
+      aria-busy={isActive}
+    >
+      <div
+        aria-hidden
+        className={cn(
+          "bulk-progress-mesh pointer-events-none absolute inset-0 opacity-90",
+          !isActive && "opacity-40"
+        )}
+      />
+      {isActive && (
+        <div
+          aria-hidden
+          className="bulk-progress-scan pointer-events-none absolute inset-x-0 h-16 opacity-70"
+        />
+      )}
+
+      <div className="relative px-5 py-5 md:px-6 md:py-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+              {eyebrow}
+            </p>
+            <p className="mt-1.5 text-base font-medium leading-snug text-foreground md:text-lg">
+              {progress.message}
+            </p>
+            {totalBatches > 0 && (
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Batch {currentBatch} of {totalBatches}
+                {progress.totalRows > 0
+                  ? ` · ${progress.totalRows} rows`
+                  : ""}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-start gap-2">
+            <div
+              className={cn(
+                "flex h-12 w-12 items-center justify-center rounded-2xl border",
+                isError &&
+                  "border-destructive/25 bg-destructive/10 text-destructive",
+                isDone &&
+                  "bulk-progress-success-pop border-primary/25 bg-primary/12 text-primary",
+                isRetrying &&
+                  "border-amber-300/60 bg-amber-50 text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-300",
+                isActive &&
+                  !isRetrying &&
+                  "bulk-progress-breathe border-primary/20 bg-primary/10 text-primary"
+              )}
+            >
+              {isError ? (
+                <CircleAlert className="h-5 w-5" />
+              ) : isDone ? (
+                <CheckCircle2 className="h-5 w-5" />
+              ) : isRetrying ? (
+                <RefreshCw className="h-5 w-5 animate-spin" />
+              ) : progress.phase === "preparing" ? (
+                <FileSpreadsheet className="h-5 w-5" />
+              ) : progress.phase === "finishing" ? (
+                <Shield className="h-5 w-5" />
+              ) : (
+                <Wifi className="h-5 w-5" />
+              )}
+            </div>
+            {canDismiss && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                onClick={onDismiss}
+                aria-label="Dismiss progress"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Progress
+            </p>
+            <p className="mt-1 font-mono text-4xl font-semibold tracking-tight text-foreground tabular-nums md:text-5xl">
+              {percent}
+              <span className="ml-0.5 text-2xl text-muted-foreground md:text-3xl">
+                %
+              </span>
+            </p>
+          </div>
+          <p className="pb-1 text-right text-xs text-muted-foreground">
+            {isValidation ? "Checking rows" : "Sending batches"}
+            <br />
+            <span className="font-medium text-foreground/80">
+              {isActive ? "In progress" : isDone ? "Finished" : "Stopped"}
+            </span>
+          </p>
+        </div>
+
+        <div className="relative mt-4">
+          <div className="h-3.5 overflow-hidden rounded-full bg-muted/80 ring-1 ring-border/60">
+            <div
+              className={cn(
+                "bulk-progress-rail-fill relative h-full rounded-full",
+                isError
+                  ? "bg-destructive"
+                  : isDone
+                    ? "bg-primary"
+                    : "bg-gradient-to-r from-primary/85 via-primary to-primary/90"
+              )}
+              style={{ width: `${Math.min(100, Math.max(0, progress.percent))}%` }}
+            >
+              {isActive && (
+                <>
+                  <div className="bulk-progress-sheen pointer-events-none absolute inset-y-0 w-1/3" />
+                  <span
+                    aria-hidden
+                    className="bulk-progress-tip absolute top-1/2 right-0 h-2.5 w-2.5 -translate-y-1/2 translate-x-1/2 rounded-full bg-background ring-2 ring-primary"
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {totalBatches > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {dotStart > 1 && (
+              <span className="mr-1 text-[10px] text-muted-foreground">…</span>
+            )}
+            {Array.from({ length: dotEnd - dotStart + 1 }, (_, i) => {
+              const batch = dotStart + i;
+              const done = batch < currentBatch || (isDone && batch <= totalBatches);
+              const active = batch === currentBatch && isActive;
+              return (
+                <span
+                  key={batch}
+                  title={`Batch ${batch}`}
+                  className={cn(
+                    "h-2 w-2 rounded-full transition-colors",
+                    done && "bulk-progress-dot-lit bg-primary",
+                    active &&
+                      "bg-primary/70 ring-2 ring-primary/30 ring-offset-1 ring-offset-background",
+                    !done && !active && "bg-border"
+                  )}
+                />
+              );
+            })}
+            {dotEnd < totalBatches && (
+              <span className="ml-1 text-[10px] text-muted-foreground">…</span>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5 grid grid-cols-3 gap-2.5">
+          <StatChip
+            label={isValidation ? "Would succeed" : "Successful"}
+            value={successful}
+            tone="success"
+          />
+          <StatChip label="Failed" value={failed} tone="danger" />
+          <StatChip label="Remaining" value={remaining} tone="neutral" />
+        </div>
+
+        {isRetrying && (
+          <p className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            Poor connection detected — automatically retrying this batch.
+          </p>
+        )}
+
+        {canDismiss && (
+          <div className="mt-5 flex justify-end border-t border-border/60 pt-4">
+            <Button type="button" variant="outline" size="sm" onClick={onDismiss}>
+              Dismiss
+            </Button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StatChip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "success" | "danger" | "neutral";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border px-3 py-2.5 backdrop-blur-[2px]",
+        tone === "success" &&
+          "border-emerald-200/80 bg-emerald-50/80 dark:border-emerald-900/50 dark:bg-emerald-950/30",
+        tone === "danger" &&
+          "border-red-200/80 bg-red-50/70 dark:border-red-900/40 dark:bg-red-950/25",
+        tone === "neutral" && "border-border/80 bg-background/70"
+      )}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+        {value}
+      </p>
     </div>
   );
 }
@@ -509,20 +1399,15 @@ function InputFile({
   onFile,
 }: {
   disabled?: boolean;
-  onFile: (file: File | undefined) => void;
+  onFile: (f: File | undefined) => void;
 }) {
   return (
-    <label className="inline-flex cursor-pointer">
-      <span className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-none hover:bg-accent hover:text-accent-foreground">
-        Choose file
-      </span>
-      <input
-        type="file"
-        className="hidden"
-        accept=".csv,.xlsx,.xls"
-        disabled={disabled}
-        onChange={(e) => onFile(e.target.files?.[0])}
-      />
-    </label>
+    <input
+      type="file"
+      accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+      disabled={disabled}
+      className="mx-auto block max-w-xs text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:font-medium"
+      onChange={(e) => onFile(e.target.files?.[0])}
+    />
   );
 }

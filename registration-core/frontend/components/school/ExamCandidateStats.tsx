@@ -43,17 +43,19 @@ function GenderProportionBar({
 interface ExamCandidateStatsProps {
   candidates: RegistrationCandidate[];
   loading?: boolean;
+  /** Optional school self-declared expected total for this exam */
+  expectedTotal?: number | null;
 }
 
 export function ExamCandidateStats({
   candidates,
   loading = false,
+  expectedTotal = null,
 }: ExamCandidateStatsProps) {
   const stats = useMemo(() => {
     const total = candidates.length;
-    let approved = 0;
-    let pending = 0;
-    let rejected = 0;
+    let complete = 0;
+    let incomplete = 0;
     let draft = 0;
     let male = 0;
     let female = 0;
@@ -63,9 +65,8 @@ export function ExamCandidateStats({
 
     for (const c of candidates) {
       const status = String(c.registration_status || "").toUpperCase();
-      if (status === "APPROVED") approved += 1;
-      else if (status === "PENDING") pending += 1;
-      else if (status === "REJECTED") rejected += 1;
+      if (status === "COMPLETE") complete += 1;
+      else if (status === "INCOMPLETE") incomplete += 1;
       else if (status === "DRAFT") draft += 1;
 
       const gender = normalizeCandidateGender(c.gender);
@@ -98,9 +99,8 @@ export function ExamCandidateStats({
     const known = male + female;
     return {
       total,
-      approved,
-      pending,
-      rejected,
+      complete,
+      incomplete,
       draft,
       male,
       female,
@@ -133,13 +133,24 @@ export function ExamCandidateStats({
   }
 
   const statusParts = [
-    stats.approved > 0 ? `${stats.approved.toLocaleString()} approved` : null,
-    stats.pending > 0 ? `${stats.pending.toLocaleString()} pending` : null,
-    stats.rejected > 0 ? `${stats.rejected.toLocaleString()} rejected` : null,
+    stats.complete > 0 ? `${stats.complete.toLocaleString()} complete` : null,
+    stats.incomplete > 0
+      ? `${stats.incomplete.toLocaleString()} incomplete`
+      : null,
     stats.draft > 0 ? `${stats.draft.toLocaleString()} draft` : null,
   ].filter(Boolean);
 
+  const expectedHint =
+    expectedTotal != null
+      ? stats.total > expectedTotal
+        ? `Over expected (${stats.total.toLocaleString()} / ${expectedTotal.toLocaleString()})`
+        : stats.total < expectedTotal
+          ? `Under expected (${stats.total.toLocaleString()} / ${expectedTotal.toLocaleString()})`
+          : `On target (${expectedTotal.toLocaleString()} expected)`
+      : null;
+
   const registeredHintParts = [
+    expectedHint,
     statusParts.length > 0 ? statusParts.join(" · ") : "No status breakdown yet",
     stats.unspecified > 0
       ? `${stats.unspecified.toLocaleString()} unspecified gender`
@@ -162,10 +173,13 @@ export function ExamCandidateStats({
           label: (
             <span className="inline-flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
-              Registered
+              {expectedTotal != null ? "Registered / expected" : "Registered"}
             </span>
           ),
-          value: stats.total.toLocaleString(),
+          value:
+            expectedTotal != null
+              ? `${stats.total.toLocaleString()} / ${expectedTotal.toLocaleString()}`
+              : stats.total.toLocaleString(),
           hint: registeredHintParts.join(" · "),
         },
         {

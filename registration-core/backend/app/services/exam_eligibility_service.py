@@ -35,15 +35,46 @@ async def replace_exam_eligible_schools(
         if missing:
             raise ValueError(f"Unknown school ids: {sorted(missing)}")
 
+    from app.models import ExamSchoolProgrammeExpectation
+
+    # Drop programme expectations for schools leaving the allow-list
+    if unique_ids:
+        await session.execute(
+            delete(ExamSchoolProgrammeExpectation).where(
+                ExamSchoolProgrammeExpectation.exam_id == exam.id,
+                ExamSchoolProgrammeExpectation.school_id.notin_(unique_ids),
+            )
+        )
+    else:
+        await session.execute(
+            delete(ExamSchoolProgrammeExpectation).where(
+                ExamSchoolProgrammeExpectation.exam_id == exam.id,
+            )
+        )
+
+    # Preserve expected_total when re-adding the same school
+    existing_expectations = {
+        row.school_id: (row.expected_total, row.expected_declared_at, row.expected_declared_by_user_id)
+        for row in (
+            await session.execute(
+                select(ExamEligibleSchool).where(ExamEligibleSchool.exam_id == exam.id)
+            )
+        ).scalars().all()
+    }
+
     await session.execute(delete(ExamEligibleSchool).where(ExamEligibleSchool.exam_id == exam.id))
     await session.flush()
     free_set = set(free_tvet_ids)
     for school_id in unique_ids:
+        prev = existing_expectations.get(school_id)
         session.add(
             ExamEligibleSchool(
                 exam_id=exam.id,
                 school_id=school_id,
                 allows_free_tvet=school_id in free_set,
+                expected_total=prev[0] if prev else None,
+                expected_declared_at=prev[1] if prev else None,
+                expected_declared_by_user_id=prev[2] if prev else None,
             )
         )
 

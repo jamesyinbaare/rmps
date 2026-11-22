@@ -67,10 +67,10 @@ export default function RegisterExamCardsHubPage() {
               counts[exam.id] = {
                 total: candidates.length,
                 approved: candidates.filter(
-                  (c) => c.registration_status === "APPROVED"
+                  (c) => c.registration_status === "COMPLETE"
                 ).length,
                 pending: candidates.filter(
-                  (c) => c.registration_status === "PENDING"
+                  (c) => c.registration_status === "INCOMPLETE"
                 ).length,
               };
             } catch {

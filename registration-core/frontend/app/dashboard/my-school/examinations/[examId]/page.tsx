@@ -254,6 +254,7 @@ export default function SchoolExaminationHistoryPage() {
       <ExamCandidateStats
         candidates={candidates}
         loading={loadingCandidates}
+        expectedTotal={exam?.expected_total}
       />
 
       <div>

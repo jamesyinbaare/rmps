@@ -27,6 +27,11 @@ from app.models import (
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.photo_validation import PhotoValidationService
 from app.services.mediapipe_photo_validation import replace_background
+from app.services.registration_completeness import (
+    apply_fee_paid,
+    default_fee_payment_status,
+    recompute_registration_status,
+)
 from app.schemas.registration import RegistrationCandidatePhotoResponse
 import logging
 
@@ -398,7 +403,8 @@ async def register_self(
         guardian_phone=candidate_data.guardian_phone,
         guardian_digital_address=candidate_data.guardian_digital_address,
         guardian_national_id=candidate_data.guardian_national_id,
-        registration_status=RegistrationStatus.PENDING,
+        registration_status=RegistrationStatus.INCOMPLETE,
+        fee_payment_status=default_fee_payment_status(registration_type),
     )
     session.add(new_candidate)
     await session.flush()
@@ -713,6 +719,7 @@ async def save_draft_registration(
             guardian_digital_address=candidate_data.guardian_digital_address,
             guardian_national_id=candidate_data.guardian_national_id,
             registration_status=RegistrationStatus.DRAFT,
+            fee_payment_status=default_fee_payment_status(draft_registration_type),
         )
         session.add(new_draft)
         await session.flush()
@@ -1026,9 +1033,12 @@ async def submit_draft_registration(
             detail=f"Payment required. Outstanding amount: {outstanding:.2f} GHS. Please complete payment before submitting.",
         )
 
-    # Change status to APPROVED after payment is completed and registration is submitted
-    draft.registration_status = RegistrationStatus.APPROVED
+    # Leave draft and recompute completeness (photo + fee)
+    apply_fee_paid(draft)
     draft.registration_date = datetime.utcnow()
+    # Exit DRAFT so recompute can set INCOMPLETE or COMPLETE
+    draft.registration_status = RegistrationStatus.INCOMPLETE
+    await recompute_registration_status(session, draft)
 
     await session.commit()
     await session.refresh(draft, ["subject_selections"])
@@ -1086,7 +1096,13 @@ async def enable_edit_registration(
         .where(
             RegistrationCandidate.id == registration_id,
             RegistrationCandidate.portal_user_id == current_user.id,
-            RegistrationCandidate.registration_status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED, RegistrationStatus.DRAFT]),
+            RegistrationCandidate.registration_status.in_(
+                [
+                    RegistrationStatus.INCOMPLETE,
+                    RegistrationStatus.COMPLETE,
+                    RegistrationStatus.DRAFT,
+                ]
+            ),
         )
         .options(
             selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
@@ -1106,7 +1122,7 @@ async def enable_edit_registration(
     if registration.registration_status == RegistrationStatus.DRAFT:
         return RegistrationCandidateResponse.model_validate(registration)
 
-    # For PENDING/APPROVED, check if registration period is still open
+    # For INCOMPLETE/COMPLETE, check if registration period is still open
     exam = registration.exam
     now = datetime.utcnow()
     if (
@@ -1237,6 +1253,8 @@ async def upload_private_candidate_photo(
         checksum=checksum,
     )
     session.add(db_photo)
+    await session.flush()
+    await recompute_registration_status(session, candidate, has_photo=True)
     await session.commit()
     await session.refresh(db_photo)
 

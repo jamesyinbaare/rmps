@@ -60,10 +60,10 @@ export default function SchoolExaminationsHubPage() {
             try {
               const candidates = await listSchoolCandidates(exam.id);
               const approved = candidates.filter(
-                (c) => c.registration_status === "APPROVED"
+                (c) => c.registration_status === "COMPLETE"
               ).length;
               const pending = candidates.filter(
-                (c) => c.registration_status === "PENDING"
+                (c) => c.registration_status === "INCOMPLETE"
               ).length;
               return {
                 ...exam,

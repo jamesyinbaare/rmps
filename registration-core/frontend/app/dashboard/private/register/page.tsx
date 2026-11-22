@@ -199,7 +199,7 @@ export default function PrivateRegistrationPage() {
   const loadExistingRegistrations = async () => {
     try {
       const regs = await listMyRegistrations();
-      // Include all registrations (DRAFT, PENDING, APPROVED, REJECTED)
+      // Include all registrations (DRAFT, INCOMPLETE, COMPLETE)
       setExistingRegistrations(regs);
       return regs;
     } catch (error) {
@@ -574,25 +574,18 @@ export default function PrivateRegistrationPage() {
             Draft
           </span>
         );
-      case "PENDING":
+      case "INCOMPLETE":
         return (
-          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 dark:bg-amber-900 dark:text-amber-200">
             <Clock className="mr-1 h-3 w-3" />
-            Pending
+            Incomplete
           </span>
         );
-      case "APPROVED":
+      case "COMPLETE":
         return (
           <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200">
             <CheckCircle className="mr-1 h-3 w-3" />
-            Approved
-          </span>
-        );
-      case "REJECTED":
-        return (
-          <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-200">
-            <XCircle className="mr-1 h-3 w-3" />
-            Rejected
+            Complete
           </span>
         );
       default:

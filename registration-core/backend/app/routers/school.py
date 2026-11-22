@@ -27,6 +27,7 @@ from app.models import (
     ExamRegistrationPeriod,
     ExamEligibleSchool,
     RegistrationCandidate,
+    RegistrationCandidateNotDuplicate,
     RegistrationStatus,
     RegistrationType,
     School,
@@ -38,6 +39,14 @@ from app.models import (
     PhotoValidationJobStatus,
     school_programmes,
     programme_subjects,
+)
+from app.schemas.expectations import (
+    SchoolExamExpectationsResponse,
+    SchoolExamExpectationsUpdate,
+)
+from app.services.registration_expectations import (
+    get_school_exam_expectations,
+    upsert_school_exam_expectations,
 )
 from app.services.exam_eligibility_service import (
     is_school_eligible_for_exam,
@@ -59,6 +68,9 @@ from app.schemas.registration import (
     RegistrationCandidateUpdate,
     RegistrationCandidateResponse,
     BulkUploadResponse,
+    BulkCandidateChunkRequest,
+    BulkCandidateParseResponse,
+    BulkUploadResultsExportRequest,
     RegistrationExamResponse,
     RegistrationCandidatePhotoResponse,
     PhotoAlbumResponse,
@@ -66,13 +78,26 @@ from app.schemas.registration import (
     PhotoBulkUploadResponse,
     PhotoBulkUploadError,
     PhotoValidationJobResponse,
+    CandidateFeeBulkUpdate,
+    DuplicateMatchesResponse,
+    CandidateNotDuplicateCreate,
+)
+from app.services.bulk_candidate_upload import process_bulk_candidate_rows
+from app.services.duplicate_detection import (
+    DEFAULT_NAME_THRESHOLD,
+    clear_not_duplicate_marks_for_candidate,
+    find_school_exam_duplicates,
+    removal_block_reason,
 )
 from app.schemas.programme import (
     ProgrammeResponse,
     ProgrammeSubjectRequirements,
     SchoolProgrammeAssociation,
 )
-from app.services.template_generator import generate_candidate_template
+from app.services.template_generator import (
+    generate_bulk_upload_instructions_pdf,
+    generate_candidate_template,
+)
 from app.schemas.user import SchoolUserCreate, UserUpdate
 from app.schemas.auth import UserResponse
 from app.core.security import get_password_hash
@@ -89,7 +114,12 @@ from app.services.photo_validation import PhotoValidationService
 from app.services.bulk_photo_validation import process_bulk_photo_validation, process_bulk_photo_resize, process_bulk_background_replacement
 from app.services.mediapipe_photo_validation import replace_background
 from fastapi import BackgroundTasks
-from app.services.registration_validation import can_approve_registration
+from app.services.registration_completeness import (
+    apply_fee_paid,
+    apply_fee_waived,
+    default_fee_payment_status,
+    recompute_registration_status,
+)
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
@@ -178,7 +208,21 @@ async def list_available_exams(
     responses = []
     for exam in exams:
         allows_free = await school_allows_free_tvet_for_exam(session, exam.id, school_id)
-        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+        expected_total = next(
+            (
+                row.expected_total
+                for row in (exam.eligible_schools or [])
+                if row.school_id == school_id
+            ),
+            None,
+        )
+        responses.append(
+            serialize_exam(
+                exam,
+                allows_free_tvet=allows_free,
+                expected_total=expected_total,
+            )
+        )
     return responses
 
 
@@ -187,12 +231,13 @@ async def list_all_exams(
     session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> list[RegistrationExamResponse]:
     """List all eligible school and private exams (open and closed) for this school."""
+    school_id = current_user.school_id
     stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .join(ExamEligibleSchool, ExamEligibleSchool.exam_id == RegistrationExam.id)
         .where(
-            ExamEligibleSchool.school_id == current_user.school_id,
+            ExamEligibleSchool.school_id == school_id,
         )
         .options(*exam_load_options())
         .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
@@ -202,11 +247,107 @@ async def list_all_exams(
 
     responses = []
     for exam in exams:
-        allows_free = await school_allows_free_tvet_for_exam(
-            session, exam.id, current_user.school_id
+        allows_free = await school_allows_free_tvet_for_exam(session, exam.id, school_id)
+        expected_total = next(
+            (
+                row.expected_total
+                for row in (exam.eligible_schools or [])
+                if row.school_id == school_id
+            ),
+            None,
         )
-        responses.append(serialize_exam(exam, allows_free_tvet=allows_free))
+        responses.append(
+            serialize_exam(
+                exam,
+                allows_free_tvet=allows_free,
+                expected_total=expected_total,
+            )
+        )
     return responses
+
+
+@router.get(
+    "/exams/{exam_id}/expectations",
+    response_model=SchoolExamExpectationsResponse,
+)
+async def get_exam_expectations(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolExamExpectationsResponse:
+    """Get optional expected registration counts and live progress for an exam."""
+    return await get_school_exam_expectations(
+        session, exam_id=exam_id, school_id=current_user.school_id
+    )
+
+
+@router.put(
+    "/exams/{exam_id}/expectations",
+    response_model=SchoolExamExpectationsResponse,
+)
+async def put_exam_expectations(
+    exam_id: int,
+    payload: SchoolExamExpectationsUpdate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolExamExpectationsResponse:
+    """Create, update, or clear optional expected registration counts for an exam."""
+    return await upsert_school_exam_expectations(
+        session,
+        exam_id=exam_id,
+        school_id=current_user.school_id,
+        payload=payload,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
+    "/exams/{exam_id}/duplicates",
+    response_model=DuplicateMatchesResponse,
+)
+async def list_exam_duplicate_candidates(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    same_programme: bool = Query(False, description="Require matching programme_id"),
+    same_dob: bool = Query(True, description="Require matching non-null date of birth"),
+    threshold: float = Query(
+        DEFAULT_NAME_THRESHOLD,
+        ge=0.5,
+        le=1.0,
+        description="Minimum name similarity ratio (0.5–1.0)",
+    ),
+) -> DuplicateMatchesResponse:
+    """Find likely duplicate registrations for this school on one exam (name similarity)."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School user is not associated with a school",
+        )
+
+    exam_stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam = (await session.execute(exam_stmt)).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+
+    if not await is_school_eligible_for_exam(session, exam_id, current_user.school_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your school is not eligible for this examination",
+        )
+
+    return await find_school_exam_duplicates(
+        session,
+        school_id=current_user.school_id,
+        exam=exam,
+        same_programme=same_programme,
+        same_dob=same_dob,
+        threshold=threshold,
+    )
 
 
 @router.get("/candidates", response_model=list[RegistrationCandidateResponse])
@@ -491,7 +632,8 @@ async def register_candidate(
             guardian_phone=candidate_data.guardian_phone,
             guardian_digital_address=candidate_data.guardian_digital_address,
             guardian_national_id=candidate_data.guardian_national_id,
-            registration_status=RegistrationStatus.PENDING,
+            registration_status=RegistrationStatus.INCOMPLETE,
+            fee_payment_status=default_fee_payment_status(registration_type),
         )
         session.add(new_candidate)
         await session.flush()
@@ -746,6 +888,9 @@ async def update_candidate(
                 )
                 session.add(subject_selection)
 
+        # Identity edit: re-open this candidate for duplicate matching
+        await clear_not_duplicate_marks_for_candidate(session, candidate.id)
+
         await session.commit()
         await session.refresh(candidate, ["subject_selections", "exam"])
 
@@ -803,171 +948,308 @@ async def update_candidate(
         )
 
 
-@router.post("/candidates/{candidate_id}/approve", response_model=RegistrationCandidateResponse, status_code=status.HTTP_200_OK)
-async def approve_candidate(
+@router.post(
+    "/candidates/not-duplicates",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def mark_candidates_not_duplicates(
+    payload: CandidateNotDuplicateCreate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> None:
+    """Mark a candidate pair as not duplicates (excluded from future scans until edited)."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School user is not associated with a school",
+        )
+    if payload.candidate_a_id == payload.candidate_b_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot mark a candidate as not a duplicate of itself",
+        )
+
+    a_id, b_id = sorted((payload.candidate_a_id, payload.candidate_b_id))
+    stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id.in_([a_id, b_id])
+    )
+    candidates = list((await session.execute(stmt)).scalars().all())
+    by_id = {c.id: c for c in candidates}
+    if a_id not in by_id or b_id not in by_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    for cid in (a_id, b_id):
+        if by_id[cid].school_id != current_user.school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Candidate does not belong to your school",
+            )
+
+    if by_id[a_id].registration_exam_id != by_id[b_id].registration_exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidates must belong to the same examination",
+        )
+
+    existing_stmt = select(RegistrationCandidateNotDuplicate).where(
+        RegistrationCandidateNotDuplicate.candidate_a_id == a_id,
+        RegistrationCandidateNotDuplicate.candidate_b_id == b_id,
+    )
+    existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+    if existing is None:
+        session.add(
+            RegistrationCandidateNotDuplicate(
+                school_id=current_user.school_id,
+                candidate_a_id=a_id,
+                candidate_b_id=b_id,
+                created_by_user_id=current_user.id,
+            )
+        )
+        await session.commit()
+
+
+@router.delete(
+    "/candidates/{candidate_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_candidate(
     candidate_id: int,
     session: DBSessionDep,
-    current_user: SchoolAdminDep,
-) -> RegistrationCandidateResponse:
-    """Approve a registration candidate."""
-    # Validate candidate exists and belongs to school
+    current_user: SchoolUserWithSchoolDep,
+) -> None:
+    """Hard-delete a school registration when open and unpaid (duplicate cleanup)."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School user is not associated with a school",
+        )
+
     candidate_stmt = (
         select(RegistrationCandidate)
         .where(RegistrationCandidate.id == candidate_id)
         .options(
-            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
-            selectinload(RegistrationCandidate.subject_selections),
+            selectinload(RegistrationCandidate.photo),
+            selectinload(RegistrationCandidate.exam).selectinload(
+                RegistrationExam.registration_period
+            ),
         )
     )
-    candidate_result = await session.execute(candidate_stmt)
-    candidate = candidate_result.scalar_one_or_none()
-
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
-    if current_user.school_id and candidate.school_id != current_user.school_id:
+    if candidate.school_id != current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Candidate does not belong to your school",
         )
 
-    # Check if candidate is already approved
-    if candidate.registration_status == RegistrationStatus.APPROVED:
+    if not candidate.exam:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Candidate is already approved",
+            detail="Cannot delete candidate: examination not found",
         )
 
-    # Check if candidate is in a valid status for approval
-    if candidate.registration_status not in (RegistrationStatus.PENDING, RegistrationStatus.DRAFT):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot approve candidate with status {candidate.registration_status.value}",
-        )
+    registration_open = await is_registration_open_for_school(
+        session, candidate.exam, current_user.school_id
+    )
+    blocked = removal_block_reason(candidate, registration_open=registration_open)
+    if blocked:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=blocked)
 
-    # Validate that registration meets approval requirements
-    is_valid, validation_errors = await can_approve_registration(session, candidate)
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Registration does not meet approval requirements: {'; '.join(validation_errors)}",
-        )
+    photo = candidate.photo
+    if photo is not None:
+        try:
+            await photo_storage_service.delete(photo.file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete photo file {photo.file_path}: {e}")
 
-    # Update registration status to APPROVED
-    candidate.registration_status = RegistrationStatus.APPROVED
-
-    try:
-        await session.commit()
-        await session.refresh(candidate, ["subject_selections", "exam"])
-
-        # Build exam response if available
-        exam_response = None
-        if candidate.exam:
-            exam_response = {
-                "id": candidate.exam.id,
-                "exam_id_main_system": candidate.exam.exam_id_main_system,
-                "exam_type": candidate.exam.exam_type,
-                "exam_series": candidate.exam.exam_series,
-                "year": candidate.exam.year,
-                "description": candidate.exam.description,
-                "exam_kind": (
-                    candidate.exam.exam_kind.value
-                    if hasattr(candidate.exam.exam_kind, "value")
-                    else str(candidate.exam.exam_kind)
-                ),
-                "allows_referral_registration": bool(candidate.exam.allows_referral_registration),
-                "registration_period": {
-                    "id": candidate.exam.registration_period.id,
-                    "registration_start_date": candidate.exam.registration_period.registration_start_date,
-                    "registration_end_date": candidate.exam.registration_period.registration_end_date,
-                    "is_active": candidate.exam.registration_period.is_active,
-                    "allows_bulk_registration": candidate.exam.registration_period.allows_bulk_registration,
-                    "allows_private_registration": candidate.exam.registration_period.allows_private_registration,
-                    "created_at": candidate.exam.registration_period.created_at,
-                    "updated_at": candidate.exam.registration_period.updated_at,
-                },
-                "created_at": candidate.exam.created_at,
-                "updated_at": candidate.exam.updated_at,
-            }
-
-        # Create response dict with subject selections
-        candidate_dict = {
-            "id": candidate.id,
-            "registration_exam_id": candidate.registration_exam_id,
-            "school_id": candidate.school_id,
-            "firstname": candidate.firstname,
-            "lastname": candidate.lastname,
-            "othername": candidate.othername,
-            "name": candidate.name,  # Computed property
-            "fullname": candidate.fullname,  # Computed property
-            "registration_number": candidate.registration_number,
-            "index_number": candidate.index_number,
-            "date_of_birth": candidate.date_of_birth,
-            "gender": candidate.gender,
-            "programme_code": candidate.programme_code,
-            "programme_id": candidate.programme_id,
-            "contact_email": candidate.contact_email,
-            "contact_phone": candidate.contact_phone,
-            "address": candidate.address,
-            "national_id": candidate.national_id,
-            "disability": get_enum_value(candidate.disability),
-            "registration_type": get_enum_value(candidate.registration_type),
-            "guardian_name": candidate.guardian_name,
-            "guardian_phone": candidate.guardian_phone,
-            "guardian_digital_address": candidate.guardian_digital_address,
-            "guardian_national_id": candidate.guardian_national_id,
-            "registration_status": candidate.registration_status,
-            "registration_date": candidate.registration_date,
-            "subject_selections": [
-                {
-                    "id": sel.id,
-                    "subject_id": sel.subject_id,
-                    "subject_code": sel.subject_code,
-                    "subject_name": sel.subject_name,
-                    "series": sel.series,
-                    "created_at": sel.created_at,
-                }
-                for sel in (candidate.subject_selections or [])
-            ],
-            "exam": exam_response,
-            "created_at": candidate.created_at,
-            "updated_at": candidate.updated_at,
-        }
-        return RegistrationCandidateResponse.model_validate(candidate_dict)
-    except HTTPException:
-        await session.rollback()
-        raise
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to approve candidate: {str(e)}",
-        )
+    await session.delete(candidate)
+    await session.commit()
 
 
-@router.post("/candidates/bulk", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
-async def bulk_upload_candidates(
-    exam_id: int = Form(...),
-    file: UploadFile = File(...),
-    default_choice_group_selection: str | None = Form(None, description="Optional JSON mapping of {choice_group_id: subject_code} for default selections"),
-    registration_type: str | None = Form(None, description="Default registration type (free_tvet or referral) to apply to all candidates"),
-    session: DBSessionDep = None,
-    current_user: SchoolUserWithSchoolDep = None,
-) -> BulkUploadResponse:
-    """Bulk upload candidates via CSV/Excel."""
-    from app.schemas.registration import BulkUploadError
-    from dateutil import parser as date_parser
+def _school_candidate_load_options():
+    """Eager loads needed for RegistrationCandidateResponse (avoids MissingGreenlet)."""
+    return (
+        selectinload(RegistrationCandidate.subject_selections),
+        selectinload(RegistrationCandidate.exam).options(*exam_load_options()),
+    )
 
-    if current_user.school_id is None:
+
+async def _get_school_candidate_or_404(
+    session: DBSessionDep,
+    candidate_id: int,
+    school_id: int | None,
+) -> RegistrationCandidate:
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id == candidate_id)
+        .options(*_school_candidate_load_options())
+    )
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    if school_id and candidate.school_id != school_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User must be associated with a school",
+            detail="Candidate does not belong to your school",
+        )
+    return candidate
+
+
+@router.post(
+    "/candidates/{candidate_id}/fee/paid",
+    response_model=RegistrationCandidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_candidate_fee_paid(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> RegistrationCandidateResponse:
+    """Mark a candidate's registration fee as paid and recompute completeness."""
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    try:
+        apply_fee_paid(candidate, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    await recompute_registration_status(session, candidate)
+    await session.commit()
+    # Re-load after commit so exam (+ nested) are available for response serialization
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    return RegistrationCandidateResponse.model_validate(candidate)
+
+
+@router.post(
+    "/candidates/{candidate_id}/fee/waived",
+    response_model=RegistrationCandidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_candidate_fee_waived(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> RegistrationCandidateResponse:
+    """Waive a candidate's registration fee and recompute completeness."""
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    try:
+        apply_fee_waived(candidate, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    await recompute_registration_status(session, candidate)
+    await session.commit()
+    candidate = await _get_school_candidate_or_404(
+        session, candidate_id, current_user.school_id
+    )
+    return RegistrationCandidateResponse.model_validate(candidate)
+
+
+@router.post(
+    "/candidates/fee/bulk",
+    response_model=list[RegistrationCandidateResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_update_candidate_fees(
+    payload: CandidateFeeBulkUpdate,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> list[RegistrationCandidateResponse]:
+    """Mark fees paid or waived for multiple candidates belonging to the school."""
+    action = (payload.action or "").strip().lower()
+    if action not in {"paid", "waived"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="action must be 'paid' or 'waived'",
         )
 
-    # Validate exam exists and registration is open
+    stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id.in_(payload.candidate_ids))
+        .options(*_school_candidate_load_options())
+    )
+    if current_user.school_id is not None:
+        stmt = stmt.where(RegistrationCandidate.school_id == current_user.school_id)
+
+    candidates = list((await session.execute(stmt)).scalars().unique().all())
+    found_ids = {c.id for c in candidates}
+    missing = [cid for cid in payload.candidate_ids if cid not in found_ids]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidates not found for this school: {missing}",
+        )
+
+    free_tvet_ids = [
+        c.id
+        for c in candidates
+        if (
+            c.registration_type.value
+            if hasattr(c.registration_type, "value")
+            else str(c.registration_type or "")
+        )
+        == RegistrationType.FREE_TVET.value
+    ]
+    if free_tvet_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Free TVET candidates do not require a registration fee. "
+                f"Remove these candidate ids: {free_tvet_ids}"
+            ),
+        )
+
+    for candidate in candidates:
+        try:
+            if action == "paid":
+                apply_fee_paid(candidate, user_id=current_user.id)
+            else:
+                apply_fee_waived(candidate, user_id=current_user.id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        await recompute_registration_status(session, candidate)
+
+    await session.commit()
+    reload_stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id.in_(payload.candidate_ids))
+        .options(*_school_candidate_load_options())
+    )
+    if current_user.school_id is not None:
+        reload_stmt = reload_stmt.where(
+            RegistrationCandidate.school_id == current_user.school_id
+        )
+    reloaded = list((await session.execute(reload_stmt)).scalars().unique().all())
+    by_id = {c.id: c for c in reloaded}
+    return [
+        RegistrationCandidateResponse.model_validate(by_id[cid])
+        for cid in payload.candidate_ids
+        if cid in by_id
+    ]
+
+
+async def _load_bulk_exam_for_school(
+    session: DBSessionDep,
+    exam_id: int,
+    school_id: int,
+) -> RegistrationExam:
     exam_stmt = (
         select(RegistrationExam)
-        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .join(
+            ExamRegistrationPeriod,
+            RegistrationExam.registration_period_id == ExamRegistrationPeriod.id,
+        )
         .where(RegistrationExam.id == exam_id)
         .options(selectinload(RegistrationExam.registration_period))
     )
@@ -977,538 +1259,355 @@ async def bulk_upload_candidates(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    if not await is_school_eligible_for_exam(session, exam_id, current_user.school_id):
+    if not await is_school_eligible_for_exam(session, exam_id, school_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your school is not eligible to register candidates for this examination",
         )
 
-    if not await is_registration_open_for_school(session, exam, current_user.school_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
+    if not await is_registration_open_for_school(session, exam, school_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration period is not open",
+        )
 
     if not exam.registration_period.allows_bulk_registration:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bulk registration is not allowed for this exam")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bulk registration is not allowed for this exam",
+        )
+    return exam
 
-    # Parse default choice group selection if provided
-    default_selections: dict[int, str] = {}
-    if default_choice_group_selection:
+
+_PHONE_LIKE_COLUMNS = {
+    "contact_phone",
+    "phone",
+    "guardian_phone",
+    "guardian phone",
+}
+
+
+def _excel_scalar_to_text(value: object, *, column: str | None = None) -> str | None:
+    """Convert a spreadsheet cell to text, preserving phone leading zeros when possible."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if hasattr(value, "isoformat"):
         try:
-            default_selections = json.loads(default_choice_group_selection)
-            # Convert string keys to int for choice_group_id
-            default_selections = {int(k): v for k, v in default_selections.items()}
-        except (json.JSONDecodeError, ValueError) as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid default_choice_group_selection format: {str(e)}"
-            )
+            if hasattr(value, "strftime"):
+                return value.strftime("%d/%m/%Y")
+            return str(value)
+        except Exception:
+            return str(value)
 
-    # Read and parse file
-    file_content = await file.read()
-    filename = file.filename or "unknown"
+    text: str
+    if isinstance(value, bool):
+        text = str(value)
+    elif isinstance(value, float):
+        if value != value:  # NaN
+            return None
+        text = str(int(value)) if value == int(value) else str(value)
+    elif isinstance(value, int):
+        text = str(value)
+    else:
+        text = str(value).strip()
+        if re.fullmatch(r"\d+\.0+", text):
+            text = text.split(".", 1)[0]
 
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+
+    col = (column or "").lower().strip()
+    if col in _PHONE_LIKE_COLUMNS:
+        digits = re.sub(r"[\s\-]", "", text)
+        # Excel numeric cells drop the leading 0 from Ghana numbers
+        if re.fullmatch(r"[2-9]\d{8}", digits):
+            return "0" + digits
+        return digits
+    return text
+
+
+def _parse_bulk_upload_file_to_rows(file_content: bytes, filename: str) -> list[dict]:
+    """Parse CSV/Excel bytes into normalized row dicts with row_number."""
     try:
-        if filename.endswith('.csv'):
-            # Try different encodings
+        if filename.endswith(".csv"):
             try:
-                text_content = file_content.decode('utf-8')
+                text_content = file_content.decode("utf-8")
             except UnicodeDecodeError:
-                text_content = file_content.decode('latin-1')
-
+                text_content = file_content.decode("latin-1")
             csv_reader = csv.DictReader(io.StringIO(text_content))
-            rows = list(csv_reader)
-
-            if not rows:
+            raw_rows = list(csv_reader)
+            if not raw_rows:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="CSV file is empty or has no data rows"
+                    detail="CSV file is empty or has no data rows",
                 )
-
-            # Convert to DataFrame for easier processing
-            df = pd.DataFrame(rows)
-        elif filename.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+            df = pd.DataFrame(raw_rows)
+        elif filename.endswith((".xlsx", ".xls")):
+            # Prefer string dtypes so text-formatted phones keep leading zeros
+            df = pd.read_excel(
+                io.BytesIO(file_content), engine="openpyxl", dtype=str
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File must be CSV or Excel format (.csv, .xlsx, .xls)"
+                detail="File must be CSV or Excel format (.csv, .xlsx, .xls)",
             )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error parsing file: {str(exc)}"
-        )
+            detail=f"Error parsing file: {str(exc)}",
+        ) from exc
 
-    # Normalize column names (strip whitespace, handle case insensitivity)
     df.columns = df.columns.str.strip()
     column_mapping = {col.lower(): col for col in df.columns}
-
-    # Required columns - check for either 'name' (backward compatibility) or 'firstname'/'lastname'
-    has_name = 'name' in column_mapping or 'name' in [col.lower() for col in df.columns]
-    has_firstname = 'firstname' in column_mapping or 'firstname' in [col.lower() for col in df.columns]
-    has_lastname = 'lastname' in column_mapping or 'lastname' in [col.lower() for col in df.columns]
-
+    # Drop helper/test-only columns
+    column_mapping = {
+        k: v for k, v in column_mapping.items() if k not in {"_test_note", "test_note"}
+    }
     missing_columns = []
-    if not has_name and not (has_firstname and has_lastname):
-        missing_columns.append('name (or firstname and lastname)')
-
+    if "firstname" not in column_mapping:
+        missing_columns.append("firstname")
+    if "lastname" not in column_mapping:
+        missing_columns.append("lastname")
     if missing_columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Missing required columns: {', '.join(missing_columns)}"
+            detail=f"Missing required columns: {', '.join(missing_columns)}",
         )
 
-    # Process each row
-    total_rows = len(df)
-    successful = 0
-    failed = 0
-    errors: list[BulkUploadError] = []
-
-    for idx, row in df.iterrows():
-        row_number = int(idx) + 2  # +2 because rows are 1-indexed and header is row 1
-
-        try:
-            # Extract data with normalized column names
-            def get_col(key: str, default=None):
-                key_lower = key.lower()
-                if key_lower in column_mapping:
-                    value = row[column_mapping[key_lower]]
-                    return value if pd.notna(value) else default
-                return default
-
-            # Parse name - support both old 'name' field and new firstname/lastname/othername fields
-            firstname = None
-            lastname = None
-            othername = None
-
-            # Try new format first (firstname, lastname, othername)
-            firstname_str = str(get_col('firstname', '')).strip()
-            lastname_str = str(get_col('lastname', '')).strip()
-            othername_str = str(get_col('othername', '')).strip()
-
-            if firstname_str and lastname_str:
-                # New format
-                firstname = firstname_str
-                lastname = lastname_str
-                if othername_str:
-                    othername = othername_str
-            else:
-                # Old format - parse name field
-                name = str(get_col('name', '')).strip()
-                if not name:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message="Name (or firstname and lastname) is required",
-                        field="name"
-                    ))
-                    failed += 1
-                    continue
-
-                # Split name: first word = firstname, second word = lastname, third word (if exists) = othername
-                name_parts = name.split()
-                if len(name_parts) >= 2:
-                    firstname = name_parts[0]
-                    lastname = name_parts[1]
-                    if len(name_parts) >= 3:
-                        othername = name_parts[2]
-                else:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message="Name must contain at least firstname and lastname",
-                        field="name"
-                    ))
-                    failed += 1
-                    continue
-
-            # Parse date_of_birth (required)
-            date_of_birth = None
-            dob_str = get_col('date_of_birth') or get_col('dob')
-            if dob_str:
-                try:
-                    if isinstance(dob_str, str):
-                        date_of_birth = date_parser.parse(dob_str).date()
-                    elif isinstance(dob_str, datetime):
-                        date_of_birth = dob_str.date()
-                    elif hasattr(dob_str, 'date'):
-                        date_of_birth = dob_str.date()
-                except Exception:
-                    date_of_birth = None
-
-            if date_of_birth is None:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message="Date of birth is required",
-                    field="date_of_birth",
-                ))
-                failed += 1
+    rows: list[dict] = []
+    for idx, series in df.iterrows():
+        row_number = int(idx) + 2
+        payload: dict = {"row_number": row_number}
+        for lower_key, original in column_mapping.items():
+            value = series[original]
+            if pd.isna(value):
                 continue
+            text = _excel_scalar_to_text(value, column=lower_key)
+            if text:
+                payload[lower_key] = text
+        rows.append(payload)
+    return rows
 
-            gender = get_col('gender')
-            if gender:
-                gender = str(gender).strip() or None
-            if not gender:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message="Gender is required",
-                    field="gender",
-                ))
-                failed += 1
-                continue
 
-            programme_code = get_col('programme_code') or get_col('programme')
-            if programme_code:
-                programme_code = str(programme_code).strip()
-
-            # Parse optional subjects (comma-separated subject codes)
-            optional_subjects_str = get_col('optional_subjects') or get_col('optional subjects')
-            optional_subject_codes = []
-            if optional_subjects_str:
-                optional_subject_codes = [s.strip() for s in str(optional_subjects_str).split(',') if s.strip()]
-
-            contact_email = get_col('contact_email') or get_col('email')
-            if contact_email:
-                contact_email = str(contact_email).strip() or None
-
-            contact_phone = get_col('contact_phone') or get_col('phone')
-            if contact_phone:
-                contact_phone = str(contact_phone).strip() or None
-
-            address = get_col('address')
-            if address:
-                address = str(address).strip() or None
-
-            national_id = get_col('national_id') or get_col('national id')
-            if national_id:
-                national_id = str(national_id).strip() or None
-
-            guardian_name = get_col('guardian_name') or get_col('guardian name')
-            if guardian_name:
-                guardian_name = str(guardian_name).strip() or None
-
-            guardian_phone = get_col('guardian_phone') or get_col('guardian phone')
-            if guardian_phone:
-                guardian_phone = str(guardian_phone).strip() or None
-
-            guardian_digital_address = get_col('guardian_digital_address') or get_col('guardian digital address') or get_col('guardian_digital_address')
-            if guardian_digital_address:
-                guardian_digital_address = str(guardian_digital_address).strip() or None
-
-            guardian_national_id = get_col('guardian_national_id') or get_col('guardian national id') or get_col('guardian_national_id')
-            if guardian_national_id:
-                guardian_national_id = str(guardian_national_id).strip() or None
-
-            disability = get_col('disability')
-            if disability:
-                disability = str(disability).strip() or None
-
-            file_registration_type = get_col('registration_type') or get_col('registration type')
-            if file_registration_type:
-                file_registration_type = str(file_registration_type).strip() or None
-
-            center_id_raw = get_col('school_id') or get_col('examination_center') or get_col('examination center') or get_col('center_id')
-            file_center_id = None
-            if center_id_raw is not None:
-                try:
-                    file_center_id = int(str(center_id_raw).strip())
-                except (TypeError, ValueError):
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=f"Invalid examination center id: {center_id_raw}",
-                        field="school_id",
-                    ))
-                    failed += 1
-                    continue
-
-            allows_free_tvet_bulk = await school_allows_free_tvet_for_exam(
-                session, exam_id, current_user.school_id
-            )
-            try:
-                if is_private_exam(exam):
-                    candidate_registration_type = validate_registration_type_for_exam(
-                        exam,
-                        file_registration_type or registration_type or RegistrationType.PRIVATE.value,
-                        is_school_registration=True,
-                    )
-                    center = await resolve_examination_center(
-                        session,
-                        school_id=file_center_id,
-                        registering_school_id=current_user.school_id,
-                    )
-                    candidate_school_id = center.id
-                else:
-                    default_type = (
-                        RegistrationType.FREE_TVET.value
-                        if allows_free_tvet_bulk
-                        else RegistrationType.REGULAR.value
-                    )
-                    candidate_registration_type = validate_registration_type_for_exam(
-                        exam,
-                        file_registration_type or registration_type or default_type,
-                        is_school_registration=True,
-                        allows_free_tvet=allows_free_tvet_bulk,
-                    )
-                    candidate_school_id = current_user.school_id
-            except HTTPException as exc:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message=str(exc.detail),
-                    field="registration_type",
-                ))
-                failed += 1
-                continue
-
-            # Programme is required
-            programme_id = None
-            if not programme_code:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message="Programme code is required",
-                    field="programme_code",
-                ))
-                failed += 1
-                continue
-
-            programme_stmt = select(Programme).where(Programme.code == programme_code)
-            programme_result = await session.execute(programme_stmt)
-            programme = programme_result.scalar_one_or_none()
-
-            if not programme:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message=f"Programme with code '{programme_code}' not found",
-                    field="programme_code",
-                ))
-                failed += 1
-                continue
-
-            assoc_stmt = select(school_programmes).where(
-                school_programmes.c.school_id == current_user.school_id,
-                school_programmes.c.programme_id == programme.id,
-            )
-            assoc_result = await session.execute(assoc_stmt)
-            if not assoc_result.first():
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message=f"Programme '{programme_code}' is not available for your school",
-                    field="programme_code",
-                ))
-                failed += 1
-                continue
-
-            programme_id = programme.id
-
-            selected_subject_ids: list[int] = []
-            is_private_bulk = candidate_registration_type == RegistrationType.PRIVATE.value
-            is_structured_bulk = candidate_registration_type in (
-                RegistrationType.FREE_TVET.value,
-                RegistrationType.REGULAR.value,
-            )
-            # Lenient types (referral/private) and private exams use subject_codes column
-            use_subject_codes_path = (
-                is_private_bulk
-                or is_private_exam(exam)
-                or candidate_registration_type == RegistrationType.REFERRAL.value
-            )
-
-            row_subject_error = False
-            if use_subject_codes_path:
-                subject_codes_str = get_col("subject_codes") or get_col("subject codes")
-                if not subject_codes_str:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=(
-                            "subject_codes column is required for referral/private "
-                            "registration. Provide comma-separated subject codes."
-                        ),
-                        field="subject_codes",
-                    ))
-                    failed += 1
-                    continue
-
-                subject_code_list = [
-                    code.strip()
-                    for code in str(subject_codes_str).split(",")
-                    if code.strip()
-                ]
-                for subject_code in subject_code_list:
-                    subject_stmt = select(Subject).where(Subject.original_code == subject_code)
-                    subject_result = await session.execute(subject_stmt)
-                    subject = subject_result.scalar_one_or_none()
-                    if not subject:
-                        subject_stmt = select(Subject).where(Subject.code == subject_code)
-                        subject_result = await session.execute(subject_stmt)
-                        subject = subject_result.scalar_one_or_none()
-
-                    if not subject:
-                        errors.append(BulkUploadError(
-                            row_number=row_number,
-                            error_message=(
-                                f"Subject not found: {subject_code}. "
-                                "Please use the subject's original code."
-                            ),
-                            field="subject_codes",
-                        ))
-                        row_subject_error = True
-                        break
-                    if subject.id not in selected_subject_ids:
-                        selected_subject_ids.append(subject.id)
-
-                if row_subject_error:
-                    failed += 1
-                    continue
-
-                for code in optional_subject_codes:
-                    subject_stmt = select(Subject).where(Subject.code == code.strip())
-                    subject_result = await session.execute(subject_stmt)
-                    subject = subject_result.scalar_one_or_none()
-                    if subject and subject.id not in selected_subject_ids:
-                        selected_subject_ids.append(subject.id)
-            else:
-                # Structured Regular/FreeTVET: auto-select cores + electives; apply choice groups
-                subjects_info = await get_programme_subjects_for_registration(
-                    session, programme_id
-                )
-                if is_structured_bulk:
-                    selected_subject_ids.extend(subjects_info["compulsory_core"])
-                    selected_subject_ids.extend(subjects_info["electives"])
-
-                choice_groups_col = get_col("optional_core_groups") or get_col("choice_groups")
-                csv_choice_groups: dict[int, str] = {}
-                if choice_groups_col:
-                    try:
-                        csv_choice_groups = json.loads(str(choice_groups_col))
-                        csv_choice_groups = {int(k): v for k, v in csv_choice_groups.items()}
-                    except (json.JSONDecodeError, ValueError):
-                        for group_id in subjects_info["optional_core_groups"].keys():
-                            col_value = get_col(f"choice_group_{group_id}")
-                            if col_value:
-                                csv_choice_groups[group_id] = str(col_value).strip()
-
-                for group_id, group_subject_ids in subjects_info["optional_core_groups"].items():
-                    selected_from_group = None
-
-                    if group_id in csv_choice_groups:
-                        subject_code = csv_choice_groups[group_id].strip()
-                        subject_stmt = select(Subject).where(Subject.code == subject_code)
-                        subject_result = await session.execute(subject_stmt)
-                        subject = subject_result.scalar_one_or_none()
-                        if subject and subject.id in group_subject_ids:
-                            selected_from_group = subject.id
-
-                    if not selected_from_group and optional_subject_codes:
-                        for code in optional_subject_codes:
-                            subject_stmt = select(Subject).where(Subject.code == code.strip())
-                            subject_result = await session.execute(subject_stmt)
-                            subject = subject_result.scalar_one_or_none()
-                            if subject and subject.id in group_subject_ids:
-                                selected_from_group = subject.id
-                                break
-
-                    if not selected_from_group and group_id in default_selections:
-                        default_code = str(default_selections[group_id]).strip()
-                        subject_stmt = select(Subject).where(Subject.code == default_code)
-                        subject_result = await session.execute(subject_stmt)
-                        subject = subject_result.scalar_one_or_none()
-                        if subject and subject.id in group_subject_ids:
-                            selected_from_group = subject.id
-
-                    if selected_from_group:
-                        selected_subject_ids.append(selected_from_group)
-
-            selected_subject_ids = list(set(selected_subject_ids))
-
-            is_valid, validation_errors = await validate_subject_selections(
-                session,
-                programme_id,
-                selected_subject_ids,
-                registration_type=candidate_registration_type,
-            )
-            if not is_valid:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message=(
-                        "Subject selections do not meet programme requirements: "
-                        f"{'; '.join(validation_errors)}"
-                    ),
-                    field="subjects",
-                ))
-                failed += 1
-                continue
-
-            registration_number = await generate_unique_registration_number(
-                session, exam_id, candidate_school_id, candidate_registration_type
-            )
-
-            # Create candidate
-            new_candidate = RegistrationCandidate(
-                registration_exam_id=exam_id,
-                school_id=candidate_school_id,
-                portal_user_id=current_user.id,
-                firstname=firstname,
-                lastname=lastname,
-                othername=othername,
-                registration_number=registration_number,
-                date_of_birth=date_of_birth,
-                gender=gender,
-                programme_code=programme_code,  # Keep for backward compatibility
-                programme_id=programme_id,
-                contact_email=contact_email,
-                contact_phone=contact_phone,
-                address=address,
-                national_id=national_id,
-                disability=disability,
-                registration_type=candidate_registration_type,
-                guardian_name=guardian_name,
-                guardian_phone=guardian_phone,
-                guardian_digital_address=guardian_digital_address,
-                guardian_national_id=guardian_national_id,
-                registration_status=RegistrationStatus.PENDING,
-            )
-            session.add(new_candidate)
-            await session.flush()
-
-            # Create subject selections
-            for subject_id in selected_subject_ids:
-                subject_stmt = select(Subject).where(Subject.id == subject_id)
-                subject_result = await session.execute(subject_stmt)
-                subject = subject_result.scalar_one_or_none()
-                if not subject:
-                    continue
-
-                subject_selection = RegistrationSubjectSelection(
-                    registration_candidate_id=new_candidate.id,
-                    subject_id=subject_id,
-                    subject_code=subject.code,
-                    subject_name=subject.name,
-                )
-                session.add(subject_selection)
-
-            successful += 1
-
-        except Exception as e:
-            errors.append(BulkUploadError(
-                row_number=row_number,
-                error_message=f"Error processing row: {str(e)}",
-                field=None
-            ))
-            failed += 1
-            continue
-
-    # Commit all successful candidates
-    try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
+@router.post("/candidates/bulk", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_candidates(
+    exam_id: int = Form(...),
+    file: UploadFile = File(...),
+    default_choice_group_selection: str | None = Form(None, description="Optional JSON mapping of {choice_group_id: subject_code} for default selections"),
+    registration_type: str | None = Form(None, description="Default registration type (free_tvet or referral) to apply to all candidates"),
+    dry_run: bool = Form(False, description="Validate only — do not create candidates"),
+    session: DBSessionDep = None,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> BulkUploadResponse:
+    """Bulk upload candidates via CSV/Excel (single-request path)."""
+    if current_user.school_id is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error committing candidates: {str(e)}"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
         )
 
-    return BulkUploadResponse(
-        total_rows=total_rows,
-        successful=successful,
-        failed=failed,
-        errors=errors
+    _ = default_choice_group_selection
+    exam = await _load_bulk_exam_for_school(session, exam_id, current_user.school_id)
+
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+    rows = _parse_bulk_upload_file_to_rows(file_content, filename)
+
+    return await process_bulk_candidate_rows(
+        session,
+        exam=exam,
+        current_user=current_user,
+        rows=rows,
+        default_registration_type=registration_type,
+        commit=not dry_run,
+        dry_run=dry_run,
     )
+
+
+@router.post(
+    "/candidates/bulk/parse",
+    response_model=BulkCandidateParseResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def parse_bulk_upload_file(
+    exam_id: int = Form(...),
+    file: UploadFile = File(...),
+    session: DBSessionDep = None,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> BulkCandidateParseResponse:
+    """Parse a CSV/Excel bulk file into row JSON for chunked upload."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+    await _load_bulk_exam_for_school(session, exam_id, current_user.school_id)
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+    rows = _parse_bulk_upload_file_to_rows(file_content, filename)
+    return BulkCandidateParseResponse(total_rows=len(rows), rows=rows)
+
+
+@router.post(
+    "/candidates/bulk/chunk",
+    response_model=BulkUploadResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_upload_candidates_chunk(
+    payload: BulkCandidateChunkRequest,
+    session: DBSessionDep = None,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> BulkUploadResponse:
+    """Process a chunk of candidate rows (JSON) for resilient bulk upload."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+    if not payload.rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No rows provided in this chunk",
+        )
+    if len(payload.rows) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chunk may contain at most 100 rows",
+        )
+
+    exam = await _load_bulk_exam_for_school(
+        session, payload.exam_id, current_user.school_id
+    )
+    rows = [row.model_dump(exclude_none=False) for row in payload.rows]
+    return await process_bulk_candidate_rows(
+        session,
+        exam=exam,
+        current_user=current_user,
+        rows=rows,
+        default_registration_type=payload.registration_type,
+        commit=not payload.dry_run,
+        dry_run=payload.dry_run,
+    )
+
+
+@router.post("/candidates/bulk/results-export")
+async def export_bulk_upload_results(
+    payload: BulkUploadResultsExportRequest,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> StreamingResponse:
+    """Download Excel of all submitted bulk rows with error_field / error_message."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+    if not payload.rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No rows to export",
+        )
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles.numbers import FORMAT_TEXT
+
+    errors_by_row: dict[int, list[tuple[str, str]]] = {}
+    for err in payload.errors:
+        errors_by_row.setdefault(err.row_number, []).append(
+            (err.field or "", err.error_message)
+        )
+
+    # Preserve column order from first row, exclude internal helpers
+    skip_keys = {"_test_note", "test_note", "error_field", "error_message"}
+    columns: list[str] = []
+    seen: set[str] = set()
+    for row in payload.rows:
+        for key in row.keys():
+            key_str = str(key)
+            if key_str in skip_keys or key_str in seen:
+                continue
+            seen.add(key_str)
+            columns.append(key_str)
+    if "row_number" in columns:
+        columns = ["row_number"] + [c for c in columns if c != "row_number"]
+    columns.extend(["error_field", "error_message"])
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Upload results"
+
+    header_font = Font(bold=True)
+    error_fill = PatternFill(start_color="FFEBEE", end_color="FFEBEE", fill_type="solid")
+    ok_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
+    header_fill = PatternFill(start_color="E3F2FD", end_color="E3F2FD", fill_type="solid")
+
+    for col_idx, name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=name)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for row_idx, row in enumerate(payload.rows, start=2):
+        row_number_raw = row.get("row_number")
+        try:
+            row_number = int(row_number_raw) if row_number_raw is not None else row_idx
+        except (TypeError, ValueError):
+            row_number = row_idx
+        row_errors = errors_by_row.get(row_number, [])
+        error_fields = "; ".join(f for f, _ in row_errors if f)
+        error_messages = "; ".join(m for _, m in row_errors if m)
+        has_error = bool(row_errors)
+
+        for col_idx, name in enumerate(columns, start=1):
+            if name == "error_field":
+                value = error_fields
+            elif name == "error_message":
+                value = error_messages
+            else:
+                raw = row.get(name)
+                value = "" if raw is None else str(raw)
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.number_format = FORMAT_TEXT
+            cell.fill = error_fill if has_error else ok_fill
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="bulk_upload_results.xlsx"'
+        },
+    )
+
+
+def _template_exam_context(
+    exam: RegistrationExam | None,
+) -> tuple[str | None, str | None, int | None, str | None, bool, str]:
+    """Return exam_series, exam_type, year, exam_kind, allows_referral, excel_filename."""
+    exam_series = None
+    exam_type = None
+    year = None
+    exam_kind = None
+    allows_referral = True
+    filename = "candidate_upload_template.xlsx"
+    if exam:
+        exam_series = exam.exam_series
+        exam_type = exam.exam_type
+        year = exam.year
+        exam_kind = exam.exam_kind.value if hasattr(exam.exam_kind, "value") else str(exam.exam_kind)
+        allows_referral = bool(exam.allows_referral_registration)
+        exam_type_safe = exam_type.replace(" ", "_").replace("/", "_")
+        exam_series_safe = exam_series.replace("/", "_") if exam_series else ""
+        if exam_series_safe:
+            filename = f"{year}_{exam_series_safe}_{exam_type_safe}.xlsx"
+        else:
+            filename = f"{year}_{exam_type_safe}.xlsx"
+    return exam_series, exam_type, year, exam_kind, allows_referral, filename
 
 
 @router.get("/candidates/template")
@@ -1519,36 +1618,18 @@ async def download_candidate_template(
 ) -> StreamingResponse:
     """Download Excel template for candidate bulk upload."""
     try:
-        exam_series = None
-        exam_type = None
-        year = None
-        filename = "candidate_upload_template.xlsx"
-
-        exam_kind = None
-        allows_referral = True
+        exam = None
         allows_free_tvet = False
         if exam_id:
-            # Get exam to determine exam series, type, and year
             exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
             exam_result = await session.execute(exam_stmt)
             exam = exam_result.scalar_one_or_none()
             if exam:
-                exam_series = exam.exam_series
-                exam_type = exam.exam_type
-                year = exam.year
-                exam_kind = exam.exam_kind.value if hasattr(exam.exam_kind, "value") else str(exam.exam_kind)
-                allows_referral = bool(exam.allows_referral_registration)
                 allows_free_tvet = await school_allows_free_tvet_for_exam(
                     session, exam_id, current_user.school_id
                 )
-                # Generate filename: {year}_{exam_series}_{exam_type}.xlsx
-                # Sanitize exam_type and exam_series for filename (replace spaces/special chars)
-                exam_type_safe = exam_type.replace(" ", "_").replace("/", "_")
-                exam_series_safe = exam_series.replace("/", "_") if exam_series else ""
-                if exam_series_safe:
-                    filename = f"{year}_{exam_series_safe}_{exam_type_safe}.xlsx"
-                else:
-                    filename = f"{year}_{exam_type_safe}.xlsx"
+
+        exam_series, _exam_type, _year, exam_kind, allows_referral, filename = _template_exam_context(exam)
 
         template_bytes = generate_candidate_template(
             exam_series=exam_series,
@@ -1565,6 +1646,50 @@ async def download_candidate_template(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.get("/candidates/template/instructions.pdf")
+async def download_candidate_template_instructions_pdf(
+    exam_id: int | None = Query(None, description="Optional exam ID for exam-specific instructions"),
+    session: DBSessionDep = None,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> StreamingResponse:
+    """Download PDF guide for candidate bulk upload."""
+    try:
+        exam = None
+        allows_free_tvet = False
+        if exam_id:
+            exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+            exam_result = await session.execute(exam_stmt)
+            exam = exam_result.scalar_one_or_none()
+            if exam:
+                allows_free_tvet = await school_allows_free_tvet_for_exam(
+                    session, exam_id, current_user.school_id
+                )
+
+        exam_series, exam_type, year, exam_kind, allows_referral, excel_filename = _template_exam_context(exam)
+        pdf_filename = "bulk_upload_instructions.pdf"
+        if excel_filename != "candidate_upload_template.xlsx":
+            pdf_filename = excel_filename.replace(".xlsx", "_instructions.pdf")
+
+        pdf_bytes = generate_bulk_upload_instructions_pdf(
+            exam_year=year,
+            exam_series=exam_series,
+            exam_type=exam_type,
+            exam_kind=exam_kind,
+            allows_referral_registration=allows_referral,
+            allows_free_tvet=allows_free_tvet,
+        )
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate instructions PDF: {str(e)}",
         )
 
 
@@ -1870,7 +1995,7 @@ async def get_school_dashboard(
         completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
             RegistrationCandidate.school_id == current_user.school_id,
             RegistrationCandidate.programme_id == programme.id,
-            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+            RegistrationCandidate.registration_status == RegistrationStatus.COMPLETE,
             school_type_filter,
         )
         completed_result = await session.execute(completed_candidates_stmt)
@@ -2248,6 +2373,8 @@ async def upload_candidate_photo(
         checksum=checksum,
     )
     session.add(db_photo)
+    await session.flush()
+    await recompute_registration_status(session, candidate, has_photo=True)
     await session.commit()
     await session.refresh(db_photo)
 
@@ -2600,6 +2727,8 @@ async def delete_candidate_photo(
 
     # Delete database record
     await session.delete(photo)
+    await session.flush()
+    await recompute_registration_status(session, candidate, has_photo=False)
     await session.commit()
 
 
@@ -2727,6 +2856,8 @@ async def bulk_upload_photos(
                 checksum=checksum,
             )
             session.add(db_photo)
+            await session.flush()
+            await recompute_registration_status(session, candidate, has_photo=True)
             await session.commit()
 
             successful += 1

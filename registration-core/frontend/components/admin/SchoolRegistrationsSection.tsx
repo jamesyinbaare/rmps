@@ -124,9 +124,9 @@ export function SchoolRegistrationsSection({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="APPROVED">Approved</SelectItem>
-              <SelectItem value="REJECTED">Rejected</SelectItem>
+              <SelectItem value="INCOMPLETE">Incomplete</SelectItem>
+              <SelectItem value="COMPLETE">Complete</SelectItem>
+              <SelectItem value="DRAFT">Draft</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -169,14 +169,18 @@ export function SchoolRegistrationsSection({
                       <TableCell>
                         <span
                           className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                            candidate.registration_status === "APPROVED"
+                            candidate.registration_status === "COMPLETE"
                               ? "bg-[var(--success)]/10 text-[var(--success)]"
-                              : candidate.registration_status === "REJECTED"
-                              ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
+                              : candidate.registration_status === "DRAFT"
+                              ? "bg-muted text-muted-foreground"
                               : "bg-[var(--warning)]/10 text-[var(--warning)]"
                           }`}
                         >
-                          {candidate.registration_status}
+                          {candidate.registration_status === "COMPLETE"
+                            ? "Complete"
+                            : candidate.registration_status === "DRAFT"
+                              ? "Draft"
+                              : "Incomplete"}
                         </span>
                       </TableCell>
                       <TableCell>

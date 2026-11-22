@@ -52,9 +52,15 @@ class Role(enum.IntEnum):
 
 class RegistrationStatus(enum.Enum):
     DRAFT = "DRAFT"
-    PENDING = "PENDING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
+    INCOMPLETE = "INCOMPLETE"
+    COMPLETE = "COMPLETE"
+
+
+class FeePaymentStatus(enum.Enum):
+    NOT_REQUIRED = "not_required"
+    UNPAID = "unpaid"
+    PAID = "paid"
+    WAIVED = "waived"
 
 
 class ExportStatus(enum.Enum):
@@ -305,7 +311,11 @@ class PortalUser(Base):
     school = relationship("School", back_populates="users")
     created_by = relationship("PortalUser", remote_side=[id], foreign_keys=[created_by_user_id])
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
-    registered_candidates = relationship("RegistrationCandidate", back_populates="portal_user")
+    registered_candidates = relationship(
+        "RegistrationCandidate",
+        back_populates="portal_user",
+        foreign_keys="RegistrationCandidate.portal_user_id",
+    )
     # user_permissions relationship will be defined after UserPermission class
 
 
@@ -349,6 +359,9 @@ class School(Base):
     programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
     result_blocks = relationship("ResultBlock", back_populates="school", cascade="all, delete-orphan")
     exam_eligibilities = relationship("ExamEligibleSchool", back_populates="school", cascade="all, delete-orphan")
+    programme_expectations = relationship(
+        "ExamSchoolProgrammeExpectation", back_populates="school", cascade="all, delete-orphan"
+    )
 
 
 class ProgrammeType(Base):
@@ -418,13 +431,44 @@ class ExamEligibleSchool(Base):
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
     # Per-exam Free TVET gate: when true, school may only use free_tvet (+ referral); when false, regular (+ referral)
     allows_free_tvet = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Optional school self-declaration of expected registration volume
+    expected_total = Column(Integer, nullable=True)
+    expected_declared_at = Column(DateTime, nullable=True)
+    expected_declared_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     exam = relationship("RegistrationExam", back_populates="eligible_schools")
     school = relationship("School", back_populates="exam_eligibilities")
+    expected_declared_by = relationship("PortalUser", foreign_keys=[expected_declared_by_user_id])
 
     __table_args__ = (
         UniqueConstraint("exam_id", "school_id", name="uq_exam_eligible_school"),
+    )
+
+
+class ExamSchoolProgrammeExpectation(Base):
+    """Optional per-programme expected candidate count for a school×exam."""
+
+    __tablename__ = "exam_school_programme_expectations"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="CASCADE"), nullable=False, index=True)
+    expected_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="programme_expectations")
+    school = relationship("School", back_populates="programme_expectations")
+    programme = relationship("Programme")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "exam_id", "school_id", "programme_id", name="uq_exam_school_programme_expectation"
+        ),
     )
 
 
@@ -515,6 +559,9 @@ class RegistrationExam(Base):
     eligible_schools = relationship(
         "ExamEligibleSchool", back_populates="exam", cascade="all, delete-orphan"
     )
+    programme_expectations = relationship(
+        "ExamSchoolProgrammeExpectation", back_populates="exam", cascade="all, delete-orphan"
+    )
     late_registration_windows = relationship(
         "ExamLateRegistrationWindow", back_populates="exam", cascade="all, delete-orphan"
     )
@@ -574,7 +621,23 @@ class RegistrationCandidate(Base):
     guardian_phone = Column(String(50), nullable=True)
     guardian_digital_address = Column(String(50), nullable=True)  # Ghana digital address format
     guardian_national_id = Column(String(50), nullable=True)
-    registration_status = Column(Enum(RegistrationStatus), default=RegistrationStatus.PENDING, nullable=False, index=True)
+    registration_status = Column(
+        Enum(RegistrationStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        default=RegistrationStatus.INCOMPLETE,
+        nullable=False,
+        index=True,
+    )
+    fee_payment_status = Column(
+        Enum(FeePaymentStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        default=FeePaymentStatus.UNPAID,
+        nullable=False,
+        index=True,
+        server_default="unpaid",
+    )
+    fee_paid_at = Column(DateTime, nullable=True)
+    fee_paid_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     registration_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     total_paid_amount = Column(Numeric(10, 2), default=0, nullable=False)  # Track total amount paid across all payments
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -596,7 +659,12 @@ class RegistrationCandidate(Base):
 
     exam = relationship("RegistrationExam", back_populates="candidates")
     school = relationship("School", back_populates="candidates")
-    portal_user = relationship("PortalUser", back_populates="registered_candidates")
+    portal_user = relationship(
+        "PortalUser",
+        back_populates="registered_candidates",
+        foreign_keys=[portal_user_id],
+    )
+    fee_paid_by = relationship("PortalUser", foreign_keys=[fee_paid_by_user_id])
     programme = relationship("Programme", back_populates="candidates")
     subject_selections = relationship("RegistrationSubjectSelection", back_populates="candidate", cascade="all, delete-orphan")
     photo = relationship("RegistrationCandidatePhoto", back_populates="candidate", uselist=False, cascade="all, delete-orphan")
@@ -604,6 +672,34 @@ class RegistrationCandidate(Base):
     result_blocks = relationship("ResultBlock", back_populates="candidate", cascade="all, delete-orphan")
     invoice = relationship("Invoice", uselist=False, back_populates="registration_candidate")
     payments = relationship("Payment", back_populates="registration_candidate")
+
+
+class RegistrationCandidateNotDuplicate(Base):
+    """School-marked pair of candidates that should not be treated as duplicates."""
+
+    __tablename__ = "registration_candidate_not_duplicates"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_a_id = Column(
+        Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_b_id = Column(
+        Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    school = relationship("School")
+    candidate_a = relationship("RegistrationCandidate", foreign_keys=[candidate_a_id])
+    candidate_b = relationship("RegistrationCandidate", foreign_keys=[candidate_b_id])
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("candidate_a_id", "candidate_b_id", name="uq_candidate_not_duplicate_pair"),
+    )
 
 
 class RegistrationSubjectSelection(Base):
