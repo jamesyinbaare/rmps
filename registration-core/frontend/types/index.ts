@@ -129,6 +129,7 @@ export interface RegistrationSubjectSelection {
   subject_name: string;
   series: number | null;
   created_at: string;
+  subject_type?: "CORE" | "ELECTIVE" | null;
 }
 
 export interface RegistrationCandidate {

@@ -19,7 +19,6 @@ from app.models import (
     RegistrationSubjectSelection,
     RegistrationType,
     Subject,
-    school_programmes,
 )
 from app.schemas.registration import BulkUploadError, BulkUploadResponse
 from app.services.exam_eligibility_service import school_allows_free_tvet_for_exam
@@ -29,6 +28,7 @@ from app.services.exam_kind_service import (
     validate_registration_type_for_exam,
 )
 from app.services.registration_completeness import default_fee_payment_status
+from app.services.school_programme_service import ensure_school_programme
 from app.services.subject_selection import (
     get_programme_subjects_for_registration,
     validate_subject_selections,
@@ -189,7 +189,7 @@ async def process_bulk_candidate_rows(
 
     # Per-request caches
     programme_by_code: dict[str, Programme | None] = {}
-    school_programme_ok: dict[int, bool] = {}
+    school_programme_ensured: set[int] = set()
     subjects_info_by_programme: dict[int, dict[str, Any]] = {}
     subject_by_code: dict[str, Subject | None] = {}
     subject_by_original_code: dict[str, Subject | None] = {}
@@ -201,16 +201,12 @@ async def process_bulk_candidate_rows(
             programme_by_code[code] = result.scalar_one_or_none()
         return programme_by_code[code]
 
-    async def programme_available(programme_id: int) -> bool:
-        if programme_id not in school_programme_ok:
-            result = await session.execute(
-                select(school_programmes).where(
-                    school_programmes.c.school_id == school_id,
-                    school_programmes.c.programme_id == programme_id,
-                )
-            )
-            school_programme_ok[programme_id] = result.first() is not None
-        return school_programme_ok[programme_id]
+    async def ensure_programme_for_school(programme_id: int) -> None:
+        if programme_id in school_programme_ensured:
+            return
+        if not dry_run:
+            await ensure_school_programme(session, school_id, programme_id)
+        school_programme_ensured.add(programme_id)
 
     async def get_subjects_info(programme_id: int) -> dict[str, Any]:
         if programme_id not in subjects_info_by_programme:
@@ -506,18 +502,7 @@ async def process_bulk_candidate_rows(
                 failed += 1
                 continue
 
-            if not await programme_available(programme.id):
-                errors.append(
-                    BulkUploadError(
-                        row_number=row_number,
-                        error_message=(
-                            f'Programme "{programme_code}" is not available for your school.'
-                        ),
-                        field="programme_code",
-                    )
-                )
-                failed += 1
-                continue
+            await ensure_programme_for_school(programme.id)
 
             programme_id = programme.id
             selected_subject_ids: list[int] = []

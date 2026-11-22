@@ -252,8 +252,9 @@
       <tr>
         <td class="col-name"><span class="tag">Required</span><br />programme_code</td>
         <td>
-          Official programme code linked to your school for this exam
-          (alias: <code>programme</code>). Wrong or unavailable codes cause the row to fail.
+          Official programme code enabled for this exam
+          (alias: <code>programme</code>). Wrong or unknown codes cause the row to fail.
+          If the programme is not yet on your school list, it is added automatically when the row succeeds.
           {% if example_programmes %}
           <br /><br />
           <strong>Examples used in the template:</strong>
@@ -262,7 +263,7 @@
             <li><code>{{ prog.code }}</code> — {{ prog.name }}</li>
             {% endfor %}
           </ul>
-          Use the codes your school is actually assigned for this exam.
+          Use valid programme codes enabled for this exam.
           {% endif %}
         </td>
       </tr>
@@ -460,7 +461,7 @@
     {% if not is_private %}
     <li>Leaving <code>option</code> blank on free_tvet/fee_paying rows</li>
     {% endif %}
-    <li>Using a programme code not assigned to your school</li>
+    <li>Using a programme code that does not exist or is not enabled for this exam</li>
   </ul>
 
   <p class="muted">

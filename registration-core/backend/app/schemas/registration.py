@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, computed_field
 from uuid import UUID
@@ -162,6 +163,7 @@ class RegistrationSubjectSelectionResponse(BaseModel):
     subject_name: str
     series: int | None
     created_at: datetime
+    subject_type: Literal["CORE", "ELECTIVE"] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
