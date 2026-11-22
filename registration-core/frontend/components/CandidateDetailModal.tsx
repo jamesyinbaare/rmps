@@ -606,6 +606,19 @@ export function CandidateDetailModal({
   if (!candidate) return null;
 
   const subjectSelections = candidate.subject_selections || [];
+  const orderedSubjects = [...subjectSelections].sort((a, b) => {
+    const aElective = a.subject_type === "ELECTIVE" ? 1 : 0;
+    const bElective = b.subject_type === "ELECTIVE" ? 1 : 0;
+    if (aElective !== bElective) return aElective - bElective;
+    const codeCmp = a.subject_code.localeCompare(b.subject_code, undefined, {
+      sensitivity: "base",
+    });
+    if (codeCmp !== 0) return codeCmp;
+    return (a.subject_id ?? a.id) - (b.subject_id ?? b.id);
+  });
+  const subjectSplitMid = Math.ceil(orderedSubjects.length / 2);
+  const subjectColumnOne = orderedSubjects.slice(0, subjectSplitMid);
+  const subjectColumnTwo = orderedSubjects.slice(subjectSplitMid);
 
   const hasPhoto = !!photo;
   const feeStatus = candidate.fee_payment_status || "unpaid";
@@ -625,12 +638,12 @@ export function CandidateDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[95vh] w-[95vw] max-w-6xl flex-col overflow-hidden border-border p-0 shadow-none">
-        <DialogHeader className="sticky top-0 z-10 border-b border-border bg-card px-6 pb-4 pt-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex min-w-0 flex-1 items-center gap-4">
+      <DialogContent className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-0 overflow-hidden border-border p-0 shadow-none">
+        <DialogHeader className="shrink-0 border-b border-border bg-card px-4 pb-2.5 pr-12 pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               {photo && photoUrl ? (
-                <div className="relative h-16 w-14 flex-shrink-0 overflow-hidden rounded-md border border-border">
+                <div className="relative h-12 w-10 flex-shrink-0 overflow-hidden rounded-md border border-border">
                   <img
                     src={photoUrl}
                     alt={candidate.name}
@@ -643,16 +656,16 @@ export function CandidateDetailModal({
                   />
                 </div>
               ) : (
-                <div className="flex h-16 w-14 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-                  <User className="h-7 w-7 text-muted-foreground" />
+                <div className="flex h-12 w-10 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+                  <User className="h-5 w-5 text-muted-foreground" />
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <DialogTitle className="truncate text-[22px] font-medium tracking-[-0.02em]">
+                <DialogTitle className="truncate text-lg font-medium tracking-[-0.02em]">
                   {candidate.name}
                 </DialogTitle>
-                <DialogDescription className="mt-1 flex items-center gap-3 flex-wrap">
-                  <span className="flex items-center gap-2">
+                <DialogDescription className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="flex items-center gap-1.5">
                     Registration: <span className="font-mono">{candidate.registration_number}</span>
                     <Button
                       variant="ghost"
@@ -665,13 +678,13 @@ export function CandidateDetailModal({
                     </Button>
                   </span>
                   {candidate.programme_code && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs font-medium">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium">
                       <GraduationCap className="h-3 w-3" />
                       {candidate.programme_code}
                     </span>
                   )}
                   <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${registrationStatusBadgeClass(
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${registrationStatusBadgeClass(
                       candidate.registration_status
                     )}`}
                   >
@@ -683,10 +696,11 @@ export function CandidateDetailModal({
                 </DialogDescription>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex flex-shrink-0 items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
+                className="h-8 w-8"
                 onClick={() => setShowKeyboardShortcuts(!showKeyboardShortcuts)}
                 title="Keyboard shortcuts"
               >
@@ -694,7 +708,7 @@ export function CandidateDetailModal({
               </Button>
             </div>
           </div>
-          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+          <div className="mt-2 flex flex-wrap gap-2.5 text-xs">
             <span
               className={
                 hasPhoto
@@ -728,12 +742,12 @@ export function CandidateDetailModal({
 
         {/* Keyboard Shortcuts Info */}
         {showKeyboardShortcuts && (
-          <div className="border-b border-border bg-muted/30 px-6 py-3">
+          <div className="shrink-0 border-b border-border bg-muted/30 px-4 py-2">
             <div className="flex items-start gap-2 text-sm">
               <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
-              <div className="flex-1">
-                <div className="mb-1 text-sm font-semibold">Keyboard shortcuts</div>
-                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <div className="min-w-0 flex-1">
+                <div className="mb-0.5 text-xs font-semibold">Keyboard shortcuts</div>
+                <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
                   <div>← → Navigate candidates</div>
                   <div>Esc Close modal</div>
                   <div>Ctrl+K Toggle shortcuts</div>
@@ -751,20 +765,22 @@ export function CandidateDetailModal({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 pb-4">
-          <div className="space-y-6 py-4">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-3">
+          <div className="space-y-3 py-2.5">
             {/* Photo and Candidate Information - Side by Side */}
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
               <section className="min-w-0 flex-1">
                 <SectionLabel
+                  className="mb-2"
                   action={
                     !editingBio && !isExamClosed ? (
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-7"
                         onClick={() => setEditingBio(true)}
                       >
-                        <Edit2 className="mr-2 h-4 w-4" />
+                        <Edit2 className="mr-1.5 h-3.5 w-3.5" />
                         Edit bio
                       </Button>
                     ) : undefined
@@ -772,11 +788,11 @@ export function CandidateDetailModal({
                 >
                   Candidate information
                 </SectionLabel>
-                <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                <div className="space-y-3 rounded-lg border border-border bg-card p-3 shadow-none">
                   {editingBio ? (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-firstname">First Name *</Label>
                           <Input
                             id="edit-firstname"
@@ -786,7 +802,7 @@ export function CandidateDetailModal({
                             required
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-lastname">Last Name *</Label>
                           <Input
                             id="edit-lastname"
@@ -797,7 +813,7 @@ export function CandidateDetailModal({
                           />
                         </div>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="edit-othername">Other Name (Optional)</Label>
                         <Input
                           id="edit-othername"
@@ -806,8 +822,8 @@ export function CandidateDetailModal({
                           disabled={savingBio}
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-dob">Date of Birth *</Label>
                           <Input
                             id="edit-dob"
@@ -818,7 +834,7 @@ export function CandidateDetailModal({
                             required
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-gender">Gender *</Label>
                           <Select
                             value={bioData.gender}
@@ -836,8 +852,8 @@ export function CandidateDetailModal({
                           </Select>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-email">Contact Email</Label>
                           <Input
                             id="edit-email"
@@ -847,7 +863,7 @@ export function CandidateDetailModal({
                             disabled={savingBio}
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           <Label htmlFor="edit-phone">Contact Phone</Label>
                           <Input
                             id="edit-phone"
@@ -857,7 +873,7 @@ export function CandidateDetailModal({
                           />
                         </div>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="edit-address">Address</Label>
                         <Input
                           id="edit-address"
@@ -866,7 +882,7 @@ export function CandidateDetailModal({
                           disabled={savingBio}
                         />
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="edit-national-id">National ID</Label>
                         <Input
                           id="edit-national-id"
@@ -875,7 +891,7 @@ export function CandidateDetailModal({
                           disabled={savingBio}
                         />
                       </div>
-                      <div className="flex items-center gap-2 pt-2">
+                      <div className="flex items-center gap-2 pt-1">
                         <Button
                           onClick={handleSaveBio}
                           disabled={
@@ -911,12 +927,12 @@ export function CandidateDetailModal({
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <div className="space-y-1 md:col-span-2">
+                    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                      <div className="space-y-0.5 md:col-span-2">
                         <div className="text-xs text-muted-foreground">Full Name</div>
                         <div className="text-sm font-medium">{candidate.name}</div>
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Calendar className="h-3 w-3" />
                           Date of Birth
@@ -934,7 +950,7 @@ export function CandidateDetailModal({
                           )}
                         </div>
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <User className="h-3 w-3" />
                           Gender
@@ -946,7 +962,7 @@ export function CandidateDetailModal({
                         </div>
                       </div>
                       {candidate.programme_code && (
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
                             <GraduationCap className="h-3 w-3" />
                             Programme Code
@@ -955,30 +971,30 @@ export function CandidateDetailModal({
                         </div>
                       )}
                       {candidate.contact_email && (
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="text-xs text-muted-foreground">Contact Email</div>
-                          <div className="text-sm font-medium">{candidate.contact_email}</div>
+                          <div className="truncate text-sm font-medium">{candidate.contact_email}</div>
                         </div>
                       )}
                       {candidate.contact_phone && (
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="text-xs text-muted-foreground">Contact Phone</div>
                           <div className="text-sm font-medium">{candidate.contact_phone}</div>
                         </div>
                       )}
                       {candidate.address && (
-                        <div className="space-y-1 md:col-span-2">
+                        <div className="space-y-0.5 md:col-span-2">
                           <div className="text-xs text-muted-foreground">Address</div>
                           <div className="text-sm font-medium">{candidate.address}</div>
                         </div>
                       )}
                       {candidate.national_id && (
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="text-xs text-muted-foreground">National ID</div>
                           <div className="text-sm font-medium">{candidate.national_id}</div>
                         </div>
                       )}
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Clock className="h-3 w-3" />
                           Registration Date
@@ -987,7 +1003,7 @@ export function CandidateDetailModal({
                           {new Date(candidate.registration_date).toLocaleDateString()}
                         </div>
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="text-xs text-muted-foreground">Index Number</div>
                         <div className="font-mono text-sm font-medium">
                           {candidate.index_number || (
@@ -1000,15 +1016,15 @@ export function CandidateDetailModal({
                 </div>
               </section>
 
-              <section className="w-full shrink-0 lg:w-56">
-                <SectionLabel>Photo</SectionLabel>
-                <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+              <section className="w-full shrink-0 lg:w-40">
+                <SectionLabel className="mb-2">Photo</SectionLabel>
+                <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-card p-3 shadow-none">
                   {loadingPhoto ? (
-                    <Skeleton className="h-48 w-48 rounded-lg" />
+                    <Skeleton className="h-[9.5rem] w-[7.75rem] rounded-md" />
                   ) : photo && photoUrl ? (
                     <>
                       <div
-                        className="group relative mx-auto h-48 w-48 cursor-pointer overflow-hidden rounded-lg border-2 border-primary bg-muted transition-shadow hover:shadow-md"
+                        className="group relative mx-auto h-[9.5rem] w-[7.75rem] cursor-pointer overflow-hidden rounded-md border border-primary bg-muted transition-shadow hover:shadow-md"
                         onClick={() => {
                           if (photoUrl) window.open(photoUrl, "_blank");
                         }}
@@ -1019,40 +1035,40 @@ export function CandidateDetailModal({
                           className="pointer-events-none h-full w-full object-cover"
                         />
                         <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/10">
-                          <ZoomIn className="h-8 w-8 text-white opacity-0 transition-opacity group-hover:opacity-100" />
+                          <ZoomIn className="h-6 w-6 text-white opacity-0 transition-opacity group-hover:opacity-100" />
                         </div>
-                        <div className="absolute right-2 top-2">
-                          <Badge className="bg-primary text-xs">Active</Badge>
+                        <div className="absolute right-1.5 top-1.5">
+                          <Badge className="bg-primary px-1.5 py-0 text-[10px]">Active</Badge>
                         </div>
                       </div>
                       {!isExamClosed && (
                         <Button
                           variant="outline"
                           size="sm"
-                          className="w-full"
+                          className="h-7 w-full"
                           onClick={() => setUploadDialogOpen(true)}
                         >
-                          <Upload className="mr-2 h-4 w-4" />
+                          <Upload className="mr-1.5 h-3.5 w-3.5" />
                           Change Photo
                         </Button>
                       )}
                     </>
                   ) : (
                     <>
-                      <div className="mx-auto flex w-48 flex-col items-center justify-center text-muted-foreground">
-                        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-muted">
-                          <User className="h-12 w-12" />
+                      <div className="mx-auto flex flex-col items-center justify-center text-muted-foreground">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                          <User className="h-8 w-8" />
                         </div>
-                        <p className="mt-2 text-center text-xs">No photo available</p>
+                        <p className="mt-1.5 text-center text-xs">No photo available</p>
                       </div>
                       {!isExamClosed && (
                         <Button
                           variant="outline"
                           size="sm"
-                          className="w-full"
+                          className="h-7 w-full"
                           onClick={() => setUploadDialogOpen(true)}
                         >
-                          <Upload className="mr-2 h-4 w-4" />
+                          <Upload className="mr-1.5 h-3.5 w-3.5" />
                           Upload Photo
                         </Button>
                       )}
@@ -1064,14 +1080,16 @@ export function CandidateDetailModal({
 
             <section>
               <SectionLabel
+                className="mb-2"
                 action={
                   !editingGuardian && !isExamClosed ? (
                     <Button
                       variant="outline"
                       size="sm"
+                      className="h-7"
                       onClick={() => setEditingGuardian(true)}
                     >
-                      <Edit2 className="mr-2 h-4 w-4" />
+                      <Edit2 className="mr-1.5 h-3.5 w-3.5" />
                       {candidate.guardian_name || candidate.guardian_phone
                         ? "Edit guardian"
                         : "Add guardian"}
@@ -1081,10 +1099,10 @@ export function CandidateDetailModal({
               >
                 Guardian information
               </SectionLabel>
-              <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+              <div className="space-y-3 rounded-lg border border-border bg-card p-3 shadow-none">
                 {editingGuardian ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
                       <Label htmlFor="edit-guardian-name">Guardian Name</Label>
                       <Input
                         id="edit-guardian-name"
@@ -1096,8 +1114,8 @@ export function CandidateDetailModal({
                         placeholder="Enter guardian full name"
                       />
                     </div>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="edit-guardian-phone">Guardian Phone</Label>
                         <Input
                           id="edit-guardian-phone"
@@ -1109,7 +1127,7 @@ export function CandidateDetailModal({
                           placeholder="+1234567890"
                         />
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <Label htmlFor="edit-guardian-digital-address">Digital Address</Label>
                         <Input
                           id="edit-guardian-digital-address"
@@ -1125,7 +1143,7 @@ export function CandidateDetailModal({
                         />
                       </div>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       <Label htmlFor="edit-guardian-national-id">Guardian National ID</Label>
                       <Input
                         id="edit-guardian-national-id"
@@ -1140,7 +1158,7 @@ export function CandidateDetailModal({
                         placeholder="GHA-123456789-1"
                       />
                     </div>
-                    <div className="flex items-center gap-2 pt-2">
+                    <div className="flex items-center gap-2 pt-1">
                       <Button onClick={handleSaveGuardian} disabled={savingGuardian} size="sm">
                         {savingGuardian ? (
                           <>
@@ -1166,27 +1184,27 @@ export function CandidateDetailModal({
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                     {candidate.guardian_name ? (
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="text-xs text-muted-foreground">Guardian Name</div>
                         <div className="text-sm font-medium">{candidate.guardian_name}</div>
                       </div>
                     ) : (
-                      <div className="space-y-1 md:col-span-2">
+                      <div className="space-y-0.5 md:col-span-2">
                         <div className="text-xs italic text-muted-foreground">
                           No guardian information available
                         </div>
                       </div>
                     )}
                     {candidate.guardian_phone && (
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="text-xs text-muted-foreground">Guardian Phone</div>
                         <div className="text-sm font-medium">{candidate.guardian_phone}</div>
                       </div>
                     )}
                     {candidate.guardian_digital_address && (
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="text-xs text-muted-foreground">Digital Address</div>
                         <div className="text-sm font-medium">
                           {candidate.guardian_digital_address}
@@ -1194,7 +1212,7 @@ export function CandidateDetailModal({
                       </div>
                     )}
                     {candidate.guardian_national_id && (
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <div className="text-xs text-muted-foreground">Guardian National ID</div>
                         <div className="text-sm font-medium">
                           {candidate.guardian_national_id}
@@ -1208,14 +1226,16 @@ export function CandidateDetailModal({
 
             <section>
               <SectionLabel
+                className="mb-2"
                 action={
                   !editingSubjects && !isExamClosed ? (
                     <Button
                       variant="outline"
                       size="sm"
+                      className="h-7"
                       onClick={startEditingSubjects}
                     >
-                      <Edit2 className="mr-2 h-4 w-4" />
+                      <Edit2 className="mr-1.5 h-3.5 w-3.5" />
                       {candidate?.programme_id ? "Edit subjects" : "Add programme & subjects"}
                     </Button>
                   ) : undefined
@@ -1226,9 +1246,9 @@ export function CandidateDetailModal({
 
               {!editingSubjects ? (
                 subjectSelections.length === 0 ? (
-                  <div className="rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
-                    <div className="py-8 text-center text-sm text-muted-foreground">
-                      <BookOpen className="mx-auto mb-3 h-12 w-12 opacity-50" />
+                  <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                    <div className="py-4 text-center text-sm text-muted-foreground">
+                      <BookOpen className="mx-auto mb-2 h-8 w-8 opacity-50" />
                       <p>
                         {candidate?.programme_id
                           ? "No subjects registered for this candidate."
@@ -1238,10 +1258,10 @@ export function CandidateDetailModal({
                         <Button
                           variant="outline"
                           size="sm"
-                          className="mt-4"
+                          className="mt-3 h-7"
                           onClick={startEditingSubjects}
                         >
-                          <Edit2 className="mr-2 h-4 w-4" />
+                          <Edit2 className="mr-1.5 h-3.5 w-3.5" />
                           {candidate?.programme_id
                             ? "Add subjects"
                             : "Add programme & subjects"}
@@ -1250,9 +1270,9 @@ export function CandidateDetailModal({
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                  <div className="space-y-2 rounded-lg border border-border bg-card p-3 shadow-none">
                     {candidate.exam && (
-                      <div>
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="text-sm font-medium">
                           {candidate.exam.exam_type}
                           {candidate.exam.exam_series
@@ -1260,41 +1280,69 @@ export function CandidateDetailModal({
                             : ""}{" "}
                           {candidate.exam.year}
                         </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {subjectSelections.length}{" "}
                           {subjectSelections.length === 1 ? "subject" : "subjects"}
                         </p>
                       </div>
                     )}
-                    <div className="space-y-3">
-                      {subjectSelections.map((subject: RegistrationSubjectSelection) => (
-                        <div
-                          key={subject.id}
-                          className="flex items-center justify-between rounded-md border border-border px-3 py-2 transition-colors hover:bg-muted/50"
-                        >
-                          <div className="flex-1">
-                            <div className="text-sm font-medium">{subject.subject_name}</div>
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              Code: {subject.subject_code}
-                              {subject.series && ` • Series ${subject.series}`}
-                            </div>
+                    <div
+                      className={
+                        subjectColumnTwo.length > 0
+                          ? "grid grid-cols-1 gap-3 sm:grid-cols-2"
+                          : "grid grid-cols-1"
+                      }
+                    >
+                      {[subjectColumnOne, subjectColumnTwo]
+                        .filter((column) => column.length > 0)
+                        .map((column, columnIndex) => (
+                          <div key={columnIndex} className="min-w-0 space-y-1.5">
+                            {column.map((subject) => {
+                              const isElective = subject.subject_type === "ELECTIVE";
+                              return (
+                                <div
+                                  key={subject.id}
+                                  className={
+                                    isElective
+                                      ? "flex min-w-0 items-center rounded-md border border-sky-500/20 border-l-2 border-l-sky-500/50 bg-sky-500/5 px-2.5 py-1.5"
+                                      : "flex min-w-0 items-center rounded-md border border-primary/20 border-l-2 border-l-primary/60 bg-primary/5 px-2.5 py-1.5"
+                                  }
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div
+                                      className={
+                                        isElective
+                                          ? "truncate text-sm font-normal"
+                                          : "truncate text-sm font-medium"
+                                      }
+                                    >
+                                      {subject.subject_name}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {subject.subject_code}
+                                      {subject.series && ` · Series ${subject.series}`}
+                                      {isElective ? " · Elective" : " · Core"}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   </div>
                 )
               ) : (
-                <div className="space-y-6 rounded-lg border border-border bg-card p-5 shadow-none md:p-6">
+                <div className="space-y-3 rounded-lg border border-border bg-card p-3 shadow-none">
                   <div>
                     <p className="text-sm font-medium">Edit programme & subjects</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                       Choose a programme for {candidate?.name}, then select subjects.
                       Changes are validated against programme requirements.
                     </p>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label>Programme *</Label>
                     <SearchableSelect
                       options={programmes.map((p) => ({
@@ -1313,8 +1361,7 @@ export function CandidateDetailModal({
                     />
                     {!loadingProgrammes && programmes.length === 0 && (
                       <p className="text-xs text-muted-foreground">
-                        No programmes available for this examination. Add programmes under
-                        My School → Programmes first.
+                        No programmes are enabled for this examination yet.
                       </p>
                     )}
                   </div>
@@ -1335,9 +1382,10 @@ export function CandidateDetailModal({
                     </p>
                   )}
 
-                  <div className="flex justify-end gap-2 border-t border-border pt-4">
+                  <div className="flex justify-end gap-2 border-t border-border pt-3">
                     <Button
                       variant="outline"
+                      size="sm"
                       onClick={handleCancelEdit}
                       disabled={savingSubjects}
                     >
@@ -1345,6 +1393,7 @@ export function CandidateDetailModal({
                       Cancel
                     </Button>
                     <Button
+                      size="sm"
                       onClick={handleSaveSubjects}
                       disabled={
                         savingSubjects ||
@@ -1374,8 +1423,8 @@ export function CandidateDetailModal({
 
         {/* Enhanced Footer with Navigation */}
         {candidates.length > 1 && (
-          <DialogFooter className="justify-between sm:justify-between px-6 pb-6 pt-4 border-t bg-muted/30">
-            <div className="text-xs text-muted-foreground flex items-center gap-2">
+          <DialogFooter className="shrink-0 justify-between border-t bg-muted/30 px-4 pb-3 pt-2.5 sm:justify-between">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Keyboard className="h-3 w-3" />
               Use ← → to navigate
             </div>
@@ -1385,11 +1434,11 @@ export function CandidateDetailModal({
                 size="icon"
                 onClick={handlePrevious}
                 disabled={!canNavigatePrevious}
-                className="h-9 w-9"
+                className="h-8 w-8"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="text-sm text-muted-foreground min-w-[80px] text-center font-medium">
+              <span className="min-w-[80px] text-center text-sm font-medium text-muted-foreground">
                 {positionText}
               </span>
               <Button
@@ -1397,7 +1446,7 @@ export function CandidateDetailModal({
                 size="icon"
                 onClick={handleNext}
                 disabled={!canNavigateNext}
-                className="h-9 w-9"
+                className="h-8 w-8"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>

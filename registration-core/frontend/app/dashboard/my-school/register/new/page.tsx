@@ -561,8 +561,7 @@ export default function RegisterSingleCandidatePage() {
               />
               {programmes.length === 0 && (
                 <p className="text-xs text-muted-foreground">
-                  No programmes available for this examination. Add programmes
-                  under My School → Programmes first.
+                  No programmes are enabled for this examination yet.
                 </p>
               )}
             </div>

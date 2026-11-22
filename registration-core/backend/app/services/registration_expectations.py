@@ -25,6 +25,7 @@ from app.schemas.expectations import (
 from app.services.exam_eligibility_service import is_school_eligible_for_exam
 from app.services.late_registration_service import is_registration_open_for_school
 from app.services.programme_type_service import list_programmes_for_exam
+from app.services.school_programme_service import ensure_school_programme
 
 
 async def _get_eligibility_row(
@@ -99,7 +100,8 @@ async def get_school_exam_expectations(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
     eligibility = await _get_eligibility_row(session, exam_id, school_id)
-    programmes = await list_programmes_for_exam(session, exam_id=exam_id, school_id=school_id)
+    # Full exam catalogue; school association is optional for expectations.
+    programmes = await list_programmes_for_exam(session, exam_id=exam_id, school_id=None)
     actual_by_programme = await _actual_counts_by_programme(session, exam_id, school_id)
     actual_total = await _actual_total(session, exam_id, school_id)
 
@@ -193,7 +195,7 @@ async def upsert_school_exam_expectations(
         )
 
     allowed_programmes = await list_programmes_for_exam(
-        session, exam_id=exam_id, school_id=school_id
+        session, exam_id=exam_id, school_id=None
     )
     allowed_ids = {p.id for p in allowed_programmes}
 
@@ -228,6 +230,9 @@ async def upsert_school_exam_expectations(
                     f"must equal expected total ({payload.expected_total})"
                 ),
             )
+
+    for programme_id in programme_map:
+        await ensure_school_programme(session, school_id, programme_id)
 
     clearing = payload.expected_total is None and not programme_map
     now = datetime.utcnow()

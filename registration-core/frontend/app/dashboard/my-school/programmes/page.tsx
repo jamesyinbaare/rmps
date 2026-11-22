@@ -366,8 +366,8 @@ export default function SchoolProgrammesPage() {
           ) : schoolProgrammes.length === 0 ? (
             <div className="space-y-3 py-10 text-center">
               <p className="text-sm text-muted-foreground">
-                No programmes added yet. Add programmes so candidates can register
-                for examinations.
+                No programmes on your list yet. You can add them here, or they will
+                be added automatically when you register a candidate for a programme.
               </p>
               {isSchoolAdmin && (
                 <Button

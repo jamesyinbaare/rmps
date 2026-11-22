@@ -516,7 +516,7 @@ export default function BulkRegisterPage() {
         </div>
         {programmes.length === 0 && (
           <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
-            No programmes linked to your school for this exam yet.
+            No programmes are enabled for this exam yet.
           </p>
         )}
       </section>

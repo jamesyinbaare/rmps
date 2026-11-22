@@ -382,7 +382,9 @@ async def list_candidates(
         pass
 
     query = query.options(
-        selectinload(RegistrationCandidate.subject_selections),
+        selectinload(RegistrationCandidate.subject_selections).selectinload(
+            RegistrationSubjectSelection.subject
+        ),
         selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period)
     )
     result = await session.execute(query)
@@ -456,14 +458,7 @@ async def list_candidates(
             ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
-                {
-                    "id": sel.id,
-                    "subject_id": sel.subject_id,
-                    "subject_code": sel.subject_code,
-                    "subject_name": sel.subject_name,
-                    "series": sel.series,
-                    "created_at": sel.created_at,
-                }
+                _subject_selection_dict(sel)
                 for sel in (candidate.subject_selections or [])
             ],
             "exam": exam_response,
@@ -482,6 +477,22 @@ def get_enum_value(enum_or_string):
     if hasattr(enum_or_string, 'value'):
         return enum_or_string.value
     return enum_or_string
+
+
+def _subject_selection_dict(sel: RegistrationSubjectSelection) -> dict:
+    """Serialize a subject selection including optional subject_type from related Subject."""
+    subject_type = None
+    if sel.subject is not None:
+        subject_type = get_enum_value(sel.subject.subject_type)
+    return {
+        "id": sel.id,
+        "subject_id": sel.subject_id,
+        "subject_code": sel.subject_code,
+        "subject_name": sel.subject_name,
+        "series": sel.series,
+        "created_at": sel.created_at,
+        "subject_type": subject_type,
+    }
 
 
 def validate_registration_type_and_guardian(
@@ -594,25 +605,17 @@ async def register_candidate(
     if not programme:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
 
-    if current_user.school_id:
-        assoc_stmt = select(school_programmes).where(
-            school_programmes.c.school_id == current_user.school_id,
-            school_programmes.c.programme_id == programme_id,
-        )
-        assoc_result = await session.execute(assoc_stmt)
-        if not assoc_result.first():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Programme is not available for your school. Please contact your administrator.",
-            )
-
     from app.services.programme_type_service import is_programme_enabled_for_exam
+    from app.services.school_programme_service import ensure_school_programme
 
     if not await is_programme_enabled_for_exam(session, exam.id, programme_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Programme is not enabled for this examination",
         )
+
+    if current_user.school_id:
+        await ensure_school_programme(session, current_user.school_id, programme_id)
 
     registration_number = await generate_unique_registration_number(
         session, exam_id, candidate_school_id, registration_type
@@ -704,8 +707,18 @@ async def register_candidate(
 
         await session.commit()
 
-        # Refresh to get the ID and relationships
-        await session.refresh(new_candidate, ["subject_selections"])
+        # Refresh with subject type for response
+        new_candidate = (
+            await session.execute(
+                select(RegistrationCandidate)
+                .where(RegistrationCandidate.id == new_candidate.id)
+                .options(
+                    selectinload(RegistrationCandidate.subject_selections).selectinload(
+                        RegistrationSubjectSelection.subject
+                    )
+                )
+            )
+        ).scalar_one()
 
         # Create response dict with subject selections
         candidate_dict = {
@@ -743,14 +756,7 @@ async def register_candidate(
             ),
             "registration_date": new_candidate.registration_date,
             "subject_selections": [
-                {
-                    "id": sel.id,
-                    "subject_id": sel.subject_id,
-                    "subject_code": sel.subject_code,
-                    "subject_name": sel.subject_name,
-                    "series": sel.series,
-                    "created_at": sel.created_at,
-                }
+                _subject_selection_dict(sel)
                 for sel in (new_candidate.subject_selections or [])
             ],
             "created_at": new_candidate.created_at,
@@ -776,7 +782,9 @@ async def update_candidate(
         .where(RegistrationCandidate.id == candidate_id)
         .options(
             selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
-            selectinload(RegistrationCandidate.subject_selections),
+            selectinload(RegistrationCandidate.subject_selections).selectinload(
+                RegistrationSubjectSelection.subject
+            ),
         )
     )
     candidate_result = await session.execute(candidate_stmt)
@@ -844,18 +852,12 @@ async def update_candidate(
                         detail=f"Programme with ID {candidate_update.programme_id} not found",
                     )
 
-                # Verify programme is associated with school
                 if current_user.school_id:
-                    assoc_stmt = select(school_programmes).where(
-                        school_programmes.c.school_id == current_user.school_id,
-                        school_programmes.c.programme_id == programme.id,
+                    from app.services.school_programme_service import ensure_school_programme
+
+                    await ensure_school_programme(
+                        session, current_user.school_id, programme.id
                     )
-                    assoc_result = await session.execute(assoc_stmt)
-                    if not assoc_result.first():
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Programme '{programme.code}' is not available for your school",
-                        )
 
                 candidate.programme_id = candidate_update.programme_id
                 candidate.programme_code = programme.code  # Keep for backward compatibility
@@ -925,7 +927,18 @@ async def update_candidate(
             await recompute_registration_status(session, candidate)
 
         await session.commit()
-        await session.refresh(candidate, ["subject_selections", "exam"])
+        candidate = (
+            await session.execute(
+                select(RegistrationCandidate)
+                .where(RegistrationCandidate.id == candidate.id)
+                .options(
+                    selectinload(RegistrationCandidate.subject_selections).selectinload(
+                        RegistrationSubjectSelection.subject
+                    ),
+                    selectinload(RegistrationCandidate.exam),
+                )
+            )
+        ).scalar_one()
 
         # Create response dict with subject selections
         candidate_dict = {
@@ -963,14 +976,7 @@ async def update_candidate(
             ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
-                {
-                    "id": sel.id,
-                    "subject_id": sel.subject_id,
-                    "subject_code": sel.subject_code,
-                    "subject_name": sel.subject_name,
-                    "series": sel.series,
-                    "created_at": sel.created_at,
-                }
+                _subject_selection_dict(sel)
                 for sel in (candidate.subject_selections or [])
             ],
             "created_at": candidate.created_at,
@@ -1111,7 +1117,9 @@ async def delete_candidate(
 def _school_candidate_load_options():
     """Eager loads needed for RegistrationCandidateResponse (avoids MissingGreenlet)."""
     return (
-        selectinload(RegistrationCandidate.subject_selections),
+        selectinload(RegistrationCandidate.subject_selections).selectinload(
+            RegistrationSubjectSelection.subject
+        ),
         selectinload(RegistrationCandidate.exam).options(*exam_load_options()),
     )
 
@@ -2110,7 +2118,7 @@ async def list_school_programmes(
     current_user: SchoolUserWithSchoolDep,
     exam_id: int | None = Query(None, description="When set, only programmes enabled for this exam"),
 ) -> list[ProgrammeResponse]:
-    """List programmes available to the school (optionally filtered by exam enablement)."""
+    """List programmes for the school, or all exam-enabled programmes when exam_id is set."""
     if current_user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2120,9 +2128,8 @@ async def list_school_programmes(
     if exam_id is not None:
         from app.services.programme_type_service import list_programmes_for_exam
 
-        programmes = await list_programmes_for_exam(
-            session, exam_id=exam_id, school_id=current_user.school_id
-        )
+        # Registration UIs need the full exam catalogue; association is optional.
+        programmes = await list_programmes_for_exam(session, exam_id=exam_id, school_id=None)
         return [_school_programme_response(programme) for programme in programmes]
 
     programme_stmt = (
@@ -2213,18 +2220,6 @@ async def get_programme(
             detail="User must be associated with a school",
         )
 
-    # Verify programme is associated with school
-    assoc_stmt = select(school_programmes).where(
-        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
-    )
-    result = await session.execute(assoc_stmt)
-    existing = result.first()
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found or not associated with school"
-        )
-
-    # Get programme
     stmt = (
         select(Programme)
         .options(selectinload(Programme.programme_type))
@@ -2249,18 +2244,6 @@ async def get_programme_subjects(
             detail="User must be associated with a school",
         )
 
-    # Verify programme is associated with school
-    assoc_stmt = select(school_programmes).where(
-        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
-    )
-    result = await session.execute(assoc_stmt)
-    existing = result.first()
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found or not associated with school"
-        )
-
-    # Get programme subject requirements
     from app.schemas.programme import ProgrammeSubjectResponse, SubjectChoiceGroup
 
     stmt = select(Programme).where(Programme.id == programme_id)
