@@ -3,6 +3,8 @@
 import * as React from "react";
 import {
   ColumnDef,
+  OnChangeFn,
+  PaginationState,
   SortingState,
   VisibilityState,
   flexRender,
@@ -17,12 +19,14 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   Search,
   X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -31,6 +35,11 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -46,21 +55,41 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { RegistrationCandidate } from "@/types";
+import type { Programme, RegistrationCandidate } from "@/types";
+import { listSchoolProgrammes } from "@/lib/api";
 import { registrationTypeLabel } from "@/lib/school-registration";
 import { normalizeCandidateGender } from "@/components/school/ExamCandidateStats";
 import { cn } from "@/lib/utils";
+
+export const CANDIDATE_TABLE_PAGE_SIZES = [10, 20, 50, 100] as const;
+export type CandidateTablePageSize = (typeof CANDIDATE_TABLE_PAGE_SIZES)[number];
 
 interface SchoolExamCandidatesTableProps {
   candidates: RegistrationCandidate[];
   loading?: boolean;
   onRowClick?: (candidate: RegistrationCandidate) => void;
   onFilteredChange?: (rows: RegistrationCandidate[]) => void;
+  /** 0-based page index when pagination is controlled via URL/parent. */
+  pageIndex?: number;
+  pageSize?: number;
+  onPaginationChange?: (pageIndex: number, pageSize: number) => void;
 }
+
+const STATUS_OPTIONS = [
+  { value: "INCOMPLETE", label: "Incomplete" },
+  { value: "COMPLETE", label: "Complete" },
+  { value: "DRAFT", label: "Draft" },
+] as const;
 
 function candidateDisplayName(c: RegistrationCandidate): string {
   if (c.name?.trim()) return c.name;
   return [c.firstname, c.lastname, c.othername].filter(Boolean).join(" ");
+}
+
+function programmeKey(c: RegistrationCandidate): string {
+  if (c.programme_id != null) return `id:${c.programme_id}`;
+  if (c.programme_code) return `code:${c.programme_code}`;
+  return "";
 }
 
 function statusBadgeClass(status: string): string {
@@ -105,23 +134,195 @@ function SortHeader({
   );
 }
 
+function truncateText(value: string, max = 28): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max - 1)}…`;
+}
+
+function FacetedHeaderFilter({
+  label,
+  options,
+  selected,
+  onChange,
+  column,
+}: {
+  label: string;
+  options: { value: string; label: string; title?: string }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  column: {
+    toggleSorting: (desc?: boolean) => void;
+    getIsSorted: () => false | "asc" | "desc";
+  };
+}) {
+  const selectedSet = React.useMemo(() => new Set(selected), [selected]);
+  const active = selected.length > 0;
+
+  const toggle = (value: string) => {
+    if (selectedSet.has(value)) {
+      onChange(selected.filter((v) => v !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+      >
+        {label}
+        <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />
+      </button>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-7 gap-1 px-1.5 text-xs font-medium shadow-none",
+              active
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ListFilter className="h-3.5 w-3.5" />
+            {active && (
+              <Badge
+                variant="secondary"
+                className="h-5 min-w-5 justify-center rounded-sm px-1 text-[10px] shadow-none"
+              >
+                {selected.length}
+              </Badge>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-72 p-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-xs font-medium">Filter {label.toLowerCase()}</p>
+            {active && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-xs shadow-none"
+                onClick={() => onChange([])}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          {options.length === 0 ? (
+            <p className="px-1 py-3 text-xs text-muted-foreground">
+              No options available.
+            </p>
+          ) : (
+            <div className="max-h-56 space-y-0.5 overflow-y-auto">
+              {options.map((opt) => {
+                const checked = selectedSet.has(opt.value);
+                return (
+                  <label
+                    key={opt.value}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-muted/60"
+                    title={opt.title || opt.label}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => toggle(opt.value)}
+                    />
+                    <span className="min-w-0 truncate">{opt.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 export function SchoolExamCandidatesTable({
   candidates,
   loading = false,
   onRowClick,
   onFilteredChange,
+  pageIndex: pageIndexProp,
+  pageSize: pageSizeProp,
+  onPaginationChange,
 }: SchoolExamCandidatesTableProps) {
+  const paginationControlled =
+    pageIndexProp != null &&
+    pageSizeProp != null &&
+    onPaginationChange != null;
+
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: "name", desc: false },
   ]);
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
   const [globalFilter, setGlobalFilter] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState("all");
+  const [statusFilters, setStatusFilters] = React.useState<string[]>([]);
   const [typeFilter, setTypeFilter] = React.useState("all");
-  const [programmeFilter, setProgrammeFilter] = React.useState("all");
+  const [programmeFilters, setProgrammeFilters] = React.useState<string[]>([]);
   const [genderFilter, setGenderFilter] = React.useState("all");
-  const [pageSize, setPageSize] = React.useState(20);
+  const [internalPagination, setInternalPagination] =
+    React.useState<PaginationState>({
+      pageIndex: 0,
+      pageSize: 20,
+    });
+  const [programmes, setProgrammes] = React.useState<Programme[]>([]);
+
+  const pagination: PaginationState = paginationControlled
+    ? { pageIndex: pageIndexProp, pageSize: pageSizeProp }
+    : internalPagination;
+
+  const handlePaginationChange: OnChangeFn<PaginationState> = (updater) => {
+    const next =
+      typeof updater === "function" ? updater(pagination) : updater;
+    if (paginationControlled) {
+      onPaginationChange(next.pageIndex, next.pageSize);
+    } else {
+      setInternalPagination(next);
+    }
+  };
+
+  const examId = candidates[0]?.registration_exam_id;
+
+  React.useEffect(() => {
+    if (!examId) {
+      setProgrammes([]);
+      return;
+    }
+    let cancelled = false;
+    async function loadProgrammes() {
+      try {
+        const data = await listSchoolProgrammes(examId);
+        if (!cancelled) setProgrammes(data);
+      } catch {
+        if (!cancelled) setProgrammes([]);
+      }
+    }
+    void loadProgrammes();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId]);
+
+  const programmeById = React.useMemo(() => {
+    const map = new Map<number, Programme>();
+    for (const p of programmes) map.set(p.id, p);
+    return map;
+  }, [programmes]);
 
   const availableTypes = React.useMemo(() => {
     return Array.from(
@@ -134,48 +335,54 @@ export function SchoolExamCandidatesTable({
   }, [candidates]);
 
   const availableProgrammes = React.useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<
+      string,
+      { value: string; label: string; title?: string; sortKey: string }
+    >();
     for (const c of candidates) {
-      if (c.programme_id != null) {
-        const key = `id:${c.programme_id}`;
-        if (!map.has(key)) {
-          map.set(key, c.programme_code || `Programme ${c.programme_id}`);
-        }
-      } else if (c.programme_code) {
-        const key = `code:${c.programme_code}`;
-        if (!map.has(key)) map.set(key, c.programme_code);
-      }
+      const key = programmeKey(c);
+      if (!key || map.has(key)) continue;
+
+      const catalogue =
+        c.programme_id != null ? programmeById.get(c.programme_id) : undefined;
+      const code = catalogue?.code || c.programme_code || "—";
+      const name = catalogue?.name?.trim() || "";
+      const label = name
+        ? `${code} — ${truncateText(name)}`
+        : code;
+      map.set(key, {
+        value: key,
+        label,
+        title: name ? `${code} — ${name}` : code,
+        sortKey: code,
+      });
     }
-    return Array.from(map.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [candidates]);
+    return Array.from(map.values()).sort((a, b) =>
+      a.sortKey.localeCompare(b.sortKey)
+    );
+  }, [candidates, programmeById]);
 
   const filteredData = React.useMemo(() => {
+    const statusSet = new Set(statusFilters.map((s) => s.toUpperCase()));
+    const programmeSet = new Set(programmeFilters);
     return candidates.filter((c) => {
-      if (statusFilter !== "all") {
-        if (String(c.registration_status || "").toUpperCase() !== statusFilter) {
-          return false;
-        }
+      if (statusSet.size > 0) {
+        const status = String(c.registration_status || "").toUpperCase();
+        if (!statusSet.has(status)) return false;
       }
       if (typeFilter !== "all" && (c.registration_type || "") !== typeFilter) {
         return false;
       }
-      if (programmeFilter !== "all") {
-        const key =
-          c.programme_id != null
-            ? `id:${c.programme_id}`
-            : c.programme_code
-              ? `code:${c.programme_code}`
-              : "";
-        if (key !== programmeFilter) return false;
+      if (programmeSet.size > 0) {
+        const key = programmeKey(c);
+        if (!key || !programmeSet.has(key)) return false;
       }
       if (genderFilter !== "all") {
         if (normalizeCandidateGender(c.gender) !== genderFilter) return false;
       }
       return true;
     });
-  }, [candidates, statusFilter, typeFilter, programmeFilter, genderFilter]);
+  }, [candidates, statusFilters, typeFilter, programmeFilters, genderFilter]);
 
   const columns: ColumnDef<RegistrationCandidate>[] = React.useMemo(
     () => [
@@ -217,11 +424,36 @@ export function SchoolExamCandidatesTable({
         id: "programme",
         accessorFn: (c) => c.programme_code || "",
         header: ({ column }) => (
-          <SortHeader label="Programme" column={column} />
+          <FacetedHeaderFilter
+            label="Programme"
+            column={column}
+            options={availableProgrammes}
+            selected={programmeFilters}
+            onChange={setProgrammeFilters}
+          />
         ),
-        cell: ({ row }) => (
-          <div className="text-sm">{row.original.programme_code || "—"}</div>
-        ),
+        cell: ({ row }) => {
+          const c = row.original;
+          const catalogue =
+            c.programme_id != null
+              ? programmeById.get(c.programme_id)
+              : undefined;
+          const code = catalogue?.code || c.programme_code || "—";
+          const name = catalogue?.name?.trim();
+          return (
+            <div
+              className="max-w-[14rem] text-sm"
+              title={name ? `${code} — ${name}` : code !== "—" ? code : undefined}
+            >
+              <span className="font-medium">{code}</span>
+              {name ? (
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  {name}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         id: "type",
@@ -237,7 +469,18 @@ export function SchoolExamCandidatesTable({
         id: "status",
         accessorFn: (c) =>
           String(c.registration_status || "").toUpperCase(),
-        header: ({ column }) => <SortHeader label="Status" column={column} />,
+        header: ({ column }) => (
+          <FacetedHeaderFilter
+            label="Status"
+            column={column}
+            options={STATUS_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.label,
+            }))}
+            selected={statusFilters}
+            onChange={setStatusFilters}
+          />
+        ),
         cell: ({ row }) => {
           const status = String(
             row.original.registration_status || ""
@@ -282,7 +525,7 @@ export function SchoolExamCandidatesTable({
         ),
       },
     ],
-    []
+    [availableProgrammes, programmeById, programmeFilters, statusFilters]
   );
 
   const dataTable = useReactTable({
@@ -291,6 +534,7 @@ export function SchoolExamCandidatesTable({
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
     onGlobalFilterChange: setGlobalFilter,
+    onPaginationChange: handlePaginationChange,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -307,40 +551,36 @@ export function SchoolExamCandidatesTable({
         c.index_number,
         c.programme_code,
         c.registration_type,
+        registrationTypeLabel(c.registration_type),
         c.registration_status,
         c.gender,
+        genderLabel(c.gender),
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
     },
-    initialState: {
-      pagination: { pageSize },
-    },
     state: {
       sorting,
       columnVisibility,
       globalFilter,
+      pagination,
     },
   });
 
   React.useEffect(() => {
-    if (pageSize !== dataTable.getState().pagination.pageSize) {
-      dataTable.setPageSize(pageSize);
-      dataTable.setPageIndex(0);
-    }
-  }, [pageSize, dataTable]);
-
-  React.useEffect(() => {
-    dataTable.setPageIndex(0);
+    if (pagination.pageIndex === 0) return;
+    handlePaginationChange({ pageIndex: 0, pageSize: pagination.pageSize });
+    // Reset to first page when filters change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     globalFilter,
-    statusFilter,
+    statusFilters,
     typeFilter,
-    programmeFilter,
+    programmeFilters,
     genderFilter,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]);
 
   const filteredRowModel = dataTable.getFilteredRowModel();
   const filteredRowIds = filteredRowModel.rows.map((r) => r.id).join(",");
@@ -357,16 +597,16 @@ export function SchoolExamCandidatesTable({
   const pageCount = dataTable.getPageCount() || 1;
   const filtersActive =
     Boolean(globalFilter.trim()) ||
-    statusFilter !== "all" ||
+    statusFilters.length > 0 ||
     typeFilter !== "all" ||
-    programmeFilter !== "all" ||
+    programmeFilters.length > 0 ||
     genderFilter !== "all";
 
   const clearFilters = () => {
     setGlobalFilter("");
-    setStatusFilter("all");
+    setStatusFilters([]);
     setTypeFilter("all");
-    setProgrammeFilter("all");
+    setProgrammeFilters([]);
     setGenderFilter("all");
   };
 
@@ -396,23 +636,12 @@ export function SchoolExamCandidatesTable({
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search name, reg no, index…"
+              placeholder="Search name, reg no, index, programme…"
               value={globalFilter ?? ""}
               onChange={(e) => setGlobalFilter(e.target.value)}
               className="pl-9 shadow-none"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-9 w-full shadow-none sm:w-[140px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="INCOMPLETE">Incomplete</SelectItem>
-              <SelectItem value="COMPLETE">Complete</SelectItem>
-              <SelectItem value="DRAFT">Draft</SelectItem>
-            </SelectContent>
-          </Select>
           <Select value={typeFilter} onValueChange={setTypeFilter}>
             <SelectTrigger className="h-9 w-full shadow-none sm:w-[150px]">
               <SelectValue placeholder="Type" />
@@ -422,19 +651,6 @@ export function SchoolExamCandidatesTable({
               {availableTypes.map((type) => (
                 <SelectItem key={type} value={type}>
                   {registrationTypeLabel(type)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={programmeFilter} onValueChange={setProgrammeFilter}>
-            <SelectTrigger className="h-9 w-full shadow-none sm:w-[170px]">
-              <SelectValue placeholder="Programme" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All programmes</SelectItem>
-              {availableProgrammes.map((p) => (
-                <SelectItem key={p.value} value={p.value}>
-                  {p.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -549,9 +765,9 @@ export function SchoolExamCandidatesTable({
             {filteredCount === 0
               ? "0 candidates"
               : `Showing ${
-                  dataTable.getState().pagination.pageIndex * pageSize + 1
+                  pagination.pageIndex * pagination.pageSize + 1
                 }–${Math.min(
-                  (dataTable.getState().pagination.pageIndex + 1) * pageSize,
+                  (pagination.pageIndex + 1) * pagination.pageSize,
                   filteredCount
                 )} of ${filteredCount}${
                   filtersActive ? ` (filtered from ${totalCount})` : ""
@@ -559,16 +775,23 @@ export function SchoolExamCandidatesTable({
           </div>
           <div className="flex items-center gap-2">
             <Select
-              value={String(pageSize)}
-              onValueChange={(v) => setPageSize(parseInt(v, 10))}
+              value={String(pagination.pageSize)}
+              onValueChange={(v) =>
+                handlePaginationChange({
+                  pageIndex: 0,
+                  pageSize: parseInt(v, 10),
+                })
+              }
             >
               <SelectTrigger className="h-8 w-[90px] shadow-none">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="10">10</SelectItem>
-                <SelectItem value="20">20</SelectItem>
-                <SelectItem value="50">50</SelectItem>
+                {CANDIDATE_TABLE_PAGE_SIZES.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Button

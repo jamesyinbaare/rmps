@@ -674,6 +674,34 @@ class RegistrationCandidate(Base):
     payments = relationship("Payment", back_populates="registration_candidate")
 
 
+class RegistrationCandidateNotDuplicate(Base):
+    """School-marked pair of candidates that should not be treated as duplicates."""
+
+    __tablename__ = "registration_candidate_not_duplicates"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_a_id = Column(
+        Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_b_id = Column(
+        Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    school = relationship("School")
+    candidate_a = relationship("RegistrationCandidate", foreign_keys=[candidate_a_id])
+    candidate_b = relationship("RegistrationCandidate", foreign_keys=[candidate_b_id])
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("candidate_a_id", "candidate_b_id", name="uq_candidate_not_duplicate_pair"),
+    )
+
+
 class RegistrationSubjectSelection(Base):
     __tablename__ = "registration_subject_selections"
 

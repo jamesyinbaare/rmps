@@ -72,6 +72,7 @@ import type {
   TimetableResponse,
   SchoolExamExpectations,
   SchoolExamExpectationsUpdate,
+  DuplicateMatchesResponse,
 } from "@/types";
 
 // Re-export types for convenience
@@ -2000,6 +2001,54 @@ export async function updateCandidate(
   return handleResponse<RegistrationCandidate>(response);
 }
 
+export async function deleteSchoolCandidate(candidateId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function markCandidatesNotDuplicates(
+  candidateAId: number,
+  candidateBId: number
+): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/school/candidates/not-duplicates`, {
+    method: "POST",
+    body: JSON.stringify({
+      candidate_a_id: candidateAId,
+      candidate_b_id: candidateBId,
+    }),
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function listSchoolDuplicateCandidates(
+  examId: number,
+  opts?: { sameProgramme?: boolean; sameDob?: boolean; threshold?: number }
+): Promise<DuplicateMatchesResponse> {
+  const params = new URLSearchParams();
+  if (opts?.sameProgramme) {
+    params.set("same_programme", "true");
+  }
+  if (opts?.sameDob === false) {
+    params.set("same_dob", "false");
+  } else if (opts?.sameDob === true) {
+    params.set("same_dob", "true");
+  }
+  if (opts?.threshold != null) {
+    params.set("threshold", String(opts.threshold));
+  }
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/school/exams/${examId}/duplicates${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<DuplicateMatchesResponse>(response);
+}
+
 export async function markCandidateFeePaid(
   candidateId: number
 ): Promise<RegistrationCandidate> {
@@ -2230,10 +2279,72 @@ export async function bulkUploadCandidates(
   return handleResponse<BulkUploadResponse>(response);
 }
 
+export async function bulkUploadCandidateChunk(
+  examId: number,
+  rows: Array<Record<string, string | number | null>>,
+  registrationType?: string,
+  options?: { dryRun?: boolean }
+): Promise<BulkUploadResponse> {
+  const response = await fetchWithAuth("/api/v1/school/candidates/bulk/chunk", {
+    method: "POST",
+    body: JSON.stringify({
+      exam_id: examId,
+      registration_type: registrationType || null,
+      rows,
+      dry_run: options?.dryRun ?? false,
+    }),
+  });
+  return handleResponse<BulkUploadResponse>(response);
+}
+
+export async function parseBulkUploadCandidatesFile(
+  examId: number,
+  file: File
+): Promise<{ total_rows: number; rows: Array<Record<string, string | number | null>> }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("exam_id", examId.toString());
+  const response = await fetchWithAuth("/api/v1/school/candidates/bulk/parse", {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse(response);
+}
+
+export async function downloadBulkUploadResultsExcel(payload: {
+  rows: Array<Record<string, string | number | null>>;
+  errors: Array<{ row_number: number; field?: string | null; error_message: string }>;
+}): Promise<Blob> {
+  const response = await fetchWithAuth(
+    "/api/v1/school/candidates/bulk/results-export",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
 export async function downloadCandidateTemplate(examId?: number): Promise<Blob> {
   const url = examId
     ? `/api/v1/school/candidates/template?exam_id=${examId}`
     : "/api/v1/school/candidates/template";
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function downloadCandidateTemplateInstructionsPdf(
+  examId?: number
+): Promise<Blob> {
+  const url = examId
+    ? `/api/v1/school/candidates/template/instructions.pdf?exam_id=${examId}`
+    : "/api/v1/school/candidates/template/instructions.pdf";
   const response = await fetchWithAuth(url);
   if (!response.ok) {
     await handleResponse(response);

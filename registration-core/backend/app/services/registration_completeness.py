@@ -94,6 +94,10 @@ def apply_fee_paid(
     user_id: UUID | None = None,
     at: datetime | None = None,
 ) -> None:
+    if not requires_fee(candidate.registration_type):
+        raise ValueError(
+            "Free TVET candidates do not require a registration fee"
+        )
     candidate.fee_payment_status = FeePaymentStatus.PAID
     candidate.fee_paid_at = at or datetime.utcnow()
     candidate.fee_paid_by_user_id = user_id
@@ -105,6 +109,10 @@ def apply_fee_waived(
     user_id: UUID | None = None,
     at: datetime | None = None,
 ) -> None:
+    if not requires_fee(candidate.registration_type):
+        raise ValueError(
+            "Free TVET candidates do not require a registration fee"
+        )
     candidate.fee_payment_status = FeePaymentStatus.WAIVED
     candidate.fee_paid_at = at or datetime.utcnow()
     candidate.fee_paid_by_user_id = user_id

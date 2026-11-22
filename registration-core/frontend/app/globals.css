@@ -415,10 +415,173 @@
   transform: scaleY(1);
 }
 
-.public-action-row:hover,
-.public-action-row:focus-visible {
-  background-color: color-mix(in oklab, var(--muted) 55%, transparent);
-  padding-left: 0.85rem;
+@keyframes shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+/* Bulk upload / validate progress card */
+@keyframes bulk-progress-mesh {
+  0% {
+    background-position: 0% 40%, 100% 60%, 50% 0%;
+  }
+  50% {
+    background-position: 80% 20%, 20% 80%, 40% 100%;
+  }
+  100% {
+    background-position: 0% 40%, 100% 60%, 50% 0%;
+  }
+}
+
+@keyframes bulk-progress-scan {
+  0% {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.55;
+  }
+  88% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translateY(220%);
+    opacity: 0;
+  }
+}
+
+@keyframes bulk-progress-sheen {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
+}
+
+@keyframes bulk-progress-tip {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
+
+@keyframes bulk-progress-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 8px color-mix(in oklab, var(--primary) 12%, transparent);
+  }
+}
+
+@keyframes bulk-progress-success-pop {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes bulk-progress-dot-lit {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.bulk-progress-mesh {
+  background-image:
+    radial-gradient(
+      42% 55% at 12% 30%,
+      color-mix(in oklab, var(--primary) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      38% 48% at 88% 70%,
+      color-mix(in oklab, var(--primary) 14%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      55% 40% at 50% 0%,
+      color-mix(in oklab, var(--muted) 65%, transparent),
+      transparent 75%
+    );
+  background-size: 140% 140%, 150% 150%, 120% 120%;
+  background-repeat: no-repeat;
+  animation: bulk-progress-mesh 14s ease-in-out infinite;
+}
+
+.bulk-progress-scan {
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklab, var(--primary) 28%, transparent),
+    transparent
+  );
+  animation: bulk-progress-scan 3.6s ease-in-out infinite;
+}
+
+.bulk-progress-sheen {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, white 55%, transparent),
+    transparent
+  );
+  animation: bulk-progress-sheen 1.8s ease-in-out infinite;
+}
+
+.dark .bulk-progress-sheen {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, white 22%, transparent),
+    transparent
+  );
+}
+
+.bulk-progress-tip {
+  animation: bulk-progress-tip 1.4s ease-in-out infinite;
+}
+
+.bulk-progress-breathe {
+  animation: bulk-progress-breathe 2.4s ease-in-out infinite;
+}
+
+.bulk-progress-success-pop {
+  animation: bulk-progress-success-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bulk-progress-dot-lit {
+  animation: bulk-progress-dot-lit 0.35s ease-out both;
+}
+
+.bulk-progress-rail-fill {
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -437,6 +600,20 @@
 
   .public-action-row,
   .public-action-row::before {
+    transition: none !important;
+  }
+
+  .bulk-progress-mesh,
+  .bulk-progress-scan,
+  .bulk-progress-sheen,
+  .bulk-progress-tip,
+  .bulk-progress-breathe,
+  .bulk-progress-success-pop,
+  .bulk-progress-dot-lit {
+    animation: none !important;
+  }
+
+  .bulk-progress-rail-fill {
     transition: none !important;
   }
 }

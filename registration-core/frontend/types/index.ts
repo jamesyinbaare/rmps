@@ -168,6 +168,45 @@ export interface RegistrationCandidate {
   subject_selections?: RegistrationSubjectSelection[];
 }
 
+export interface DuplicateCandidateSummary {
+  id: number;
+  firstname: string;
+  lastname: string;
+  othername: string | null;
+  name: string;
+  date_of_birth: string | null;
+  gender: string | null;
+  programme_id: number | null;
+  programme_code: string | null;
+  registration_number: string;
+  index_number: string | null;
+  registration_status: "DRAFT" | "INCOMPLETE" | "COMPLETE";
+  fee_payment_status: "not_required" | "unpaid" | "paid" | "waived";
+  contact_email: string | null;
+  contact_phone: string | null;
+  national_id: string | null;
+  registration_type: string | null;
+  subject_selections: RegistrationSubjectSelection[];
+  has_photo: boolean;
+  can_remove: boolean;
+  remove_blocked_reason: string | null;
+}
+
+export interface DuplicateMatchGroup {
+  group_id: number;
+  best_score: number;
+  match_reasons: string[];
+  candidates: DuplicateCandidateSummary[];
+}
+
+export interface DuplicateMatchesResponse {
+  exam_id: number;
+  groups: DuplicateMatchGroup[];
+  threshold: number;
+  same_programme: boolean;
+  same_dob: boolean;
+}
+
 export interface Invoice {
   id: number;
   invoice_number: string;

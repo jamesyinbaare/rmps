@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bulk Upload Instructions</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 1.5cm 1.4cm;
+    }
+
+    body {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: #1a1a1a;
+      font-size: 10pt;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .banner {
+      display: flex;
+      align-items: center;
+      border-bottom: 3px solid #0f3d2e;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+
+    .banner-logo {
+      height: 64px;
+      width: auto;
+      margin-right: 16px;
+    }
+
+    .banner-text {
+      flex: 1;
+    }
+
+    .banner .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 8pt;
+      color: #4a6358;
+      margin: 0 0 4px 0;
+      font-weight: 600;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 16pt;
+      color: #0f3d2e;
+      font-weight: 700;
+    }
+
+    .meta {
+      margin-top: 4px;
+      color: #44554c;
+      font-size: 9pt;
+    }
+
+    h2 {
+      font-size: 11.5pt;
+      color: #0f3d2e;
+      margin: 16px 0 8px 0;
+      padding-bottom: 3px;
+      border-bottom: 1px solid #d5e0da;
+    }
+
+    h3 {
+      font-size: 10.5pt;
+      color: #1b4332;
+      margin: 12px 0 6px 0;
+    }
+
+    p {
+      margin: 0 0 8px 0;
+    }
+
+    ol, ul {
+      margin: 0 0 10px 0;
+      padding-left: 18px;
+    }
+
+    li {
+      margin-bottom: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 12px 0;
+      font-size: 9pt;
+    }
+
+    th, td {
+      border: 1px solid #c9d5ce;
+      padding: 6px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef5f1;
+      color: #0f3d2e;
+      font-weight: 700;
+    }
+
+    .col-name {
+      white-space: nowrap;
+      width: 22%;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 8.5pt;
+    }
+
+    .tag {
+      display: inline-block;
+      background: #e8f5e9;
+      color: #1b5e20;
+      border: 1px solid #c8e6c9;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 7.5pt;
+      font-weight: 700;
+      margin-right: 4px;
+    }
+
+    .tag.optional {
+      background: #fff8e1;
+      color: #8d6e00;
+      border-color: #ffe082;
+    }
+
+    .callout {
+      background: #f4f8f6;
+      border-left: 4px solid #0f3d2e;
+      padding: 9px 11px;
+      margin: 8px 0 12px 0;
+    }
+
+    .callout.warn {
+      background: #fff8e1;
+      border-left-color: #c9a227;
+    }
+
+    .callout strong {
+      color: #0f3d2e;
+    }
+
+    .muted {
+      color: #5a6b62;
+      font-size: 8.5pt;
+    }
+
+    code {
+      font-family: "Courier New", Courier, monospace;
+      background: #f0f4f2;
+      padding: 1px 3px;
+      border-radius: 2px;
+      font-size: 8.5pt;
+    }
+
+    .avoid-break {
+      page-break-inside: avoid;
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <img src="img/logo-crest-only.png" alt="CTVET Logo" class="banner-logo" />
+    <div class="banner-text">
+      <p class="eyebrow">Commission for Technical and Vocational Education and Training</p>
+      <h1>Bulk candidate upload — instructions</h1>
+      <p class="meta">
+        {% if exam_type or exam_year or exam_series %}
+          {{ exam_type or "Examination" }}{% if exam_year %} {{ exam_year }}{% endif %}{% if exam_series %} · {{ exam_series }}{% endif %}
+          {% if is_private %} · Private{% else %} · School portal{% endif %}
+        {% else %}
+          School portal · CSV or Excel upload
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <h2>1. Overview</h2>
+  <p>
+    Use bulk upload to register many candidates at once from a spreadsheet.
+    Download the Excel template from
+    <strong>My school → Register → Bulk upload</strong>, fill it in, then upload it on the same page.
+    You can also open these instructions in the portal or download this PDF separately.
+  </p>
+  <p>
+    Each successful row creates a candidate with status <strong>Incomplete</strong>.
+    You still need to add photos (and pay fees where required) before registration is complete.
+  </p>
+
+  <h2>2. Step-by-step</h2>
+  <ol>
+    <li>Download and open the Excel template (green headers = required, yellow = optional).</li>
+    <li>Delete the sample rows and enter one candidate per row. Keep the header row unchanged.</li>
+    <li>Save as <code>.xlsx</code> or <code>.csv</code> (UTF-8 for CSV).</li>
+    <li>On the bulk upload page, set the default registration type if needed, then upload the file.</li>
+    <li>Review the results table. Fix failed rows using the field name and message, then re-upload those rows.</li>
+  </ol>
+
+  <div class="callout warn">
+    <strong>Important rules</strong>
+    <ul>
+      <li>Use separate <code>firstname</code> and <code>lastname</code> columns — there is no single <code>name</code> column.</li>
+      <li>Dates must be <code>DD/MM/YYYY</code> (example: <code>15/01/2005</code>).</li>
+      <li>Phone numbers must be 10-digit Ghana numbers starting with <code>0</code>, with no country code (example: <code>0244123456</code>).</li>
+      {% if not is_private %}
+      <li>For <code>free_tvet</code> and <code>regular</code>, every row needs <code>option</code>: <code>SOC</code> or <code>ENT</code> (or <code>C702</code> / <code>C705</code>).</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  <h2>3. Column reference — required</h2>
+  <table class="avoid-break">
+    <thead>
+      <tr>
+        <th>Column</th>
+        <th>Explanation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />firstname</td>
+        <td>
+          Candidate’s given / first name. Required on every row.
+          Do not put the full name in one cell.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />lastname</td>
+        <td>
+          Candidate’s family / surname. Required on every row.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />date_of_birth</td>
+        <td>
+          Date of birth in <strong>DD/MM/YYYY</strong> only.
+          Example: <code>15/01/2005</code>. Do not use YYYY-MM-DD or MM/DD/YYYY.
+          Alias column <code>dob</code> is also accepted.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />gender</td>
+        <td>
+          Gender as recorded for the candidate. Typical values: <code>M</code> or <code>F</code>.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />programme_code</td>
+        <td>
+          Official programme code linked to your school for this exam
+          (alias: <code>programme</code>). Wrong or unavailable codes cause the row to fail.
+          {% if example_programmes %}
+          <br /><br />
+          <strong>Examples used in the template:</strong>
+          <ul>
+            {% for prog in example_programmes %}
+            <li><code>{{ prog.code }}</code> — {{ prog.name }}</li>
+            {% endfor %}
+          </ul>
+          Use the codes your school is actually assigned for this exam.
+          {% endif %}
+        </td>
+      </tr>
+      {% if not is_private %}
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />option</td>
+        <td>
+          Optional-core subject choice for <strong>free_tvet</strong> and <strong>regular</strong> candidates.
+          Allowed values (case-insensitive):
+          <ul>
+            <li><code>SOC</code> or <code>C702</code> → Social Studies (C702)</li>
+            <li><code>ENT</code> or <code>C705</code> → Entrepreneurship (C705)</li>
+          </ul>
+          Compulsory cores and electives are selected automatically from the programme.
+          Referral rows use <code>subject_codes</code> instead of <code>option</code>.
+        </td>
+      </tr>
+      {% endif %}
+      {% if is_private %}
+      <tr>
+        <td class="col-name"><span class="tag">Required</span><br />subject_codes</td>
+        <td>
+          Comma-separated subject codes the private candidate will sit
+          (example: <code>C701,C702</code>).
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  <h2>4. Column reference — optional identity &amp; contact</h2>
+  <table class="avoid-break">
+    <thead>
+      <tr>
+        <th>Column</th>
+        <th>Explanation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />othername</td>
+        <td>
+          Middle or other given name. Leave blank if none.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />national_id</td>
+        <td>
+          National identification number for the candidate, if available.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />contact_email</td>
+        <td>
+          Candidate email address (alias: <code>email</code>).
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />contact_phone</td>
+        <td>
+          Candidate mobile number (alias: <code>phone</code>).
+          Must be a <strong>10-digit Ghana number starting with 0</strong>, without <code>+233</code>.
+          Spaces or dashes are stripped. Example: <code>0244123456</code>.
+          Leave blank if unknown; do not enter an incomplete number.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />address</td>
+        <td>
+          Residential or postal address for the candidate.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />disability</td>
+        <td>
+          Disability information if applicable (example: <code>Visual</code>). Leave blank if none.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>5. Column reference — guardian</h2>
+  <table class="avoid-break">
+    <thead>
+      <tr>
+        <th>Column</th>
+        <th>Explanation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />guardian_name</td>
+        <td>Full name of parent or guardian.</td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />guardian_phone</td>
+        <td>
+          Guardian mobile number. Same rule as <code>contact_phone</code>:
+          10 digits starting with <code>0</code>, no country code.
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />guardian_digital_address</td>
+        <td>
+          GhanaPost GPS / digital address for the guardian (example: <code>GA-123-4567</code>).
+        </td>
+      </tr>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />guardian_national_id</td>
+        <td>
+          Guardian national ID, if available.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>6. Column reference — registration</h2>
+  <table class="avoid-break">
+    <thead>
+      <tr>
+        <th>Column</th>
+        <th>Explanation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />registration_type</td>
+        <td>
+          {% if is_private %}
+            For private exams use <code>private</code>. If omitted, private is applied.
+          {% else %}
+            Overrides the default selected on the upload page for that row.
+            Typical values for this exam:
+            <ul>
+              <li><code>{{ primary_registration_type }}</code> — structured subjects; requires <code>option</code></li>
+              {% if allows_referral_registration %}
+              <li><code>referral</code> — requires <code>subject_codes</code> (comma-separated)</li>
+              {% endif %}
+            </ul>
+            {% if allows_free_tvet %}
+              Your school is eligible for <code>free_tvet</code> on this exam.
+            {% else %}
+              Your school uses <code>regular</code> (not free TVET) as the primary type on this exam.
+            {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+      {% if not is_private and allows_referral_registration %}
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional*</span><br />subject_codes</td>
+        <td>
+          Required when <code>registration_type</code> is <code>referral</code>.
+          Comma-separated subject codes (example: <code>C701,C702</code>).
+          Not used for free_tvet/regular (those use <code>option</code>).
+        </td>
+      </tr>
+      {% endif %}
+      {% if is_private %}
+      <tr>
+        <td class="col-name"><span class="tag optional">Optional</span><br />examination_center</td>
+        <td>
+          School id of the examination center (aliases: <code>school_id</code>, <code>center_id</code>).
+          Leave blank to use your registering school as the center.
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  {% if not is_private %}
+  <div class="callout">
+    <strong>option reminder</strong><br />
+    <code>SOC</code> / <code>C702</code> = Social Studies &nbsp;·&nbsp;
+    <code>ENT</code> / <code>C705</code> = Entrepreneurship<br />
+    <span class="muted">Values are case-insensitive. Any other value fails the row.</span>
+  </div>
+  {% endif %}
+
+  <h2>7. After upload</h2>
+  <ul>
+    <li><strong>Successful</strong> rows create candidates with generated registration numbers and subject selections.</li>
+    <li><strong>Failed</strong> rows are skipped; the results table shows the row number, field, and a short fix message.</li>
+    <li>Next steps in the portal: upload candidate photos, then complete fee payment where required.</li>
+  </ul>
+
+  <h3>Common mistakes</h3>
+  <ul>
+    <li>Putting the whole name in one column instead of <code>firstname</code> + <code>lastname</code></li>
+    <li>Using <code>2005-01-15</code> instead of <code>15/01/2005</code></li>
+    <li>Entering <code>+233244123456</code> or a number shorter/longer than 10 digits</li>
+    {% if not is_private %}
+    <li>Leaving <code>option</code> blank on free_tvet/regular rows</li>
+    {% endif %}
+    <li>Using a programme code not assigned to your school</li>
+  </ul>
+
+  <p class="muted">
+    Green header cells in the Excel template are required; yellow headers are optional.
+    Keep all cells formatted as text so leading zeros in phone numbers are preserved.
+  </p>
+</body>
+</html>
