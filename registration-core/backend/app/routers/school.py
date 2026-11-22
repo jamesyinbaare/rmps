@@ -75,6 +75,8 @@ from app.schemas.registration import (
     RegistrationCandidatePhotoResponse,
     PhotoAlbumResponse,
     PhotoAlbumItem,
+    PhotoExamSummaryResponse,
+    PhotoExamSummaryItem,
     PhotoBulkUploadResponse,
     PhotoBulkUploadError,
     PhotoValidationJobResponse,
@@ -123,6 +125,7 @@ from app.services.registration_completeness import (
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
+    generate_missing_photos_summary_pdf,
 )
 from app.schemas.invoice import SchoolInvoiceResponse, ProgrammeInvoiceItem, ExaminationInvoiceItem
 from app.services.school_invoice_service import (
@@ -2505,6 +2508,50 @@ async def download_candidate_index_slip(
     )
 
 
+@router.get("/exams/{exam_id}/candidates/missing-photos.pdf")
+async def download_missing_photos_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> StreamingResponse:
+    """Download PDF of candidates without photos, grouped by programme."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        pdf_bytes = await generate_missing_photos_summary_pdf(
+            session, exam_id, current_user.school_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate missing photos PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate missing photos PDF",
+        )
+
+    filename = (
+        f"missing_photos_{exam.exam_type}_{exam.year}_{exam.exam_series or ''}.pdf"
+    )
+    filename = filename.replace("/", "_").replace("\\", "_").replace("__", "_")
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/exams/{exam_id}/candidates/summary.pdf")
 async def download_registration_summary(
     exam_id: int,
@@ -2739,7 +2786,11 @@ async def bulk_upload_photos(
     exam_id: int = Form(...),
     files: list[UploadFile] = File(...),
 ) -> PhotoBulkUploadResponse:
-    """Bulk upload photos (zip file with photos named by registration_number or index_number)."""
+    """Bulk upload photos matched by registration number (exact or last 4 characters of filename stem).
+
+    Files named like ``0000.jpg`` match registration number ``F17090260000``.
+    Matched photos are renamed to ``{registration_number}{ext}`` before saving.
+    """
     if current_user.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2752,6 +2803,16 @@ async def bulk_upload_photos(
     exam = exam_result.scalar_one_or_none()
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    candidates_result = await session.execute(
+        select(RegistrationCandidate).where(
+            and_(
+                RegistrationCandidate.registration_exam_id == exam_id,
+                RegistrationCandidate.school_id == current_user.school_id,
+            )
+        )
+    )
+    candidates = list(candidates_result.scalars().all())
 
     total = len(files)
     successful = 0
@@ -2780,45 +2841,51 @@ async def bulk_upload_photos(
                 failed += 1
                 continue
 
-            # Extract registration number or index number from filename
-            # Prioritize registration_number over index_number
-            # Filename format: {registration_number}.jpg or {index_number}.jpg
-            base_name = filename.rsplit(".", 1)[0]  # Remove extension
-
-            # Try to find candidate by registration_number first, then index_number
-            candidate_stmt = select(RegistrationCandidate).where(
-                and_(
-                    RegistrationCandidate.registration_exam_id == exam_id,
-                    RegistrationCandidate.school_id == current_user.school_id,
-                    RegistrationCandidate.registration_number == base_name,
+            stem = Path(filename).stem
+            matches = [
+                c
+                for c in candidates
+                if c.registration_number
+                and (
+                    c.registration_number == stem
+                    or (len(stem) == 4 and c.registration_number.endswith(stem))
                 )
-            )
-            candidate_result = await session.execute(candidate_stmt)
-            candidate = candidate_result.scalar_one_or_none()
+            ]
 
-            # If not found by registration_number, try index_number
-            if not candidate:
-                candidate_stmt = select(RegistrationCandidate).where(
-                    and_(
-                        RegistrationCandidate.registration_exam_id == exam_id,
-                        RegistrationCandidate.school_id == current_user.school_id,
-                        RegistrationCandidate.index_number == base_name,
-                    )
-                )
-            candidate_result = await session.execute(candidate_stmt)
-            candidate = candidate_result.scalar_one_or_none()
-
-            if not candidate:
+            if not matches:
                 errors.append(
                     PhotoBulkUploadError(
                         filename=filename,
                         registration_number=None,
                         index_number=None,
-                        error_message=f"No candidate found with registration_number or index_number matching '{base_name}'",
+                        error_message=(
+                            f"No candidate found with registration number matching '{stem}' "
+                            "(exact match or last 4 characters)"
+                        ),
                     )
                 )
                 failed += 1
                 continue
+
+            if len(matches) > 1:
+                matched_regs = ", ".join(
+                    sorted({c.registration_number for c in matches if c.registration_number})
+                )
+                errors.append(
+                    PhotoBulkUploadError(
+                        filename=filename,
+                        registration_number=None,
+                        index_number=None,
+                        error_message=(
+                            f"Ambiguous match for '{stem}': multiple candidates share this "
+                            f"registration suffix ({matched_regs})"
+                        ),
+                    )
+                )
+                failed += 1
+                continue
+
+            candidate = matches[0]
 
             # Delete existing photo if present
             existing_photo_stmt = select(RegistrationCandidatePhoto).where(
@@ -2882,6 +2949,52 @@ async def bulk_upload_photos(
         skipped=skipped,
         errors=errors,
     )
+
+
+@router.get("/candidates/photos/summary", response_model=PhotoExamSummaryResponse)
+async def get_photo_album_summary(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    exam_id: int | None = Query(None, description="Filter to a single exam ID"),
+) -> PhotoExamSummaryResponse:
+    """Return per-exam photo coverage counts for the current school."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    stmt = (
+        select(
+            RegistrationCandidate.registration_exam_id,
+            func.count(RegistrationCandidate.id).label("total"),
+            func.count(RegistrationCandidatePhoto.id).label("with_photo"),
+        )
+        .outerjoin(
+            RegistrationCandidatePhoto,
+            RegistrationCandidatePhoto.registration_candidate_id == RegistrationCandidate.id,
+        )
+        .where(RegistrationCandidate.school_id == current_user.school_id)
+        .group_by(RegistrationCandidate.registration_exam_id)
+        .order_by(RegistrationCandidate.registration_exam_id)
+    )
+    if exam_id is not None:
+        stmt = stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    items = [
+        PhotoExamSummaryItem(
+            exam_id=row.registration_exam_id,
+            total=int(row.total or 0),
+            with_photo=int(row.with_photo or 0),
+            without_photo=max(0, int(row.total or 0) - int(row.with_photo or 0)),
+        )
+        for row in rows
+        if row.registration_exam_id is not None
+    ]
+    return PhotoExamSummaryResponse(items=items)
 
 
 @router.get("/candidates/photos/album", response_model=PhotoAlbumResponse)

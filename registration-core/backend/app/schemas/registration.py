@@ -45,6 +45,21 @@ class PhotoAlbumResponse(BaseModel):
     total_pages: int
 
 
+class PhotoExamSummaryItem(BaseModel):
+    """Per-exam photo coverage summary for a school."""
+
+    exam_id: int
+    total: int
+    with_photo: int
+    without_photo: int
+
+
+class PhotoExamSummaryResponse(BaseModel):
+    """Photo coverage summary across exams (or a single exam)."""
+
+    items: list[PhotoExamSummaryItem]
+
+
 class PhotoBulkUploadError(BaseModel):
     """Schema for bulk photo upload error details."""
 
