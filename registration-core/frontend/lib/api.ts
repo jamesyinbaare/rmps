@@ -69,6 +69,12 @@ import type {
   ExamPricingModelResponse,
   ExamPricingModelCreate,
   Invoice,
+  FeesSummary,
+  FeesExamSummaryResponse,
+  FeeCandidatesResponse,
+  SchoolFeeInvoice,
+  SchoolFeePaystackResponse,
+  BankDepositProof,
   TimetableDownloadFilter,
   TimetableResponse,
   SchoolExamExpectations,
@@ -3215,7 +3221,7 @@ export async function generateResultsPDF(
 }
 
 // Admin invoice helpers (registration)
-export async function downloadFeePayingInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
+export async function downloadFeePayingInvoicePdf(examId: number, groupByProgramme: boolean = true): Promise<Blob> {
   const params = new URLSearchParams();
   params.append("exam_id", examId.toString());
   if (groupByProgramme) {
@@ -3244,7 +3250,7 @@ export async function getReferralInvoiceByExamination(examId: number): Promise<a
   return handleResponse<any>(response);
 }
 
-export async function downloadFreeTvetInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
+export async function downloadFreeTvetInvoicePdf(examId: number, groupByProgramme: boolean = true): Promise<Blob> {
   const params = new URLSearchParams();
   params.append("exam_id", examId.toString());
   if (groupByProgramme) {
@@ -3340,4 +3346,214 @@ export async function downloadAdminReferralInvoiceSummaryPdf(examId: number): Pr
     throw new Error(error.detail || "Failed to download invoice");
   }
   return response.blob();
+}
+
+// ---------------------------------------------------------------------------
+// School / Admin Fees & Invoices management
+// ---------------------------------------------------------------------------
+
+function feesBase(mode: "school" | "admin"): string {
+  return mode === "school" ? "/api/v1/school/fees" : "/api/v1/admin/fees";
+}
+
+export async function getFeesSummary(
+  mode: "school" | "admin",
+  params: { examId?: number; schoolId?: number } = {}
+): Promise<FeesSummary> {
+  const qs = new URLSearchParams();
+  if (params.examId) qs.set("exam_id", String(params.examId));
+  if (params.schoolId) qs.set("school_id", String(params.schoolId));
+  const q = qs.toString();
+  const response = await fetchWithAuth(`${feesBase(mode)}/summary${q ? `?${q}` : ""}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to load fees summary" }));
+    throw new Error(error.detail || "Failed to load fees summary");
+  }
+  return response.json();
+}
+
+export async function getFeesSummaryByExam(): Promise<FeesExamSummaryResponse> {
+  const response = await fetchWithAuth("/api/v1/school/fees/summary-by-exam");
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to load fees summary by exam" }));
+    throw new Error(error.detail || "Failed to load fees summary by exam");
+  }
+  return response.json();
+}
+
+export async function listFeeCandidates(
+  mode: "school" | "admin",
+  examId: number,
+  params: {
+    schoolId?: number;
+    registrationType?: string;
+    unpaidOnly?: boolean;
+    includeFreeTvet?: boolean;
+  } = {}
+): Promise<FeeCandidatesResponse> {
+  const qs = new URLSearchParams();
+  if (params.schoolId) qs.set("school_id", String(params.schoolId));
+  if (params.registrationType) qs.set("registration_type", params.registrationType);
+  if (params.unpaidOnly === false) qs.set("unpaid_only", "false");
+  if (params.includeFreeTvet) qs.set("include_free_tvet", "true");
+  const q = qs.toString();
+  const response = await fetchWithAuth(
+    `${feesBase(mode)}/exams/${examId}/candidates${q ? `?${q}` : ""}`
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to load candidates" }));
+    throw new Error(error.detail || "Failed to load candidates");
+  }
+  return response.json();
+}
+
+export async function listSchoolFeeInvoices(
+  mode: "school" | "admin",
+  params: { examId?: number; schoolId?: number; status?: string } = {}
+): Promise<SchoolFeeInvoice[]> {
+  const qs = new URLSearchParams();
+  if (params.examId) qs.set("exam_id", String(params.examId));
+  if (params.schoolId) qs.set("school_id", String(params.schoolId));
+  if (params.status) qs.set("status", params.status);
+  const q = qs.toString();
+  const response = await fetchWithAuth(`${feesBase(mode)}/invoices${q ? `?${q}` : ""}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to list invoices" }));
+    throw new Error(error.detail || "Failed to list invoices");
+  }
+  return response.json();
+}
+
+export async function createSchoolFeeInvoice(
+  mode: "school" | "admin",
+  body: {
+    exam_id: number;
+    school_id?: number;
+    candidate_ids?: number[];
+    all_unpaid?: boolean;
+    registration_types?: string[];
+    allow_free_tvet?: boolean;
+  }
+): Promise<SchoolFeeInvoice> {
+  const response = await fetchWithAuth(`${feesBase(mode)}/invoices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to create invoice" }));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Failed to create invoice");
+  }
+  return response.json();
+}
+
+export async function downloadSchoolFeeInvoicePdf(
+  mode: "school" | "admin",
+  invoiceId: number
+): Promise<Blob> {
+  const response = await fetchWithAuth(`${feesBase(mode)}/invoices/${invoiceId}/pdf`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice PDF" }));
+    throw new Error(error.detail || "Failed to download invoice PDF");
+  }
+  return response.blob();
+}
+
+export async function paySchoolFeeInvoicePaystack(
+  mode: "school" | "admin",
+  invoiceId: number
+): Promise<SchoolFeePaystackResponse> {
+  const response = await fetchWithAuth(`${feesBase(mode)}/invoices/${invoiceId}/pay/paystack`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to start Paystack payment" }));
+    throw new Error(
+      typeof error.detail === "string" ? error.detail : "Failed to start Paystack payment"
+    );
+  }
+  return response.json();
+}
+
+export async function paySchoolFeeInvoiceBankDeposit(
+  mode: "school" | "admin",
+  invoiceId: number,
+  file: File,
+  options: { depositReference?: string; depositedAmount?: string } = {}
+): Promise<SchoolFeeInvoice> {
+  const form = new FormData();
+  form.append("file", file);
+  if (options.depositReference) form.append("deposit_reference", options.depositReference);
+  if (options.depositedAmount) form.append("deposited_amount", options.depositedAmount);
+  const response = await fetchWithAuth(`${feesBase(mode)}/invoices/${invoiceId}/pay/bank-deposit`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to upload pay-in slip" }));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Failed to upload pay-in slip");
+  }
+  return response.json();
+}
+
+export async function listBankDeposits(params: {
+  status?: string;
+  schoolId?: number;
+} = {}): Promise<BankDepositProof[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.schoolId) qs.set("school_id", String(params.schoolId));
+  const q = qs.toString();
+  const response = await fetchWithAuth(`/api/v1/admin/fees/bank-deposits${q ? `?${q}` : ""}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to list bank deposits" }));
+    throw new Error(error.detail || "Failed to list bank deposits");
+  }
+  return response.json();
+}
+
+export async function downloadBankDepositFile(proofId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/fees/bank-deposits/${proofId}/file`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download slip" }));
+    throw new Error(error.detail || "Failed to download slip");
+  }
+  return response.blob();
+}
+
+export async function approveBankDeposit(proofId: number): Promise<SchoolFeeInvoice> {
+  const response = await fetchWithAuth(`/api/v1/admin/fees/bank-deposits/${proofId}/approve`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to approve deposit" }));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Failed to approve deposit");
+  }
+  return response.json();
+}
+
+export async function rejectBankDeposit(proofId: number, reason: string): Promise<BankDepositProof> {
+  const response = await fetchWithAuth(`/api/v1/admin/fees/bank-deposits/${proofId}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to reject deposit" }));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Failed to reject deposit");
+  }
+  return response.json();
+}
+
+export function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }

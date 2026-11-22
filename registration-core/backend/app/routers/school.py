@@ -122,6 +122,9 @@ from app.services.registration_completeness import (
     default_fee_payment_status,
     recompute_registration_status,
 )
+from app.services.school_fee_invoice_service import (
+    sync_fee_payment_status_from_outstanding,
+)
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
@@ -441,6 +444,13 @@ async def list_candidates(
             "guardian_digital_address": candidate.guardian_digital_address,
             "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
+            "fee_payment_status": get_enum_value(candidate.fee_payment_status),
+            "fee_paid_at": candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(candidate.fee_paid_by_user_id)
+                if candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
                 {
@@ -721,6 +731,13 @@ async def register_candidate(
             "guardian_digital_address": new_candidate.guardian_digital_address,
             "guardian_national_id": new_candidate.guardian_national_id,
             "registration_status": new_candidate.registration_status,
+            "fee_payment_status": get_enum_value(new_candidate.fee_payment_status),
+            "fee_paid_at": new_candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(new_candidate.fee_paid_by_user_id)
+                if new_candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": new_candidate.registration_date,
             "subject_selections": [
                 {
@@ -894,6 +911,16 @@ async def update_candidate(
         # Identity edit: re-open this candidate for duplicate matching
         await clear_not_duplicate_marks_for_candidate(session, candidate.id)
 
+        selection_changed = (
+            candidate_update.programme_id is not None
+            or candidate_update.subject_ids is not None
+        )
+        if selection_changed:
+            await session.flush()
+            await session.refresh(candidate, ["subject_selections"])
+            await sync_fee_payment_status_from_outstanding(session, candidate)
+            await recompute_registration_status(session, candidate)
+
         await session.commit()
         await session.refresh(candidate, ["subject_selections", "exam"])
 
@@ -924,6 +951,13 @@ async def update_candidate(
             "guardian_digital_address": candidate.guardian_digital_address,
             "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
+            "fee_payment_status": get_enum_value(candidate.fee_payment_status),
+            "fee_paid_at": candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(candidate.fee_paid_by_user_id)
+                if candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
                 {
@@ -3727,9 +3761,12 @@ async def download_fee_paying_invoice_pdf(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
-    group_by_programme: bool = Query(False, description="Group by programme"),
+    group_by_programme: bool = Query(
+        True,
+        description="Group by programme (always applied for fee-paying)",
+    ),
 ) -> StreamingResponse:
-    """Download PDF invoice for fee-paying candidates."""
+    """Download PDF invoice for fee-paying candidates (programme totals + grand total)."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3742,15 +3779,12 @@ async def download_fee_paying_invoice_pdf(
             current_user.school_id,
             exam_id,
             RegistrationType.FEE_PAYING.value,
-            group_by_programme=group_by_programme,
+            group_by_programme=True,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"fee_paying_invoice_exam_{exam_id}"
-    if group_by_programme:
-        filename += "_by_programme"
-    filename += ".pdf"
+    filename = f"fee_paying_invoice_exam_{exam_id}_by_programme.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -3764,9 +3798,12 @@ async def download_free_tvet_invoice_pdf(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
-    group_by_programme: bool = Query(False, description="Group by programme"),
+    group_by_programme: bool = Query(
+        True,
+        description="Group by programme (always applied for Free TVET)",
+    ),
 ) -> StreamingResponse:
-    """Download PDF invoice for free_tvet candidates."""
+    """Download PDF invoice for free_tvet candidates (programme totals + grand total)."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3779,15 +3816,12 @@ async def download_free_tvet_invoice_pdf(
             current_user.school_id,
             exam_id,
             RegistrationType.FREE_TVET.value,
-            group_by_programme=group_by_programme,
+            group_by_programme=True,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"free_tvet_invoice_exam_{exam_id}"
-    if group_by_programme:
-        filename += "_by_programme"
-    filename += ".pdf"
+    filename = f"free_tvet_invoice_exam_{exam_id}_by_programme.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

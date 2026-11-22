@@ -335,7 +335,10 @@ export function PricingTable({ examId, onUpdate }: PricingTableProps) {
                               <SelectItem value="auto">Auto</SelectItem>
                               <SelectItem value="per_subject">Per-Subject</SelectItem>
                               <SelectItem value="tiered">Tiered</SelectItem>
-                              <SelectItem value="per_programme">Per-Programme</SelectItem>
+                              {row.registrationType !== "referral" &&
+                              row.registrationType !== "private" ? (
+                                <SelectItem value="per_programme">Per-Programme</SelectItem>
+                              ) : null}
                             </SelectContent>
                           </Select>
                           <Button

@@ -3463,6 +3463,19 @@ async def create_or_update_pricing_model(
                 detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: fee_paying, free_tvet, private, referral"
             )
 
+    # Referral and private only support per_subject / tiered
+    if (
+        model_data.pricing_model_preference == "per_programme"
+        and model_data.registration_type in ("referral", "private")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Per-programme pricing is not allowed for {model_data.registration_type}. "
+                "Use per_subject or tiered instead."
+            ),
+        )
+
     # Handle case where table doesn't exist yet
     try:
         # Check if pricing model exists

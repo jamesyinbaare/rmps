@@ -59,6 +59,12 @@ export const systemAdminMenuItems: MenuItem[] = [
     icon: DollarSign,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
+  {
+    href: "/dashboard/admin/fees-invoices",
+    label: "Fees & Invoices",
+    icon: FileText,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
 ];
 
 // System Admin secondary sidebar nav (pinned below primary)
@@ -137,6 +143,12 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/programmes",
     label: "Programmes",
     icon: BookOpen,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
+    href: "/dashboard/my-school/fees",
+    label: "Fees & Invoices",
+    icon: DollarSign,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {

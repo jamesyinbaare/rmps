@@ -155,6 +155,25 @@ class PaymentStatus(enum.Enum):
     CANCELLED = "cancelled"
 
 
+class SchoolRegistrationInvoiceStatus(enum.Enum):
+    DRAFT = "draft"
+    PENDING = "pending"
+    AWAITING_BANK_CONFIRMATION = "awaiting_bank_confirmation"
+    PAID = "paid"
+    CANCELLED = "cancelled"
+
+
+class SchoolInvoicePaymentMethod(enum.Enum):
+    PAYSTACK = "paystack"
+    BANK_DEPOSIT = "bank_deposit"
+
+
+class BankDepositProofStatus(enum.Enum):
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class TicketPriority(enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -1067,6 +1086,148 @@ class Invoice(Base):
     certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id], uselist=False)
     certificate_confirmation_request = relationship("CertificateConfirmationRequest", foreign_keys=[certificate_confirmation_request_id], uselist=False)
     registration_candidate = relationship("RegistrationCandidate", foreign_keys=[registration_candidate_id])
+    school_registration_invoice = relationship(
+        "SchoolRegistrationInvoice",
+        back_populates="linked_invoice",
+        uselist=False,
+        foreign_keys="SchoolRegistrationInvoice.linked_invoice_id",
+    )
+
+
+class SchoolRegistrationInvoice(Base):
+    """Persisted batch invoice for school (or admin) registration fee collection."""
+
+    __tablename__ = "school_registration_invoices"
+
+    id = Column(Integer, primary_key=True)
+    invoice_number = Column(String(50), unique=True, nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(3), default="GHS", nullable=False)
+    status = Column(
+        Enum(
+            SchoolRegistrationInvoiceStatus,
+            create_constraint=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=SchoolRegistrationInvoiceStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    payment_method = Column(
+        Enum(
+            SchoolInvoicePaymentMethod,
+            create_constraint=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=True,
+    )
+    linked_invoice_id = Column(
+        Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, unique=True, index=True
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    paid_at = Column(DateTime, nullable=True)
+    confirmed_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    content_fingerprint = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    school = relationship("School", foreign_keys=[school_id])
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+    linked_invoice = relationship(
+        "Invoice",
+        foreign_keys=[linked_invoice_id],
+        back_populates="school_registration_invoice",
+    )
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+    confirmed_by = relationship("PortalUser", foreign_keys=[confirmed_by_user_id])
+    items = relationship(
+        "SchoolRegistrationInvoiceItem",
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+    )
+    bank_deposit_proofs = relationship(
+        "BankDepositProof",
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+    )
+
+
+class SchoolRegistrationInvoiceItem(Base):
+    """Line item linking a candidate to a school registration invoice."""
+
+    __tablename__ = "school_registration_invoice_items"
+
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(
+        Integer,
+        ForeignKey("school_registration_invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_id = Column(
+        Integer,
+        ForeignKey("registration_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount = Column(Numeric(10, 2), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    invoice = relationship("SchoolRegistrationInvoice", back_populates="items")
+    candidate = relationship("RegistrationCandidate", foreign_keys=[candidate_id])
+
+    __table_args__ = (
+        UniqueConstraint("invoice_id", "candidate_id", name="uq_school_invoice_candidate"),
+    )
+
+
+class BankDepositProof(Base):
+    """Pay-in slip uploaded for a school registration invoice bank deposit."""
+
+    __tablename__ = "bank_deposit_proofs"
+
+    id = Column(Integer, primary_key=True)
+    school_registration_invoice_id = Column(
+        Integer,
+        ForeignKey("school_registration_invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_path = Column(String(512), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    deposit_reference = Column(String(100), nullable=True)
+    deposited_amount = Column(Numeric(10, 2), nullable=True)
+    status = Column(
+        Enum(
+            BankDepositProofStatus,
+            create_constraint=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=BankDepositProofStatus.PENDING_REVIEW,
+        nullable=False,
+        index=True,
+    )
+    uploaded_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reviewed_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reviewed_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    invoice = relationship("SchoolRegistrationInvoice", back_populates="bank_deposit_proofs")
+    uploaded_by = relationship("PortalUser", foreign_keys=[uploaded_by_user_id])
+    reviewed_by = relationship("PortalUser", foreign_keys=[reviewed_by_user_id])
 
 
 class CertificateRequest(TicketRequestMixin, Base):

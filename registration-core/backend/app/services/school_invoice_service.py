@@ -417,10 +417,21 @@ async def generate_admin_invoice_pdf(
         raise ValueError("Registration exam not found")
 
     if school_id:
-        # Per-school invoice
-        invoice_data = await aggregate_candidates_by_examination(
-            session, school_id, exam_id, registration_type
+        # Per-school invoice — fee-paying / Free TVET always by programme
+        group_by_programme = registration_type in (
+            RegistrationType.FEE_PAYING.value,
+            RegistrationType.FREE_TVET.value,
+            "fee_paying",
+            "free_tvet",
         )
+        if group_by_programme:
+            invoice_data = await aggregate_candidates_by_examination_and_programme(
+                session, school_id, exam_id, registration_type
+            )
+        else:
+            invoice_data = await aggregate_candidates_by_examination(
+                session, school_id, exam_id, registration_type
+            )
 
         # Get school
         school_stmt = select(School).where(School.id == school_id)
@@ -428,6 +439,17 @@ async def generate_admin_invoice_pdf(
         school = school_result.scalar_one_or_none()
         if not school:
             raise ValueError("School not found")
+
+        programmes = []
+        if group_by_programme and "programmes" in invoice_data:
+            for prog in invoice_data["programmes"]:
+                programmes.append({
+                    "programme_id": prog["programme_id"],
+                    "programme_code": prog["programme_code"],
+                    "programme_name": prog["programme_name"],
+                    "candidate_count": prog["candidate_count"],
+                    "total_amount": float(prog["total_amount"]),
+                })
 
         context = {
             "school": {
@@ -444,8 +466,8 @@ async def generate_admin_invoice_pdf(
             "registration_type": registration_type,
             "candidate_count": invoice_data["candidate_count"],
             "total_amount": float(invoice_data["total_amount"]),
-            "programmes": [],
-            "group_by_programme": False,
+            "programmes": programmes,
+            "group_by_programme": group_by_programme,
             "is_summary": False,
             "generated_at": datetime.utcnow(),
         }
