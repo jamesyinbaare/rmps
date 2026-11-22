@@ -456,7 +456,7 @@ async def process_bulk_candidate_rows(
                     default_type = (
                         RegistrationType.FREE_TVET.value
                         if allows_free_tvet_bulk
-                        else RegistrationType.REGULAR.value
+                        else RegistrationType.FEE_PAYING.value
                     )
                     candidate_registration_type = validate_registration_type_for_exam(
                         exam,
@@ -524,7 +524,7 @@ async def process_bulk_candidate_rows(
             is_private_bulk = candidate_registration_type == RegistrationType.PRIVATE.value
             is_structured_bulk = candidate_registration_type in (
                 RegistrationType.FREE_TVET.value,
-                RegistrationType.REGULAR.value,
+                RegistrationType.FEE_PAYING.value,
             )
             use_subject_codes_path = (
                 is_private_bulk

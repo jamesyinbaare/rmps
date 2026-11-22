@@ -447,8 +447,8 @@ export default function RegisterSingleCandidatePage() {
               {exam.exam_kind !== "private" && (
                 <p className="text-xs text-muted-foreground">
                   {exam.allows_free_tvet
-                    ? "This school is Free TVET–eligible for this examination."
-                    : "This school is not Free TVET–eligible for this examination."}
+                    ? "Free TVET–eligible: you can register Free TVET or Fee-paying candidates."
+                    : "Not Free TVET–eligible: Fee-paying is the default type for this examination."}
                 </p>
               )}
             </div>

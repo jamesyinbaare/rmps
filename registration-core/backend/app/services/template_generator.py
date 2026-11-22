@@ -77,7 +77,7 @@ def generate_candidate_template(
         exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC") — still used for subject_codes layout.
         exam_kind: "school" or "private".
         allows_referral_registration: Whether school exams may include referral type column.
-        allows_free_tvet: When True, school uses free_tvet (not regular); when False, regular.
+        allows_free_tvet: When True, school defaults to free_tvet (fee_paying also allowed); when False, fee_paying.
     """
     from app.services.subject_selection import normalize_exam_series
 
@@ -117,7 +117,7 @@ def generate_candidate_template(
         optional_cols["registration_type"] = ["private", "private", "private"]
         optional_cols["examination_center"] = ["", "", ""]  # defaults to registering school
     else:
-        primary = "free_tvet" if allows_free_tvet else "regular"
+        primary = "free_tvet" if allows_free_tvet else "fee_paying"
         if allows_referral_registration:
             optional_cols["registration_type"] = [primary, "referral", primary]
         else:
@@ -222,7 +222,7 @@ def generate_bulk_upload_instructions_pdf(
     kind = (exam_kind or "school").strip().lower()
     is_private = kind == "private"
     normalized_series = normalize_exam_series(exam_series)
-    primary_type = "free_tvet" if allows_free_tvet else "regular"
+    primary_type = "free_tvet" if allows_free_tvet else "fee_paying"
 
     example_programmes = [
         {"code": "C301", "name": "Building Construction"},

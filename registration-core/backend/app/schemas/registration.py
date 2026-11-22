@@ -95,7 +95,7 @@ class RegistrationCandidateBase(BaseModel):
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
     registration_type: str | None = Field(
-        None, description="Registration type: regular, free_tvet, private, or referral"
+        None, description="Registration type: fee_paying, free_tvet, private, or referral"
     )
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
@@ -143,7 +143,7 @@ class RegistrationCandidateUpdate(BaseModel):
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
     registration_type: str | None = Field(
-        None, description="Registration type: regular, free_tvet, private, or referral"
+        None, description="Registration type: fee_paying, free_tvet, private, or referral"
     )
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)

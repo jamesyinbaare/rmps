@@ -3215,13 +3215,13 @@ export async function generateResultsPDF(
 }
 
 // Admin invoice helpers (registration)
-export async function downloadRegularInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
+export async function downloadFeePayingInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
   const params = new URLSearchParams();
   params.append("exam_id", examId.toString());
   if (groupByProgramme) {
     params.append("group_by_programme", "true");
   }
-  const response = await fetchWithAuth(`/api/v1/school/invoices/regular/pdf?${params.toString()}`);
+  const response = await fetchWithAuth(`/api/v1/school/invoices/fee-paying/pdf?${params.toString()}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
     throw new Error(error.detail || "Failed to download invoice");
@@ -3268,8 +3268,8 @@ export async function downloadReferralInvoicePdf(examId: number): Promise<Blob> 
 }
 
 // System Admin Invoice APIs
-export async function downloadAdminRegularInvoicePdfBySchool(examId: number, schoolId: number): Promise<Blob> {
-  const response = await fetchWithAuth(`/api/v1/admin/invoices/regular/by-school/pdf?exam_id=${examId}&school_id=${schoolId}`);
+export async function downloadAdminFeePayingInvoicePdfBySchool(examId: number, schoolId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/fee-paying/by-school/pdf?exam_id=${examId}&school_id=${schoolId}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
     throw new Error(error.detail || "Failed to download invoice");
@@ -3277,8 +3277,8 @@ export async function downloadAdminRegularInvoicePdfBySchool(examId: number, sch
   return response.blob();
 }
 
-export async function downloadAdminRegularInvoiceSummaryPdf(examId: number): Promise<Blob> {
-  const response = await fetchWithAuth(`/api/v1/admin/invoices/regular/summary/pdf?exam_id=${examId}`);
+export async function downloadAdminFeePayingInvoiceSummaryPdf(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/fee-paying/summary/pdf?exam_id=${examId}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
     throw new Error(error.detail || "Failed to download invoice");

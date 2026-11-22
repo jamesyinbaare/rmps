@@ -51,7 +51,7 @@ async def aggregate_candidates_by_examination(
         session: Database session
         school_id: School ID to filter candidates
         exam_id: Exam ID to filter candidates
-        registration_type: Registration type ("regular", "free_tvet", or "referral")
+        registration_type: Registration type ("fee_paying", "free_tvet", or "referral")
 
     Returns:
         Dictionary with exam details, candidate count, and total amount
@@ -111,7 +111,7 @@ async def aggregate_candidates_by_examination_and_programme(
         session: Database session
         school_id: School ID to filter candidates
         exam_id: Exam ID to filter candidates
-        registration_type: Registration type ("regular", "free_tvet", or "referral")
+        registration_type: Registration type ("fee_paying", "free_tvet", or "referral")
 
     Returns:
         Dictionary with exam details, total candidate count, total amount, and programme breakdown
@@ -217,7 +217,7 @@ async def generate_school_invoice_pdf(
         session: Database session
         school_id: School ID
         exam_id: Exam ID
-        registration_type: Registration type ("regular", "free_tvet", or "referral")
+        registration_type: Registration type ("fee_paying", "free_tvet", or "referral")
         group_by_programme: Whether to group by programme
 
     Returns:
@@ -308,7 +308,7 @@ async def aggregate_candidates_by_school(
     Args:
         session: Database session
         exam_id: Exam ID to filter candidates
-        registration_type: Registration type ("regular", "free_tvet", or "referral")
+        registration_type: Registration type ("fee_paying", "free_tvet", or "referral")
 
     Returns:
         Dictionary with exam details, list of schools with their totals, and grand totals
@@ -403,7 +403,7 @@ async def generate_admin_invoice_pdf(
     Args:
         session: Database session
         exam_id: Exam ID
-        registration_type: Registration type ("regular", "free_tvet", or "referral")
+        registration_type: Registration type ("fee_paying", "free_tvet", or "referral")
         school_id: Optional school ID for per-school invoice. If None, generates summary for all schools.
 
     Returns:

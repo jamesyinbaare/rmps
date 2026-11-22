@@ -202,7 +202,7 @@ class Disability(enum.Enum):
 
 
 class RegistrationType(enum.Enum):
-    REGULAR = "regular"
+    FEE_PAYING = "fee_paying"
     FREE_TVET = "free_tvet"
     PRIVATE = "private"
     REFERRAL = "referral"
@@ -429,7 +429,7 @@ class ExamEligibleSchool(Base):
     id = Column(Integer, primary_key=True)
     exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
-    # Per-exam Free TVET gate: when true, school may only use free_tvet (+ referral); when false, regular (+ referral)
+    # Per-exam Free TVET gate: when true, school may use free_tvet + fee_paying (+ referral); when false, fee_paying (+ referral)
     allows_free_tvet = Column(Boolean, default=False, nullable=False, server_default="false")
     # Optional school self-declaration of expected registration volume
     expected_total = Column(Integer, nullable=True)

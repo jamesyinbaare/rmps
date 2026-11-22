@@ -17,8 +17,8 @@ import { listExams, listSchools } from "@/lib/api";
 import type { RegistrationExam, School } from "@/types";
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import {
-  downloadAdminRegularInvoicePdfBySchool,
-  downloadAdminRegularInvoiceSummaryPdf,
+  downloadAdminFeePayingInvoicePdfBySchool,
+  downloadAdminFeePayingInvoiceSummaryPdf,
   downloadAdminFreeTvetInvoicePdfBySchool,
   downloadAdminReferralInvoicePdfBySchool,
   downloadAdminFreeTvetInvoiceSummaryPdf,
@@ -53,14 +53,14 @@ export default function AdminInvoicesPage() {
     loadData();
   }, []);
 
-  const getDownloadKey = (type: "regular" | "free-tvet" | "referral", summary: boolean): string => {
+  const getDownloadKey = (type: "fee-paying" | "free-tvet" | "referral", summary: boolean): string => {
     const examIdStr = selectedExamId ? String(selectedExamId) : "";
     const schoolIdStr = summary ? "summary" : (selectedSchoolId === "all" ? "summary" : String(selectedSchoolId));
     return `${type}-${examIdStr}-${schoolIdStr}`;
   };
 
   const handleDownload = async (
-    type: "regular" | "free-tvet" | "referral",
+    type: "fee-paying" | "free-tvet" | "referral",
     summary: boolean = false
   ) => {
     if (!selectedExamId) {
@@ -79,8 +79,8 @@ export default function AdminInvoicesPage() {
     try {
       let blob: Blob;
       if (summary) {
-        if (type === "regular") {
-          blob = await downloadAdminRegularInvoiceSummaryPdf(selectedExamId);
+        if (type === "fee-paying") {
+          blob = await downloadAdminFeePayingInvoiceSummaryPdf(selectedExamId);
         } else if (type === "free-tvet") {
           blob = await downloadAdminFreeTvetInvoiceSummaryPdf(selectedExamId);
         } else {
@@ -90,8 +90,8 @@ export default function AdminInvoicesPage() {
           if (selectedSchoolId === "all") {
             throw new Error("School ID is required for per-school invoices");
           }
-          if (type === "regular") {
-            blob = await downloadAdminRegularInvoicePdfBySchool(selectedExamId, selectedSchoolId);
+          if (type === "fee-paying") {
+            blob = await downloadAdminFeePayingInvoicePdfBySchool(selectedExamId, selectedSchoolId);
           } else if (type === "free-tvet") {
             blob = await downloadAdminFreeTvetInvoicePdfBySchool(selectedExamId, selectedSchoolId);
           } else {
@@ -192,20 +192,20 @@ export default function AdminInvoicesPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Receipt className="h-5 w-5" />
-                  Regular Invoices
+                  Fee-paying Invoices
                 </CardTitle>
                 <CardDescription>
-                  Generate invoices for regular candidates
+                  Generate invoices for fee-paying candidates
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {selectedSchoolId !== "all" ? (
                   <Button
                     className="w-full"
-                    onClick={() => handleDownload("regular", false)}
+                    onClick={() => handleDownload("fee-paying", false)}
                     disabled={downloading !== null}
                   >
-                    {downloading === getDownloadKey("regular", false) ? (
+                    {downloading === getDownloadKey("fee-paying", false) ? (
                       "Downloading..."
                     ) : (
                       <>
@@ -217,10 +217,10 @@ export default function AdminInvoicesPage() {
                 ) : (
                   <Button
                     className="w-full"
-                    onClick={() => handleDownload("regular", true)}
+                    onClick={() => handleDownload("fee-paying", true)}
                     disabled={downloading !== null}
                   >
-                    {downloading === getDownloadKey("regular", true) ? (
+                    {downloading === getDownloadKey("fee-paying", true) ? (
                       "Downloading..."
                     ) : (
                       <>

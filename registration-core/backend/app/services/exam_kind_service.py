@@ -80,14 +80,16 @@ def allowed_registration_types_for_school_exam(
     *,
     allows_free_tvet: bool,
 ) -> list[str]:
-    """Mutually exclusive: TVET schools get free_tvet; non-TVET get regular; both may get referral."""
+    """
+    Free TVET schools: free_tvet + fee_paying (+ referral if enabled).
+    Non–Free TVET schools: fee_paying (+ referral if enabled).
+    """
     if is_private_exam(exam):
         return [RegistrationType.PRIVATE.value]
     types: list[str] = []
     if allows_free_tvet:
         types.append(RegistrationType.FREE_TVET.value)
-    else:
-        types.append(RegistrationType.REGULAR.value)
+    types.append(RegistrationType.FEE_PAYING.value)
     if allows_referral(exam):
         types.append(RegistrationType.REFERRAL.value)
     return types
@@ -97,7 +99,7 @@ def allowed_registration_types_for_exam(exam: RegistrationExam) -> list[str]:
     """Exam-level types without school Free TVET context (admin listing)."""
     if is_private_exam(exam):
         return [RegistrationType.PRIVATE.value]
-    types = [RegistrationType.REGULAR.value, RegistrationType.FREE_TVET.value]
+    types = [RegistrationType.FEE_PAYING.value, RegistrationType.FREE_TVET.value]
     if allows_referral(exam):
         types.append(RegistrationType.REFERRAL.value)
     return types
@@ -114,9 +116,9 @@ def validate_registration_type_for_exam(
     Validate and return the canonical registration_type string for this exam.
 
     School exams (with school Free TVET flag):
-    - allows_free_tvet True  -> free_tvet (+ referral); reject regular
-    - allows_free_tvet False -> regular (+ referral); reject free_tvet
-    - allows_free_tvet None  -> accept regular/free_tvet/referral when otherwise valid (admin import)
+    - allows_free_tvet True  -> free_tvet (default), fee_paying, referral if enabled
+    - allows_free_tvet False -> fee_paying (default), referral if enabled; reject free_tvet
+    - allows_free_tvet None  -> accept fee_paying/free_tvet/referral when otherwise valid (admin import)
     Private exams: private only.
     """
     kind = exam_kind_value(exam)
@@ -135,7 +137,7 @@ def validate_registration_type_for_exam(
         if allows_free_tvet is True:
             resolved = RegistrationType.FREE_TVET.value
         else:
-            resolved = RegistrationType.REGULAR.value
+            resolved = RegistrationType.FEE_PAYING.value
     else:
         resolved = registration_type
 
@@ -159,20 +161,13 @@ def validate_registration_type_for_exam(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     "This school is not Free TVET–eligible for this examination. "
-                    "Use registration_type 'regular' or 'referral'."
+                    "Use registration_type 'fee_paying' or 'referral'."
                 ),
             )
         return resolved
 
-    if resolved == RegistrationType.REGULAR.value:
-        if allows_free_tvet is True:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "This school is Free TVET–eligible for this examination. "
-                    "Use registration_type 'free_tvet' or 'referral'."
-                ),
-            )
+    if resolved == RegistrationType.FEE_PAYING.value:
+        # Fee-paying is allowed for both Free TVET and non–Free TVET schools
         return resolved
 
     allowed = (

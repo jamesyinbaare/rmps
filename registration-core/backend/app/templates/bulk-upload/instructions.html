@@ -208,7 +208,7 @@
       <li>Dates must be <code>DD/MM/YYYY</code> (example: <code>15/01/2005</code>).</li>
       <li>Phone numbers must be 10-digit Ghana numbers starting with <code>0</code>, with no country code (example: <code>0244123456</code>).</li>
       {% if not is_private %}
-      <li>For <code>free_tvet</code> and <code>regular</code>, every row needs <code>option</code>: <code>SOC</code> or <code>ENT</code> (or <code>C702</code> / <code>C705</code>).</li>
+      <li>For <code>free_tvet</code> and <code>fee_paying</code>, every row needs <code>option</code>: <code>SOC</code> or <code>ENT</code> (or <code>C702</code> / <code>C705</code>).</li>
       {% endif %}
     </ul>
   </div>
@@ -270,7 +270,7 @@
       <tr>
         <td class="col-name"><span class="tag">Required</span><br />option</td>
         <td>
-          Optional-core subject choice for <strong>free_tvet</strong> and <strong>regular</strong> candidates.
+          Optional-core subject choice for <strong>free_tvet</strong> and <strong>fee_paying</strong> candidates.
           Allowed values (case-insensitive):
           <ul>
             <li><code>SOC</code> or <code>C702</code> → Social Studies (C702)</li>
@@ -398,14 +398,18 @@
             Typical values for this exam:
             <ul>
               <li><code>{{ primary_registration_type }}</code> — structured subjects; requires <code>option</code></li>
+              {% if allows_free_tvet %}
+              <li><code>fee_paying</code> — structured subjects; requires <code>option</code></li>
+              {% endif %}
               {% if allows_referral_registration %}
               <li><code>referral</code> — requires <code>subject_codes</code> (comma-separated)</li>
               {% endif %}
             </ul>
             {% if allows_free_tvet %}
-              Your school is eligible for <code>free_tvet</code> on this exam.
+              Your school is eligible for <code>free_tvet</code> on this exam and may also register
+              <code>fee_paying</code> candidates.
             {% else %}
-              Your school uses <code>regular</code> (not free TVET) as the primary type on this exam.
+              Your school uses <code>fee_paying</code> (not free TVET) as the primary type on this exam.
             {% endif %}
           {% endif %}
         </td>
@@ -416,7 +420,7 @@
         <td>
           Required when <code>registration_type</code> is <code>referral</code>.
           Comma-separated subject codes (example: <code>C701,C702</code>).
-          Not used for free_tvet/regular (those use <code>option</code>).
+          Not used for free_tvet/fee_paying (those use <code>option</code>).
         </td>
       </tr>
       {% endif %}
@@ -454,7 +458,7 @@
     <li>Using <code>2005-01-15</code> instead of <code>15/01/2005</code></li>
     <li>Entering <code>+233244123456</code> or a number shorter/longer than 10 digits</li>
     {% if not is_private %}
-    <li>Leaving <code>option</code> blank on free_tvet/regular rows</li>
+    <li>Leaving <code>option</code> blank on free_tvet/fee_paying rows</li>
     {% endif %}
     <li>Using a programme code not assigned to your school</li>
   </ul>

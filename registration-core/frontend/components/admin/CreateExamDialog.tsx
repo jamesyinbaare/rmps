@@ -210,7 +210,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
               </div>
               <p className="text-xs text-muted-foreground">
                 {examKind === "school"
-                  ? "Schools register regular (free TVET) candidates; referral optional. Private portal closed."
+                  ? "Schools register Free TVET and/or Fee-paying candidates; referral optional. Private portal closed."
                   : "Individuals and schools register private candidates only. No referral or free TVET."}
               </p>
             </div>

@@ -442,7 +442,7 @@ export default function BulkRegisterPage() {
             </Select>
             <p className="text-xs text-muted-foreground">
               Applied when a row omits registration_type. Rows can still
-              override with referral when allowed. For free_tvet and regular,
+              override with referral when allowed. For free_tvet and fee_paying,
               each row must include option (SOC or ENT). Dates use DD/MM/YYYY;
               phones are 10-digit Ghana numbers starting with 0.
             </p>
@@ -722,7 +722,7 @@ function BulkInstructionsContent({ isPrivate }: { isPrivate: boolean }) {
       : [
           {
             name: "option",
-            text: "Optional core for free_tvet and regular. SOC/C702 or ENT/C705.",
+            text: "Optional core for free_tvet and fee_paying. SOC/C702 or ENT/C705.",
             example: "SOC",
           },
         ]),
@@ -810,7 +810,7 @@ function BulkInstructionsContent({ isPrivate }: { isPrivate: boolean }) {
               title="Option subject"
               body={
                 <>
-                  For free_tvet and regular, set <Code>option</Code> to{" "}
+                  For free_tvet and fee_paying, set <Code>option</Code> to{" "}
                   <Code>SOC</Code> / <Code>C702</Code> or <Code>ENT</Code> /{" "}
                   <Code>C705</Code>.
                 </>
@@ -940,7 +940,7 @@ function BulkInstructionsContent({ isPrivate }: { isPrivate: boolean }) {
               name: "registration_type",
               text: isPrivate
                 ? "Use private. Applied automatically if omitted."
-                : "Overrides the page default. free_tvet/regular need option; referral needs subject_codes.",
+                : "Overrides the page default. free_tvet/fee_paying need option; referral needs subject_codes.",
             },
             ...(!isPrivate
               ? [
