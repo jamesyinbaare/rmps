@@ -43,7 +43,7 @@ export const systemAdminMenuItems: MenuItem[] = [
   },
   {
     href: "/dashboard/reports",
-    label: "Reports",
+    label: "Reports and Documents",
     icon: BarChart3,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
@@ -57,6 +57,12 @@ export const systemAdminMenuItems: MenuItem[] = [
     href: "/dashboard/admin/fees",
     label: "Fees Management",
     icon: DollarSign,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/admin/fees-invoices",
+    label: "Fees & Invoices",
+    icon: FileText,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
 ];
@@ -140,8 +146,14 @@ export const schoolUserMenuItems: MenuItem[] = [
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
+    href: "/dashboard/my-school/fees",
+    label: "Fees & Invoices",
+    icon: DollarSign,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
     href: "/dashboard/my-school/reports",
-    label: "Reports",
+    label: "Reports and Documents",
     icon: BarChart3,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },

@@ -218,6 +218,116 @@ export interface Invoice {
   created_at: string;
 }
 
+export interface FeeTypeBreakdown {
+  registration_type: string;
+  candidate_count: number;
+  amount_due: number;
+}
+
+export interface FeesSummary {
+  school_id: number | null;
+  exam_id: number | null;
+  amount_due: number;
+  unpaid_candidate_count: number;
+  by_type: FeeTypeBreakdown[];
+}
+
+export interface FeesExamSummaryItem {
+  exam_id: number;
+  amount_due: number;
+  unpaid_candidate_count: number;
+}
+
+export interface FeesExamSummaryResponse {
+  items: FeesExamSummaryItem[];
+}
+
+export interface FeeCandidateItem {
+  id: number;
+  registration_number: string;
+  firstname: string;
+  lastname: string;
+  othername?: string | null;
+  registration_type?: string | null;
+  fee_payment_status: string;
+  programme_code?: string | null;
+  amount: number;
+  on_open_invoice: boolean;
+  open_invoice_number?: string | null;
+  open_invoice_status?: string | null;
+  open_invoice_amount?: number | null;
+}
+
+export interface FeeCandidatesResponse {
+  exam_id: number;
+  school_id: number | null;
+  candidates: FeeCandidateItem[];
+  total_amount: number;
+  total_count: number;
+}
+
+export interface SchoolFeeInvoiceItem {
+  id: number;
+  candidate_id: number;
+  amount: number;
+  registration_number?: string | null;
+  candidate_name?: string | null;
+  registration_type?: string | null;
+}
+
+export interface BankDepositProof {
+  id: number;
+  school_registration_invoice_id: number;
+  file_name: string;
+  mime_type: string;
+  deposit_reference?: string | null;
+  deposited_amount?: number | null;
+  status: "pending_review" | "approved" | "rejected" | string;
+  uploaded_by_user_id?: string | null;
+  reviewed_by_user_id?: string | null;
+  reviewed_at?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+  invoice_number?: string | null;
+  school_id?: number | null;
+  school_name?: string | null;
+  exam_id?: number | null;
+  invoice_amount?: number | null;
+}
+
+export interface SchoolFeeInvoice {
+  id: number;
+  invoice_number: string;
+  school_id: number;
+  exam_id: number;
+  amount: number;
+  currency: string;
+  status: "draft" | "pending" | "awaiting_bank_confirmation" | "paid" | "cancelled" | string;
+  payment_method?: "paystack" | "bank_deposit" | null;
+  linked_invoice_id?: number | null;
+  created_by_user_id?: string | null;
+  paid_at?: string | null;
+  confirmed_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+  items: SchoolFeeInvoiceItem[];
+  bank_deposit_proofs: BankDepositProof[];
+  school_name?: string | null;
+  school_code?: string | null;
+  exam_type?: string | null;
+  exam_series?: string | null;
+  exam_year?: number | null;
+  reused?: boolean;
+}
+
+export interface SchoolFeePaystackResponse {
+  authorization_url: string;
+  reference: string;
+  invoice_id: number;
+  school_registration_invoice_id: number;
+}
+
 export interface ExamRegistrationPeriod {
   id: number;
   registration_start_date: string;

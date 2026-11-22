@@ -111,7 +111,10 @@ from app.services.subject_selection import (
     get_programme_subjects_for_registration,
 )
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
-from app.services.index_slip_service import generate_index_slip_pdf
+from app.services.index_slip_service import (
+    generate_index_slip_pdf,
+    generate_names_registration_roster_pdf,
+)
 from app.services.photo_validation import PhotoValidationService
 from app.services.bulk_photo_validation import process_bulk_photo_validation, process_bulk_photo_resize, process_bulk_background_replacement
 from app.services.mediapipe_photo_validation import replace_background
@@ -121,6 +124,9 @@ from app.services.registration_completeness import (
     apply_fee_waived,
     default_fee_payment_status,
     recompute_registration_status,
+)
+from app.services.school_fee_invoice_service import (
+    sync_fee_payment_status_from_outstanding,
 )
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
@@ -441,6 +447,13 @@ async def list_candidates(
             "guardian_digital_address": candidate.guardian_digital_address,
             "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
+            "fee_payment_status": get_enum_value(candidate.fee_payment_status),
+            "fee_paid_at": candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(candidate.fee_paid_by_user_id)
+                if candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
                 {
@@ -721,6 +734,13 @@ async def register_candidate(
             "guardian_digital_address": new_candidate.guardian_digital_address,
             "guardian_national_id": new_candidate.guardian_national_id,
             "registration_status": new_candidate.registration_status,
+            "fee_payment_status": get_enum_value(new_candidate.fee_payment_status),
+            "fee_paid_at": new_candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(new_candidate.fee_paid_by_user_id)
+                if new_candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": new_candidate.registration_date,
             "subject_selections": [
                 {
@@ -894,6 +914,16 @@ async def update_candidate(
         # Identity edit: re-open this candidate for duplicate matching
         await clear_not_duplicate_marks_for_candidate(session, candidate.id)
 
+        selection_changed = (
+            candidate_update.programme_id is not None
+            or candidate_update.subject_ids is not None
+        )
+        if selection_changed:
+            await session.flush()
+            await session.refresh(candidate, ["subject_selections"])
+            await sync_fee_payment_status_from_outstanding(session, candidate)
+            await recompute_registration_status(session, candidate)
+
         await session.commit()
         await session.refresh(candidate, ["subject_selections", "exam"])
 
@@ -924,6 +954,13 @@ async def update_candidate(
             "guardian_digital_address": candidate.guardian_digital_address,
             "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
+            "fee_payment_status": get_enum_value(candidate.fee_payment_status),
+            "fee_paid_at": candidate.fee_paid_at,
+            "fee_paid_by_user_id": (
+                str(candidate.fee_paid_by_user_id)
+                if candidate.fee_paid_by_user_id
+                else None
+            ),
             "registration_date": candidate.registration_date,
             "subject_selections": [
                 {
@@ -2469,6 +2506,10 @@ async def download_candidate_index_slip(
     candidate_id: int,
     session: DBSessionDep,
     current_user: SchoolUserWithSchoolDep,
+    include_registration_number: bool = Query(
+        False,
+        description="Include registration number on the index slip PDF",
+    ),
 ) -> StreamingResponse:
     """Download Index Slip PDF for a candidate (school admin only)."""
     # Get candidate and verify it belongs to the user's school
@@ -2490,7 +2531,12 @@ async def download_candidate_index_slip(
 
     # Generate PDF (service function will load photo if needed)
     try:
-        pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data=None)
+        pdf_bytes = await generate_index_slip_pdf(
+            candidate,
+            session,
+            photo_data=None,
+            include_registration_number=include_registration_number,
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -2501,6 +2547,78 @@ async def download_candidate_index_slip(
         )
 
     filename = f"index_slip_{candidate.index_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/candidates/{candidate_id}/registration-details")
+async def download_candidate_registration_details(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> StreamingResponse:
+    """Download registration-details PDF (index slip without timetable)."""
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id == candidate_id,
+        RegistrationCandidate.school_id == current_user.school_id,
+    )
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if not candidate.index_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Index number must be generated before downloading registration details",
+        )
+
+    if not candidate.registration_exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidate has no examination",
+        )
+
+    exam = (
+        await session.execute(
+            select(RegistrationExam).where(
+                RegistrationExam.id == candidate.registration_exam_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    school = (
+        await session.execute(
+            select(School).where(School.id == current_user.school_id)
+        )
+    ).scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    try:
+        pdf_bytes = await generate_names_registration_roster_pdf(
+            session,
+            school=school,
+            exam=exam,
+            candidates=[candidate],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.error(
+            f"Failed to generate registration details PDF: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration details PDF",
+        ) from e
+
+    filename = f"registration_details_{candidate.index_number}.pdf"
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -2652,6 +2770,10 @@ async def download_index_slips_bulk(
     session: DBSessionDep,
     current_user: SchoolUserWithSchoolDep,
     programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+    include_registration_number: bool = Query(
+        False,
+        description="Include registration number on each index slip PDF",
+    ),
 ) -> StreamingResponse:
     """Download index slips for multiple candidates as a ZIP file."""
     if not current_user.school_id:
@@ -2700,7 +2822,12 @@ async def download_index_slips_bulk(
             for candidate in candidates:
                 try:
                     # Generate PDF for each candidate
-                    pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data=None)
+                    pdf_bytes = await generate_index_slip_pdf(
+                        candidate,
+                        session,
+                        photo_data=None,
+                        include_registration_number=include_registration_number,
+                    )
 
                     # Use index number for filename
                     filename = f"index_slip_{candidate.index_number}.pdf"
@@ -2736,6 +2863,90 @@ async def download_index_slips_bulk(
         iter([zip_buffer.getvalue()]),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/index-slips/names-pdf")
+async def download_index_slip_names_pdf(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(
+        None, description="Optional programme ID to filter candidates"
+    ),
+) -> StreamingResponse:
+    """Download registration-details PDF cards (index slip without timetable)."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam = (await session.execute(exam_stmt)).scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school = (await session.execute(school_stmt)).scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.registration_exam_id == exam_id,
+        RegistrationCandidate.school_id == current_user.school_id,
+        RegistrationCandidate.index_number.isnot(None),
+    )
+    if programme_id:
+        candidate_stmt = candidate_stmt.where(
+            RegistrationCandidate.programme_id == programme_id
+        )
+
+    candidates = list((await session.execute(candidate_stmt)).scalars().all())
+    candidates = sorted(candidates, key=lambda c: c.name)
+
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No candidates with index numbers found for the selected filters",
+        )
+
+    try:
+        pdf_bytes = await generate_names_registration_roster_pdf(
+            session,
+            school=school,
+            exam=exam,
+            candidates=candidates,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Failed to generate registration details PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration details PDF",
+        ) from e
+
+    exam_type_safe = (
+        (exam.exam_type or "").replace(" ", "_").replace("/", "_").replace("\\", "_")
+    )
+    exam_series_safe = (
+        (exam.exam_series or "").replace("/", "_").replace("\\", "_")
+        if exam.exam_series
+        else ""
+    )
+    parts = ["registration_details", exam_type_safe, str(exam.year)]
+    if exam_series_safe:
+        parts.append(exam_series_safe)
+    if programme_id:
+        parts.append(f"programme_{programme_id}")
+    filename = "_".join(parts) + ".pdf"
+    filename = filename.replace("__", "_")
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -3727,9 +3938,12 @@ async def download_fee_paying_invoice_pdf(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
-    group_by_programme: bool = Query(False, description="Group by programme"),
+    group_by_programme: bool = Query(
+        True,
+        description="Group by programme (always applied for fee-paying)",
+    ),
 ) -> StreamingResponse:
-    """Download PDF invoice for fee-paying candidates."""
+    """Download PDF invoice for fee-paying candidates (programme totals + grand total)."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3742,15 +3956,12 @@ async def download_fee_paying_invoice_pdf(
             current_user.school_id,
             exam_id,
             RegistrationType.FEE_PAYING.value,
-            group_by_programme=group_by_programme,
+            group_by_programme=True,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"fee_paying_invoice_exam_{exam_id}"
-    if group_by_programme:
-        filename += "_by_programme"
-    filename += ".pdf"
+    filename = f"fee_paying_invoice_exam_{exam_id}_by_programme.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -3764,9 +3975,12 @@ async def download_free_tvet_invoice_pdf(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
     exam_id: int = Query(..., description="The exam ID"),
-    group_by_programme: bool = Query(False, description="Group by programme"),
+    group_by_programme: bool = Query(
+        True,
+        description="Group by programme (always applied for Free TVET)",
+    ),
 ) -> StreamingResponse:
-    """Download PDF invoice for free_tvet candidates."""
+    """Download PDF invoice for free_tvet candidates (programme totals + grand total)."""
     if not current_user.school_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3779,15 +3993,12 @@ async def download_free_tvet_invoice_pdf(
             current_user.school_id,
             exam_id,
             RegistrationType.FREE_TVET.value,
-            group_by_programme=group_by_programme,
+            group_by_programme=True,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    filename = f"free_tvet_invoice_exam_{exam_id}"
-    if group_by_programme:
-        filename += "_by_programme"
-    filename += ".pdf"
+    filename = f"free_tvet_invoice_exam_{exam_id}_by_programme.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

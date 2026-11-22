@@ -365,6 +365,90 @@ async def get_programme_price(
     return None
 
 
+SUBJECT_OR_TIERED_ONLY_TYPES = {
+    RegistrationType.REFERRAL.value,
+    RegistrationType.PRIVATE.value,
+}
+
+
+async def _has_subject_pricing(
+    session: AsyncSession,
+    exam_id: int | None,
+    registration_type: str | None,
+) -> bool:
+    """True if any active subject pricing exists for this exam/type (incl. NULL-type fallback)."""
+    filters = [SubjectPricing.is_active == True]
+    if exam_id is not None:
+        filters.append(
+            or_(SubjectPricing.exam_id == exam_id, SubjectPricing.exam_id.is_(None))
+        )
+    else:
+        filters.append(SubjectPricing.exam_id.is_(None))
+    if registration_type:
+        filters.append(
+            or_(
+                SubjectPricing.registration_type == registration_type,
+                SubjectPricing.registration_type.is_(None),
+            )
+        )
+    stmt = select(SubjectPricing.id).where(and_(*filters)).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
+async def _has_tiered_pricing(
+    session: AsyncSession,
+    exam_id: int | None,
+    registration_type: str | None,
+) -> bool:
+    """True if any active tiered pricing exists for this exam/type (incl. NULL-type fallback)."""
+    filters = [RegistrationTieredPricing.is_active == True]
+    if exam_id is not None:
+        filters.append(
+            or_(
+                RegistrationTieredPricing.exam_id == exam_id,
+                RegistrationTieredPricing.exam_id.is_(None),
+            )
+        )
+    else:
+        filters.append(RegistrationTieredPricing.exam_id.is_(None))
+    if registration_type:
+        filters.append(
+            or_(
+                RegistrationTieredPricing.registration_type == registration_type,
+                RegistrationTieredPricing.registration_type.is_(None),
+            )
+        )
+    stmt = select(RegistrationTieredPricing.id).where(and_(*filters)).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
+async def _resolve_payable_model_for_type(
+    session: AsyncSession,
+    exam_id: int | None,
+    registration_type: str | None,
+    pricing_model: str,
+) -> str:
+    """
+    Referral and private may only use per_subject or tiered.
+    If they inherit per_programme (e.g. exam default), remap to an available model.
+    """
+    if pricing_model != "per_programme":
+        return pricing_model
+    if registration_type not in SUBJECT_OR_TIERED_ONLY_TYPES:
+        return pricing_model
+
+    if await _has_subject_pricing(session, exam_id, registration_type):
+        return "per_subject"
+    if await _has_tiered_pricing(session, exam_id, registration_type):
+        return "tiered"
+
+    raise ValueError(
+        f"Registration type '{registration_type}' only supports per_subject or tiered pricing, "
+        f"but the resolved model is per_programme and no subject/tiered prices are configured "
+        f"for exam_id={exam_id}. Configure per_subject or tiered pricing for {registration_type}."
+    )
+
+
 async def get_pricing_model_preference(
     session: AsyncSession,
     exam_id: int | None = None,
@@ -482,6 +566,10 @@ async def calculate_registration_amount(
     if pricing_model is None:
         pricing_model = await get_pricing_model_preference(session, exam_id, registration_type_str)
 
+    pricing_model = await _resolve_payable_model_for_type(
+        session, exam_id, registration_type_str, pricing_model
+    )
+
     # Get application fee
     application_fee = Decimal("0")
     if include_application_fee:
@@ -491,8 +579,6 @@ async def calculate_registration_amount(
             registration_type_for_fee = registration_type_for_fee.value
         application_fee = await get_application_fee(session, exam_id, registration_type_for_fee)
 
-    # Check if candidate is free_tvet and pricing model is per_programme
-    is_free_tvet = registration_type_str == RegistrationType.FREE_TVET.value if registration_type_str else False
     programme_id = candidate.programme_id
 
     # Check if pricing is configured for this exam
@@ -515,15 +601,9 @@ async def calculate_registration_amount(
             "(per_subject, tiered, or per_programme)."
         )
 
-    # For free_tvet candidates with per_programme pricing model
+    # Per-programme: free_tvet and fee_paying (referral/private remapped above)
     use_programme_pricing = False
     if pricing_model == "per_programme":
-        if not is_free_tvet:
-            raise ValueError(
-                f"Per-programme pricing model is only valid for FREE TVET candidates. "
-                f"Current registration type: {registration_type_str}. "
-                "Please use 'per_subject' or 'tiered' pricing model instead."
-            )
         programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
         if programme_price is None:
             raise ValueError(
@@ -625,19 +705,20 @@ async def calculate_price_difference(
 
     # Get pricing model preference for this registration type
     pricing_model = await get_pricing_model_preference(session, exam_id, registration_type_str)
+    pricing_model = await _resolve_payable_model_for_type(
+        session, exam_id, registration_type_str, pricing_model
+    )
 
     # Calculate new total
     # Get application fee
     application_fee = await get_application_fee(session, exam_id, registration_type_str)
 
-    # Check if candidate is free_tvet and pricing model is per_programme
-    is_free_tvet = registration_type_str == RegistrationType.FREE_TVET.value if registration_type_str else False
     programme_id = candidate.programme_id
 
     new_total = application_fee
 
-    # For free_tvet candidates with per_programme pricing model
-    if is_free_tvet and pricing_model == "per_programme":
+    # Per-programme: free_tvet and fee_paying (referral/private remapped above)
+    if pricing_model == "per_programme":
         programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
         if programme_price is None:
             raise ValueError(

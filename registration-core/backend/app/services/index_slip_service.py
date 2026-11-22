@@ -57,6 +57,8 @@ async def generate_index_slip_pdf(
     candidate: RegistrationCandidate,
     session: AsyncSession,
     photo_data: bytes | None = None,
+    *,
+    include_registration_number: bool = False,
 ) -> bytes:
     """
     Generate Index Slip PDF document for a candidate.
@@ -65,6 +67,7 @@ async def generate_index_slip_pdf(
         candidate: RegistrationCandidate model instance
         session: Database session
         photo_data: Optional candidate photo file content as bytes
+        include_registration_number: When True, print registration number on the slip
 
     Returns:
         PDF file as bytes
@@ -270,6 +273,7 @@ async def generate_index_slip_pdf(
         "qr_code_url": qr_code_url,
         "exam": exam,
         "now": datetime.utcnow(),
+        "include_registration_number": include_registration_number,
     }
 
     # Render the HTML template
@@ -292,3 +296,91 @@ async def generate_index_slip_pdf(
 
     pdf_bytes = pdf_gen.render_pdf()
     return pdf_bytes
+
+
+def _photo_bytes_to_data_uri(photo_data: bytes | None) -> str | None:
+    if not photo_data:
+        return None
+    try:
+        encoded = base64.b64encode(photo_data).decode("utf-8")
+        if photo_data[:2] == b"\xff\xd8":
+            return f"data:image/jpeg;base64,{encoded}"
+        if photo_data[:8] == b"\x89PNG\r\n\x1a\n":
+            return f"data:image/png;base64,{encoded}"
+        return f"data:image/jpeg;base64,{encoded}"
+    except Exception:
+        return None
+
+
+async def _load_candidate_photo_bytes(
+    session: AsyncSession,
+    candidate_id: int,
+) -> bytes | None:
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo = (await session.execute(photo_stmt)).scalar_one_or_none()
+    if not photo:
+        return None
+    try:
+        return await PhotoStorageService().retrieve(photo.file_path)
+    except Exception:
+        return None
+
+
+async def generate_names_registration_roster_pdf(
+    session: AsyncSession,
+    *,
+    school: School,
+    exam: RegistrationExam,
+    candidates: list[RegistrationCandidate],
+) -> bytes:
+    """
+    Multi-page PDF of registration-detail cards (index-slip content without timetable).
+
+    Always includes registration number. One page per candidate.
+    """
+    frontend_url = settings.frontend_base_url.rstrip("/")
+    center_name = school.name
+    center_code = school.code
+    cards: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        if not candidate.index_number:
+            continue
+        photo_data = await _load_candidate_photo_bytes(session, candidate.id)
+        qr_code_url = f"{frontend_url}/candidate/{candidate.index_number}"
+        cards.append(
+            {
+                "candidate": candidate,
+                "photo_base64": _photo_bytes_to_data_uri(photo_data),
+                "qr_code_base64": generate_qr_code(qr_code_url),
+                "qr_code_url": qr_code_url,
+                "center_name": center_name,
+                "center_code": center_code,
+            }
+        )
+
+    if not cards:
+        raise ValueError("No candidates with index numbers to include")
+
+    context = {
+        "school": school,
+        "exam": exam,
+        "cards": cards,
+        "now": datetime.utcnow(),
+    }
+    templates_dir = Path(__file__).parent.parent / "templates"
+    main_html = render_html(
+        context, "index-slip/names-registration-roster.html", templates_dir
+    )
+    app_dir = Path(__file__).parent.parent.resolve()
+    pdf_gen = PdfGenerator(
+        main_html=main_html,
+        header_html=None,
+        footer_html=None,
+        base_url=str(app_dir),
+        side_margin=1.5,
+        extra_vertical_margin=20,
+    )
+    return pdf_gen.render_pdf()

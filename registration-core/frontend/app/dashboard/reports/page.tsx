@@ -10,24 +10,24 @@ export default function ReportsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
-        title="Reports"
+        title="Reports and Documents"
         subtitle="Generate and download invoices and reports"
       />
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <Card className="cursor-pointer shadow-none">
-          <Link href="/dashboard/reports/invoices">
+          <Link href="/dashboard/admin/fees-invoices">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Receipt className="h-5 w-5" />
-                Invoices
+                Fees & Invoices
               </CardTitle>
               <CardDescription>
-                Generate and download invoices for schools by examination
+                Manage school fees, invoices, payments, and bank deposit confirmations
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button className="w-full">View Invoices</Button>
+              <Button className="w-full">Open Fees & Invoices</Button>
             </CardContent>
           </Link>
         </Card>

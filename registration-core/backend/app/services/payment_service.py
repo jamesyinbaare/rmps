@@ -399,6 +399,20 @@ async def process_webhook_event(
                             f"payment_amount={payment.amount}"
                         )
 
+                # School batch registration invoice (Paystack)
+                from app.services.school_fee_invoice_service import settle_by_linked_invoice_id
+
+                school_batch = await settle_by_linked_invoice_id(
+                    session,
+                    invoice.id,
+                    paid_at=payment.paid_at,
+                )
+                if school_batch:
+                    logger.info(
+                        f"Settled school registration invoice {school_batch.id} "
+                        f"via Paystack payment {payment.id}"
+                    )
+
                 # Credit purchases are out of scope for registration-core
                 paystack_response = payment.paystack_response or {}
                 paystack_metadata = paystack_response.get("data", {}).get("metadata", {}) or data.get("metadata", {})

@@ -15,7 +15,9 @@ from app.routers import (
     public,
     admin_registration,
     admin_results,
+    admin_fees_invoices,
     school,
+    school_fees,
     private,
     permissions,
     programme_taxonomy,
@@ -180,6 +182,8 @@ app.include_router(admin_registration.router)
 app.include_router(programme_taxonomy.router)
 app.include_router(admin_results.router)
 app.include_router(school.router)
+app.include_router(school_fees.router)
+app.include_router(admin_fees_invoices.router)
 app.include_router(private.router)
 app.include_router(permissions.router)
 

@@ -219,10 +219,12 @@
                     <span class="info-label">Index Number:</span>
                     <span class="info-value"><strong>{{ candidate.index_number }}</strong></span>
                 </div>
+                {% if include_registration_number %}
                 <div class="info-row">
                     <span class="info-label">Registration Number:</span>
                     <span class="info-value">{{ candidate.registration_number }}</span>
                 </div>
+                {% endif %}
                 <div class="info-row">
                     <span class="info-label">Examination Center:</span>
                     <span class="info-value">{{ center_name }} ({{ center_code }})</span>

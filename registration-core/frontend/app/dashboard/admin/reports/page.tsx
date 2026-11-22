@@ -10,7 +10,7 @@ export default function AdminReportsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
-        title="Reports"
+        title="Reports and Documents"
         subtitle="Generate and download reports and timetables"
       />
 
