@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   CheckCircle2,
   Clock,
+  Copy,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +14,7 @@ import {
   updateSchoolExamExpectations,
 } from "@/lib/api";
 import type { RegistrationCandidate, SchoolExamExpectations } from "@/types";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExamRegistrationPulse } from "@/components/school/ExamRegistrationPulse";
 import { ExpectationsEditDialog } from "@/components/school/ExpectationsEditDialog";
@@ -187,34 +190,42 @@ export function ExamRegistrationWorkspace({
 
           <TabsContent value="candidates" className="mt-0 focus-visible:ring-0">
             <div className="space-y-4 p-4 md:p-5">
-              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <Users className="h-3.5 w-3.5" />
-                  <span className="font-mono tabular-nums text-foreground">
-                    {candidatesLoaded && !loadingCandidates
-                      ? candidateStats.total.toLocaleString()
-                      : "—"}
-                  </span>{" "}
-                  registered
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span className="font-mono tabular-nums text-foreground">
-                    {candidatesLoaded && !loadingCandidates
-                      ? candidateStats.complete.toLocaleString()
-                      : "—"}
-                  </span>{" "}
-                  complete
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5" />
-                  <span className="font-mono tabular-nums text-foreground">
-                    {candidatesLoaded && !loadingCandidates
-                      ? candidateStats.incomplete.toLocaleString()
-                      : "—"}
-                  </span>{" "}
-                  incomplete
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" />
+                    <span className="font-mono tabular-nums text-foreground">
+                      {candidatesLoaded && !loadingCandidates
+                        ? candidateStats.total.toLocaleString()
+                        : "—"}
+                    </span>{" "}
+                    registered
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span className="font-mono tabular-nums text-foreground">
+                      {candidatesLoaded && !loadingCandidates
+                        ? candidateStats.complete.toLocaleString()
+                        : "—"}
+                    </span>{" "}
+                    complete
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock className="h-3.5 w-3.5" />
+                    <span className="font-mono tabular-nums text-foreground">
+                      {candidatesLoaded && !loadingCandidates
+                        ? candidateStats.incomplete.toLocaleString()
+                        : "—"}
+                    </span>{" "}
+                    incomplete
+                  </span>
+                </div>
+                <Button variant="ghost" size="sm" asChild className="h-8">
+                  <Link href={`/dashboard/my-school/register/${examId}/duplicates`}>
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    Find duplicates
+                  </Link>
+                </Button>
               </div>
               <SchoolExamCandidatesTable
                 candidates={candidates}

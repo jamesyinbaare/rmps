@@ -6,12 +6,10 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import {
   listAvailableExams,
   listSchoolCandidates,
-  getSchoolDashboard,
 } from "@/lib/api";
 import type {
   RegistrationCandidate,
   RegistrationExam,
-  SchoolDashboardData,
   SchoolExamExpectations,
 } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -22,7 +20,6 @@ import {
   Upload,
   AlertCircle,
   ArrowLeft,
-  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
@@ -35,10 +32,6 @@ import {
   CANDIDATE_TABLE_PAGE_SIZES,
   type CandidateTablePageSize,
 } from "@/components/school/SchoolExamCandidatesTable";
-import {
-  primaryRegistrationType,
-  registrationTypeLabel,
-} from "@/lib/school-registration";
 
 function examTitle(exam: RegistrationExam): string {
   const type = exam.programme_type_name || exam.exam_type;
@@ -82,7 +75,6 @@ export default function ExamRegistrationWorkspacePage() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
-  const [schoolData, setSchoolData] = useState<SchoolDashboardData | null>(null);
 
   const [selectedCandidate, setSelectedCandidate] =
     useState<RegistrationCandidate | null>(null);
@@ -194,11 +186,7 @@ export default function ExamRegistrationWorkspacePage() {
       setFilteredCandidates([]);
       setCandidatesLoaded(false);
       try {
-        const [examsData, dashboard] = await Promise.all([
-          listAvailableExams(),
-          getSchoolDashboard(),
-        ]);
-        setSchoolData(dashboard);
+        const examsData = await listAvailableExams();
         const found = examsData.find((e) => e.id === examId);
         if (!found) {
           toast.error("Examination not available for your school");
@@ -268,29 +256,23 @@ export default function ExamRegistrationWorkspacePage() {
     );
   }
 
-  const periodLabel = exam.registration_period
-    ? `${new Date(
-        exam.registration_period.registration_start_date
-      ).toLocaleDateString()} – ${new Date(
+  const endDate = exam.registration_period
+    ? new Date(
         exam.registration_period.registration_end_date
-      ).toLocaleDateString()}`
+      ).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
     : null;
 
-  const defaultTypeLabel =
-    exam.exam_kind === "private"
-      ? "Private exam"
-      : `Default type: ${registrationTypeLabel(primaryRegistrationType(exam))}`;
-
-  const schoolLine = schoolData?.school
-    ? `${schoolData.school.code} — ${schoolData.school.name}`
-    : null;
-
-  const metaParts = [
-    periodOpen ? "Registration open" : "Registration closed",
-    schoolLine,
-    periodLabel,
-    defaultTypeLabel,
-  ].filter(Boolean);
+  const statusLine = periodOpen
+    ? endDate
+      ? `Open · ends ${endDate}`
+      : "Registration open"
+    : endDate
+      ? `Closed · ended ${endDate}`
+      : "Registration closed";
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -299,20 +281,14 @@ export default function ExamRegistrationWorkspacePage() {
           <Button variant="ghost" asChild>
             <Link href="/dashboard/my-school/register">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              All examinations
+              Examinations
             </Link>
           </Button>
         }
         title={examTitle(exam)}
-        subtitle={<p>{metaParts.join(" · ")}</p>}
+        subtitle={statusLine}
         actions={
           <>
-            <Button variant="ghost" asChild>
-              <Link href={`/dashboard/my-school/register/${examId}/duplicates`}>
-                <Copy className="mr-2 h-4 w-4" />
-                Find duplicates
-              </Link>
-            </Button>
             <Button variant="outline" asChild disabled={!periodOpen}>
               <Link href={`/dashboard/my-school/register/bulk${querySuffix}`}>
                 <Upload className="mr-2 h-4 w-4" />
