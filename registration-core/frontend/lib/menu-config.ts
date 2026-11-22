@@ -43,7 +43,7 @@ export const systemAdminMenuItems: MenuItem[] = [
   },
   {
     href: "/dashboard/reports",
-    label: "Reports",
+    label: "Reports and Documents",
     icon: BarChart3,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
@@ -153,7 +153,7 @@ export const schoolUserMenuItems: MenuItem[] = [
   },
   {
     href: "/dashboard/my-school/reports",
-    label: "Reports",
+    label: "Reports and Documents",
     icon: BarChart3,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },

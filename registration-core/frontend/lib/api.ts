@@ -1755,54 +1755,144 @@ export async function downloadInvoicePdf(invoiceId: number): Promise<Blob> {
   return response.blob();
 }
 
-export async function downloadSchoolCandidateIndexSlip(candidateId: number): Promise<Blob> {
+export async function downloadSchoolCandidateIndexSlip(
+  candidateId: number,
+  options?: { includeRegistrationNumber?: boolean }
+): Promise<Blob> {
   const token = getAccessToken();
-  const response = await fetch(`${API_BASE_URL}/api/v1/school/candidates/${candidateId}/index-slip`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const params = new URLSearchParams();
+  if (options?.includeRegistrationNumber) {
+    params.set("include_registration_number", "true");
+  }
+  const query = params.toString();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/school/candidates/${candidateId}/index-slip${
+      query ? `?${query}` : ""
+    }`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
   if (!response.ok) {
     await handleResponse(response);
   }
   return response.blob();
 }
 
-export async function downloadIndexSlipsBulk(examId: number, programmeId?: number): Promise<void> {
+export async function downloadSchoolCandidateRegistrationDetails(
+  candidateId: number
+): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/school/candidates/${candidateId}/registration-details`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export type DownloadIndexSlipsResult =
+  | { ok: true }
+  | { ok: false; empty: true; message: string }
+  | { ok: false; empty: false; message: string };
+
+export async function downloadIndexSlipsBulk(
+  examId: number,
+  programmeId?: number,
+  options?: { includeRegistrationNumber?: boolean }
+): Promise<DownloadIndexSlipsResult> {
   const params = new URLSearchParams();
   if (programmeId !== undefined) {
     params.append("programme_id", programmeId.toString());
+  }
+  if (options?.includeRegistrationNumber) {
+    params.append("include_registration_number", "true");
   }
   const queryString = params.toString();
   const url = `/api/v1/school/exams/${examId}/index-slips/download${queryString ? `?${queryString}` : ""}`;
 
   const response = await fetchWithAuth(url);
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Failed to download ZIP" }));
-    throw new Error(error.detail || "Failed to download index slips ZIP");
+    const error = await response.json().catch(() => ({
+      detail: "Failed to download ZIP",
+    }));
+    const detail =
+      (typeof error.detail === "string" && error.detail) ||
+      "Failed to download index slips ZIP";
+    const empty =
+      response.status === 404 &&
+      /no candidates with index numbers/i.test(detail);
+    return { ok: false, empty, message: detail };
   }
 
   // Get filename from Content-Disposition header or use default
   const contentDisposition = response.headers.get("Content-Disposition");
   let filename = `index_slips_${examId}.zip`;
   if (contentDisposition) {
-    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i) || contentDisposition.match(/filename=([^;\s]+)/i);
+    const filenameMatch =
+      contentDisposition.match(/filename="?([^"]+)"?/i) ||
+      contentDisposition.match(/filename=([^;\s]+)/i);
     if (filenameMatch) {
-      filename = filenameMatch[1].replace(/^["']|["']$/g, ''); // Strip any leading/trailing quotes
+      filename = filenameMatch[1].replace(/^["']|["']$/g, ""); // Strip any leading/trailing quotes
     }
   }
 
-  // Download the file
   const blob = await response.blob();
-  const downloadUrl = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = downloadUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(downloadUrl);
+  triggerBlobDownload(blob, filename);
+  return { ok: true };
+}
+
+export async function downloadIndexSlipNamesPdf(
+  examId: number,
+  programmeId?: number
+): Promise<DownloadIndexSlipsResult> {
+  const params = new URLSearchParams();
+  if (programmeId !== undefined) {
+    params.append("programme_id", programmeId.toString());
+  }
+  const queryString = params.toString();
+  const url = `/api/v1/school/exams/${examId}/index-slips/names-pdf${
+    queryString ? `?${queryString}` : ""
+  }`;
+
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({
+      detail: "Failed to download names PDF",
+    }));
+    const detail =
+      (typeof error.detail === "string" && error.detail) ||
+      "Failed to download registration details PDF";
+    const empty =
+      response.status === 404 &&
+      /no candidates with index numbers/i.test(detail);
+    return { ok: false, empty, message: detail };
+  }
+
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `registration_details_${examId}.pdf`;
+  if (contentDisposition) {
+    const filenameMatch =
+      contentDisposition.match(/filename="?([^"]+)"?/i) ||
+      contentDisposition.match(/filename=([^;\s]+)/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1].replace(/^["']|["']$/g, "");
+    }
+  }
+
+  const blob = await response.blob();
+  triggerBlobDownload(blob, filename);
+  return { ok: true };
 }
 
 // Public candidate info API (no auth) - uses index_number

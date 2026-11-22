@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Details - {{ exam.exam_type }} {{ exam.year }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.4cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 10.5pt;
+            color: #111;
+            line-height: 1.45;
+            margin: 0;
+            padding: 0;
+        }
+
+        .page {
+            position: relative;
+            min-height: 250mm;
+            page-break-after: always;
+        }
+
+        .page:last-child {
+            page-break-after: auto;
+        }
+
+        .watermark {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: url('img/logo-crest-only.png');
+            background-size: 55%;
+            background-repeat: no-repeat;
+            background-position: center 42%;
+            opacity: 0.04;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            display: table;
+            width: 100%;
+            border-bottom: 2.5px solid #111;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+        }
+
+        .header-logo-cell,
+        .header-title-cell {
+            display: table-cell;
+            vertical-align: middle;
+        }
+
+        .header-logo-cell {
+            width: 78px;
+        }
+
+        .header-logo {
+            height: 68px;
+            width: auto;
+        }
+
+        .header-title-cell {
+            text-align: center;
+            padding: 0 12px;
+        }
+
+        .doc-kicker {
+            margin: 0 0 4px 0;
+            font-size: 8.5pt;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #555;
+            font-weight: bold;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 18pt;
+            font-weight: bold;
+            letter-spacing: 0.02em;
+        }
+
+        .header h2 {
+            margin: 6px 0 0 0;
+            font-size: 12pt;
+            font-weight: normal;
+            color: #222;
+        }
+
+        .school-bar {
+            display: table;
+            width: 100%;
+            margin-bottom: 20px;
+            padding: 8px 10px;
+            background: #f6f6f6;
+            border: 1px solid #ddd;
+        }
+
+        .school-bar span {
+            display: table-cell;
+            font-size: 9pt;
+        }
+
+        .school-bar .label {
+            font-weight: bold;
+            width: 52px;
+            color: #444;
+        }
+
+        .identity {
+            display: table;
+            width: 100%;
+            margin-top: 8px;
+            border: 1.5px solid #222;
+        }
+
+        .identity-row {
+            display: table-row;
+        }
+
+        .cell {
+            display: table-cell;
+            vertical-align: top;
+            padding: 14px;
+        }
+
+        .photo-cell {
+            width: 128px;
+            border-right: 1px solid #ddd;
+            text-align: center;
+        }
+
+        .photo-frame {
+            width: 108px;
+            height: 130px;
+            border: 1.5px solid #111;
+            margin: 0 auto;
+            overflow: hidden;
+            background: #fafafa;
+        }
+
+        .photo-frame img {
+            width: 108px;
+            height: 130px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .photo-placeholder {
+            width: 108px;
+            height: 130px;
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+            font-size: 8pt;
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .info-cell {
+            padding-left: 18px;
+            padding-right: 18px;
+        }
+
+        .info-row {
+            margin-bottom: 11px;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            display: block;
+            font-size: 7.5pt;
+            font-weight: bold;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #666;
+            margin-bottom: 2px;
+        }
+
+        .info-value {
+            display: block;
+            font-size: 12pt;
+            color: #111;
+        }
+
+        .info-value.emphasis {
+            font-size: 14pt;
+            font-weight: bold;
+            letter-spacing: 0.03em;
+        }
+
+        .info-value.mono {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11.5pt;
+            letter-spacing: 0.04em;
+        }
+
+        .qr-cell {
+            width: 140px;
+            border-left: 1px solid #ddd;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        .qr-cell img {
+            width: 112px;
+            height: 112px;
+        }
+
+        .qr-caption {
+            margin-top: 8px;
+            font-size: 7.5pt;
+            color: #666;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .footer {
+            margin-top: 28px;
+            padding-top: 10px;
+            border-top: 1px solid #bbb;
+            font-size: 8pt;
+            color: #555;
+            text-align: center;
+        }
+
+        .footer strong {
+            color: #222;
+        }
+    </style>
+</head>
+<body>
+{% for card in cards %}
+    <div class="page">
+        <div class="watermark"></div>
+        <div class="content">
+            <div class="header">
+                <div class="header-logo-cell">
+                    <img src="img/logo-crest-only.png" alt="CTVET Logo" class="header-logo" />
+                </div>
+                <div class="header-title-cell">
+                    <p class="doc-kicker">Candidate registration details</p>
+                    <h1>REGISTRATION DETAILS</h1>
+                    <h2>{{ exam.exam_type }}{% if exam.exam_series %} · {{ exam.exam_series }}{% endif %} · {{ exam.year }}</h2>
+                </div>
+            </div>
+
+            <div class="school-bar">
+                <span class="label">School</span>
+                <span>{{ school.name }} ({{ school.code }})</span>
+            </div>
+
+            <div class="identity">
+                <div class="identity-row">
+                    <div class="cell photo-cell">
+                        {% if card.photo_base64 %}
+                        <div class="photo-frame">
+                            <img src="{{ card.photo_base64 }}" alt="Candidate photo">
+                        </div>
+                        {% else %}
+                        <div class="photo-frame">
+                            <div class="photo-placeholder">No photo</div>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="cell info-cell">
+                        <div class="info-row">
+                            <span class="info-label">Name</span>
+                            <span class="info-value emphasis">{{ card.candidate.name }}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Index Number</span>
+                            <span class="info-value mono emphasis">{{ card.candidate.index_number }}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Registration Number</span>
+                            <span class="info-value mono">{{ card.candidate.registration_number }}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Examination Center</span>
+                            <span class="info-value">{{ card.center_name }} ({{ card.center_code }})</span>
+                        </div>
+                        {% if card.candidate.date_of_birth %}
+                        <div class="info-row">
+                            <span class="info-label">Date of Birth</span>
+                            <span class="info-value">{{ card.candidate.date_of_birth.strftime('%d/%m/%Y') }}</span>
+                        </div>
+                        {% endif %}
+                        {% if card.candidate.gender %}
+                        <div class="info-row">
+                            <span class="info-label">Gender</span>
+                            <span class="info-value">{{ card.candidate.gender }}</span>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="cell qr-cell">
+                        <img src="data:image/png;base64,{{ card.qr_code_base64 }}" alt="QR Code">
+                        <div class="qr-caption">Scan to verify</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer">
+                <p>Generated {{ now.strftime('%d/%m/%Y %H:%M') }} UTC · Page {{ loop.index }} of {{ cards|length }}</p>
+            </div>
+        </div>
+    </div>
+{% endfor %}
+</body>
+</html>
