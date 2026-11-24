@@ -3647,3 +3647,28 @@ export function triggerBlobDownload(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
 }
+
+export async function fetchSchoolRegistrationManualMarkdown(): Promise<string> {
+  const response = await fetchWithAuth("/api/v1/school/manuals/school-registration.md");
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.text();
+}
+
+export async function downloadSchoolRegistrationManualPdf(): Promise<void> {
+  const response = await fetchWithAuth("/api/v1/school/manuals/school-registration.pdf");
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = "school-registration-manual.pdf";
+  if (contentDisposition) {
+    const match = contentDisposition.match(/filename="?([^"]+)"?/i);
+    if (match?.[1]) {
+      filename = match[1];
+    }
+  }
+  triggerBlobDownload(blob, filename);
+}

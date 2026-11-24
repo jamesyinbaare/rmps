@@ -497,7 +497,7 @@ export default function PhotoAlbumExamDetailPage() {
         }}
       >
         <DialogContent
-          className="max-h-[90vh] max-w-2xl overflow-y-auto"
+          className="max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl overflow-x-hidden overflow-y-auto"
           onInteractOutside={(e) => {
             if (uploadInProgress) e.preventDefault();
           }}
@@ -508,7 +508,7 @@ export default function PhotoAlbumExamDetailPage() {
           <DialogHeader>
             <DialogTitle>Bulk Upload Photos</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {uploadProgress ? (
               <BulkUploadProgressCard
                 progress={uploadProgress}
@@ -556,11 +556,11 @@ export default function PhotoAlbumExamDetailPage() {
                   </ul>
                 </div>
 
-                <div>
+                <div className="min-w-0">
                   <label className="mb-2 block text-sm font-medium">
                     Select Photos
                   </label>
-                  <div className="rounded-lg border border-dashed border-border p-6 text-center">
+                  <div className="min-w-0 rounded-lg border border-dashed border-border p-6 text-center">
                     <input
                       type="file"
                       id="bulk-upload-input"
@@ -593,16 +593,19 @@ export default function PhotoAlbumExamDetailPage() {
                   </div>
 
                   {selectedFiles.length > 0 && (
-                    <div className="mt-4 max-h-48 space-y-2 overflow-y-auto">
+                    <div className="mt-4 max-h-48 min-w-0 space-y-2 overflow-y-auto">
                       {selectedFiles.map((file, index) => (
                         <div
                           key={`${file.name}-${index}`}
-                          className="flex items-center justify-between rounded-lg bg-muted p-2"
+                          className="flex min-w-0 items-center gap-2 rounded-lg bg-muted p-2"
                         >
-                          <span className="flex-1 truncate text-sm">
+                          <span
+                            className="min-w-0 flex-1 truncate text-sm"
+                            title={file.name}
+                          >
                             {file.name}
                           </span>
-                          <span className="mx-2 text-xs text-muted-foreground">
+                          <span className="shrink-0 text-xs text-muted-foreground">
                             {(file.size / 1024).toFixed(1)} KB
                           </span>
                           <Button
@@ -614,7 +617,7 @@ export default function PhotoAlbumExamDetailPage() {
                                 prev.filter((_, i) => i !== index)
                               )
                             }
-                            className="h-6 w-6 p-0"
+                            className="h-6 w-6 shrink-0 p-0"
                           >
                             <X className="h-4 w-4" />
                           </Button>
@@ -652,9 +655,14 @@ export default function PhotoAlbumExamDetailPage() {
                       {uploadResult.errors.map((error, idx) => (
                         <div
                           key={idx}
-                          className="rounded bg-destructive/5 p-1 text-xs text-destructive"
+                          className="min-w-0 rounded bg-destructive/5 p-1 text-xs text-destructive"
                         >
-                          <div className="font-medium">{error.filename}</div>
+                          <div
+                            className="truncate font-medium"
+                            title={error.filename}
+                          >
+                            {error.filename}
+                          </div>
                           {error.index_number && (
                             <div className="text-muted-foreground">
                               Index: {error.index_number}
@@ -665,7 +673,7 @@ export default function PhotoAlbumExamDetailPage() {
                               Reg: {error.registration_number}
                             </div>
                           )}
-                          <div>{error.error_message}</div>
+                          <div className="break-words">{error.error_message}</div>
                         </div>
                       ))}
                     </div>

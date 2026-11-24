@@ -120,14 +120,20 @@ function PhotoImage({
 
 function CandidateMetaChips({ item }: { item: PhotoAlbumItem }) {
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
+    <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
       {item.registration_number ? (
-        <span className="inline-flex items-center rounded-full border border-border bg-background/80 px-3 py-1 font-mono text-xs text-foreground shadow-none">
+        <span
+          className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-background/80 px-3 py-1 font-mono text-xs text-foreground shadow-none"
+          title={item.registration_number}
+        >
           {item.registration_number}
         </span>
       ) : null}
       {item.index_number ? (
-        <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-3 py-1 font-mono text-xs text-muted-foreground shadow-none">
+        <span
+          className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-muted/40 px-3 py-1 font-mono text-xs text-muted-foreground shadow-none"
+          title={item.index_number}
+        >
           {item.index_number}
         </span>
       ) : null}
@@ -142,6 +148,19 @@ function acceptImageFile(file: File | undefined | null): File | null {
     return null;
   }
   return file;
+}
+
+/** Middle-truncate long filenames for layout; keep extension. Full name stays in title. */
+function formatUploadFilename(name: string, maxLength = 42): string {
+  if (name.length <= maxLength) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot) : "";
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const budget = Math.max(8, maxLength - ext.length - 1);
+  if (base.length <= budget) return name;
+  const head = Math.ceil(budget * 0.55);
+  const tail = Math.max(1, budget - head);
+  return `${base.slice(0, head)}…${base.slice(-tail)}${ext}`;
 }
 
 function HiddenFileInput({
@@ -234,11 +253,14 @@ function PhotoUploadActions({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-muted/20 px-3 py-2.5">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">
-            {selectedFile.name}
+    <div className="min-w-0 space-y-3">
+      <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border/80 bg-muted/20 px-3 py-2.5">
+        <div className="w-0 min-w-0 flex-1 overflow-hidden">
+          <p
+            className="truncate text-sm font-medium text-foreground"
+            title={selectedFile.name}
+          >
+            {formatUploadFilename(selectedFile.name)}
           </p>
           <p className="font-mono text-[11px] text-muted-foreground">
             {(selectedFile.size / 1024).toFixed(1)} KB · ready to upload
@@ -483,7 +505,7 @@ export function PhotoAlbumCandidateGrid({
 
     setUploadingPhoto(true);
     try {
-      const uploaded = await uploadCandidatePhoto(
+      await uploadCandidatePhoto(
         selectedPhoto.candidate_id,
         selectedFile,
         false
@@ -493,15 +515,8 @@ export function PhotoAlbumCandidateGrid({
           ? "Photo replaced successfully"
           : "Photo uploaded successfully"
       );
-      clearUploadState();
-
-      const updatedItem: PhotoAlbumItem = {
-        ...selectedPhoto,
-        photo: uploaded,
-      };
-      setSelectedPhoto(updatedItem);
-      await reloadViewerPhoto(updatedItem);
       onPhotoChanged?.();
+      closeViewer();
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to upload photo"
@@ -615,13 +630,13 @@ export function PhotoAlbumCandidateGrid({
       >
         <DialogContent
           className={cn(
-            "gap-0 overflow-hidden border-border/80 p-0 shadow-none sm:max-w-[420px]",
-            "bg-card"
+            "w-[min(calc(100%-2rem),420px)] max-w-[420px] gap-0 overflow-hidden border-border/80 p-0 shadow-none sm:max-w-[420px]",
+            "[&>*]:min-w-0 bg-card"
           )}
         >
           {selectedPhoto ? (
             <>
-              <div className="relative overflow-hidden border-b border-border/70 bg-gradient-to-b from-muted/50 via-muted/20 to-background px-5 pb-5 pt-8">
+              <div className="relative min-w-0 overflow-hidden border-b border-border/70 bg-gradient-to-b from-muted/50 via-muted/20 to-background px-5 pb-5 pt-8">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 opacity-[0.35]"
@@ -773,9 +788,12 @@ export function PhotoAlbumCandidateGrid({
                 </div>
               </div>
 
-              <div className="space-y-5 px-5 py-5">
-                <div className="space-y-3 text-center">
-                  <DialogTitle className="text-lg font-medium tracking-[-0.02em] text-foreground">
+              <div className="min-w-0 space-y-5 px-5 py-5">
+                <div className="min-w-0 space-y-3 text-center">
+                  <DialogTitle
+                    className="truncate text-lg font-medium tracking-[-0.02em] text-foreground"
+                    title={selectedPhoto.candidate_name}
+                  >
                     {selectedPhoto.candidate_name}
                   </DialogTitle>
                   <CandidateMetaChips item={selectedPhoto} />

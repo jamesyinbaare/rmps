@@ -33,6 +33,7 @@ dependencies = [
     "mediapipe>=0.10.31",
     "pillow>=12.0.0",
     "opencv-python-headless>=4.13.0.90",
+    "markdown>=3.11.3",
 ]
 
 [dependency-groups]
