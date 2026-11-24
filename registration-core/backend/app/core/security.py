@@ -73,6 +73,13 @@ def create_refresh_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def refresh_token_lookup_hash(token: str) -> str:
+    """HMAC-SHA256 lookup key for O(1) refresh token retrieval."""
+    return hashlib.sha256(
+        f"{settings.secret_key}:refresh:{token}".encode("utf-8")
+    ).hexdigest()
+
+
 def hash_refresh_token(token: str) -> str:
     """Hash a refresh token using bcrypt before storage."""
     # Prepare token for bcrypt (same approach as passwords)
@@ -100,3 +107,30 @@ def verify_refresh_token_hash(plain_token: str, hashed_token: str) -> bool:
 
     # Verify using bcrypt
     return bcrypt.checkpw(prepared_token, hashed_token.encode("utf-8"))
+
+
+DEFAULT_SECRET_KEY = "registration-core-secret-key-change-in-production"
+DEV_ENVIRONMENTS = {"dev", "development", "local", "test"}
+
+
+def is_development_environment(environment: str | None = None) -> bool:
+    env = (environment if environment is not None else settings.environment).strip().lower()
+    return env in DEV_ENVIRONMENTS
+
+
+def assert_secret_key_safe_for_boot() -> None:
+    """Refuse to start outside development when SECRET_KEY is missing/default."""
+    if is_development_environment():
+        return
+    key = (settings.secret_key or "").strip()
+    if not key or key == DEFAULT_SECRET_KEY:
+        raise RuntimeError(
+            "SECRET_KEY must be set to a strong random value outside development. "
+            "Refusing to start with the default or empty key."
+        )
+
+
+def system_admin_provisioning_allowed() -> bool:
+    if settings.allow_system_admin_provisioning is not None:
+        return bool(settings.allow_system_admin_provisioning)
+    return is_development_environment()

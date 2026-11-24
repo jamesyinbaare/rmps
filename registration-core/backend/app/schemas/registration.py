@@ -228,6 +228,8 @@ class BulkUploadResponse(BaseModel):
     successful: int
     failed: int
     errors: list[BulkUploadError]
+    invites_sent: int = 0
+    invites_failed: int = 0
 
 
 class BulkCandidateRow(BaseModel):

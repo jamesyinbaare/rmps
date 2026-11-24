@@ -96,6 +96,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Configure logging FIRST
     setup_logging()
 
+    from app.core.security import assert_secret_key_safe_for_boot
+
+    assert_secret_key_safe_for_boot()
 
     import os
     if os.getenv("DEBUG") == "true":

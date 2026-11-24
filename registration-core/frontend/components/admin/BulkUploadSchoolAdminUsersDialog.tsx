@@ -135,9 +135,11 @@ export function BulkUploadSchoolAdminUsersDialog({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Bulk Upload School Admin Users</DialogTitle>
+          <DialogTitle>Bulk upload coordinators</DialogTitle>
           <DialogDescription>
-            Upload an Excel or CSV file with school admin user data. The file should have columns: Full_name, email_address, school_code, password
+            Upload an Excel or CSV file with coordinator data. Columns: Full_name, email_address,
+            school_code. Each user receives an email to set their password. A school may have only
+            one active coordinator — rows for schools that already have one will fail.
           </DialogDescription>
         </DialogHeader>
 
@@ -209,9 +211,9 @@ export function BulkUploadSchoolAdminUsersDialog({
           <div className="rounded-lg bg-muted p-4 space-y-2">
             <div className="text-sm font-medium">File Format Requirements:</div>
             <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-              <li>Required columns: <strong>Full_name</strong>, <strong>email_address</strong>, <strong>school_code</strong>, <strong>password</strong></li>
-              <li>Column names are case-insensitive and can have spaces (e.g., "Full name", "Email Address")</li>
-              <li>Passwords must be at least 8 characters long</li>
+              <li>Required columns: <strong>Full_name</strong>, <strong>email_address</strong>, <strong>school_code</strong></li>
+              <li>Column names are case-insensitive and can have spaces (e.g., &quot;Full name&quot;, &quot;Email Address&quot;)</li>
+              <li>Do not include passwords — users set their own via invite email</li>
               <li>Email addresses must be valid format</li>
               <li>School codes must exist in the system</li>
               <li>Each email address must be unique</li>
@@ -221,13 +223,23 @@ export function BulkUploadSchoolAdminUsersDialog({
           {/* Results */}
           {result && (
             <div className="space-y-4">
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-5 w-5 text-green-600" />
                   <span className="text-sm font-medium">
-                    Successful: {result.successful}
+                    Created: {result.successful}
                   </span>
                 </div>
+                {typeof result.invites_sent === "number" && (
+                  <span className="text-sm text-muted-foreground">
+                    Invites sent: {result.invites_sent}
+                  </span>
+                )}
+                {typeof result.invites_failed === "number" && result.invites_failed > 0 && (
+                  <span className="text-sm text-amber-700">
+                    Invite email failed: {result.invites_failed}
+                  </span>
+                )}
                 {result.failed > 0 && (
                   <div className="flex items-center gap-2">
                     <XCircle className="h-5 w-5 text-red-600" />

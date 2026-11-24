@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,28 +56,44 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
     }
   };
 
+  const forgotHref = (() => {
+    const value = email.trim();
+    if (value.includes("@")) {
+      return `/forgot-password?email=${encodeURIComponent(value)}`;
+    }
+    return "/forgot-password";
+  })();
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-2">
         <Label htmlFor="email" className="text-sm font-medium">
-          Email
+          Email or username
         </Label>
         <Input
           id="email"
-          type="email"
-          placeholder="Your email address"
+          type="text"
+          placeholder="Email or username"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
           disabled={loading}
           className="h-11"
-          autoComplete="email"
+          autoComplete="username"
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="password" className="text-sm font-medium">
-          Password
-        </Label>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="password" className="text-sm font-medium">
+            Password
+          </Label>
+          <Link
+            href={forgotHref}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <Input
           id="password"
           type="password"

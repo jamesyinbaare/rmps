@@ -16,6 +16,14 @@ services:
       - RELOAD=true
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=80
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_USER=
+      - SMTP_PASSWORD=
+      - SMTP_FROM_EMAIL=noreply@registration-core.local
+      - SMTP_FROM_NAME=CTVET
+      - EMAIL_CONSOLE_FALLBACK=true
+      - REDIS_URL=redis://registration-core-redis:6379/0
     volumes:
       - registration_core_storage_data:/app/storage/documents
       - registration_core_photos_data:/app/storage/photos
@@ -52,6 +60,10 @@ services:
     depends_on:
       registration_core_postgres:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+      registration-core-redis:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
@@ -65,6 +77,25 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+
+  registration-core-redis:
+    image: redis:7-alpine
+    container_name: registration-core-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - registration-core-network
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: registration-core-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+    networks:
+      - registration-core-network
 
   registration-core-frontend:
     build:

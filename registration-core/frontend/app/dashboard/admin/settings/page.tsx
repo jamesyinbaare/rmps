@@ -34,11 +34,13 @@ import {
   getCurrentUser,
   updateAdminUser,
   resetUserPassword,
+  resendPasswordSetup,
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { User } from "@/types";
 import { ArrowLeft, Settings as SettingsIcon, Plus, Upload } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/PageHeader";
+import { AccountEventsPanel } from "@/components/admin/AccountEventsPanel";
 
 type UserGroupTab = "general-public" | "coordinators" | "ctvet-staff";
 
@@ -223,6 +225,15 @@ export default function AdminSettingsPage() {
     setResetPasswordDialogOpen(true);
   };
 
+  const handleResendInvite = async (user: User) => {
+    try {
+      await resendPasswordSetup(user.id);
+      toast.success("Invite email sent");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to resend invite");
+    }
+  };
+
   const handleResetPasswordSuccess = () => {
     reloadCurrentTab();
   };
@@ -262,17 +273,21 @@ export default function AdminSettingsPage() {
         }
         actions={
           <>
-            <Button
-              variant="outline"
-              onClick={() => setBulkUploadDialogOpen(true)}
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Bulk Import
-            </Button>
-            <Button onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create User
-            </Button>
+            {currentUser?.role === "SystemAdmin" && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setBulkUploadDialogOpen(true)}
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Bulk Import
+                </Button>
+                <Button onClick={() => setCreateDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create User
+                </Button>
+              </>
+            )}
             <Button
               variant="outline"
               onClick={() => router.push("/dashboard/admin/permissions")}
@@ -305,9 +320,10 @@ export default function AdminSettingsPage() {
                   users={generalPublicUsers}
                   loading={loadingGeneralPublic}
                   currentUserId={currentUser?.id}
-                  onEdit={handleEdit}
-                  onResetPassword={handleResetPassword}
-                  onToggleActive={handleToggleActive}
+                  onEdit={currentUser?.role === "SystemAdmin" ? handleEdit : undefined}
+                  onResetPassword={currentUser?.role === "SystemAdmin" ? handleResetPassword : undefined}
+                  onResendInvite={currentUser?.role === "SystemAdmin" ? handleResendInvite : undefined}
+                  onToggleActive={currentUser?.role === "SystemAdmin" ? handleToggleActive : undefined}
                 />
               </div>
             </CardContent>
@@ -320,7 +336,8 @@ export default function AdminSettingsPage() {
             <CardHeader>
               <CardTitle>Coordinators</CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
-                School Administrators and School Staff
+                School coordinators and school staff. One active coordinator per school —
+                use Replace on the school page to transfer.
               </p>
             </CardHeader>
             <CardContent className="p-0">
@@ -329,9 +346,10 @@ export default function AdminSettingsPage() {
                   users={coordinatorUsers}
                   loading={loadingCoordinators}
                   currentUserId={currentUser?.id}
-                  onEdit={handleEdit}
-                  onResetPassword={handleResetPassword}
-                  onToggleActive={handleToggleActive}
+                  onEdit={currentUser?.role === "SystemAdmin" ? handleEdit : undefined}
+                  onResetPassword={currentUser?.role === "SystemAdmin" ? handleResetPassword : undefined}
+                  onResendInvite={currentUser?.role === "SystemAdmin" ? handleResendInvite : undefined}
+                  onToggleActive={currentUser?.role === "SystemAdmin" ? handleToggleActive : undefined}
                 />
               </div>
             </CardContent>
@@ -353,15 +371,18 @@ export default function AdminSettingsPage() {
                   users={ctvetStaffUsers}
                   loading={loadingCtvetStaff}
                   currentUserId={currentUser?.id}
-                  onEdit={handleEdit}
-                  onResetPassword={handleResetPassword}
-                  onToggleActive={handleToggleActive}
+                  onEdit={currentUser?.role === "SystemAdmin" ? handleEdit : undefined}
+                  onResetPassword={currentUser?.role === "SystemAdmin" ? handleResetPassword : undefined}
+                  onResendInvite={currentUser?.role === "SystemAdmin" ? handleResendInvite : undefined}
+                  onToggleActive={currentUser?.role === "SystemAdmin" ? handleToggleActive : undefined}
                 />
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AccountEventsPanel />
 
       {/* Dialogs */}
       <CreateAdminUserDialog

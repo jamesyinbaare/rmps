@@ -16,6 +16,7 @@ export type Role =
 export interface User {
   id: string;
   email: string;
+  username: string;
   full_name: string;
   role: Role;
   school_id: number | null;
@@ -24,6 +25,7 @@ export interface User {
   created_at: string;
   updated_at: string;
   last_login: string | null;
+  invite_sent?: boolean | null;
 }
 
 export interface Token {
@@ -513,21 +515,24 @@ export interface ExamSeriesDefinition {
 
 export interface SchoolAdminCreate {
   email: string;
-  password: string;
   full_name: string;
   school_id: number;
 }
 
+export interface SchoolAdminReplace {
+  email: string;
+  full_name: string;
+}
+
 export interface AdminUserCreate {
   email: string;
-  password: string;
   full_name: string;
   role: Role;
   school_id?: number | null;
 }
 
 export interface UserPasswordReset {
-  new_password: string;
+  new_password?: string;
 }
 
 export interface UserUpdate {
@@ -629,6 +634,8 @@ export interface BulkUploadResponse {
   successful: number;
   failed: number;
   errors: BulkUploadError[];
+  invites_sent?: number;
+  invites_failed?: number;
 }
 
 export interface ProgrammeBulkUploadError {

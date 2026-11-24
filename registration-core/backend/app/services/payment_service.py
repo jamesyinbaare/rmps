@@ -288,10 +288,14 @@ async def process_webhook_event(
 
     # Update payment status based on event
     if event_type == "charge.success":
+        from datetime import datetime
+
+        # Idempotency: skip side effects (emails) if already settled
+        already_success = payment.status == PaymentStatus.SUCCESS
+
         payment.status = PaymentStatus.SUCCESS
         paid_at_value = data.get("paid_at")
         if paid_at_value:
-            from datetime import datetime
             # Parse Paystack datetime string if needed
             if isinstance(paid_at_value, str):
                 try:
@@ -399,6 +403,9 @@ async def process_webhook_event(
                             f"payment_amount={payment.amount}"
                         )
 
+                        if not already_success:
+                            _send_private_payment_receipt(candidate, payment)
+
                 # School batch registration invoice (Paystack)
                 from app.services.school_fee_invoice_service import settle_by_linked_invoice_id
 
@@ -412,6 +419,8 @@ async def process_webhook_event(
                         f"Settled school registration invoice {school_batch.id} "
                         f"via Paystack payment {payment.id}"
                     )
+                    if not already_success:
+                        await _send_school_fee_payment_receipt(session, school_batch, payment)
 
                 # Credit purchases are out of scope for registration-core
                 paystack_response = payment.paystack_response or {}
@@ -434,3 +443,79 @@ async def process_webhook_event(
 
     logger.info(f"Payment {payment.id} status updated to {payment.status.value} via webhook")
     return payment
+
+
+def _dashboard_base() -> str:
+    return (settings.frontend_base_url or "http://localhost:3002").rstrip("/")
+
+
+def _send_private_payment_receipt(candidate, payment: Payment) -> None:
+    from app.services.email_service import send_payment_receipt_email
+
+    to = (candidate.contact_email or "").strip()
+    if not to:
+        logger.info(
+            "Skipping private payment receipt: no contact_email for candidate %s",
+            candidate.id,
+        )
+        return
+
+    name = " ".join(
+        part for part in [candidate.firstname, candidate.lastname] if part
+    ).strip() or to
+    reg_no = candidate.registration_number or str(candidate.id)
+    paid_at = payment.paid_at.isoformat(sep=" ", timespec="minutes") if payment.paid_at else ""
+    send_payment_receipt_email(
+        to=to,
+        recipient_name=name,
+        amount=str(payment.amount),
+        currency=payment.currency or "GHS",
+        reference=payment.paystack_reference or str(payment.id),
+        paid_at=paid_at,
+        detail_line=f"Registration number: {reg_no}.",
+        dashboard_url=f"{_dashboard_base()}/dashboard/private",
+    )
+
+
+async def _send_school_fee_payment_receipt(session: AsyncSession, school_batch, payment: Payment) -> None:
+    from app.models import PortalUser, School
+    from app.services.email_service import send_payment_receipt_email
+
+    to = None
+    name = "Coordinator"
+    if school_batch.created_by_user_id:
+        creator = (
+            await session.execute(
+                select(PortalUser).where(PortalUser.id == school_batch.created_by_user_id)
+            )
+        ).scalar_one_or_none()
+        if creator and creator.email:
+            to = creator.email
+            name = creator.full_name or creator.email
+
+    if not to and school_batch.school_id:
+        school = (
+            await session.execute(select(School).where(School.id == school_batch.school_id))
+        ).scalar_one_or_none()
+        if school and school.email:
+            to = school.email
+            name = school.name or to
+
+    if not to:
+        logger.info(
+            "Skipping school fee receipt: no recipient for invoice %s",
+            school_batch.invoice_number,
+        )
+        return
+
+    paid_at = payment.paid_at.isoformat(sep=" ", timespec="minutes") if payment.paid_at else ""
+    send_payment_receipt_email(
+        to=to,
+        recipient_name=name,
+        amount=str(payment.amount),
+        currency=payment.currency or "GHS",
+        reference=payment.paystack_reference or str(payment.id),
+        paid_at=paid_at,
+        detail_line=f"Invoice {school_batch.invoice_number} is marked paid.",
+        dashboard_url=f"{_dashboard_base()}/dashboard/my-school",
+    )

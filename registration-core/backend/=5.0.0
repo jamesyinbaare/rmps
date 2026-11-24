@@ -1,0 +1,4 @@
+Resolved 142 packages in 6.67s
+warning: `numpy==2.4.0` is yanked (reason: "Backward compatibility bug")
+Prepared 1 package in 1.13s
+error: failed to remove file `/home/jyin/workplace/lazaar/registration-core/backend/.venv/lib/python3.13/site-packages/mediapipe-0.10.31.dist-info/INSTALLER`: Read-only file system (os error 30)

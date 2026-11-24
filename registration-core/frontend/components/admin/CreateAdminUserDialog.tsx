@@ -19,10 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createAdminUser, listSchools } from "@/lib/api";
+import { createAdminUser, getSchoolAdmins, listSchools } from "@/lib/api";
 import { toast } from "sonner";
 import type { School, Role } from "@/types";
-import { Eye, EyeOff } from "lucide-react";
 
 interface CreateAdminUserDialogProps {
   open: boolean;
@@ -48,8 +47,8 @@ const ROLE_DISPLAY_NAMES: Record<Role, string> = {
   SeniorManager: "Senior Manager",
   Manager: "Manager",
   Staff: "Staff",
-  SchoolAdmin: "School Admin",
-  SchoolStaff: "SchoolStaff",
+  SchoolAdmin: "Coordinator",
+  SchoolStaff: "School Staff",
   PublicUser: "Public User",
   APIUSER: "API User",
 };
@@ -60,15 +59,13 @@ export function CreateAdminUserDialog({
   onSuccess,
 }: CreateAdminUserDialogProps) {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<Role | "">("");
   const [schoolId, setSchoolId] = useState<string>("");
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [checkingAdmin, setCheckingAdmin] = useState(false);
+  const [hasActiveAdmin, setHasActiveAdmin] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -79,17 +76,37 @@ export function CreateAdminUserDialog({
           console.error(error);
         });
     } else {
-      // Reset form when dialog closes
       setEmail("");
-      setPassword("");
-      setConfirmPassword("");
       setFullName("");
       setRole("");
       setSchoolId("");
-      setShowPassword(false);
-      setShowConfirmPassword(false);
+      setHasActiveAdmin(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || role !== "SchoolAdmin" || !schoolId) {
+      setHasActiveAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingAdmin(true);
+    getSchoolAdmins(parseInt(schoolId, 10))
+      .then((admins) => {
+        if (!cancelled) {
+          setHasActiveAdmin(admins.some((a) => a.is_active));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHasActiveAdmin(false);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, role, schoolId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,32 +116,32 @@ export function CreateAdminUserDialog({
       return;
     }
 
-    if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
-      return;
-    }
-
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters long");
-      return;
-    }
-
     if (role === "SchoolAdmin" && !schoolId) {
-      toast.error("Please select a school for School Admin role");
+      toast.error("Please select a school for the coordinator role");
+      return;
+    }
+
+    if (role === "SchoolAdmin" && hasActiveAdmin) {
+      toast.error(
+        "This school already has an active coordinator. Use Replace coordinator on the school page."
+      );
       return;
     }
 
     setLoading(true);
 
     try {
-      await createAdminUser({
+      const created = await createAdminUser({
         email,
-        password,
         full_name: fullName,
         role: role as Role,
         school_id: schoolId ? parseInt(schoolId) : null,
       });
-      toast.success("User created successfully");
+      if (created.invite_sent === false) {
+        toast.warning("User created, but the invite email failed to send. Use Resend invite.");
+      } else {
+        toast.success("User created — invite email sent to set their password");
+      }
       onSuccess();
       onOpenChange(false);
     } catch (error) {
@@ -142,7 +159,8 @@ export function CreateAdminUserDialog({
         <DialogHeader>
           <DialogTitle>Create Admin User</DialogTitle>
           <DialogDescription>
-            Create a new admin user account. User and PublicUser roles are reserved for self-registration.
+            Create a new admin user. They will receive an email to set their own password.
+            PublicUser and SchoolStaff roles are reserved for self-registration.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
@@ -172,12 +190,17 @@ export function CreateAdminUserDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
-              <Select value={role} onValueChange={(value) => {
-                setRole(value as Role);
-                if (value !== "SchoolAdmin") {
-                  setSchoolId("");
-                }
-              }} disabled={loading}>
+              <Select
+                value={role}
+                onValueChange={(value) => {
+                  setRole(value as Role);
+                  if (value !== "SchoolAdmin") {
+                    setSchoolId("");
+                    setHasActiveAdmin(false);
+                  }
+                }}
+                disabled={loading}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a role" />
                 </SelectTrigger>
@@ -192,7 +215,9 @@ export function CreateAdminUserDialog({
             </div>
             {requiresSchool && (
               <div className="space-y-2">
-                <Label htmlFor="school">School <span className="text-destructive">*</span></Label>
+                <Label htmlFor="school">
+                  School <span className="text-destructive">*</span>
+                </Label>
                 <Select value={schoolId} onValueChange={setSchoolId} disabled={loading} required>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a school" />
@@ -205,73 +230,28 @@ export function CreateAdminUserDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {hasActiveAdmin ? (
+                  <p className="text-sm text-destructive">
+                    This school already has an active coordinator. Open the school page and use
+                    Replace coordinator.
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    A school may have only one active coordinator.
+                  </p>
+                )}
               </div>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  disabled={loading}
-                  minLength={8}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                  onClick={() => setShowPassword(!showPassword)}
-                  disabled={loading}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <div className="relative">
-                <Input
-                  id="confirmPassword"
-                  type={showConfirmPassword ? "text" : "password"}
-                  placeholder="Confirm password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  disabled={loading}
-                  minLength={8}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  disabled={loading}
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </Button>
-              </div>
-            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? "Creating..." : "Create"}
+            <Button
+              type="submit"
+              disabled={loading || checkingAdmin || (requiresSchool && hasActiveAdmin)}
+            >
+              {loading ? "Creating..." : "Create & send invite"}
             </Button>
           </DialogFooter>
         </form>

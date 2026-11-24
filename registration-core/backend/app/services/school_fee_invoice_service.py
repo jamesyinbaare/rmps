@@ -926,12 +926,19 @@ async def approve_bank_deposit(
     if not invoice:
         raise ValueError("Associated invoice not found")
 
-    return await settle_school_fee_invoice(
+    settled = await settle_school_fee_invoice(
         session,
         invoice,
         confirmed_by_user_id=reviewed_by_user_id,
         payment_method=SchoolInvoicePaymentMethod.BANK_DEPOSIT,
     )
+    await _notify_bank_deposit_uploader(
+        session,
+        proof,
+        approved=True,
+        invoice_number=settled.invoice_number if settled else invoice.invoice_number,
+    )
+    return settled
 
 
 async def reject_bank_deposit(
@@ -975,7 +982,48 @@ async def reject_bank_deposit(
             invoice.payment_method = None
 
     await session.flush()
+    invoice_number = invoice.invoice_number if invoice else str(proof.school_registration_invoice_id)
+    await _notify_bank_deposit_uploader(
+        session,
+        proof,
+        approved=False,
+        invoice_number=invoice_number,
+        rejection_reason=reason,
+    )
     return proof
+
+
+async def _notify_bank_deposit_uploader(
+    session: AsyncSession,
+    proof: BankDepositProof,
+    *,
+    approved: bool,
+    invoice_number: str,
+    rejection_reason: str | None = None,
+) -> None:
+    from app.config import settings
+    from app.models import PortalUser
+    from app.services.email_service import send_bank_deposit_status_email
+
+    if not proof.uploaded_by_user_id:
+        return
+    uploader = (
+        await session.execute(
+            select(PortalUser).where(PortalUser.id == proof.uploaded_by_user_id)
+        )
+    ).scalar_one_or_none()
+    if not uploader or not uploader.email:
+        return
+
+    base = (settings.frontend_base_url or "http://localhost:3002").rstrip("/")
+    send_bank_deposit_status_email(
+        to=uploader.email,
+        recipient_name=uploader.full_name or uploader.email,
+        invoice_number=invoice_number,
+        approved=approved,
+        rejection_reason=rejection_reason,
+        dashboard_url=f"{base}/dashboard/my-school",
+    )
 
 
 async def list_bank_deposits(
