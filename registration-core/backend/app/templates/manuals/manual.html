@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      --ghana-red: #CE1126;
+      --ghana-gold: #FCD116;
+      --ghana-green: #006B3F;
+      --ghana-forest: #005530;
+      --ghana-mint: #ECFDF5;
+      --ghana-mint-soft: #EEF5F1;
+      --ghana-rich-gold: #E6B80A;
+      --ink: #1A1A1A;
+      --muted: #5A6B62;
+      --border: #C9D5CE;
+    }
+
+    @page {
+      size: A4;
+      margin: 1.7cm 1.5cm 2.2cm 1.5cm;
+
+      @bottom-left {
+        content: "{{ title }}";
+        font-family: "DejaVu Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 8pt;
+        color: var(--muted);
+        border-top: 1.5px solid var(--ghana-green);
+        padding-top: 6pt;
+        margin-top: 8pt;
+        width: 70%;
+      }
+
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: "DejaVu Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 8pt;
+        color: var(--ghana-forest);
+        font-weight: 600;
+        border-top: 1.5px solid var(--ghana-green);
+        padding-top: 6pt;
+        margin-top: 8pt;
+        width: 30%;
+        text-align: right;
+      }
+    }
+
+    @page :first {
+      margin: 1.2cm 1.5cm 1.8cm 1.5cm;
+
+      @bottom-left {
+        content: none;
+        border-top: none;
+      }
+
+      @bottom-right {
+        content: none;
+        border-top: none;
+      }
+    }
+
+    body {
+      font-family: "DejaVu Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.5;
+      color: var(--ink);
+      margin: 0;
+      position: relative;
+    }
+
+    .watermark {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+      background-image: url("{{ logo_src }}");
+      background-size: 55%;
+      background-repeat: no-repeat;
+      background-position: center;
+      opacity: 0.03;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .content-wrapper {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* —— Cover —— */
+    .cover {
+      page-break-after: always;
+      min-height: 240mm;
+    }
+
+    .flag-stripe {
+      display: flex;
+      height: 10px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 22px;
+    }
+
+    .flag-stripe span {
+      flex: 1;
+      display: block;
+    }
+
+    .flag-stripe .red { background: var(--ghana-red); }
+    .flag-stripe .gold { background: var(--ghana-gold); }
+    .flag-stripe .green { background: var(--ghana-green); }
+
+    .cover-banner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 18px 20px;
+      background: linear-gradient(135deg, var(--ghana-mint) 0%, #ffffff 55%, #fff9e6 100%);
+      border: 1px solid var(--border);
+      border-left: 6px solid var(--ghana-green);
+      border-radius: 8px;
+      margin-bottom: 28px;
+    }
+
+    .cover-logo {
+      height: 78px;
+      width: auto;
+      flex-shrink: 0;
+    }
+
+    .cover-banner-text {
+      flex: 1;
+    }
+
+    .cover-eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: var(--ghana-forest);
+      margin: 0 0 6px 0;
+    }
+
+    .cover-title {
+      margin: 0;
+      font-size: 22pt;
+      line-height: 1.2;
+      font-weight: 700;
+      color: var(--ghana-green);
+    }
+
+    .cover-subtitle {
+      margin: 8px 0 0 0;
+      font-size: 11.5pt;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .cover-gold-rule {
+      width: 56px;
+      height: 3px;
+      background: var(--ghana-gold);
+      margin: 10px 0 0 0;
+      border-radius: 2px;
+    }
+
+    .cover-panel {
+      background: var(--ghana-mint-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 22px;
+    }
+
+    .cover-panel-label {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 8pt;
+      font-weight: 700;
+      color: var(--ghana-green);
+      margin: 0 0 6px 0;
+    }
+
+    .cover-panel p {
+      margin: 0;
+      font-size: 11pt;
+      color: #24352c;
+      line-height: 1.45;
+    }
+
+    .cover-meta {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .cover-chip {
+      display: inline-block;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: var(--ghana-forest);
+    }
+
+    .cover-chip.gold {
+      background: #fff8e1;
+      border-color: #ffe082;
+      color: #8d6e00;
+    }
+
+    .cover-footer-note {
+      margin-top: 36px;
+      padding-top: 12px;
+      border-top: 2px solid var(--ghana-mint);
+      font-size: 9pt;
+      color: var(--muted);
+    }
+
+    /* —— Body content —— */
+    .manual-body > h1:first-of-type {
+      display: none;
+    }
+
+    /* Hide the short intro lines that duplicate the cover (first two paragraphs after h1) */
+    .manual-body > h1:first-of-type + p,
+    .manual-body > h1:first-of-type + p + p {
+      display: none;
+    }
+
+    .manual-body > h1:first-of-type + p + p + hr {
+      display: none;
+    }
+
+    h1 {
+      font-size: 18pt;
+      margin: 0 0 0.55em;
+      color: var(--ghana-green);
+    }
+
+    h2 {
+      font-size: 13.5pt;
+      margin: 1.45em 0 0.5em;
+      padding: 0.28em 0 0.28em 0.55em;
+      color: var(--ghana-forest);
+      border-left: 4px solid var(--ghana-gold);
+      border-bottom: 2px solid var(--ghana-mint);
+      page-break-after: avoid;
+      background: linear-gradient(90deg, var(--ghana-mint) 0%, transparent 70%);
+    }
+
+    h3 {
+      font-size: 11.5pt;
+      margin: 1.15em 0 0.35em;
+      color: var(--ghana-green);
+      page-break-after: avoid;
+    }
+
+    h4 {
+      font-size: 10.5pt;
+      margin: 0.95em 0 0.3em;
+      color: #1b4332;
+    }
+
+    p, ul, ol, table {
+      margin: 0 0 0.7em;
+    }
+
+    ul, ol {
+      padding-left: 1.35em;
+    }
+
+    li {
+      margin-bottom: 0.22em;
+    }
+
+    li::marker {
+      color: var(--ghana-green);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+      margin: 0.5em 0 1em;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.4em 0.55em;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--ghana-green);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: var(--ghana-mint-soft);
+    }
+
+    code {
+      font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace;
+      font-size: 9pt;
+      background: var(--ghana-mint);
+      color: var(--ghana-forest);
+      padding: 0.05em 0.3em;
+      border-radius: 3px;
+      border: 1px solid #c8e6c9;
+    }
+
+    hr {
+      border: none;
+      height: 3px;
+      margin: 1.3em 0;
+      background: linear-gradient(
+        90deg,
+        var(--ghana-red) 0%,
+        var(--ghana-red) 33%,
+        var(--ghana-gold) 33%,
+        var(--ghana-gold) 66%,
+        var(--ghana-green) 66%,
+        var(--ghana-green) 100%
+      );
+      border-radius: 2px;
+      opacity: 0.85;
+    }
+
+    strong {
+      font-weight: 700;
+      color: #0f2a1c;
+    }
+
+    a {
+      color: var(--ghana-green);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0.75em 0 0.35em;
+      border: 2px solid #b7d4c4;
+      border-radius: 6px;
+      outline: 4px solid rgba(0, 107, 63, 0.08);
+      page-break-inside: avoid;
+      background: #ffffff;
+    }
+
+    figure {
+      margin: 0.9em 0 1.1em;
+      page-break-inside: avoid;
+    }
+
+    figcaption {
+      font-size: 9pt;
+      color: var(--muted);
+      margin-top: 0.3em;
+      font-style: italic;
+    }
+
+    blockquote,
+    .callout {
+      background: var(--ghana-mint-soft);
+      border-left: 4px solid var(--ghana-green);
+      padding: 10px 12px;
+      margin: 0.7em 0 1em;
+      border-radius: 0 6px 6px 0;
+      color: #24352c;
+    }
+
+    blockquote.warn,
+    .callout.warn {
+      background: #fff8e1;
+      border-left-color: var(--ghana-rich-gold);
+    }
+
+    blockquote strong,
+    .callout strong {
+      color: var(--ghana-forest);
+    }
+  </style>
+</head>
+<body>
+  <div class="watermark"></div>
+  <div class="content-wrapper">
+    <section class="cover">
+      <div class="flag-stripe" aria-hidden="true">
+        <span class="red"></span>
+        <span class="gold"></span>
+        <span class="green"></span>
+      </div>
+
+      <div class="cover-banner">
+        <img src="{{ logo_src }}" alt="CTVET crest" class="cover-logo" />
+        <div class="cover-banner-text">
+          <p class="cover-eyebrow">{{ org_name }}</p>
+          <h1 class="cover-title">{{ title }}</h1>
+          <p class="cover-subtitle">{{ subtitle }}</p>
+          <div class="cover-gold-rule" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="cover-panel">
+        <p class="cover-panel-label">What this guide covers</p>
+        <p>{{ purpose }}</p>
+        <div class="cover-meta">
+          <span class="cover-chip">School Administrator</span>
+          <span class="cover-chip">Support Staff</span>
+          <span class="cover-chip gold">Help &amp; Support PDF</span>
+        </div>
+      </div>
+
+      <p class="cover-footer-note">
+        Read this guide in the portal under <strong>Help &amp; Support</strong>, or keep this PDF
+        as an offline reference for your school registration team.
+      </p>
+    </section>
+
+    <div class="manual-body">
+      {{ body_html | safe }}
+    </div>
+  </div>
+</body>
+</html>

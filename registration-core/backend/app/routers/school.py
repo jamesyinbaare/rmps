@@ -11,7 +11,7 @@ import re
 from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select, and_, or_, func, insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -100,6 +100,11 @@ from app.services.template_generator import (
     generate_bulk_upload_instructions_pdf,
     generate_candidate_template,
 )
+from app.services.manual_pdf import (
+    generate_school_registration_manual_pdf,
+    load_manual_markdown,
+    resolve_manual_asset_path,
+)
 from app.schemas.user import SchoolUserCreate, UserUpdate
 from app.schemas.auth import UserResponse
 from app.core.security import get_password_hash
@@ -154,6 +159,70 @@ router = APIRouter(prefix="/api/v1/school", tags=["school"])
 
 # Maximum number of active users allowed per school
 MAX_ACTIVE_USERS_PER_SCHOOL = 10
+
+
+@router.get("/manuals/school-registration.md")
+async def get_school_registration_manual_markdown(
+    current_user: SchoolUserWithSchoolDep,
+) -> Response:
+    """Return the school registration user manual as Markdown."""
+    content = load_manual_markdown()
+    return Response(
+        content=content,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": 'inline; filename="school-registration-manual.md"',
+        },
+    )
+
+
+@router.get("/manuals/assets/{asset_path:path}")
+async def get_school_manual_asset(
+    asset_path: str,
+    current_user: SchoolUserWithSchoolDep,
+) -> Response:
+    """Serve an image/asset from the school manuals package."""
+    path = resolve_manual_asset_path(asset_path)
+    suffix = path.suffix.lower()
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+    }
+    media_type = media_types.get(suffix)
+    if not media_type:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported manual asset type",
+        )
+    return Response(content=path.read_bytes(), media_type=media_type)
+
+
+@router.get("/manuals/school-registration.pdf")
+async def download_school_registration_manual_pdf(
+    current_user: SchoolUserWithSchoolDep,
+) -> StreamingResponse:
+    """Download the school registration user manual as PDF."""
+    try:
+        pdf_bytes = generate_school_registration_manual_pdf()
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'attachment; filename="school-registration-manual.pdf"',
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to generate school registration manual PDF")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate manual PDF: {str(e)}",
+        ) from e
 
 
 async def count_active_school_users(session: DBSessionDep, school_id: int) -> int:

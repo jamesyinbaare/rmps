@@ -180,6 +180,12 @@ export const schoolUserMoreActions: MenuItem[] = [
     icon: UserCircle,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
+  {
+    href: "/dashboard/help",
+    label: "Help & Support",
+    icon: HelpCircle,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
 ];
 
 /**
