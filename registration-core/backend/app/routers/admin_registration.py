@@ -93,7 +93,16 @@ from app.schemas.registration import (
     PhotoAlbumResponse,
     PhotoAlbumItem,
     RegistrationCandidatePhotoResponse,
+    RegistrationCandidateResponse,
+    RegistrationCandidateUpdate,
     ExamStatisticsResponse,
+)
+from app.services.candidate_detail_service import (
+    apply_candidate_update,
+    candidate_to_response,
+    delete_candidate_photo_record,
+    load_candidate_for_detail,
+    upload_candidate_photo_file,
 )
 from app.schemas.user import (
     SchoolAdminUserCreate,
@@ -1339,19 +1348,19 @@ async def get_school_candidates(
     offset = (page - 1) * page_size
     stmt = stmt.order_by(RegistrationCandidate.created_at.desc()).offset(offset).limit(page_size)
     stmt = stmt.options(
-        selectinload(RegistrationCandidate.subject_selections),
-        selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period)
+        selectinload(RegistrationCandidate.subject_selections).selectinload(
+            RegistrationSubjectSelection.subject
+        ),
+        selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
     )
 
     result = await session.execute(stmt)
     candidates = result.scalars().all()
 
-    from app.schemas.registration import RegistrationCandidateResponse
-
     total_pages = (total + page_size - 1) // page_size
 
     return CandidateListResponse(
-        items=[RegistrationCandidateResponse.model_validate(c) for c in candidates],
+        items=[candidate_to_response(c, include_exam=True) for c in candidates],
         total=total,
         page=page,
         page_size=page_size,
@@ -4330,6 +4339,78 @@ async def export_candidate_photos(
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
+
+
+@router.put(
+    "/candidates/{candidate_id}",
+    response_model=RegistrationCandidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_admin_candidate(
+    candidate_id: int,
+    candidate_update: RegistrationCandidateUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> RegistrationCandidateResponse:
+    """Update a registration candidate (platform admin)."""
+    candidate = await load_candidate_for_detail(session, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    return await apply_candidate_update(
+        session,
+        candidate,
+        candidate_update,
+        acting_school_id=candidate.school_id,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/photos",
+    response_model=RegistrationCandidatePhotoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_admin_candidate_photo(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    file: UploadFile = File(...),
+    validation_level: str = Form(
+        "strict",
+        description="Validation level: 'basic', 'standard', or 'strict'",
+    ),
+    replace_background: bool = Form(
+        False, description="Replace background with white color if checked"
+    ),
+) -> RegistrationCandidatePhotoResponse:
+    """Upload/replace photo for a candidate (platform admin)."""
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    return await upload_candidate_photo_file(
+        session,
+        candidate,
+        file,
+        validation_level=validation_level,
+        do_replace_background=replace_background,
+    )
+
+
+@router.delete("/candidates/{candidate_id}/photos", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_candidate_photo(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete candidate's photo (platform admin)."""
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    await delete_candidate_photo_record(session, candidate)
 
 
 @router.get("/candidates/{candidate_id}/photos", response_model=RegistrationCandidatePhotoResponse | None)
