@@ -1,0 +1,13 @@
+{% extends "emails/_layout.html" %}
+{% from "emails/_macros.html" import detail_panel with context %}
+
+{% block body %}
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:{{ brand.text }};font-family:{{ font }};">
+  Hi {{ recipient_name }},
+</p>
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:{{ brand.text }};font-family:{{ font }};">
+  We received your payment of <strong>{{ currency }} {{ amount }}</strong>.
+  {{ detail_line }}
+</p>
+{{ detail_panel(detail_rows, tint=brand.mint) }}
+{% endblock %}

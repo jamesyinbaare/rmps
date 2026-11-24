@@ -33,7 +33,7 @@ import {
   denyUserPermission,
   revokeUserPermission,
 } from "@/lib/api/permissions";
-import { listAdminUsers } from "@/lib/api";
+import { getAdminUser } from "@/lib/api";
 import { toast } from "sonner";
 import type { Permission, UserPermission } from "@/types/permissions";
 import type { User } from "@/types";
@@ -61,14 +61,7 @@ export default function UserPermissionsPage() {
     const loadData = async () => {
       setUserLoading(true);
       try {
-        // Load user details from list (filter by ID)
-        const usersResponse = await listAdminUsers({ page: 1, page_size: 1000 });
-        const userData = usersResponse.items.find((u) => u.id === userId);
-        if (!userData) {
-          toast.error("User not found");
-          router.back();
-          return;
-        }
+        const userData = await getAdminUser(userId);
         setUser(userData);
 
         // Load all available permissions

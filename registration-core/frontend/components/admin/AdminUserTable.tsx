@@ -15,7 +15,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronDown, MoreVertical, Key, Edit, UserCheck, UserX, ChevronLeft, ChevronRight, Shield } from "lucide-react";
+import { ArrowUpDown, ChevronDown, MoreVertical, Key, Edit, UserCheck, UserX, ChevronLeft, ChevronRight, Shield, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +44,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { User, Role } from "@/types";
 
 interface AdminUserTableProps {
@@ -52,6 +62,7 @@ interface AdminUserTableProps {
   currentUserId?: string | null;
   onEdit?: (user: User) => void;
   onResetPassword?: (user: User) => void;
+  onResendInvite?: (user: User) => void;
   onToggleActive?: (user: User) => void;
 }
 
@@ -63,11 +74,17 @@ const ROLE_DISPLAY_NAMES: Record<Role, string> = {
   SeniorManager: "Senior Manager",
   Manager: "Manager",
   Staff: "Staff",
-  SchoolAdmin: "School Admin",
-  SchoolStaff: "SchoolStaff",
+  SchoolAdmin: "Coordinator",
+  SchoolStaff: "School Staff",
   PublicUser: "Public User",
   APIUSER: "API User",
 };
+
+function userAccountStatus(user: User): "inactive" | "pending" | "active" {
+  if (!user.is_active) return "inactive";
+  if (!user.last_login) return "pending";
+  return "active";
+}
 
 export function AdminUserTable({
   users,
@@ -75,6 +92,7 @@ export function AdminUserTable({
   currentUserId,
   onEdit,
   onResetPassword,
+  onResendInvite,
   onToggleActive,
 }: AdminUserTableProps) {
   const router = useRouter();
@@ -83,6 +101,7 @@ export function AdminUserTable({
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [pageSize, setPageSize] = React.useState(20);
+  const [deactivateTarget, setDeactivateTarget] = React.useState<User | null>(null);
 
   const columns: ColumnDef<User>[] = React.useMemo(
     () => [
@@ -100,6 +119,21 @@ export function AdminUserTable({
           );
         },
         cell: ({ row }) => <div className="font-medium">{row.getValue("email")}</div>,
+      },
+      {
+        accessorKey: "username",
+        header: ({ column }) => {
+          return (
+            <Button
+              variant="ghost"
+              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            >
+              Username
+              <ArrowUpDown className="ml-2 h-4 w-4" />
+            </Button>
+          );
+        },
+        cell: ({ row }) => <div>{row.getValue("username")}</div>,
       },
       {
         accessorKey: "full_name",
@@ -185,17 +219,30 @@ export function AdminUserTable({
           );
         },
         cell: ({ row }) => {
-          const isActive = row.getValue("is_active") as boolean;
+          const status = userAccountStatus(row.original);
+          if (status === "pending") {
+            return (
+              <Badge
+                variant="outline"
+                className="border-amber-200 bg-amber-50 text-amber-800 shadow-none dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-200"
+              >
+                Pending invite
+              </Badge>
+            );
+          }
+          if (status === "active") {
+            return (
+              <Badge
+                variant="outline"
+                className="border-success/30 bg-success/10 text-success shadow-none"
+              >
+                Active
+              </Badge>
+            );
+          }
           return (
-            <Badge
-              variant={isActive ? "default" : "secondary"}
-              className={
-                isActive
-                  ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                  : ""
-              }
-            >
-              {isActive ? "Active" : "Inactive"}
+            <Badge variant="secondary" className="shadow-none">
+              Inactive
             </Badge>
           );
         },
@@ -240,10 +287,16 @@ export function AdminUserTable({
                     Edit
                   </DropdownMenuItem>
                 )}
-                {onResetPassword && (
+                {onResendInvite && userAccountStatus(user) === "pending" && (
+                  <DropdownMenuItem onClick={() => onResendInvite(user)}>
+                    <Key className="mr-2 h-4 w-4" />
+                    Resend invite
+                  </DropdownMenuItem>
+                )}
+                {onResetPassword && userAccountStatus(user) !== "pending" && (
                   <DropdownMenuItem onClick={() => onResetPassword(user)}>
                     <Key className="mr-2 h-4 w-4" />
-                    Reset Password
+                    Send password reset
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
@@ -256,7 +309,13 @@ export function AdminUserTable({
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      onClick={() => onToggleActive(user)}
+                      onClick={() => {
+                        if (user.is_active && user.role === "SchoolAdmin") {
+                          setDeactivateTarget(user);
+                          return;
+                        }
+                        onToggleActive(user);
+                      }}
                       disabled={isCurrentUser}
                     >
                       {user.is_active ? (
@@ -286,7 +345,7 @@ export function AdminUserTable({
         },
       },
     ],
-    [currentUserId, onEdit, onResetPassword, onToggleActive]
+    [currentUserId, onEdit, onResetPassword, onResendInvite, onToggleActive]
   );
 
   // Initialize table with empty data when loading to render headers
@@ -304,6 +363,7 @@ export function AdminUserTable({
     globalFilterFn: (row, columnId, filterValue) => {
       const search = filterValue.toLowerCase();
       const email = (row.getValue("email") as string)?.toLowerCase() || "";
+      const username = (row.getValue("username") as string)?.toLowerCase() || "";
       const fullName = (row.getValue("full_name") as string)?.toLowerCase() || "";
       const role = (row.getValue("role") as Role) || "";
       const roleName = ROLE_DISPLAY_NAMES[role]?.toLowerCase() || role.toLowerCase();
@@ -311,6 +371,7 @@ export function AdminUserTable({
 
       return (
         email.includes(search) ||
+        username.includes(search) ||
         fullName.includes(search) ||
         roleName.includes(search) ||
         schoolName.includes(search)
@@ -386,6 +447,7 @@ export function AdminUserTable({
   }
 
   return (
+    <>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <Input
@@ -515,5 +577,59 @@ export function AdminUserTable({
         </div>
       </div>
     </div>
+
+    <AlertDialog
+      open={Boolean(deactivateTarget)}
+      onOpenChange={(open) => {
+        if (!open) setDeactivateTarget(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <UserX className="h-5 w-5 text-destructive" />
+            Deactivate coordinator
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This school will have no active coordinator until you invite a replacement.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deactivateTarget && (
+          <div className="space-y-3 py-2">
+            <div className="rounded-md border bg-muted p-4">
+              <div className="text-sm font-medium">{deactivateTarget.full_name}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{deactivateTarget.email}</div>
+              {deactivateTarget.school_name && (
+                <div className="mt-1 text-sm text-muted-foreground">
+                  {deactivateTarget.school_name}
+                </div>
+              )}
+            </div>
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+              <div className="text-sm text-amber-800 dark:text-amber-200">
+                The school portal will be blocked until a new coordinator is invited from the
+                school page.
+              </div>
+            </div>
+          </div>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => {
+              if (deactivateTarget && onToggleActive) {
+                onToggleActive(deactivateTarget);
+              }
+              setDeactivateTarget(null);
+            }}
+          >
+            Deactivate coordinator
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

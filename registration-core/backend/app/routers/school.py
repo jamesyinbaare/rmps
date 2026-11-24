@@ -1599,7 +1599,7 @@ async def create_school_user(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
 ) -> UserResponse:
-    """Create a new SCHOOL_USER for the coordinator's school."""
+    """Create a SchoolStaff account and email an INVITE set-password link."""
     # Ensure coordinator has a school
     if current_user.school_id is None:
         raise HTTPException(
@@ -1622,8 +1622,18 @@ async def create_school_user(
             detail="Coordinators can only create SchoolStaff accounts",
         )
 
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        generate_unusable_password_hash,
+        issue_and_send_password_setup,
+    )
+    from app.utils.username import normalize_email, resolve_username
+
+    email = normalize_email(str(user_data.email))
+    username = resolve_username(email, user_data.username)
+
     # Check if user already exists
-    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    stmt = select(PortalUser).where(PortalUser.email == email)
     result = await session.execute(stmt)
     existing_user = result.scalar_one_or_none()
 
@@ -1633,18 +1643,19 @@ async def create_school_user(
             detail="Email already registered",
         )
 
-    # Validate password length
-    if len(user_data.password) < settings.password_min_length:
+    existing_username = (
+        await session.execute(select(PortalUser).where(PortalUser.username == username))
+    ).scalar_one_or_none()
+    if existing_username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must be at least {settings.password_min_length} characters long",
+            detail="Username already taken",
         )
 
-    # Create new user
-    hashed_password = get_password_hash(user_data.password)
     new_user = PortalUser(
-        email=user_data.email,
-        hashed_password=hashed_password,
+        email=email,
+        username=username,
+        hashed_password=generate_unusable_password_hash(),
         full_name=user_data.full_name,
         role=Role.SchoolStaff,
         school_id=current_user.school_id,
@@ -1653,10 +1664,32 @@ async def create_school_user(
     )
 
     session.add(new_user)
+    await session.flush()
+    sent = await issue_and_send_password_setup(
+        session, new_user, purpose=PasswordSetupPurpose.INVITE
+    )
+    from app.services import account_audit
+
+    await account_audit.record_account_event(
+        session,
+        action=account_audit.USER_CREATED,
+        target_user_id=new_user.id,
+        actor_user_id=current_user.id,
+        metadata={"role": "SchoolStaff", "invite_sent": sent},
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_SENT,
+            target_user_id=new_user.id,
+            actor_user_id=current_user.id,
+        )
     await session.commit()
     await session.refresh(new_user)
 
-    return UserResponse.model_validate(new_user)
+    response = UserResponse.model_validate(new_user)
+    response.invite_sent = sent
+    return response
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -1718,16 +1751,88 @@ async def update_school_user(
             detail="You cannot deactivate your own account",
         )
 
+    from app.core.cache import invalidate_user_cache
+    from app.services.password_setup_service import revoke_user_refresh_tokens
+
+    from app.services import account_audit
+
     # Update fields if provided
     if user_update.full_name is not None:
         user.full_name = user_update.full_name
+    deactivating = user_update.is_active is False and user.is_active
+    activating = user_update.is_active is True and not user.is_active
     if user_update.is_active is not None:
         user.is_active = user_update.is_active
 
+    if deactivating:
+        await revoke_user_refresh_tokens(session, user.id)
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USER_DEACTIVATED,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+    elif activating:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USER_ACTIVATED,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+
     await session.commit()
     await session.refresh(user)
+    invalidate_user_cache(user_id=user.id, email=user.email)
 
     return UserResponse.model_validate(user)
+
+
+@router.post("/users/{user_id}/resend-password-setup", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_school_user_password_setup(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> None:
+    """Resend invite / set-password email for a user in the coordinator's school."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coordinator must be associated with a school",
+        )
+
+    stmt = select(PortalUser).where(
+        PortalUser.id == user_id,
+        PortalUser.school_id == current_user.school_id,
+    )
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found or does not belong to your school",
+        )
+
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import issue_and_send_password_setup
+
+    from app.services import account_audit
+
+    sent = await issue_and_send_password_setup(
+        session, user, purpose=PasswordSetupPurpose.INVITE
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_RESENT,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+    await session.commit()
+    if not sent:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to send invite email. Check SMTP configuration.",
+        )
 
 
 @router.get("/profile", response_model=SchoolResponse)

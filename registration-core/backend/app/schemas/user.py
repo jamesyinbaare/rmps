@@ -7,31 +7,45 @@ from app.models import Role
 
 
 class SchoolUserCreate(BaseModel):
-    """Schema for creating a school user (by coordinator)."""
+    """Schema for creating a school user (by coordinator). Invite-only — no password."""
 
     email: EmailStr
-    password: str
     full_name: str = Field(..., min_length=1, max_length=255)
     role: Role = Role.SchoolStaff
+    username: str | None = Field(None, max_length=255)
 
 
 class SchoolAdminUserCreate(BaseModel):
-    """Schema for creating a coordinator (by system admin)."""
+    """Schema for creating a coordinator (by system admin). Invite-only — no password."""
 
     email: EmailStr
-    password: str
     full_name: str = Field(..., min_length=1, max_length=255)
     school_id: int
+    username: str | None = Field(None, max_length=255)
+
+
+class SchoolAdminReplace(BaseModel):
+    """Replace the active coordinator for a school. Invite-only — no password.
+
+    school_id comes from the path; this body matches SchoolAdminUserCreate minus school_id.
+    """
+
+    email: EmailStr
+    full_name: str = Field(..., min_length=1, max_length=255)
+    username: str | None = Field(None, max_length=255)
 
 
 class AdminUserCreate(BaseModel):
-    """Schema for creating an admin user (by system admin). Excludes SchoolStaff and PublicUser roles. Allows APIUSER role."""
+    """Schema for creating an admin user (by system admin). Invite-only — no password.
+
+    Excludes SchoolStaff and PublicUser roles. Allows APIUSER role.
+    """
 
     email: EmailStr
-    password: str
     full_name: str = Field(..., min_length=1, max_length=255)
     role: Role
     school_id: int | None = None
+    username: str | None = Field(None, max_length=255)
 
     @field_validator("role", mode="before")
     @classmethod
@@ -69,9 +83,13 @@ class AdminUserCreate(BaseModel):
 
 
 class UserPasswordReset(BaseModel):
-    """Schema for resetting a user's password."""
+    """Deprecated: admin reset now sends an email link. Kept for API compatibility."""
 
-    new_password: str = Field(..., min_length=8, description="New password (minimum 8 characters)")
+    new_password: str | None = Field(
+        None,
+        min_length=8,
+        description="Deprecated — ignored. Admin reset sends a set-password email.",
+    )
 
 
 class UserUpdate(BaseModel):

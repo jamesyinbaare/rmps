@@ -30,6 +30,8 @@ Unused certificate/API/credit **database tables** remain in the ORM/migrations f
 | Backend  | 8002 |
 | Postgres | 5434 |
 | PgAdmin  | 5051 |
+| Mailpit UI | 8025 |
+| Mailpit SMTP | 1025 |
 
 ## Quick start
 
@@ -42,6 +44,7 @@ docker compose up -d
 - Frontend: http://localhost:3002
 - Backend API: http://localhost:8002
 - OpenAPI docs: http://localhost:8002/docs
+- Mailpit (dev inbox): http://localhost:8025
 
 ## Development without Docker
 

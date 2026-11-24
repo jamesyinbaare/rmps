@@ -9,9 +9,9 @@ from app.models import Role
 
 
 class UserLogin(BaseModel):
-    """Schema for user login."""
+    """Schema for user login. `email` wire key accepts email or username."""
 
-    email: EmailStr
+    email: str = Field(..., min_length=1, max_length=255)
     password: str
 
 
@@ -37,12 +37,37 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
-class PublicUserCreate(BaseModel):
-    """Schema for public user registration (unauthenticated users can only create PublicUser accounts)."""
+class PasswordSetupValidateResponse(BaseModel):
+    """Generic token validity — never distinguishes expired/used/missing."""
+
+    valid: bool
+
+
+class PasswordSetupRequest(BaseModel):
+    """Consume a password setup / reset token."""
+
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=1)
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request a password reset email (enumeration-safe)."""
 
     email: EmailStr
-    password: str
-    full_name: str = Field(..., min_length=1, max_length=255)
+
+
+class PublicUserCreate(BaseModel):
+    """Invite-only public registration: email + username; password set via email link."""
+
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=32)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        from app.utils.username import validate_private_username
+
+        return validate_private_username(v)
 
 
 class UserCreate(BaseModel):
@@ -78,6 +103,7 @@ class UserResponse(BaseModel):
 
     id: UUID
     email: str
+    username: str
     full_name: str
     role: Role
     school_id: int | None = None
@@ -85,6 +111,8 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    last_login: datetime | None = None
+    invite_sent: bool | None = None
 
     class Config:
         from_attributes = True

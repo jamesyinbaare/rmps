@@ -1,0 +1,20 @@
+{% extends "emails/_layout.html" %}
+{% from "emails/_macros.html" import detail_panel with context %}
+
+{% block body %}
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:{{ brand.text }};font-family:{{ font }};">
+  Hi {{ recipient_name }},
+</p>
+{% if approved %}
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:{{ brand.text }};font-family:{{ font }};">
+  Your bank deposit for invoice <strong>{{ invoice_number }}</strong>
+  has been approved and the invoice is marked paid.
+</p>
+{% else %}
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:{{ brand.text }};font-family:{{ font }};">
+  Your bank deposit for invoice <strong>{{ invoice_number }}</strong>
+  was rejected. Please review the reason below and resubmit if needed.
+</p>
+{% endif %}
+{{ detail_panel(detail_rows, tint=panel_tint) }}
+{% endblock %}

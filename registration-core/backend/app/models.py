@@ -317,6 +317,7 @@ class PortalUser(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    username = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     role = Column(Enum(Role), nullable=False)
@@ -343,13 +344,67 @@ class RefreshToken(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
-    token = Column(String(255), nullable=False, index=True)  # Hashed refresh token
+    token = Column(String(255), nullable=False, index=True)  # bcrypt hash of refresh token
+    token_lookup = Column(String(64), nullable=True, unique=True, index=True)  # HMAC-SHA256 for O(1) lookup
     expires_at = Column(DateTime, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("PortalUser", back_populates="refresh_tokens")
+
+
+class PortalAccountEvent(Base):
+    """Append-only audit log for account lifecycle actions."""
+
+    __tablename__ = "portal_account_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    target_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action = Column(String(64), nullable=False, index=True)
+    event_metadata = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    actor = relationship("PortalUser", foreign_keys=[actor_user_id])
+    target = relationship("PortalUser", foreign_keys=[target_user_id])
+
+
+class PasswordSetupPurpose(enum.Enum):
+    INVITE = "invite"
+    RESET = "reset"
+
+
+class PasswordSetupToken(Base):
+    """One-time tokens for invite / admin-initiated password setup."""
+
+    __tablename__ = "password_setup_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    purpose = Column(
+        Enum(
+            PasswordSetupPurpose,
+            native_enum=False,
+            create_constraint=False,
+            values_callable=lambda x: [e.value for e in x],
+            length=20,
+        ),
+        nullable=False,
+        index=True,
+    )
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("PortalUser", foreign_keys=[user_id])
 
 
 class School(Base):

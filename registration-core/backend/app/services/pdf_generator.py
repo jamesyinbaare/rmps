@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import CSS, HTML
 
 from app.config import settings
@@ -302,7 +302,10 @@ def render_html(context: dict[str, Any], template_path: str, templates_dir: Path
         # Default to app/templates if not specified
         templates_dir = Path(__file__).parent.parent / "templates"
 
-    env = Environment(loader=FileSystemLoader(str(templates_dir)))
+    env = Environment(
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
     template = env.get_template(template_path)
     html_output = template.render(context)
     return html_output

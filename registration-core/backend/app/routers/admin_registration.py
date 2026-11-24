@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
 from app.dependencies.permissions import PermissionChecker
@@ -106,11 +106,16 @@ from app.services.candidate_detail_service import (
 )
 from app.schemas.user import (
     SchoolAdminUserCreate,
+    SchoolAdminReplace,
     AdminUserCreate,
-    UserPasswordReset,
     UserUpdate,
     UserResponse,
     UserListResponse,
+)
+from app.services.school_admin_guard import (
+    ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+    assert_school_has_no_active_admin,
+    is_one_active_school_admin_violation,
 )
 from app.schemas.school import (
     SchoolResponse,
@@ -143,7 +148,6 @@ from app.schemas.schedule import (
 )
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_storage import PhotoStorageService
-from app.core.security import get_password_hash
 from app.core.cache import invalidate_user_cache
 from app.config import settings
 from app.schemas.programme import (
@@ -251,8 +255,13 @@ async def create_school_admin_user(
     user_data: SchoolAdminUserCreate, session: DBSessionDep, current_user: SystemAdminDep
 ) -> UserResponse:
     """Create a coordinator account (system admin only)."""
+    from app.utils.username import normalize_email, resolve_username
+
+    email = normalize_email(str(user_data.email))
+    username = resolve_username(email, user_data.username)
+
     # Check if user already exists
-    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    stmt = select(PortalUser).where(PortalUser.email == email)
     result = await session.execute(stmt)
     existing_user = result.scalar_one_or_none()
 
@@ -260,6 +269,15 @@ async def create_school_admin_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
+        )
+
+    existing_username = (
+        await session.execute(select(PortalUser).where(PortalUser.username == username))
+    ).scalar_one_or_none()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken",
         )
 
     # Validate school exists
@@ -270,18 +288,19 @@ async def create_school_admin_user(
     if not school:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
-    # Validate password length
-    if len(user_data.password) < settings.password_min_length:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must be at least {settings.password_min_length} characters long",
-        )
+    await assert_school_has_no_active_admin(session, user_data.school_id)
 
-    # Create new user
-    hashed_password = get_password_hash(user_data.password)
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        generate_unusable_password_hash,
+        issue_and_send_password_setup,
+    )
+    from sqlalchemy.exc import IntegrityError
+
     new_user = PortalUser(
-        email=user_data.email,
-        hashed_password=hashed_password,
+        email=email,
+        username=username,
+        hashed_password=generate_unusable_password_hash(),
         full_name=user_data.full_name,
         role=Role.SchoolAdmin,
         school_id=user_data.school_id,
@@ -290,6 +309,35 @@ async def create_school_admin_user(
     )
 
     session.add(new_user)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        if is_one_active_school_admin_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+            ) from exc
+        raise
+    sent = await issue_and_send_password_setup(
+        session, new_user, purpose=PasswordSetupPurpose.INVITE
+    )
+    from app.services import account_audit
+
+    await account_audit.record_account_event(
+        session,
+        action=account_audit.USER_CREATED,
+        target_user_id=new_user.id,
+        actor_user_id=current_user.id,
+        metadata={"role": "SchoolAdmin", "invite_sent": sent},
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_SENT,
+            target_user_id=new_user.id,
+            actor_user_id=current_user.id,
+        )
     await session.commit()
     await session.refresh(new_user)
 
@@ -301,6 +349,7 @@ async def create_school_admin_user(
     user_dict = {
         "id": user_with_school.id,
         "email": user_with_school.email,
+        "username": user_with_school.username,
         "full_name": user_with_school.full_name,
         "role": user_with_school.role,
         "school_id": user_with_school.school_id,
@@ -308,6 +357,7 @@ async def create_school_admin_user(
         "is_active": user_with_school.is_active,
         "created_at": user_with_school.created_at,
         "updated_at": user_with_school.updated_at,
+        "invite_sent": sent,
     }
     return UserResponse(**user_dict)
 
@@ -324,6 +374,7 @@ async def list_school_admin_users(session: DBSessionDep, current_user: SystemAdm
         user_dict = {
             "id": user.id,
             "email": user.email,
+            "username": user.username,
             "full_name": user.full_name,
             "role": user.role,
             "school_id": user.school_id,
@@ -349,6 +400,7 @@ async def list_school_staff_users(session: DBSessionDep, current_user: SystemAdm
         user_dict = {
             "id": user.id,
             "email": user.email,
+            "username": user.username,
             "full_name": user.full_name,
             "role": user.role,
             "school_id": user.school_id,
@@ -374,6 +426,7 @@ async def list_public_users(session: DBSessionDep, current_user: SystemAdminDep)
         user_dict = {
             "id": user.id,
             "email": user.email,
+            "username": user.username,
             "full_name": user.full_name,
             "role": user.role,
             "school_id": user.school_id,
@@ -425,7 +478,9 @@ async def list_users(
     if search:
         search_pattern = f"%{search}%"
         stmt = stmt.where(
-            (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
+            (PortalUser.email.ilike(search_pattern))
+            | (PortalUser.full_name.ilike(search_pattern))
+            | (PortalUser.username.ilike(search_pattern))
         )
 
     # Get total count (rebuild query without eager loading for performance)
@@ -445,7 +500,9 @@ async def list_users(
     if search:
         search_pattern = f"%{search}%"
         count_conditions.append(
-            (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
+            (PortalUser.email.ilike(search_pattern))
+            | (PortalUser.full_name.ilike(search_pattern))
+            | (PortalUser.username.ilike(search_pattern))
         )
 
     count_stmt = select(func.count(PortalUser.id))
@@ -465,6 +522,7 @@ async def list_users(
         user_dict = {
             "id": user.id,
             "email": user.email,
+            "username": user.username,
             "full_name": user.full_name,
             "role": user.role,
             "school_id": user.school_id,
@@ -496,8 +554,23 @@ async def create_admin_user(
 
     Cannot create User or PublicUser roles (those are reserved for self-registration).
     """
+    from app.core.security import system_admin_provisioning_allowed
+    from app.utils.username import normalize_email, resolve_username
+
+    if user_data.role == Role.SystemAdmin and not system_admin_provisioning_allowed():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Creating SystemAdmin accounts is disabled. "
+                "Set ALLOW_SYSTEM_ADMIN_PROVISIONING=true temporarily as a break-glass."
+            ),
+        )
+
+    email = normalize_email(str(user_data.email))
+    username = resolve_username(email, user_data.username)
+
     # Check if user already exists
-    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    stmt = select(PortalUser).where(PortalUser.email == email)
     result = await session.execute(stmt)
     existing_user = result.scalar_one_or_none()
 
@@ -505,6 +578,15 @@ async def create_admin_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
+        )
+
+    existing_username = (
+        await session.execute(select(PortalUser).where(PortalUser.username == username))
+    ).scalar_one_or_none()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken",
         )
 
     # Validate school exists if school_id is provided
@@ -516,18 +598,20 @@ async def create_admin_user(
         if not school:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
-    # Validate password length
-    if len(user_data.password) < settings.password_min_length:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must be at least {settings.password_min_length} characters long",
-        )
+    if user_data.role == Role.SchoolAdmin and user_data.school_id is not None:
+        await assert_school_has_no_active_admin(session, user_data.school_id)
 
-    # Create new user
-    hashed_password = get_password_hash(user_data.password)
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        generate_unusable_password_hash,
+        issue_and_send_password_setup,
+    )
+    from sqlalchemy.exc import IntegrityError
+
     new_user = PortalUser(
-        email=user_data.email,
-        hashed_password=hashed_password,
+        email=email,
+        username=username,
+        hashed_password=generate_unusable_password_hash(),
         full_name=user_data.full_name,
         role=user_data.role,
         school_id=user_data.school_id,
@@ -536,6 +620,35 @@ async def create_admin_user(
     )
 
     session.add(new_user)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        if is_one_active_school_admin_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+            ) from exc
+        raise
+    sent = await issue_and_send_password_setup(
+        session, new_user, purpose=PasswordSetupPurpose.INVITE
+    )
+    from app.services import account_audit
+
+    await account_audit.record_account_event(
+        session,
+        action=account_audit.USER_CREATED,
+        target_user_id=new_user.id,
+        actor_user_id=current_user.id,
+        metadata={"role": str(user_data.role), "invite_sent": sent},
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_SENT,
+            target_user_id=new_user.id,
+            actor_user_id=current_user.id,
+        )
     await session.commit()
     await session.refresh(new_user)
 
@@ -547,6 +660,7 @@ async def create_admin_user(
     user_dict = {
         "id": user_with_school.id,
         "email": user_with_school.email,
+        "username": user_with_school.username,
         "full_name": user_with_school.full_name,
         "role": user_with_school.role,
         "school_id": user_with_school.school_id,
@@ -554,8 +668,41 @@ async def create_admin_user(
         "is_active": user_with_school.is_active,
         "created_at": user_with_school.created_at,
         "updated_at": user_with_school.updated_at,
+        "invite_sent": sent,
     }
     return UserResponse(**user_dict)
+
+
+@router.get("/users/{user_id}", response_model=UserResponse)
+async def get_admin_user(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> UserResponse:
+    """Get a single user by ID. SystemAdmin only."""
+    stmt = (
+        select(PortalUser)
+        .options(selectinload(PortalUser.school))
+        .where(PortalUser.id == user_id)
+    )
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        school_id=user.school_id,
+        school_name=user.school.name if user.school else None,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
@@ -583,13 +730,48 @@ async def update_admin_user(
             detail="You cannot deactivate yourself",
         )
 
+    from app.services import account_audit
+    from app.services.password_setup_service import revoke_user_refresh_tokens
+    from sqlalchemy.exc import IntegrityError
+
     # Update fields if provided
     if user_update.full_name is not None:
         user.full_name = user_update.full_name
+    deactivating = user_update.is_active is False and user.is_active
+    activating = user_update.is_active is True and not user.is_active
+    if activating and user.role == Role.SchoolAdmin and user.school_id is not None:
+        await assert_school_has_no_active_admin(
+            session, user.school_id, exclude_user_id=user.id
+        )
     if user_update.is_active is not None:
         user.is_active = user_update.is_active
 
-    await session.commit()
+    if deactivating:
+        await revoke_user_refresh_tokens(session, user.id)
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USER_DEACTIVATED,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+    elif activating:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USER_ACTIVATED,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if is_one_active_school_admin_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+            ) from exc
+        raise
     await session.refresh(user)
 
     # Reload with school relationship to get school name
@@ -603,6 +785,7 @@ async def update_admin_user(
     user_dict = {
         "id": user_with_school.id,
         "email": user_with_school.email,
+        "username": user_with_school.username,
         "full_name": user_with_school.full_name,
         "role": user_with_school.role,
         "school_id": user_with_school.school_id,
@@ -626,7 +809,8 @@ async def bulk_upload_school_admin_users(
     - Full_name: User's full name
     - email_address: User's email address
     - school_code: School code to associate the user with
-    - password: User's password (minimum 8 characters)
+
+    Each created user receives an email invite to set their password.
     """
     # Read file content
     file_content = await file.read()
@@ -677,12 +861,11 @@ async def bulk_upload_school_admin_users(
     df.columns = df.columns.str.strip()
     column_mapping = {col.lower(): col for col in df.columns}
 
-    # Required columns
+    # Required columns (password removed — users set password via invite email)
     required_columns = {
         'full_name': ['full_name', 'full name', 'name'],
         'email_address': ['email_address', 'email address', 'email'],
         'school_code': ['school_code', 'school code', 'school'],
-        'password': ['password', 'pwd'],
     }
 
     missing_columns = []
@@ -706,7 +889,16 @@ async def bulk_upload_school_admin_users(
 
     successful = 0
     failed = 0
+    invites_sent = 0
+    invites_failed = 0
     errors: list[BulkUploadError] = []
+    created_users: list[PortalUser] = []
+
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        generate_unusable_password_hash,
+        issue_and_send_password_setup,
+    )
 
     # Track emails within the batch for duplicate detection
     batch_emails: set[str] = set()
@@ -718,7 +910,6 @@ async def bulk_upload_school_admin_users(
             full_name = str(row[column_map['full_name']]).strip() if pd.notna(row[column_map['full_name']]) else ""
             email_address = str(row[column_map['email_address']]).strip().lower() if pd.notna(row[column_map['email_address']]) else ""
             school_code = str(row[column_map['school_code']]).strip() if pd.notna(row[column_map['school_code']]) else ""
-            password = str(row[column_map['password']]).strip() if pd.notna(row[column_map['password']]) else ""
 
             # Validate required fields
             if not full_name:
@@ -727,16 +918,10 @@ async def bulk_upload_school_admin_users(
                 raise ValueError("email_address is required")
             if not school_code:
                 raise ValueError("school_code is required")
-            if not password:
-                raise ValueError("password is required")
 
             # Validate email format
             if '@' not in email_address or '.' not in email_address.split('@')[-1]:
                 raise ValueError(f"Invalid email format: {email_address}")
-
-            # Validate password length
-            if len(password) < settings.password_min_length:
-                raise ValueError(f"Password must be at least {settings.password_min_length} characters long")
 
             # Validate full name length
             if len(full_name) > 255:
@@ -762,11 +947,31 @@ async def bulk_upload_school_admin_users(
             if not school:
                 raise ValueError(f"School with code '{school_code}' not found")
 
-            # Create user
-            hashed_password = get_password_hash(password)
+            from app.services.school_admin_guard import (
+                ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+                count_active_school_admins,
+            )
+
+            # Also block a second create for the same school within this batch
+            if any(u.school_id == school.id for u in created_users):
+                raise ValueError(ACTIVE_SCHOOL_ADMIN_EXISTS_MSG)
+
+            active_count = await count_active_school_admins(session, school.id)
+            if active_count > 0:
+                raise ValueError(ACTIVE_SCHOOL_ADMIN_EXISTS_MSG)
+
+            from app.utils.username import resolve_username
+
+            username = resolve_username(email_address)
+            username_stmt = select(PortalUser).where(PortalUser.username == username)
+            username_result = await session.execute(username_stmt)
+            if username_result.scalar_one_or_none():
+                raise ValueError(f"User with username '{username}' already exists")
+
             new_user = PortalUser(
                 email=email_address,
-                hashed_password=hashed_password,
+                username=username,
+                hashed_password=generate_unusable_password_hash(),
                 full_name=full_name,
                 role=Role.SchoolAdmin,
                 school_id=school.id,
@@ -775,6 +980,8 @@ async def bulk_upload_school_admin_users(
             )
 
             session.add(new_user)
+            await session.flush()
+            created_users.append(new_user)
             batch_emails.add(email_address)
             successful += 1
 
@@ -786,11 +993,38 @@ async def bulk_upload_school_admin_users(
                 field=None
             ))
 
-    # Commit all successful users
+    # Send invites before commit so tokens are part of the same transaction
+    from app.services import account_audit
+
+    for user in created_users:
+        sent = await issue_and_send_password_setup(
+            session, user, purpose=PasswordSetupPurpose.INVITE
+        )
+        if sent:
+            invites_sent += 1
+        else:
+            invites_failed += 1
+            errors.append(BulkUploadError(
+                row_number=0,
+                error_message=f"User created but invite email failed for {user.email}",
+                field="email",
+            ))
+
+    if created_users:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USERS_BULK_IMPORTED,
+            actor_user_id=current_user.id,
+            metadata={
+                "created": len(created_users),
+                "invites_sent": invites_sent,
+                "invites_failed": invites_failed,
+            },
+        )
+
     try:
         await session.commit()
     except Exception as e:
-        # Rollback on commit error
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -801,18 +1035,22 @@ async def bulk_upload_school_admin_users(
         total_rows=len(df),
         successful=successful,
         failed=failed,
-        errors=errors
+        errors=errors,
+        invites_sent=invites_sent,
+        invites_failed=invites_failed,
     )
 
 
 @router.post("/users/{user_id}/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_user_password(
     user_id: UUID,
-    password_reset: UserPasswordReset,
     session: DBSessionDep,
     current_user: SystemAdminDep,
 ) -> None:
-    """Reset user password. SystemAdmin only."""
+    """Send a password reset email (set-password link). SystemAdmin only.
+
+    Does not accept or set a password directly — the user chooses their password via email.
+    """
     stmt = select(PortalUser).where(PortalUser.id == user_id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
@@ -820,19 +1058,155 @@ async def reset_user_password(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Validate password length
-    if len(password_reset.new_password) < settings.password_min_length:
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        issue_and_send_password_setup,
+        revoke_user_refresh_tokens,
+    )
+
+    from app.services import account_audit
+
+    await revoke_user_refresh_tokens(session, user.id)
+    sent = await issue_and_send_password_setup(
+        session, user, purpose=PasswordSetupPurpose.RESET
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.PASSWORD_RESET_SENT,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
+    await session.commit()
+    invalidate_user_cache(user_id=user.id, email=user.email)
+
+    if not sent:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must be at least {settings.password_min_length} characters long",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to send password reset email. Check SMTP configuration.",
         )
 
-    # Update password
-    user.hashed_password = get_password_hash(password_reset.new_password)
+
+@router.post("/users/{user_id}/resend-password-setup", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_password_setup(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Resend invite / set-password email for a user. SystemAdmin only."""
+    stmt = select(PortalUser).where(PortalUser.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    from app.models import PasswordSetupPurpose
+    from app.services import account_audit
+    from app.services.password_setup_service import issue_and_send_password_setup
+
+    sent = await issue_and_send_password_setup(
+        session, user, purpose=PasswordSetupPurpose.INVITE
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_RESENT,
+            target_user_id=user.id,
+            actor_user_id=current_user.id,
+        )
     await session.commit()
 
-    # Invalidate cache
-    invalidate_user_cache(user_id=user.id, email=user.email)
+    if not sent:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to send invite email. Check SMTP configuration.",
+        )
+
+
+@router.get("/account-events")
+async def list_account_events(
+    session: DBSessionDep,
+    current_user: Annotated[PortalUser, Depends(PermissionChecker("user_management.view"))],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    action: str | None = Query(None),
+    target_user_id: UUID | None = Query(None),
+    actor_user_id: UUID | None = Query(None),
+    search: str | None = Query(None, description="Filter by target or actor email"),
+):
+    """List account lifecycle audit events. Requires user_management.view."""
+    from math import ceil
+
+    from app.models import PortalAccountEvent
+    from app.schemas.account_events import AccountEventListResponse, AccountEventResponse
+
+    Actor = aliased(PortalUser)
+    Target = aliased(PortalUser)
+
+    stmt = (
+        select(PortalAccountEvent, Actor.email, Target.email)
+        .outerjoin(Actor, PortalAccountEvent.actor_user_id == Actor.id)
+        .outerjoin(Target, PortalAccountEvent.target_user_id == Target.id)
+    )
+    count_stmt = select(func.count(PortalAccountEvent.id))
+
+    if action:
+        stmt = stmt.where(PortalAccountEvent.action == action)
+        count_stmt = count_stmt.where(PortalAccountEvent.action == action)
+    if target_user_id:
+        stmt = stmt.where(PortalAccountEvent.target_user_id == target_user_id)
+        count_stmt = count_stmt.where(PortalAccountEvent.target_user_id == target_user_id)
+    if actor_user_id:
+        stmt = stmt.where(PortalAccountEvent.actor_user_id == actor_user_id)
+        count_stmt = count_stmt.where(PortalAccountEvent.actor_user_id == actor_user_id)
+    if search:
+        pattern = f"%{search}%"
+        email_filter = or_(Actor.email.ilike(pattern), Target.email.ilike(pattern))
+        stmt = stmt.where(email_filter)
+        count_stmt = (
+            select(func.count(PortalAccountEvent.id))
+            .select_from(PortalAccountEvent)
+            .outerjoin(Actor, PortalAccountEvent.actor_user_id == Actor.id)
+            .outerjoin(Target, PortalAccountEvent.target_user_id == Target.id)
+            .where(email_filter)
+        )
+        if action:
+            count_stmt = count_stmt.where(PortalAccountEvent.action == action)
+        if target_user_id:
+            count_stmt = count_stmt.where(PortalAccountEvent.target_user_id == target_user_id)
+        if actor_user_id:
+            count_stmt = count_stmt.where(PortalAccountEvent.actor_user_id == actor_user_id)
+
+    total = (await session.execute(count_stmt)).scalar_one()
+    offset = (page - 1) * page_size
+    rows = (
+        await session.execute(
+            stmt.order_by(PortalAccountEvent.created_at.desc()).offset(offset).limit(page_size)
+        )
+    ).all()
+
+    items = [
+        AccountEventResponse(
+            id=event.id,
+            actor_user_id=event.actor_user_id,
+            target_user_id=event.target_user_id,
+            action=event.action,
+            metadata=event.event_metadata,
+            created_at=event.created_at,
+            actor_email=actor_email,
+            target_email=target_email,
+        )
+        for event, actor_email, target_email in rows
+    ]
+    total_pages = ceil(total / page_size) if page_size else 0
+    return AccountEventListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/schools", response_model=SchoolListResponse)
@@ -1295,6 +1669,145 @@ async def get_school_admins(
     users = result.scalars().all()
 
     return [UserResponse.model_validate(user) for user in users]
+
+
+@router.post(
+    "/schools/{school_id}/replace-admin",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def replace_school_admin(
+    school_id: int,
+    user_data: SchoolAdminReplace,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> UserResponse:
+    """Deactivate the current active coordinator(s) and invite a replacement.
+
+    SystemAdmin only. Atomic: deactivate → create → invite → commit.
+    """
+    from app.utils.username import normalize_email, resolve_username
+    from app.models import PasswordSetupPurpose
+    from app.services.password_setup_service import (
+        generate_unusable_password_hash,
+        issue_and_send_password_setup,
+        revoke_user_refresh_tokens,
+    )
+    from app.services import account_audit
+    from sqlalchemy.exc import IntegrityError
+
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    email = normalize_email(str(user_data.email))
+    username = resolve_username(email, user_data.username)
+
+    existing_user = (
+        await session.execute(select(PortalUser).where(PortalUser.email == email))
+    ).scalar_one_or_none()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    existing_username = (
+        await session.execute(select(PortalUser).where(PortalUser.username == username))
+    ).scalar_one_or_none()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken",
+        )
+
+    active_admins = (
+        await session.execute(
+            select(PortalUser).where(
+                PortalUser.school_id == school_id,
+                PortalUser.role == Role.SchoolAdmin,
+                PortalUser.is_active.is_(True),
+            )
+        )
+    ).scalars().all()
+
+    for admin in active_admins:
+        admin.is_active = False
+        await revoke_user_refresh_tokens(session, admin.id)
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.USER_DEACTIVATED,
+            target_user_id=admin.id,
+            actor_user_id=current_user.id,
+            metadata={"reason": "replaced"},
+        )
+        invalidate_user_cache(user_id=admin.id, email=admin.email)
+
+    new_user = PortalUser(
+        email=email,
+        username=username,
+        hashed_password=generate_unusable_password_hash(),
+        full_name=user_data.full_name,
+        role=Role.SchoolAdmin,
+        school_id=school_id,
+        is_active=True,
+        created_by_user_id=current_user.id,
+    )
+    session.add(new_user)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        if is_one_active_school_admin_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ACTIVE_SCHOOL_ADMIN_EXISTS_MSG,
+            ) from exc
+        raise
+
+    sent = await issue_and_send_password_setup(
+        session, new_user, purpose=PasswordSetupPurpose.INVITE
+    )
+    await account_audit.record_account_event(
+        session,
+        action=account_audit.USER_CREATED,
+        target_user_id=new_user.id,
+        actor_user_id=current_user.id,
+        metadata={"role": "SchoolAdmin", "invite_sent": sent, "replaced": True},
+    )
+    if sent:
+        await account_audit.record_account_event(
+            session,
+            action=account_audit.INVITE_SENT,
+            target_user_id=new_user.id,
+            actor_user_id=current_user.id,
+        )
+
+    await session.commit()
+    await session.refresh(new_user)
+
+    stmt_with_school = (
+        select(PortalUser)
+        .options(selectinload(PortalUser.school))
+        .where(PortalUser.id == new_user.id)
+    )
+    user_with_school = (await session.execute(stmt_with_school)).scalar_one()
+
+    return UserResponse(
+        id=user_with_school.id,
+        email=user_with_school.email,
+        username=user_with_school.username,
+        full_name=user_with_school.full_name,
+        role=user_with_school.role,
+        school_id=user_with_school.school_id,
+        school_name=user_with_school.school.name if user_with_school.school else None,
+        is_active=user_with_school.is_active,
+        created_at=user_with_school.created_at,
+        updated_at=user_with_school.updated_at,
+        invite_sent=sent,
+    )
 
 
 @router.get("/schools/{school_id}/candidates", response_model=CandidateListResponse)

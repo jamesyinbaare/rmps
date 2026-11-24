@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listSchoolUsers, updateSchoolUser, getSchoolDashboard, getCurrentUser } from "@/lib/api";
+import {
+  listSchoolUsers,
+  updateSchoolUser,
+  getSchoolDashboard,
+  getCurrentUser,
+  resendSchoolUserPasswordSetup,
+} from "@/lib/api";
 import type { User, SchoolDashboardData } from "@/types";
 import {
   Table,
@@ -71,6 +77,15 @@ export function UserManagement() {
     }
   };
 
+  const handleResendInvite = async (user: User) => {
+    try {
+      await resendSchoolUserPasswordSetup(user.id);
+      toast.success("Invite email sent");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to resend invite");
+    }
+  };
+
   const isAtUserLimit = dashboardData
     ? dashboardData.active_user_count >= dashboardData.max_active_users
     : false;
@@ -127,6 +142,7 @@ export function UserManagement() {
             <TableHeader>
               <TableRow>
                 <TableHead>Email</TableHead>
+                <TableHead>Username</TableHead>
                 <TableHead>Full Name</TableHead>
                 <TableHead>User Type</TableHead>
                 <TableHead>Status</TableHead>
@@ -137,7 +153,7 @@ export function UserManagement() {
             <TableBody>
               {users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
                     No users found
                   </TableCell>
                 </TableRow>
@@ -145,6 +161,7 @@ export function UserManagement() {
                 users.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell>{user.email}</TableCell>
+                    <TableCell>{user.username}</TableCell>
                     <TableCell>{user.full_name}</TableCell>
                     <TableCell>
                       <span className="capitalize">
@@ -164,15 +181,26 @@ export function UserManagement() {
                     </TableCell>
                     <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
-                      {user.id !== currentUser?.id && (
-                        <Button
-                          variant={user.is_active ? "destructive" : "default"}
-                          size="sm"
-                          onClick={() => handleToggleActive(user)}
-                        >
-                          {user.is_active ? "Deactivate" : "Activate"}
-                        </Button>
-                      )}
+                      <div className="flex justify-end gap-2">
+                        {user.id !== currentUser?.id && user.role === "SchoolStaff" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleResendInvite(user)}
+                          >
+                            Resend invite
+                          </Button>
+                        )}
+                        {user.id !== currentUser?.id && (
+                          <Button
+                            variant={user.is_active ? "destructive" : "default"}
+                            size="sm"
+                            onClick={() => handleToggleActive(user)}
+                          >
+                            {user.is_active ? "Deactivate" : "Activate"}
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

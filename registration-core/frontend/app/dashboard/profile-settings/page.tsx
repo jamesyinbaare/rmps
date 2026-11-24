@@ -88,7 +88,7 @@ export default function SettingsPage() {
     }
 
     if (newPassword.length < 8) {
-      toast.error("New password must be at least 8 characters long");
+      toast.error("New password must be at least 12 characters long");
       return;
     }
 
@@ -167,6 +167,20 @@ export default function SettingsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Email address cannot be changed
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                type="text"
+                value={user.username}
+                disabled
+                className="bg-muted"
+              />
+              <p className="text-xs text-muted-foreground">
+                Username cannot be changed
               </p>
             </div>
 
@@ -258,7 +272,7 @@ export default function SettingsPage() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Enter your new password (minimum 8 characters)"
                   required
-                  minLength={8}
+                  minLength={12}
                   disabled={changingPassword}
                 />
                 <Button
@@ -277,7 +291,7 @@ export default function SettingsPage() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Password must be at least 8 characters long
+                Password must be at least 12 characters long
               </p>
             </div>
 
@@ -293,7 +307,7 @@ export default function SettingsPage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm your new password"
                   required
-                  minLength={8}
+                  minLength={12}
                   disabled={changingPassword}
                 />
                 <Button

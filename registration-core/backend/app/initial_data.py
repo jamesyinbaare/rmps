@@ -19,9 +19,13 @@ async def ensure_system_admin_user(session) -> None:
         return  # System admin already exists
 
     # Create system admin user
+    from app.utils.username import resolve_username
+
     hashed_password = get_password_hash(settings.system_admin_password)
+    email = settings.system_admin_email.strip().lower()
     system_admin = PortalUser(
-        email=settings.system_admin_email,
+        email=email,
+        username=resolve_username(email),
         hashed_password=hashed_password,
         full_name=settings.system_admin_full_name,
         role=Role.SystemAdmin,

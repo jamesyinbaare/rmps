@@ -363,7 +363,14 @@ export async function handleResponse<T>(response: Response): Promise<T> {
 
     throw new Error(errorMessage);
   }
-  return response.json();
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 // Auth API
@@ -449,18 +456,16 @@ export async function changeCurrentUserPassword(data: UserPasswordChange): Promi
 
 export interface PublicUserCreate {
   email: string;
-  password: string;
-  full_name: string;
+  username: string;
 }
 
-export async function register(userData: PublicUserCreate): Promise<User> {
+export async function register(userData: PublicUserCreate): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(userData),
   });
-  const user = await handleResponse<User>(response);
-  return transformUser(user);
+  await handleResponse(response);
 }
 
 // Private User Registration API
@@ -889,6 +894,23 @@ export async function createSchoolAdmin(data: SchoolAdminCreate): Promise<User> 
 // Alias for consistency with new terminology
 export const createCoordinator = createSchoolAdmin;
 
+export async function replaceSchoolAdmin(
+  schoolId: number,
+  data: { email: string; full_name: string }
+): Promise<User> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/schools/${schoolId}/replace-admin`,
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
+}
+
+export const replaceCoordinator = replaceSchoolAdmin;
+
 export async function listSchoolAdmins(): Promise<User[]> {
   const response = await fetchWithAuth("/api/v1/admin/school-admin-users");
   const users = await handleResponse<User[]>(response);
@@ -908,7 +930,9 @@ export async function listAdminUsers(filters?: {
 }): Promise<UserListResponse> {
   const params = new URLSearchParams();
   if (filters?.page) params.append("page", filters.page.toString());
-  if (filters?.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters?.page_size) {
+    params.append("page_size", Math.min(filters.page_size, 100).toString());
+  }
   if (filters?.role) params.append("role", filters.role);
   if (filters?.is_active !== undefined && filters?.is_active !== null) {
     params.append("is_active", filters.is_active.toString());
@@ -924,6 +948,12 @@ export async function listAdminUsers(filters?: {
     ...result,
     items: transformUsers(result.items),
   };
+}
+
+export async function getAdminUser(userId: string): Promise<User> {
+  const response = await fetchWithAuth(`/api/v1/admin/users/${userId}`);
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
 }
 
 // Functions for fetching specific user groups for admin settings page
@@ -990,10 +1020,87 @@ export async function updateAdminUser(userId: string, data: UserUpdate): Promise
   return transformUser(user);
 }
 
-export async function resetUserPassword(userId: string, newPassword: string): Promise<void> {
+export async function resetUserPassword(userId: string, _newPassword?: string): Promise<void> {
   const response = await fetchWithAuth(`/api/v1/admin/users/${userId}/reset-password`, {
     method: "POST",
-    body: JSON.stringify({ new_password: newPassword }),
+    body: JSON.stringify({}),
+  });
+  await handleResponse(response);
+}
+
+export async function resendPasswordSetup(userId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/users/${userId}/resend-password-setup`, {
+    method: "POST",
+  });
+  await handleResponse(response);
+}
+
+export interface AccountEvent {
+  id: string;
+  actor_user_id: string | null;
+  target_user_id: string | null;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  actor_email: string | null;
+  target_email: string | null;
+}
+
+export interface AccountEventListResponse {
+  items: AccountEvent[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function listAccountEvents(filters?: {
+  page?: number;
+  page_size?: number;
+  action?: string;
+  search?: string;
+}): Promise<AccountEventListResponse> {
+  const params = new URLSearchParams();
+  if (filters?.page) params.set("page", String(filters.page));
+  if (filters?.page_size) params.set("page_size", String(filters.page_size));
+  if (filters?.action) params.set("action", filters.action);
+  if (filters?.search) params.set("search", filters.search);
+  const qs = params.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/admin/account-events${qs ? `?${qs}` : ""}`
+  );
+  return handleResponse<AccountEventListResponse>(response);
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8002";
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  await handleResponse(response);
+}
+
+export async function validatePasswordSetupToken(
+  token: string
+): Promise<{ valid: boolean }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8002";
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/auth/password-setup/validate?token=${encodeURIComponent(token)}`
+  );
+  return handleResponse<{ valid: boolean }>(response);
+}
+
+export async function completePasswordSetup(
+  token: string,
+  newPassword: string
+): Promise<void> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8002";
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/password-setup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
   });
   await handleResponse(response);
 }
@@ -2007,8 +2114,8 @@ export async function importCandidates(
 // School API - For coordinators
 export interface SchoolUserCreate {
   email: string;
-  password: string;
   full_name: string;
+  username?: string;
 }
 
 export interface SchoolUserUpdate {
@@ -2052,6 +2159,13 @@ export async function createSchoolUser(data: SchoolUserCreate): Promise<User> {
   });
   const user = await handleResponse<User>(response);
   return transformUser(user);
+}
+
+export async function resendSchoolUserPasswordSetup(userId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/school/users/${userId}/resend-password-setup`, {
+    method: "POST",
+  });
+  await handleResponse(response);
 }
 
 export async function listSchoolUsers(): Promise<User[]> {

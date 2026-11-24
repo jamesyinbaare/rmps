@@ -29,8 +29,6 @@ export function CreateSchoolUserDialog({
   isAtLimit,
 }: CreateSchoolUserDialogProps) {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -38,35 +36,29 @@ export function CreateSchoolUserDialog({
     e.preventDefault();
 
     if (isAtLimit) {
-      toast.error("Cannot create user: You have reached the maximum of 10 active users. Please deactivate an existing user first.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
-      return;
-    }
-
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters long");
+      toast.error(
+        "Cannot create user: You have reached the maximum of 10 active users. Please deactivate an existing user first."
+      );
       return;
     }
 
     setLoading(true);
 
     try {
-      await createSchoolUser({
+      const user = await createSchoolUser({
         email,
-        password,
         full_name: fullName,
       });
-      toast.success("User created successfully");
+      if (user.invite_sent === false) {
+        toast.warning(
+          "User created, but the invite email failed to send. Use Resend invite."
+        );
+      } else {
+        toast.success("User created. An invite email was sent to set their password.");
+      }
       onSuccess();
       onOpenChange(false);
-      // Reset form
       setEmail("");
-      setPassword("");
-      setConfirmPassword("");
       setFullName("");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to create user";
@@ -81,7 +73,9 @@ export function CreateSchoolUserDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create School User</DialogTitle>
-          <DialogDescription>Create a new user account for your school.</DialogDescription>
+          <DialogDescription>
+            Create a school staff account. They will receive an email to set their own password.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
@@ -108,35 +102,10 @@ export function CreateSchoolUserDialog({
                 disabled={loading || isAtLimit}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading || isAtLimit}
-                minLength={8}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                disabled={loading || isAtLimit}
-                minLength={8}
-              />
-            </div>
             {isAtLimit && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                You have reached the maximum of 10 active users. Please deactivate an existing user first.
+                You have reached the maximum of 10 active users. Please deactivate an existing user
+                first.
               </div>
             )}
           </div>
@@ -145,7 +114,7 @@ export function CreateSchoolUserDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={loading || isAtLimit}>
-              {loading ? "Creating..." : "Create User"}
+              {loading ? "Creating..." : "Create & send invite"}
             </Button>
           </DialogFooter>
         </form>

@@ -280,10 +280,10 @@ Same permission check:
 
 All permissions are defined in `backend/app/core/permissions.py`. Common ones:
 
-- `user_management.view` - View user management page
-- `user_management.create` - Create new users
-- `user_management.edit` - Edit existing users
-- `user_management.delete` - Delete users
+- `user_management.view` - List/search users and account audit events (read-only)
+- `user_management.create` - Documented for future use; **mutations currently require SystemAdmin**
+- `user_management.edit` - Documented for future use; **create/update/reset/resend/deactivate require SystemAdmin**
+- `user_management.delete` - Documented for future use; mutations require SystemAdmin
 - `permission_management` - Manage permissions (meta-permission)
 - `exam_management.*` - Exam-related permissions
 - `school_management.*` - School-related permissions

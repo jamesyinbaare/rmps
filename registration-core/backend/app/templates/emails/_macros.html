@@ -1,0 +1,37 @@
+{# Reusable email fragments. Expects brand + font in context. #}
+{% macro cta_button(label, url) -%}
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 16px;">
+      <tr>
+        <td align="center" bgcolor="{{ brand.green }}" style="border-radius:6px;background:{{ brand.green }};">
+          <a href="{{ url }}"
+             style="display:inline-block;padding:14px 28px;font-family:{{ font }};font-size:15px;font-weight:700;color:{{ brand.white }};text-decoration:none;border-radius:6px;">
+            {{ label }}
+          </a>
+        </td>
+      </tr>
+    </table>
+{%- endmacro %}
+
+{% macro detail_panel(rows, tint=None) -%}
+    {% set bg = tint if tint else brand.mint %}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+           bgcolor="{{ bg }}"
+           style="margin:20px 0;background:{{ bg }};border:1px solid {{ brand.border }};">
+      <tr>
+        <td style="padding:4px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            {% for label, value in rows %}
+            <tr>
+              <td style="padding:8px 12px;font-size:13px;color:{{ brand.muted }};border-bottom:1px solid {{ brand.border }};width:40%;font-family:{{ font }};">
+                {{ label }}
+              </td>
+              <td style="padding:8px 12px;font-size:13px;color:{{ brand.text }};border-bottom:1px solid {{ brand.border }};font-family:{{ font }};font-weight:600;">
+                {{ value }}
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </td>
+      </tr>
+    </table>
+{%- endmacro %}

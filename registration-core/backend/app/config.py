@@ -23,12 +23,16 @@ class Settings(BaseSettings):
     gcs_project_id: str = ""  # GCP project ID (optional, uses default if not provided)
     gcs_credentials_path: str = ""  # Path to service account JSON file (optional, uses ADC if not provided)
     # Authentication settings
-    secret_key: str = "registration-core-secret-key-change-in-production"  # Should be set via environment variable
+    secret_key: str = "registration-core-secret-key-change-in-production"  # Must be overridden outside development
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     inactivity_timeout_minutes: int = 30  # For frontend reference
-    password_min_length: int = 8
+    password_min_length: int = 12
+    password_breach_check_enabled: bool = False
+    max_refresh_sessions_per_user: int = 5
+    allow_system_admin_provisioning: bool | None = None  # None = true only in development/test/local
+    redis_url: str = ""  # Optional; empty = in-process rate limits
     # Photo validation settings
     # Candidate passport photo: exact dimensions only
     candidate_photo_width: int = 155
@@ -52,7 +56,12 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from_email: str = ""
-    smtp_from_name: str = "Registration Core"
+    smtp_from_name: str = "CTVET"
+    email_console_fallback: bool = True
+    password_setup_token_expiry_hours: int = 48
+    password_setup_rate_limit_per_minute: int = 10
+    login_rate_limit_per_minute: int = 20
+    register_rate_limit_per_minute: int = 10
     # Paystack settings
     paystack_secret_key: str = ""  # Paystack secret key
     paystack_public_key: str = ""  # Paystack public key (for frontend)

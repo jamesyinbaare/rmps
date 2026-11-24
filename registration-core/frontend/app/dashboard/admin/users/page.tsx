@@ -29,6 +29,7 @@ import {
   listAdminUsers,
   updateAdminUser,
   resetUserPassword,
+  resendPasswordSetup,
   getCurrentUser,
 } from "@/lib/api";
 import { toast } from "sonner";
@@ -140,6 +141,15 @@ export default function AdminUsersPage() {
     setResetPasswordDialogOpen(true);
   };
 
+  const handleResendInvite = async (user: User) => {
+    try {
+      await resendPasswordSetup(user.id);
+      toast.success("Invite email sent");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to resend invite");
+    }
+  };
+
   const handleResetPasswordSuccess = () => {
     loadUsers();
   };
@@ -169,16 +179,18 @@ export default function AdminUsersPage() {
         title="User Management"
         subtitle="Manage admin user accounts"
         actions={
-          <>
-            <Button variant="outline" onClick={() => setBulkUploadDialogOpen(true)}>
-              <Upload className="mr-2 h-4 w-4" />
-              Bulk Import
-            </Button>
-            <Button onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create User
-            </Button>
-          </>
+          currentUser?.role === "SystemAdmin" ? (
+            <>
+              <Button variant="outline" onClick={() => setBulkUploadDialogOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Import
+              </Button>
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create User
+              </Button>
+            </>
+          ) : undefined
         }
       />
 
@@ -200,9 +212,16 @@ export default function AdminUsersPage() {
               users={users}
               loading={loading}
               currentUserId={currentUser?.id}
-              onEdit={handleEdit}
-              onResetPassword={handleResetPassword}
-              onToggleActive={handleToggleActive}
+              onEdit={currentUser?.role === "SystemAdmin" ? handleEdit : undefined}
+              onResetPassword={
+                currentUser?.role === "SystemAdmin" ? handleResetPassword : undefined
+              }
+              onResendInvite={
+                currentUser?.role === "SystemAdmin" ? handleResendInvite : undefined
+              }
+              onToggleActive={
+                currentUser?.role === "SystemAdmin" ? handleToggleActive : undefined
+              }
             />
           </div>
         </CardContent>
