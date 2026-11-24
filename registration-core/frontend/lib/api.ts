@@ -2098,6 +2098,17 @@ export async function updateCandidate(
   return handleResponse<RegistrationCandidate>(response);
 }
 
+export async function updateAdminCandidate(
+  candidateId: number,
+  candidateData: Partial<RegistrationCandidateCreate>
+): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/${candidateId}`, {
+    method: "PUT",
+    body: JSON.stringify(candidateData),
+  });
+  return handleResponse<RegistrationCandidate>(response);
+}
+
 export async function deleteSchoolCandidate(candidateId: number): Promise<void> {
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}`, {
     method: "DELETE",
@@ -2845,6 +2856,23 @@ export async function uploadCandidatePhoto(candidateId: number, file: File, repl
   return handleResponse<RegistrationCandidatePhoto>(response);
 }
 
+export async function uploadAdminCandidatePhoto(
+  candidateId: number,
+  file: File,
+  replaceBackground: boolean = false
+): Promise<RegistrationCandidatePhoto> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("validation_level", "strict");
+  formData.append("replace_background", replaceBackground.toString());
+
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/${candidateId}/photos`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<RegistrationCandidatePhoto>(response);
+}
+
 export async function getCandidatePhoto(candidateId: number): Promise<RegistrationCandidatePhoto | null> {
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/photos`);
   if (response.status === 404) {
@@ -2863,6 +2891,15 @@ export async function getAdminCandidatePhoto(candidateId: number): Promise<Regis
 
 export async function deleteCandidatePhoto(candidateId: number): Promise<void> {
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/photos`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function deleteAdminCandidatePhoto(candidateId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/${candidateId}/photos`, {
     method: "DELETE",
   });
   if (!response.ok) {

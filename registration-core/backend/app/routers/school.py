@@ -133,6 +133,14 @@ from app.services.registration_completeness import (
 from app.services.school_fee_invoice_service import (
     sync_fee_payment_status_from_outstanding,
 )
+from app.services.candidate_detail_service import (
+    apply_candidate_update,
+    delete_candidate_photo_record,
+    get_enum_value,
+    load_candidate_for_detail,
+    subject_selection_dict as _subject_selection_dict,
+    upload_candidate_photo_file,
+)
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
@@ -539,31 +547,6 @@ async def list_candidates(
     return response_list
 
 
-def get_enum_value(enum_or_string):
-    """Safely extract value from enum or return string if already a string."""
-    if enum_or_string is None:
-        return None
-    if hasattr(enum_or_string, 'value'):
-        return enum_or_string.value
-    return enum_or_string
-
-
-def _subject_selection_dict(sel: RegistrationSubjectSelection) -> dict:
-    """Serialize a subject selection including optional subject_type from related Subject."""
-    subject_type = None
-    if sel.subject is not None:
-        subject_type = get_enum_value(sel.subject.subject_type)
-    return {
-        "id": sel.id,
-        "subject_id": sel.subject_id,
-        "subject_code": sel.subject_code,
-        "subject_name": sel.subject_name,
-        "series": sel.series,
-        "created_at": sel.created_at,
-        "subject_type": subject_type,
-    }
-
-
 def validate_registration_type_and_guardian(
     exam: RegistrationExam,
     registration_type: str | None,
@@ -845,20 +828,7 @@ async def update_candidate(
     current_user: SchoolUserWithSchoolDep,
 ) -> RegistrationCandidateResponse:
     """Update a registration candidate's information and subject selections."""
-    # Validate candidate exists and belongs to school
-    candidate_stmt = (
-        select(RegistrationCandidate)
-        .where(RegistrationCandidate.id == candidate_id)
-        .options(
-            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
-            selectinload(RegistrationCandidate.subject_selections).selectinload(
-                RegistrationSubjectSelection.subject
-            ),
-        )
-    )
-    candidate_result = await session.execute(candidate_stmt)
-    candidate = candidate_result.scalar_one_or_none()
-
+    candidate = await load_candidate_for_detail(session, candidate_id)
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
@@ -868,199 +838,12 @@ async def update_candidate(
             detail="Candidate does not belong to your school",
         )
 
-    # Check if registration period is still open (only if updating subject selections)
-    if candidate_update.subject_ids is not None:
-        if not candidate.exam or not candidate.exam.registration_period:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot update subject selections: exam or registration period not found",
-            )
-
-        if not await is_registration_open_for_school(
-            session, candidate.exam, current_user.school_id
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot update subject selections: registration period is not open",
-            )
-
-    try:
-        # Reject clearing required bio fields when explicitly sent as null/empty
-        fields_set = candidate_update.model_fields_set
-        if "date_of_birth" in fields_set and candidate_update.date_of_birth is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Date of birth is required",
-            )
-        if "gender" in fields_set and (
-            candidate_update.gender is None or not str(candidate_update.gender).strip()
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Gender is required",
-            )
-
-        # Update basic candidate fields
-        update_data = candidate_update.model_dump(exclude_unset=True, exclude={"subject_ids", "subject_codes"})
-
-        for field, value in update_data.items():
-            if value is not None:
-                setattr(candidate, field, value)
-
-        # Handle programme update
-        if candidate_update.programme_id is not None:
-            # Validate programme exists and is available to school
-            if candidate_update.programme_id:
-                programme_stmt = select(Programme).where(Programme.id == candidate_update.programme_id)
-                programme_result = await session.execute(programme_stmt)
-                programme = programme_result.scalar_one_or_none()
-
-                if not programme:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Programme with ID {candidate_update.programme_id} not found",
-                    )
-
-                if current_user.school_id:
-                    from app.services.school_programme_service import ensure_school_programme
-
-                    await ensure_school_programme(
-                        session, current_user.school_id, programme.id
-                    )
-
-                candidate.programme_id = candidate_update.programme_id
-                candidate.programme_code = programme.code  # Keep for backward compatibility
-
-        # Handle subject selections update
-        if candidate_update.subject_ids is not None:
-            # Get current programme_id (might have been updated above)
-            programme_id = candidate.programme_id
-
-            if not programme_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Programme selection is required",
-                )
-
-            registration_type = (
-                candidate.registration_type.value if candidate.registration_type else None
-            )
-            is_valid, validation_errors = await validate_subject_selections(
-                session,
-                programme_id,
-                candidate_update.subject_ids,
-                registration_type=registration_type,
-            )
-            if not is_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        "Subject selections do not meet programme requirements: "
-                        f"{'; '.join(validation_errors)}"
-                    ),
-                )
-
-            # Delete existing subject selections
-            delete_stmt = delete(RegistrationSubjectSelection).where(
-                RegistrationSubjectSelection.registration_candidate_id == candidate_id
-            )
-            await session.execute(delete_stmt)
-
-            # Create new subject selections
-            for subject_id in candidate_update.subject_ids:
-                subject_stmt = select(Subject).where(Subject.id == subject_id)
-                subject_result = await session.execute(subject_stmt)
-                subject = subject_result.scalar_one_or_none()
-                if not subject:
-                    continue  # Skip if subject not found
-
-                subject_selection = RegistrationSubjectSelection(
-                    registration_candidate_id=candidate.id,
-                    subject_id=subject_id,
-                    subject_code=subject.code,  # Keep for backward compatibility
-                    subject_name=subject.name,  # Keep for backward compatibility
-                )
-                session.add(subject_selection)
-
-        # Identity edit: re-open this candidate for duplicate matching
-        await clear_not_duplicate_marks_for_candidate(session, candidate.id)
-
-        selection_changed = (
-            candidate_update.programme_id is not None
-            or candidate_update.subject_ids is not None
-        )
-        if selection_changed:
-            await session.flush()
-            await session.refresh(candidate, ["subject_selections"])
-            await sync_fee_payment_status_from_outstanding(session, candidate)
-            await recompute_registration_status(session, candidate)
-
-        await session.commit()
-        candidate = (
-            await session.execute(
-                select(RegistrationCandidate)
-                .where(RegistrationCandidate.id == candidate.id)
-                .options(
-                    selectinload(RegistrationCandidate.subject_selections).selectinload(
-                        RegistrationSubjectSelection.subject
-                    ),
-                    selectinload(RegistrationCandidate.exam),
-                )
-            )
-        ).scalar_one()
-
-        # Create response dict with subject selections
-        candidate_dict = {
-            "id": candidate.id,
-            "registration_exam_id": candidate.registration_exam_id,
-            "school_id": candidate.school_id,
-            "firstname": candidate.firstname,
-            "lastname": candidate.lastname,
-            "othername": candidate.othername,
-            "name": candidate.name,  # Computed property
-            "fullname": candidate.fullname,  # Computed property
-            "registration_number": candidate.registration_number,
-            "index_number": candidate.index_number,
-            "date_of_birth": candidate.date_of_birth,
-            "gender": candidate.gender,
-            "programme_code": candidate.programme_code,
-            "programme_id": candidate.programme_id,
-            "contact_email": candidate.contact_email,
-            "contact_phone": candidate.contact_phone,
-            "address": candidate.address,
-            "national_id": candidate.national_id,
-            "disability": get_enum_value(candidate.disability),
-            "registration_type": get_enum_value(candidate.registration_type),
-            "guardian_name": candidate.guardian_name,
-            "guardian_phone": candidate.guardian_phone,
-            "guardian_digital_address": candidate.guardian_digital_address,
-            "guardian_national_id": candidate.guardian_national_id,
-            "registration_status": candidate.registration_status,
-            "fee_payment_status": get_enum_value(candidate.fee_payment_status),
-            "fee_paid_at": candidate.fee_paid_at,
-            "fee_paid_by_user_id": (
-                str(candidate.fee_paid_by_user_id)
-                if candidate.fee_paid_by_user_id
-                else None
-            ),
-            "registration_date": candidate.registration_date,
-            "subject_selections": [
-                _subject_selection_dict(sel)
-                for sel in (candidate.subject_selections or [])
-            ],
-            "created_at": candidate.created_at,
-            "updated_at": candidate.updated_at,
-        }
-        return RegistrationCandidateResponse.model_validate(candidate_dict)
-    except HTTPException:
-        await session.rollback()
-        raise
-    except Exception as e:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update candidate: {str(e)}",
-        )
+    return await apply_candidate_update(
+        session,
+        candidate,
+        candidate_update,
+        acting_school_id=current_user.school_id,
+    )
 
 
 @router.post(
@@ -2396,10 +2179,8 @@ async def upload_candidate_photo(
             'standard' (basic + face detection), or 'strict' (all validations including
             MediaPipe face detection, pose, eyes, background). Defaults to 'strict' for passport photos.
     """
-    # Validate candidate exists and belongs to school
     candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
-    candidate_result = await session.execute(candidate_stmt)
-    candidate = candidate_result.scalar_one_or_none()
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
@@ -2409,68 +2190,13 @@ async def upload_candidate_photo(
             detail="Candidate does not belong to your school",
         )
 
-    # Read file content
-    content = await file.read()
-
-    # Replace background if requested
-    if replace_background:
-        try:
-            content = replace_background(content, background_color=(255, 255, 255))  # White background
-            logger.info(f"Background replaced with white for candidate {candidate_id}")
-        except Exception as e:
-            logger.warning(f"Failed to replace background for candidate {candidate_id}: {e}")
-            # Continue with original image if replacement fails
-            pass
-
-    # Validate photo with specified validation level
-    # This now includes MediaPipe validation if validation_level is 'standard' or 'strict'
-    PhotoValidationService.validate_all(content, file.content_type or "", validation_level=validation_level)
-
-    # Delete existing photo if present (one photo per candidate)
-    existing_photo_stmt = select(RegistrationCandidatePhoto).where(
-        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    return await upload_candidate_photo_file(
+        session,
+        candidate,
+        file,
+        validation_level=validation_level,
+        do_replace_background=replace_background,
     )
-    existing_photo_result = await session.execute(existing_photo_stmt)
-    existing_photo = existing_photo_result.scalar_one_or_none()
-
-    if existing_photo:
-        try:
-            # Delete the file from storage
-            await photo_storage_service.delete(existing_photo.file_path)
-        except Exception as e:
-            logger.warning(f"Failed to delete old photo file {existing_photo.file_path}: {e}")
-        # Delete the database record
-        await session.delete(existing_photo)
-        await session.commit()
-
-    # Calculate checksum
-    checksum = calculate_checksum(content)
-
-    # Rename file using candidate's registration number
-    original_filename = file.filename or "photo.jpg"
-    ext = Path(original_filename).suffix or ".jpg"
-    new_filename = f"{candidate.registration_number}{ext}" if candidate.registration_number else original_filename
-
-    # Save photo file (renamed using registration number)
-    file_path, _ = await photo_storage_service.save(
-        content, new_filename, candidate_id, candidate.registration_exam_id, candidate.registration_number
-    )
-
-    # Create photo record
-    db_photo = RegistrationCandidatePhoto(
-        registration_candidate_id=candidate_id,
-        file_path=file_path,
-        file_name=new_filename,
-        mime_type=file.content_type or "image/jpeg",
-        checksum=checksum,
-    )
-    session.add(db_photo)
-    await session.flush()
-    await recompute_registration_status(session, candidate, has_photo=True)
-    await session.commit()
-    await session.refresh(db_photo)
-
-    return RegistrationCandidatePhotoResponse.model_validate(db_photo)
 
 
 @router.get("/candidates/{candidate_id}/photos", response_model=RegistrationCandidatePhotoResponse | None)
@@ -3007,10 +2733,8 @@ async def delete_candidate_photo(
     candidate_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
 ) -> None:
     """Delete candidate's photo."""
-    # Validate candidate exists and belongs to school
     candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
-    candidate_result = await session.execute(candidate_stmt)
-    candidate = candidate_result.scalar_one_or_none()
+    candidate = (await session.execute(candidate_stmt)).scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
@@ -3020,26 +2744,7 @@ async def delete_candidate_photo(
             detail="Candidate does not belong to your school",
         )
 
-    # Get photo
-    photo_stmt = select(RegistrationCandidatePhoto).where(
-        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
-    )
-    photo_result = await session.execute(photo_stmt)
-    photo = photo_result.scalar_one_or_none()
-    if not photo:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-
-    # Delete file from storage
-    try:
-        await photo_storage_service.delete(photo.file_path)
-    except Exception as e:
-        logger.warning(f"Failed to delete photo file {photo.file_path}: {e}")
-
-    # Delete database record
-    await session.delete(photo)
-    await session.flush()
-    await recompute_registration_status(session, candidate, has_photo=False)
-    await session.commit()
+    await delete_candidate_photo_record(session, candidate)
 
 
 @router.post("/candidates/photos/bulk-upload", response_model=PhotoBulkUploadResponse, status_code=status.HTTP_200_OK)

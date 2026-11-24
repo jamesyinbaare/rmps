@@ -36,17 +36,18 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import {
-  uploadCandidatePhoto,
-  getCandidatePhoto,
-  getAdminCandidatePhoto,
-  getAdminPhotoFile,
-  deleteCandidatePhoto,
-  getPhotoFile,
-  updateCandidate,
   getProgrammeSubjects,
-  listSchoolProgrammes,
   getCurrentUser,
 } from "@/lib/api";
+import {
+  deleteCandidateDetailPhoto,
+  fetchCandidatePhoto,
+  fetchCandidatePhotoFile,
+  isPlatformAdmin,
+  listProgrammesForCandidateEdit,
+  updateCandidateDetail,
+  uploadCandidateDetailPhoto,
+} from "@/lib/candidate-detail-access";
 import { toast } from "sonner";
 import type {
   RegistrationCandidatePhoto,
@@ -294,7 +295,12 @@ export function CandidateDetailModal({
       setLoadingProgrammes(true);
       try {
         const examId = candidate!.registration_exam_id;
-        const progs = await listSchoolProgrammes(examId);
+        const admin = isPlatformAdmin(currentUser?.role);
+        const progs = await listProgrammesForCandidateEdit({
+          examId,
+          schoolId: candidate!.school_id,
+          isAdmin: admin,
+        });
         if (cancelled) return;
         setProgrammes(progs);
 
@@ -331,31 +337,19 @@ export function CandidateDetailModal({
     return () => {
       cancelled = true;
     };
-    // Only re-run when opening edit mode or switching candidate; programme changes handled separately
+    // Only re-run when opening edit mode, switching candidate, or role resolves
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingSubjects, candidate?.id]);
+  }, [editingSubjects, candidate?.id, currentUser?.role]);
 
   const loadPhoto = async () => {
     if (!candidate) return;
     setLoadingPhoto(true);
     try {
-      // Use admin endpoint if user is admin, otherwise use school endpoint
-      const isAdmin = currentUser && (currentUser.role === "SystemAdmin" ||
-        currentUser.role === "Director" ||
-        currentUser.role === "DeputyDirector" ||
-        currentUser.role === "PrincipalManager" ||
-        currentUser.role === "SeniorManager" ||
-        currentUser.role === "Manager" ||
-        currentUser.role === "Staff");
-
-      const photoData = isAdmin
-        ? await getAdminCandidatePhoto(candidate.id)
-        : await getCandidatePhoto(candidate.id);
+      const admin = isPlatformAdmin(currentUser?.role);
+      const photoData = await fetchCandidatePhoto(candidate.id, admin);
       setPhoto(photoData);
       if (photoData) {
-        const url = isAdmin
-          ? await getAdminPhotoFile(candidate.id)
-          : await getPhotoFile(candidate.id);
+        const url = await fetchCandidatePhotoFile(candidate.id, admin);
         setPhotoUrl(url);
       } else {
         setPhotoUrl(null);
@@ -386,7 +380,12 @@ export function CandidateDetailModal({
 
     setUploadingPhoto(true);
     try {
-      await uploadCandidatePhoto(candidate.id, selectedFile, false);
+      await uploadCandidateDetailPhoto(
+        candidate.id,
+        selectedFile,
+        isPlatformAdmin(currentUser?.role),
+        false
+      );
       toast.success("Photo uploaded successfully");
       setUploadDialogOpen(false);
       setSelectedFile(null);
@@ -406,7 +405,10 @@ export function CandidateDetailModal({
     }
 
     try {
-      await deleteCandidatePhoto(candidate.id);
+      await deleteCandidateDetailPhoto(
+        candidate.id,
+        isPlatformAdmin(currentUser?.role)
+      );
       toast.success("Photo deleted successfully");
       setPhoto(null);
       if (photoUrl) {
@@ -462,10 +464,14 @@ export function CandidateDetailModal({
 
     setSavingSubjects(true);
     try {
-      const updatedCandidate = await updateCandidate(candidate.id, {
-        programme_id: editProgrammeId,
-        subject_ids: selectedSubjectIds,
-      });
+      const updatedCandidate = await updateCandidateDetail(
+        candidate.id,
+        {
+          programme_id: editProgrammeId,
+          subject_ids: selectedSubjectIds,
+        },
+        isPlatformAdmin(currentUser?.role)
+      );
 
       toast.success("Programme and subjects updated successfully");
       setEditingSubjects(false);
@@ -518,17 +524,21 @@ export function CandidateDetailModal({
 
     setSavingBio(true);
     try {
-      const updatedCandidate = await updateCandidate(candidate.id, {
-        firstname: bioData.firstname,
-        lastname: bioData.lastname,
-        othername: bioData.othername || null,
-        date_of_birth: bioData.date_of_birth,
-        gender: bioData.gender,
-        contact_email: bioData.contact_email || null,
-        contact_phone: bioData.contact_phone || null,
-        address: bioData.address || null,
-        national_id: bioData.national_id || null,
-      });
+      const updatedCandidate = await updateCandidateDetail(
+        candidate.id,
+        {
+          firstname: bioData.firstname,
+          lastname: bioData.lastname,
+          othername: bioData.othername || null,
+          date_of_birth: bioData.date_of_birth,
+          gender: bioData.gender,
+          contact_email: bioData.contact_email || null,
+          contact_phone: bioData.contact_phone || null,
+          address: bioData.address || null,
+          national_id: bioData.national_id || null,
+        },
+        isPlatformAdmin(currentUser?.role)
+      );
 
       toast.success("Bio data updated successfully");
       setEditingBio(false);
@@ -568,12 +578,16 @@ export function CandidateDetailModal({
 
     setSavingGuardian(true);
     try {
-      const updatedCandidate = await updateCandidate(candidate.id, {
-        guardian_name: guardianData.guardian_name || null,
-        guardian_phone: guardianData.guardian_phone || null,
-        guardian_digital_address: guardianData.guardian_digital_address || null,
-        guardian_national_id: guardianData.guardian_national_id || null,
-      });
+      const updatedCandidate = await updateCandidateDetail(
+        candidate.id,
+        {
+          guardian_name: guardianData.guardian_name || null,
+          guardian_phone: guardianData.guardian_phone || null,
+          guardian_digital_address: guardianData.guardian_digital_address || null,
+          guardian_national_id: guardianData.guardian_national_id || null,
+        },
+        isPlatformAdmin(currentUser?.role)
+      );
 
       toast.success("Guardian information updated successfully");
       setEditingGuardian(false);
