@@ -2062,6 +2062,9 @@ async def create_exam(
             description=exam_data.description,
             exam_kind=exam_kind,
             allows_referral_registration=allows_referral,
+            requires_completion_confirmation=bool(
+                exam_data.requires_completion_confirmation
+            ),
             registration_period_id=registration_period.id,
             pricing_model_preference=exam_data.pricing_model_preference,
         )
@@ -2694,6 +2697,10 @@ async def update_exam(
         exam.description = exam_update.description
     if exam_update.pricing_model_preference is not None:
         exam.pricing_model_preference = exam_update.pricing_model_preference
+    if exam_update.requires_completion_confirmation is not None:
+        exam.requires_completion_confirmation = bool(
+            exam_update.requires_completion_confirmation
+        )
 
     if exam_update.exam_kind is not None or exam_update.allows_referral_registration is not None:
         current_kind = parse_exam_kind(exam_update.exam_kind) if exam_update.exam_kind is not None else exam.exam_kind

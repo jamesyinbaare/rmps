@@ -28,7 +28,7 @@ export function programmesWithRegistrationsNoTarget(
 
 interface OtherProgrammesBreakdownProps {
   programmes: ProgrammeExpectationProgress[];
-  /** When true, copy frames this as “no target” under a declaration. */
+  /** When true, copy frames this as “no target” under expected registration targets. */
   undeclaredMode?: boolean;
   canEdit?: boolean;
   onAddTargets?: () => void;

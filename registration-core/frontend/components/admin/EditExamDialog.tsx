@@ -52,6 +52,7 @@ export function EditExamDialog({
   const [examSeriesId, setExamSeriesId] = useState("");
   const [year, setYear] = useState("");
   const [allowsReferralRegistration, setAllowsReferralRegistration] = useState(true);
+  const [requiresCompletionConfirmation, setRequiresCompletionConfirmation] = useState(false);
   const [enabledIds, setEnabledIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
 
@@ -76,6 +77,7 @@ export function EditExamDialog({
       setExamSeriesId(exam.exam_series_id ? String(exam.exam_series_id) : "");
       setYear(exam.year.toString());
       setAllowsReferralRegistration(exam.allows_referral_registration ?? true);
+      setRequiresCompletionConfirmation(exam.requires_completion_confirmation ?? false);
       setEnabledIds(new Set(exam.enabled_programme_type_ids || []));
     }
   }, [open, exam]);
@@ -125,6 +127,8 @@ export function EditExamDialog({
         enabled_programme_type_ids: Array.from(enabledIds),
         allows_referral_registration:
           exam.exam_kind === "school" ? allowsReferralRegistration : false,
+        requires_completion_confirmation:
+          exam.exam_kind === "school" ? requiresCompletionConfirmation : false,
       });
 
       toast.success("Examination updated successfully");
@@ -231,6 +235,15 @@ export function EditExamDialog({
                     disabled={loading}
                   />
                   Allow referral candidate registration
+                </Label>
+                <Label className="flex items-center gap-2 font-normal">
+                  <input
+                    type="checkbox"
+                    checked={requiresCompletionConfirmation}
+                    onChange={(e) => setRequiresCompletionConfirmation(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Require school completion confirmation
                 </Label>
               </div>
             )}

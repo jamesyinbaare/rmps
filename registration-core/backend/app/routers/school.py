@@ -48,6 +48,14 @@ from app.services.registration_expectations import (
     get_school_exam_expectations,
     upsert_school_exam_expectations,
 )
+from app.schemas.completion import SchoolCompletionStatusResponse
+from app.services.completion_confirmation_service import (
+    assert_registration_editable,
+    confirm_from_upload,
+    generate_declaration_pdf,
+    get_completion_status,
+    withdraw_confirmation,
+)
 from app.services.exam_eligibility_service import (
     is_school_eligible_for_exam,
     school_allows_free_tvet_for_exam,
@@ -388,6 +396,79 @@ async def put_exam_expectations(
 
 
 @router.get(
+    "/exams/{exam_id}/completion",
+    response_model=SchoolCompletionStatusResponse,
+)
+async def get_exam_completion_status(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolCompletionStatusResponse:
+    """Get school registration completion confirmation status for an exam."""
+    return await get_completion_status(
+        session, exam_id=exam_id, school_id=current_user.school_id
+    )
+
+
+@router.get("/exams/{exam_id}/completion/declaration.pdf")
+async def download_completion_declaration(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> Response:
+    """Download the one-page completion confirmation form PDF."""
+    pdf_bytes, filename = await generate_declaration_pdf(
+        session, exam_id=exam_id, school_id=current_user.school_id
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/exams/{exam_id}/completion/upload",
+    response_model=SchoolCompletionStatusResponse,
+)
+async def upload_completion_declaration(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    file: UploadFile = File(...),
+) -> SchoolCompletionStatusResponse:
+    """Upload a signed completion form scan to confirm and lock registration."""
+    content = await file.read()
+    return await confirm_from_upload(
+        session,
+        exam_id=exam_id,
+        school_id=current_user.school_id,
+        user_id=current_user.id,
+        file_content=content,
+        filename=file.filename,
+        mime_type=file.content_type,
+    )
+
+
+@router.post(
+    "/exams/{exam_id}/completion/withdraw",
+    response_model=SchoolCompletionStatusResponse,
+)
+async def withdraw_exam_completion(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolCompletionStatusResponse:
+    """Withdraw completion confirmation while registration is still open."""
+    return await withdraw_confirmation(
+        session,
+        exam_id=exam_id,
+        school_id=current_user.school_id,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
     "/exams/{exam_id}/duplicates",
     response_model=DuplicateMatchesResponse,
 )
@@ -617,6 +698,8 @@ async def register_candidate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="School ID is required for candidate registration",
         )
+
+    await assert_registration_editable(session, exam, current_user.school_id)
 
     allows_free_tvet = await school_allows_free_tvet_for_exam(
         session, exam_id, current_user.school_id
@@ -955,6 +1038,8 @@ async def delete_candidate(
     if blocked:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=blocked)
 
+    await assert_registration_editable(session, candidate.exam, current_user.school_id)
+
     photo = candidate.photo
     if photo is not None:
         try:
@@ -1170,6 +1255,8 @@ async def _load_bulk_exam_for_school(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Registration period is not open",
         )
+
+    await assert_registration_editable(session, exam, school_id)
 
     if not exam.registration_period.allows_bulk_registration:
         raise HTTPException(

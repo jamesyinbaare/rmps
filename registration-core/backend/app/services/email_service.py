@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from app.config import settings
 from app.services.email_templates import (
     render_bank_deposit_status_html,
+    render_completion_confirmation_html,
     render_password_setup_html,
     render_payment_receipt_html,
 )
@@ -193,6 +194,48 @@ def send_bank_deposit_status_email(
         invoice_number=invoice_number,
         approved=approved,
         rejection_reason=rejection_reason,
+        dashboard_url=dashboard_url,
+    )
+    return send_email(to, subject, text_body, html_body)
+
+
+def send_completion_confirmation_email(
+    *,
+    to: str,
+    principal_name: str,
+    school_name: str,
+    school_code: str,
+    exam_label: str,
+    total_candidates: int,
+    counts_by_type: dict,
+    counts_by_programme: list,
+    confirmed_at: str,
+) -> bool:
+    dashboard_url = (settings.frontend_base_url or "").rstrip("/") or "http://localhost:3002"
+    dashboard_url = f"{dashboard_url}/dashboard/my-school/register"
+    subject = f"Registration confirmed — {exam_label} — {school_code}"
+    type_summary = ", ".join(
+        f"{k}: {int(counts_by_type.get(k, 0))}"
+        for k in ("fee_paying", "free_tvet", "referral")
+    )
+    text_body = (
+        f"Dear {principal_name},\n\n"
+        f"Registration for {school_name} ({school_code}) has been confirmed for {exam_label}.\n"
+        f"Confirmed at: {confirmed_at}\n"
+        f"Total candidates: {total_candidates}\n"
+        f"By type: {type_summary}\n\n"
+        f"Registration is locked until confirmation is withdrawn or the period ends.\n"
+        f"Open dashboard: {dashboard_url}\n"
+    )
+    html_body = render_completion_confirmation_html(
+        recipient_name=principal_name,
+        school_name=school_name,
+        school_code=school_code,
+        exam_label=exam_label,
+        total_candidates=total_candidates,
+        counts_by_type=counts_by_type,
+        counts_by_programme=counts_by_programme,
+        confirmed_at=confirmed_at,
         dashboard_url=dashboard_url,
     )
     return send_email(to, subject, text_body, html_body)

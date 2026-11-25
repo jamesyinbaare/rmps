@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import {
   getExam,
   getExamStatistics,
+  updateExam,
   updateRegistrationPeriod,
   closeRegistrationPeriod,
   generateIndexNumbers,
@@ -45,6 +46,8 @@ import { ImportCandidatesDialog } from "@/components/admin/ImportCandidatesDialo
 import { PageHeader } from "@/components/dashboard/PageHeader";
 import { SectionLabel } from "@/components/dashboard/SectionLabel";
 import { StatStrip } from "@/components/dashboard/StatStrip";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 export default function ExamDetailPage() {
   const params = useParams();
@@ -74,6 +77,9 @@ export default function ExamDetailPage() {
   const [eligibleSchoolsDialogOpen, setEligibleSchoolsDialogOpen] = useState(false);
   const [statistics, setStatistics] = useState<ExamStatistics | null>(null);
   const [loadingStatistics, setLoadingStatistics] = useState(true);
+  const [togglingOption, setTogglingOption] = useState<
+    "referral" | "completion" | null
+  >(null);
 
   useEffect(() => {
     // Parse examId from params inside effect to ensure params are available
@@ -221,6 +227,35 @@ export default function ExamDetailPage() {
   const handleUpdateSuccess = async () => {
     await reloadData();
     setUpdateDialogOpen(false);
+  };
+
+  const handleToggleExamOption = async (
+    field: "allows_referral_registration" | "requires_completion_confirmation",
+    checked: boolean
+  ) => {
+    if (!exam?.id) return;
+    const optionKey =
+      field === "allows_referral_registration" ? "referral" : "completion";
+    setTogglingOption(optionKey);
+    try {
+      const updated = await updateExam(exam.id, { [field]: checked });
+      setExam(updated);
+      toast.success(
+        field === "allows_referral_registration"
+          ? checked
+            ? "Referral registration enabled"
+            : "Referral registration disabled"
+          : checked
+            ? "Completion confirmation required"
+            : "Completion confirmation disabled"
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update examination option"
+      );
+    } finally {
+      setTogglingOption(null);
+    }
   };
 
   const getRegistrationStatus = (exam: RegistrationExam) => {
@@ -553,12 +588,45 @@ export default function ExamDetailPage() {
             </Badge>
           </div>
           {exam.exam_kind === "school" ? (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Referral registration</p>
-              <Badge variant="outline">
-                {exam.allows_referral_registration ? "Allowed" : "Not allowed"}
-              </Badge>
-            </div>
+            <>
+              <div className="space-y-2 sm:col-span-2">
+                <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                  <Label
+                    htmlFor="toggle-referral"
+                    className="text-sm font-normal leading-snug cursor-pointer"
+                  >
+                    Allow referral candidate registration
+                  </Label>
+                  <Switch
+                    id="toggle-referral"
+                    checked={Boolean(exam.allows_referral_registration)}
+                    disabled={togglingOption !== null}
+                    onCheckedChange={(checked) =>
+                      handleToggleExamOption("allows_referral_registration", checked)
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                  <Label
+                    htmlFor="toggle-completion"
+                    className="text-sm font-normal leading-snug cursor-pointer"
+                  >
+                    Require school completion confirmation
+                  </Label>
+                  <Switch
+                    id="toggle-completion"
+                    checked={Boolean(exam.requires_completion_confirmation)}
+                    disabled={togglingOption !== null}
+                    onCheckedChange={(checked) =>
+                      handleToggleExamOption(
+                        "requires_completion_confirmation",
+                        checked
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            </>
           ) : (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Individual private portal</p>

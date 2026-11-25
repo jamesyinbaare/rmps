@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Registration Completion Confirmation</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 1.1cm 1.2cm;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 8.5pt;
+      color: #0A0A0A;
+      line-height: 1.3;
+      margin: 0;
+      padding: 0;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #E5E7EB;
+      margin-bottom: 2px;
+    }
+
+    .logo {
+      height: 40px;
+      width: auto;
+    }
+
+    .title-block {
+      text-align: right;
+    }
+
+    .title {
+      font-size: 13pt;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 2px 0;
+      color: #0A0A0A;
+    }
+
+    .subtitle {
+      font-size: 7.5pt;
+      color: #5D6D7E;
+      margin: 0;
+    }
+
+    .accent {
+      display: block;
+      height: 3px;
+      background: #006B3F;
+      margin: 0 0 10px 0;
+    }
+
+    .meta {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 8px;
+      border: 1px solid #111;
+    }
+
+    .meta td {
+      padding: 5px 8px;
+      vertical-align: top;
+      border: 1px solid #D1D5DB;
+      width: 50%;
+    }
+
+    .meta .label {
+      display: block;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #5D6D7E;
+      margin-bottom: 1px;
+    }
+
+    .meta .value {
+      font-size: 8.5pt;
+      font-weight: 600;
+      color: #0A0A0A;
+    }
+
+    .totals {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .total-band {
+      flex: 1.2;
+      border: 2px solid #0A0A0A;
+      padding: 6px 8px;
+      background: #F9FAFB;
+    }
+
+    .total-band .label {
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #5D6D7E;
+    }
+
+    .total-band .value {
+      font-size: 14pt;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+
+    .type-strip {
+      flex: 2;
+      display: flex;
+      border: 1px solid #111;
+    }
+
+    .type-cell {
+      flex: 1;
+      padding: 6px 7px;
+      border-right: 1px solid #D1D5DB;
+    }
+
+    .type-cell:last-child {
+      border-right: none;
+    }
+
+    .type-cell .label {
+      font-size: 7pt;
+      color: #5D6D7E;
+    }
+
+    .type-cell .value {
+      font-size: 11pt;
+      font-weight: 700;
+    }
+
+    h2 {
+      font-size: 9pt;
+      margin: 0 0 4px 0;
+      padding-bottom: 2px;
+      border-bottom: 1px solid #111;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    table.counts {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 8px;
+      font-size: 8pt;
+    }
+
+    table.counts th,
+    table.counts td {
+      border: 1px solid #111;
+      padding: 3px 5px;
+      text-align: left;
+    }
+
+    table.counts th {
+      background: #E5E7EB;
+      font-weight: 600;
+      font-size: 7.5pt;
+    }
+
+    table.counts td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      width: 12%;
+    }
+
+    .truncate-note {
+      font-size: 7.5pt;
+      color: #5D6D7E;
+      margin: -4px 0 8px 0;
+      font-style: italic;
+    }
+
+    .bottom {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+      page-break-inside: avoid;
+    }
+
+    .sign-box {
+      flex: 1.5;
+      border: 1px solid #111;
+      padding: 8px 10px;
+      min-height: 150px;
+    }
+
+    .sign-box h2 {
+      margin-bottom: 6px;
+    }
+
+    .sign-box p {
+      margin: 0 0 6px 0;
+      font-size: 8pt;
+    }
+
+    .sign-field {
+      margin-top: 8px;
+      font-size: 8pt;
+    }
+
+    .sign-line {
+      margin-top: 28px;
+      border-top: 1px solid #0A0A0A;
+      width: 70%;
+      padding-top: 3px;
+      font-size: 7.5pt;
+      color: #5D6D7E;
+    }
+
+    .qr-box {
+      flex: 1;
+      border: 2px solid #0A0A0A;
+      padding: 8px;
+      text-align: center;
+      page-break-inside: avoid;
+    }
+
+    .qr-box .qr-title {
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+
+    .qr-box img {
+      width: 128px;
+      height: 128px;
+      border: 1px solid #111;
+    }
+
+    .qr-box .hint {
+      margin-top: 4px;
+      font-size: 7pt;
+      color: #5D6D7E;
+      line-height: 1.25;
+    }
+
+    .footer {
+      margin-top: 8px;
+      padding-top: 5px;
+      border-top: 1px solid #111;
+      font-size: 7pt;
+      color: #5D6D7E;
+      line-height: 1.3;
+    }
+
+    .empty {
+      color: #5D6D7E;
+      font-style: italic;
+      margin: 0 0 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img class="logo" src="img/logo-crest-only.png" alt="CTVET">
+    <div class="title-block">
+      <h1 class="title">Registration Completion Confirmation</h1>
+      <p class="subtitle">Commission for Technical and Vocational Education and Training (CTVET)</p>
+    </div>
+  </div>
+  <span class="accent"></span>
+
+  <table class="meta">
+    <tr>
+      <td>
+        <span class="label">School</span>
+        <span class="value">{{ school_name }} ({{ school_code }})</span>
+      </td>
+      <td>
+        <span class="label">Examination</span>
+        <span class="value">{{ exam_label }}</span>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <span class="label">Generated</span>
+        <span class="value">{{ generated_at }}</span>
+      </td>
+      <td>
+        <span class="label">Form reference</span>
+        <span class="value">{{ token_short }}…</span>
+      </td>
+    </tr>
+  </table>
+
+  <div class="totals">
+    <div class="total-band">
+      <div class="label">Total candidates</div>
+      <div class="value">{{ total_candidates }}</div>
+    </div>
+    <div class="type-strip">
+      {% for row in type_rows %}
+      <div class="type-cell">
+        <div class="label">{{ row.label }}</div>
+        <div class="value">{{ row.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <h2>By programme</h2>
+  {% if programmes %}
+  <table class="counts">
+    <thead>
+      <tr>
+        <th>Programme</th>
+        <th class="num">Total</th>
+        {% for col in programme_type_columns %}
+        <th class="num">{{ col.label }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in programmes %}
+      <tr>
+        <td>{{ p.code }} — {{ p.name }}</td>
+        <td class="num">{{ p.total }}</td>
+        {% for col in programme_type_columns %}
+        <td class="num">{{ p.by_type.get(col.key, 0) }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if programmes_truncated %}
+  <p class="truncate-note">+{{ programmes_truncated }} more programme(s) — full breakdown in the registration portal.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty">No candidates registered.</p>
+  {% endif %}
+
+  <div class="bottom">
+    <div class="sign-box">
+      <h2>Head confirmation</h2>
+      <p>
+        I, the Headmaster / Headmistress / Principal of the above-named school,
+        confirm that the registration details summarised on this form are complete
+        and accurate for this examination.
+      </p>
+      <div class="sign-field"><strong>Name:</strong> {{ principal_name or "________________________________" }}</div>
+      <div class="sign-field"><strong>Title:</strong> ________________________________</div>
+      <div class="sign-field"><strong>Date:</strong> ________________________________</div>
+      <div class="sign-line">Signature</div>
+    </div>
+    <div class="qr-box">
+      <div class="qr-title">Verification</div>
+      <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="Verification QR code">
+      <div class="hint">Do not cover or alter this QR code. It is verified when the signed form is uploaded.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <strong>Instructions:</strong> Print this one-page form, obtain the school head’s signature,
+    scan the signed page, and upload it in the registration portal to confirm completion.
+    After confirmation, registration edits are locked until confirmation is withdrawn
+    (while the registration window remains open).
+  </div>
+</body>
+</html>
