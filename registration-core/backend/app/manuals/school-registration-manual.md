@@ -28,7 +28,7 @@ If you see “Your session has expired,” sign in again.
 | Menu item | Purpose |
 |-----------|---------|
 | **Home** | School overview and open exams |
-| **Registration** | Register candidates, self-declaration, duplicates |
+| **Registration** | Register candidates, expected registration targets, duplicates |
 | **Examinations** | Browse exams your school is eligible for |
 | **Photo Album** | View and upload candidate photos |
 | **Programmes** | View (or manage, if coordinator) programmes |
@@ -76,9 +76,9 @@ Registration actions (register, bulk upload, photo upload, expected numbers) are
 
 ---
 
-## 3. Self-declaration and progress monitoring
+## 3. Expected registration targets and progress monitoring
 
-Self-declaration lets you set **expected registration numbers** so you can track progress. It is **optional** and does **not** block registration.
+**Expected registration targets** let you set planned candidate numbers so you can track progress. This is **optional** and does **not** block registration. It is separate from **registration completion confirmation**.
 
 ### Set expected numbers
 
@@ -87,7 +87,7 @@ Self-declaration lets you set **expected registration numbers** so you can track
 3. Enter an **Overall expected total** (whole number, at least 1), and/or counts **by programme**.
 4. If you use programme counts, you can choose **Use programme sum** to fill the overall total.
 5. If both overall and programme counts are set, the **programme sum must equal the overall total**.
-6. Save. To remove targets, use **Clear** when a declaration already exists.
+6. Save. To remove targets, use **Clear** when targets already exist.
 
 You can only edit targets while registration is open for your school.
 
@@ -103,6 +103,24 @@ Use the **By programme** tab to see which programmes are on track, under, or ove
 ![Registration workspace showing progress against expected numbers](images/02-registration-workspace.png)
 
 **Tip:** Set realistic targets early, then use Incomplete counts and missing-photo reports to finish registration before the period closes.
+
+---
+
+## 3b. Confirm registration completion (when required)
+
+Some examinations require schools to **confirm completion** before the deadline. This is separate from **expected registration targets**.
+
+When the examination requires it, the registration workspace shows **Confirm registration completion**:
+
+1. Finish registering candidates (and photos/fees as needed).
+2. **Download completion form** — a one-page PDF with totals by registration type and programme, plus a verification QR code.
+3. Have the **headmaster / headmistress / principal** sign the printed form.
+4. **Upload signed form** (JPEG, PNG, or PDF). The portal verifies the QR code and that counts still match.
+5. On success, registration is **locked** for that examination. A summary is emailed and texted to the principal contacts on your school profile.
+
+To make further changes before the deadline, use **Withdraw confirmation**, edit, then download/sign/upload again.
+
+Ensure **principal email** and **principal phone** are set on **My school → Profile** so the confirmation summary can be delivered.
 
 ---
 
@@ -375,7 +393,7 @@ Keep school contact and profile information up to date. Incomplete profiles can 
 
 1. Confirm **School Profile** is complete.
 2. Open the examination under **Registration**.
-3. Set **expected numbers** (self-declaration) to guide progress.
+3. Set **expected registration targets** to guide progress.
 4. Register candidates (**single form** and/or **bulk upload**).
 5. Run **Find duplicates** and clean up before paying.
 6. Upload **photos** (single or bulk); use **Utility Tools** to prepare files.

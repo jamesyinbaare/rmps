@@ -340,6 +340,10 @@ class RegistrationExamCreate(BaseModel):
         default=True,
         description="Whether referral candidates may register (school exams only)",
     )
+    requires_completion_confirmation: bool = Field(
+        default=False,
+        description="When true, schools must upload a signed completion form before registration is final",
+    )
     pricing_model_preference: str | None = Field(
         None,
         description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')",
@@ -366,6 +370,10 @@ class RegistrationExamUpdate(BaseModel):
     allows_referral_registration: bool | None = Field(
         None,
         description="Whether referral candidates may register (school exams only)",
+    )
+    requires_completion_confirmation: bool | None = Field(
+        None,
+        description="When true, schools must upload a signed completion form before registration is final",
     )
     pricing_model_preference: str | None = Field(
         None,
@@ -394,6 +402,7 @@ class RegistrationExamResponse(BaseModel):
     description: str | None = None
     exam_kind: str = ExamKind.SCHOOL.value
     allows_referral_registration: bool = True
+    requires_completion_confirmation: bool = False
     # Present on school-facing exam list: whether current school may register free_tvet
     allows_free_tvet: bool | None = None
     registration_period: ExamRegistrationPeriodResponse

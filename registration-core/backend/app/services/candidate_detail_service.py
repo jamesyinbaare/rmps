@@ -15,6 +15,7 @@ from app.models import (
     Programme,
     RegistrationCandidate,
     RegistrationCandidatePhoto,
+    RegistrationExam,
     RegistrationSubjectSelection,
     Subject,
 )
@@ -24,6 +25,7 @@ from app.schemas.registration import (
     RegistrationCandidateUpdate,
 )
 from app.services.duplicate_detection import clear_not_duplicate_marks_for_candidate
+from app.services.completion_confirmation_service import assert_registration_editable
 from app.services.late_registration_service import is_registration_open_for_school
 from app.services.mediapipe_photo_validation import replace_background
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
@@ -154,8 +156,6 @@ async def load_candidate_for_detail(
     session: AsyncSession,
     candidate_id: int,
 ) -> RegistrationCandidate | None:
-    from app.models import RegistrationExam
-
     result = await session.execute(
         select(RegistrationCandidate)
         .where(RegistrationCandidate.id == candidate_id)
@@ -180,6 +180,9 @@ async def apply_candidate_update(
 ) -> RegistrationCandidateResponse:
     """Apply bio/guardian/programme/subject updates. Caller must have loaded exam + subjects."""
     school_id = acting_school_id or candidate.school_id
+
+    if candidate.exam is not None:
+        await assert_registration_editable(session, candidate.exam, school_id)
 
     if candidate_update.subject_ids is not None:
         if not candidate.exam or not candidate.exam.registration_period:
@@ -322,6 +325,18 @@ async def upload_candidate_photo_content(
     do_replace_background: bool = False,
 ) -> RegistrationCandidatePhotoResponse:
     """Validate and store a candidate passport photo (replace if present)."""
+    exam = candidate.exam
+    if exam is None and candidate.registration_exam_id:
+        exam = (
+            await session.execute(
+                select(RegistrationExam).where(
+                    RegistrationExam.id == candidate.registration_exam_id
+                )
+            )
+        ).scalar_one_or_none()
+    if exam is not None:
+        await assert_registration_editable(session, exam, candidate.school_id)
+
     if do_replace_background:
         try:
             content = replace_background(content, background_color=(255, 255, 255))

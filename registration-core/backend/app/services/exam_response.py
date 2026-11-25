@@ -40,6 +40,9 @@ def serialize_exam(
         description=exam.description,
         exam_kind=exam.exam_kind.value if hasattr(exam.exam_kind, "value") else str(exam.exam_kind),
         allows_referral_registration=bool(exam.allows_referral_registration),
+        requires_completion_confirmation=bool(
+            getattr(exam, "requires_completion_confirmation", False)
+        ),
         allows_free_tvet=allows_free_tvet,
         registration_period=ExamRegistrationPeriodResponse.model_validate(exam.registration_period),
         results_published=exam.results_published,

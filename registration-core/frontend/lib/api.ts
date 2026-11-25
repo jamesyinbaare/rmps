@@ -79,6 +79,7 @@ import type {
   TimetableResponse,
   SchoolExamExpectations,
   SchoolExamExpectationsUpdate,
+  SchoolCompletionStatus,
   DuplicateMatchesResponse,
 } from "@/types";
 
@@ -2323,6 +2324,60 @@ export async function updateSchoolExamExpectations(
     body: JSON.stringify(data),
   });
   return handleResponse<SchoolExamExpectations>(response);
+}
+
+export async function getSchoolExamCompletion(
+  examId: number
+): Promise<SchoolCompletionStatus> {
+  const response = await fetchWithAuth(`/api/v1/school/exams/${examId}/completion`);
+  return handleResponse<SchoolCompletionStatus>(response);
+}
+
+export async function downloadCompletionDeclaration(examId: number): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/school/exams/${examId}/completion/declaration.pdf`
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail || "Failed to download completion form"
+    );
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `registration_completion_exam_${examId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+export async function uploadCompletionDeclaration(
+  examId: number,
+  file: File
+): Promise<SchoolCompletionStatus> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetchWithAuth(
+    `/api/v1/school/exams/${examId}/completion/upload`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+  return handleResponse<SchoolCompletionStatus>(response);
+}
+
+export async function withdrawCompletionConfirmation(
+  examId: number
+): Promise<SchoolCompletionStatus> {
+  const response = await fetchWithAuth(
+    `/api/v1/school/exams/${examId}/completion/withdraw`,
+    { method: "POST" }
+  );
+  return handleResponse<SchoolCompletionStatus>(response);
 }
 
 export async function listAllSchoolExams(): Promise<RegistrationExam[]> {

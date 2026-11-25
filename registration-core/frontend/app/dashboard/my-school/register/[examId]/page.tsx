@@ -28,6 +28,7 @@ import {
   ExamRegistrationWorkspace,
   type WorkbenchTab,
 } from "@/components/school/ExamRegistrationWorkspace";
+import { CompletionConfirmationPanel } from "@/components/school/CompletionConfirmationPanel";
 import {
   CANDIDATE_TABLE_PAGE_SIZES,
   type CandidateTablePageSize,
@@ -80,6 +81,7 @@ export default function ExamRegistrationWorkspacePage() {
     useState<RegistrationCandidate | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [candidatesLoaded, setCandidatesLoaded] = useState(false);
+  const [registrationLocked, setRegistrationLocked] = useState(false);
 
   const loadCandidates = useCallback(async (id: number) => {
     setLoadingCandidates(true);
@@ -289,13 +291,17 @@ export default function ExamRegistrationWorkspacePage() {
         subtitle={statusLine}
         actions={
           <>
-            <Button variant="outline" asChild disabled={!periodOpen}>
+            <Button
+              variant="outline"
+              asChild
+              disabled={!periodOpen || registrationLocked}
+            >
               <Link href={`/dashboard/my-school/register/bulk${querySuffix}`}>
                 <Upload className="mr-2 h-4 w-4" />
                 Bulk upload
               </Link>
             </Button>
-            <Button asChild disabled={!periodOpen}>
+            <Button asChild disabled={!periodOpen || registrationLocked}>
               <Link href={`/dashboard/my-school/register/new${querySuffix}`}>
                 <Plus className="mr-2 h-4 w-4" />
                 Register candidate
@@ -303,6 +309,12 @@ export default function ExamRegistrationWorkspacePage() {
             </Button>
           </>
         }
+      />
+
+      <CompletionConfirmationPanel
+        examId={examId}
+        enabled={Boolean(exam.requires_completion_confirmation)}
+        onLockedChange={setRegistrationLocked}
       />
 
       <ExamRegistrationWorkspace

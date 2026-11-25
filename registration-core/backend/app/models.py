@@ -174,6 +174,12 @@ class BankDepositProofStatus(enum.Enum):
     REJECTED = "rejected"
 
 
+class SchoolRegistrationCompletionStatus(enum.Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    WITHDRAWN = "withdrawn"
+
+
 class TicketPriority(enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -436,6 +442,9 @@ class School(Base):
     programme_expectations = relationship(
         "ExamSchoolProgrammeExpectation", back_populates="school", cascade="all, delete-orphan"
     )
+    registration_completions = relationship(
+        "SchoolRegistrationCompletion", back_populates="school", cascade="all, delete-orphan"
+    )
 
 
 class ProgrammeType(Base):
@@ -505,7 +514,7 @@ class ExamEligibleSchool(Base):
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
     # Per-exam Free TVET gate: when true, school may use free_tvet + fee_paying (+ referral); when false, fee_paying (+ referral)
     allows_free_tvet = Column(Boolean, default=False, nullable=False, server_default="false")
-    # Optional school self-declaration of expected registration volume
+    # Optional school expected registration targets (progress tracking only)
     expected_total = Column(Integer, nullable=True)
     expected_declared_at = Column(DateTime, nullable=True)
     expected_declared_by_user_id = Column(
@@ -616,6 +625,9 @@ class RegistrationExam(Base):
         index=True,
     )
     allows_referral_registration = Column(Boolean, default=True, nullable=False, server_default="true")
+    requires_completion_confirmation = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     registration_period_id = Column(Integer, ForeignKey("exam_registration_periods.id", ondelete="CASCADE"), nullable=False, index=True)
     results_published = Column(Boolean, default=False, nullable=False, index=True)
     results_published_at = Column(DateTime, nullable=True)
@@ -639,6 +651,9 @@ class RegistrationExam(Base):
     late_registration_windows = relationship(
         "ExamLateRegistrationWindow", back_populates="exam", cascade="all, delete-orphan"
     )
+    registration_completions = relationship(
+        "SchoolRegistrationCompletion", back_populates="exam", cascade="all, delete-orphan"
+    )
     candidates = relationship("RegistrationCandidate", back_populates="exam")
     schedules = relationship("ExaminationSchedule", back_populates="exam", cascade="all, delete-orphan")
     exports = relationship("RegistrationExport", back_populates="exam")
@@ -651,6 +666,61 @@ class RegistrationExam(Base):
         UniqueConstraint(
             "programme_type_id", "exam_series_id", "year", name="uq_exam_programme_type_series_year"
         ),
+    )
+
+
+class SchoolRegistrationCompletion(Base):
+    """School-level registration completion confirmation for an exam (signed declaration)."""
+
+    __tablename__ = "school_registration_completions"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(
+        Enum(
+            SchoolRegistrationCompletionStatus,
+            create_constraint=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=SchoolRegistrationCompletionStatus.PENDING,
+        server_default="pending",
+        index=True,
+    )
+    confirmation_token = Column(String(36), nullable=False, unique=True, index=True)
+    payload_nonce = Column(String(32), nullable=False)
+    total_candidates = Column(Integer, nullable=False, default=0)
+    counts_by_type = Column(JSON, nullable=False, default=dict)
+    counts_by_programme = Column(JSON, nullable=False, default=list)
+    counts_digest = Column(String(64), nullable=False)
+    declaration_generated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    generation_count = Column(Integer, nullable=False, default=1, server_default="1")
+    confirmed_at = Column(DateTime, nullable=True)
+    confirmed_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    scanned_file_path = Column(String(512), nullable=True)
+    scanned_mime_type = Column(String(100), nullable=True)
+    scanned_checksum = Column(String(64), nullable=True)
+    withdrawn_at = Column(DateTime, nullable=True)
+    withdrawn_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    principal_email_sent_at = Column(DateTime, nullable=True)
+    principal_sms_sent_at = Column(DateTime, nullable=True)
+    notify_email_error = Column(Text, nullable=True)
+    notify_sms_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="registration_completions")
+    school = relationship("School", back_populates="registration_completions")
+    confirmed_by = relationship("PortalUser", foreign_keys=[confirmed_by_user_id])
+    withdrawn_by = relationship("PortalUser", foreign_keys=[withdrawn_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "school_id", name="uq_school_registration_completion_exam_school"),
     )
 
 

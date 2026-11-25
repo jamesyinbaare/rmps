@@ -14,7 +14,7 @@ class ProgrammeExpectationInput(BaseModel):
 
 
 class SchoolExamExpectationsUpdate(BaseModel):
-    """Create/update/clear optional expected registration declaration."""
+    """Create/update/clear optional expected registration targets."""
 
     expected_total: int | None = Field(
         None,

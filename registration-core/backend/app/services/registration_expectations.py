@@ -23,6 +23,7 @@ from app.schemas.expectations import (
     SchoolExamExpectationsUpdate,
 )
 from app.services.exam_eligibility_service import is_school_eligible_for_exam
+from app.services.completion_confirmation_service import assert_registration_editable
 from app.services.late_registration_service import is_registration_open_for_school
 from app.services.programme_type_service import list_programmes_for_exam
 from app.services.school_programme_service import ensure_school_programme
@@ -186,6 +187,8 @@ async def upsert_school_exam_expectations(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot update expectations: registration period is not open",
         )
+
+    await assert_registration_editable(session, exam, school_id)
 
     eligibility = await _get_eligibility_row(session, exam_id, school_id)
     if eligibility is None:

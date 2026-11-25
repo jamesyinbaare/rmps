@@ -359,6 +359,7 @@ export interface RegistrationExam {
   description: string | null;
   exam_kind?: ExamKind;
   allows_referral_registration?: boolean;
+  requires_completion_confirmation?: boolean;
   /** School-facing: whether this school is Free TVET–eligible for this exam */
   allows_free_tvet?: boolean | null;
   registration_period: ExamRegistrationPeriod;
@@ -411,6 +412,44 @@ export interface SchoolExamExpectationsUpdate {
   programmes: ProgrammeExpectationInput[];
 }
 
+export interface ProgrammeCountBreakdown {
+  programme_id: number | null;
+  code: string;
+  name: string;
+  total: number;
+  by_type: Record<string, number>;
+}
+
+export interface SchoolExamCounts {
+  total_candidates: number;
+  counts_by_type: Record<string, number>;
+  counts_by_programme: ProgrammeCountBreakdown[];
+}
+
+export interface SchoolCompletionStatus {
+  exam_id: number;
+  school_id: number;
+  feature_enabled: boolean;
+  status: "pending" | "confirmed" | "withdrawn" | null;
+  is_confirmed: boolean;
+  is_locked: boolean;
+  can_withdraw: boolean;
+  can_download: boolean;
+  can_upload: boolean;
+  registration_open: boolean;
+  live_counts: SchoolExamCounts;
+  snapshot_total: number | null;
+  snapshot_counts_by_type: Record<string, number> | null;
+  snapshot_counts_by_programme: ProgrammeCountBreakdown[] | null;
+  declaration_generated_at: string | null;
+  confirmed_at: string | null;
+  withdrawn_at: string | null;
+  principal_email_sent: boolean;
+  principal_sms_sent: boolean;
+  notify_email_error: string | null;
+  notify_sms_error: string | null;
+}
+
 export interface LateRegistrationWindowSchool {
   school_id: number;
   school_code: string;
@@ -460,6 +499,7 @@ export interface RegistrationExamCreate {
   description?: string | null;
   exam_kind?: ExamKind;
   allows_referral_registration?: boolean;
+  requires_completion_confirmation?: boolean;
   /** @deprecated Prefer programme_type_id */
   exam_type?: string;
   /** @deprecated Prefer exam_series_id */
@@ -482,6 +522,7 @@ export interface RegistrationExamUpdate {
   description?: string | null;
   exam_kind?: ExamKind;
   allows_referral_registration?: boolean;
+  requires_completion_confirmation?: boolean;
   exam_type?: string;
   exam_series?: string | null;
   pricing_model_preference?: string | null;

@@ -50,6 +50,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
   const [description, setDescription] = useState("");
   const [examKind, setExamKind] = useState<ExamKind>("school");
   const [allowsReferralRegistration, setAllowsReferralRegistration] = useState(true);
+  const [requiresCompletionConfirmation, setRequiresCompletionConfirmation] = useState(false);
   const [registrationStartDate, setRegistrationStartDate] = useState<Date | null>(null);
   const [registrationEndDate, setRegistrationEndDate] = useState<Date | null>(null);
   const [allowsBulkRegistration, setAllowsBulkRegistration] = useState(true);
@@ -140,6 +141,8 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
         description: description || null,
         exam_kind: examKind,
         allows_referral_registration: examKind === "school" ? allowsReferralRegistration : false,
+        requires_completion_confirmation:
+          examKind === "school" ? requiresCompletionConfirmation : false,
         registration_period: {
           registration_start_date: startDateTime.toISOString(),
           registration_end_date: endDateTime.toISOString(),
@@ -157,6 +160,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       setDescription("");
       setExamKind("school");
       setAllowsReferralRegistration(true);
+      setRequiresCompletionConfirmation(false);
       setRegistrationStartDate(null);
       setRegistrationEndDate(null);
       setAllowsBulkRegistration(true);
@@ -335,6 +339,18 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
                   />
                   Allow referral candidate registration
                 </Label>
+                <Label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={requiresCompletionConfirmation}
+                    onChange={(e) => setRequiresCompletionConfirmation(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Require school completion confirmation
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Schools must download, sign, and upload a completion form to finalize registration.
+                </p>
               </div>
             )}
           </div>
